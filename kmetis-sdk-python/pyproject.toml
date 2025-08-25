@@ -1,8 +1,8 @@
 name = "k8s-sandbox-sdk"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python SDK for managing Kubernetes sandboxes"
-author = "Your Name"
-author_email = "your.email@example.com"
+author = "Senbo Fu"
+author_email = "senbof@gmail.com"
 
 [dependencies]
 kubernetes = "^27.2.0"

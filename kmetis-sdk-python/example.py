@@ -1,97 +1,119 @@
 """
 Example usage of the Kubernetes Sandbox SDK
 """
+import atexit
+import subprocess
 import time
-from sandbox import Sandbox
-from exceptions import SandboxError
+
+from sandbox import SandboxSDK
+from services.exceptions import SandboxError
 
 
 def main():
+
     """Example usage of the SDK"""
     # Initialize the SDK
-    sdk = Sandbox(namespace="default")
+    sdk = SandboxSDK()
     
     # Example SSH key (in practice, you would load these from secure storage)
-    public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDexample your_email@example.com"
-    private_key = "/home/qi/picosdk/id_rsa"  # Or the key content as a string
+    public_key_path = "/root/.ssh/id_rsa.pub"
+    private_key = "/root/.ssh/id_rsa"  # Or the key content as a string
     
     try:
+        # Demonstrate testing capabilities
+        print("\n---------------------------- Testing Capabilities ----------------------------")
+
+        # Upload a file (you would need an actual file for this)
+        print("\n---------------------------- Create Sandbox ----------------------------")
         # Create a sandbox
-        # print("Creating sandbox...")
-        # sandbox_info = sdk.create_sandbox(public_key=public_key)
-        # sandbox_id = sandbox_info["sandbox_id"]
-        # print(f"Created sandbox: {sandbox_info}")
-        
+        print("Creating sandbox...")
+        sandbox = sdk.create_sandbox(sandbox_id="example")
+        print(f"Created sandbox: {sandbox}")
+
+        print("\n--------------- Wait for SSH to be ready and hack configurations --------------")
         # Wait a moment for SSH to be fully ready
-        # time.sleep(10)
+        time.sleep(10)
 
-                
-        # Example of updating IP address in cache for testing
-        # print("\nUpdating IP address in cache...")
-        # success = sdk.update_sandbox_ip("sandbox-1754382392", "127.0.0.1")
-        # if success:
-        #     print("Updated IP address in cache")
-        # else:
-        #     print("Failed to update IP address (sandbox not in cache)")
+        # The container using local configuration cannot be connected using ssh
+        port_forward_str = f"kubectl port-forward {sandbox.id} 2222:{sandbox.port} --address 0.0.0.0"
+        port_forward_cmd = port_forward_str.split(" ")
+        process = subprocess.Popen(port_forward_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"Command '{' '.join(port_forward_cmd)}' started in the background with PID: {process.pid}")
 
-         # Example of manually adding a sandbox to cache for testing
-        sandbox_id = "sandbox-1754382392"
-        print("\nAdding test sandbox to cache...")
-        sdk.add_sandbox_to_cache(
-            sandbox_id=sandbox_id,
-            ip_address="127.0.0.1",
-            port="2222",
-            created_at="2023-01-01T00:00:00"
-        )
-        print("Added test sandbox to cache")
-        # Execute a command
-        print("\nExecuting command...")
-        result = sdk.execute_command(
-            sandbox_id=sandbox_id,
+        # Register a cleanup function to kill the process when the main program exits
+        def cleanup_background_process():
+            if process and process.poll() is None:  # Check if the process is still running
+                print(f"Terminating background process with PID: {process.pid}")
+                try:
+                    # Send SIGTERM first for graceful shutdown, then SIGKILL if needed
+                    process.terminate()
+                    process.wait(timeout=5)  # Wait for process to terminate
+                    if process.poll() is None:
+                        print(f"Background process did not terminate gracefully, killing PID: {process.pid}")
+                        process.kill()
+                except subprocess.TimeoutExpired:
+                    print(f"Background process did not terminate gracefully, killing PID: {process.pid}")
+                    process.kill()
+                except Exception as e:
+                    print(f"Error terminating background process: {e}")
+
+        if process:
+            atexit.register(cleanup_background_process)
+
+        clean_known_hosts = 'ssh-keygen -f /root/.ssh/known_hosts -R [127.0.0.1]:2222'
+        clean_known_hosts_cmd = clean_known_hosts.split(" ")
+        result = subprocess.run(clean_known_hosts_cmd, capture_output=True, text=True, check=True)
+        print(f"Command executed successfully: {result.stdout}")
+        if result.stderr:
+            print(f"Errors (if any): {result.stderr}")
+
+        time.sleep(5)
+        sandbox.ip_address = "127.0.0.1"
+        sandbox.port = 2222
+        print(f"Updated sandbox: {sandbox}")
+
+        if process and process.poll() is None:  # Check if the process is still running
+            print(f"Process is running: {process.pid}")
+        
+        # Upload a file (you would need an actual file for this)
+        print("\n---------------------------- Uploading file ----------------------------")
+        local_file_path="test_python.py"
+        remote_file_path="/tmp/test_python.py"
+        success = sdk.upload_file(
+            sandbox=sandbox,
             private_key=private_key,
-            command="echo 'Hello from sandbox!'"
+            local_file_path="test_python.py",
+            remote_file_path="/tmp/test_python.py"
+        )
+        print(f"Upload {local_file_path} to {sandbox.id}:{remote_file_path} success: {success}")
+
+        # Execute python code files
+        print("\n---------------------------- Executing command ----------------------------")
+        result = sdk.execute_command(
+            sandbox,
+            private_key=private_key,
+            command=f"python3 {remote_file_path}"
         )
         print(f"Command result: {result}")
         
-        # Get sandbox info
-        # print("\nGetting sandbox info...")
-        # info = sdk.get_sandbox_info(sandbox_id)
-        # print(f"Sandbox info: {info}")
-        
-        # Demonstrate testing capabilities
-        # print("\n--- Testing Capabilities ---")
-
-        # Example of executing command on cached sandbox (for testing)
-        # Note: This would normally fail in a real environment without an actual sandbox
-        # print("\nTo test execute_command with cached sandbox:")
-        # print("1. Add sandbox to cache with add_sandbox_to_cache()")
-        # print("2. Use execute_command() with the same sandbox_id")
-        # print("3. Provide a valid private key for SSH connection")
-        
-        # Upload a file (you would need an actual file for this)
-        # print("\nUploading file...")
-        # success = sdk.upload_file(
-        #     sandbox_id=sandbox_id,
-        #     private_key=private_key,
-        #     local_path="local_file.txt",
-        #     remote_path="/tmp/remote_file.txt"
-        # )
-        # print(f"Upload success: {success}")
-        
         # Download a file (you would need an actual file for this)
-        # print("\nDownloading file...")
-        # success = sdk.download_file(
-        #     sandbox_id=sandbox_id,
-        #     private_key=private_key,
-        #     remote_path="/tmp/remote_file.txt",
-        #     local_path="downloaded_file.txt"
-        # )
-        # print(f"Download success: {success}")
+        print("\n---------------------------- Downloading file ----------------------------")
+        success = sdk.download_file(
+            sandbox=sandbox,
+            private_key=private_key,
+            remote_file_path="/tmp/test_python.py",
+            local_file_path="downloaded_file.txt"
+        )
+        print(f"Download success: {success}")
+
+        print(f"\n Downloaded file content:")
+        with open('downloaded_file.txt', 'r') as f:
+            print(f.read())
         
-        # Shutdown the sandbox
-        # print("\nShutting down sandbox...")
-        # success = sdk.shutdown_sandbox(sandbox_id)
-        # print(f"Shutdown success: {success}")
+        # Delete the sandbox
+        print("\n---------------------------- Shutting down sandbox ----------------------------")
+        success = sdk.delete_sandbox(sandbox)
+        print(f"Shutdown success: {success}")
         
     except SandboxError as e:
         print(f"Sandbox error: {e}")

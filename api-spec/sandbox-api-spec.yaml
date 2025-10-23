@@ -1,0 +1,595 @@
+openapi: 3.0.3
+info:
+  title: Sandbox API
+  description: |
+    RESTful API for managing isolated sandbox environments for executing code, 
+    running commands, and transferring files on a remote server.
+
+    ## Key Concepts
+
+    - **Session**: A temporary, isolated environment with a unique session ID
+    - **Sandbox**: An isolated environment where all operations are executed, 1:1 map with session
+    - **Automatic Cleanup**: Sessions expire after TTL or can be explicitly deleted
+
+  version: 1.0.0
+  contact:
+    name: Sandbox API Support
+    email: support@example.com
+
+servers:
+  - url: https://api.sandbox.example.com/v1
+    description: Production server
+  - url: http://localhost:8080/v1
+    description: Development server
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Sessions
+    description: Manage sandbox sessions
+  - name: Commands
+    description: Execute commands in sandbox
+  - name: Files
+    description: File upload/download operations
+  - name: Code
+    description: Execute code snippets
+
+paths:
+  /sessions:
+    post:
+      tags:
+        - Sessions
+      summary: Create a new sandbox session
+      description: |
+        Creates a new isolated sandbox environment with a unique session ID.
+        The sandbox is automatically created by the server and will be
+        cleaned up when the session expires or is explicitly deleted.
+      operationId: createSession
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ttl:
+                  type: integer
+                  description: Time-to-live in seconds (default 3600, max 28800)
+                  default: 3600
+                  minimum: 60
+                  maximum: 28800
+                image:
+                  type: string
+                  description: Sandbox environment image
+                  default: "a default image"
+                metadata:
+                  type: object
+                  additionalProperties: true
+                  description: Optional metadata to attach to the session
+                  example:
+                    user: "john.doe"
+                    project: "test-automation"
+      responses:
+        "200":
+          description: Session created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    get:
+      tags:
+        - Sessions
+      summary: List all active sessions
+      description: Returns a list of all active sandbox sessions for the authenticated user
+      operationId: listSessions
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: List of sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Session"
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /sessions/{sessionId}:
+    get:
+      tags:
+        - Sessions
+      summary: Get session details
+      description: Retrieve information about a specific sandbox session
+      operationId: getSession
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    delete:
+      tags:
+        - Sessions
+      summary: Delete a sandbox session
+      description: |
+        Terminates the session and removes the sandbox.
+        All files and data in the sandbox will be permanently deleted.
+      operationId: deleteSession
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session deleted successfully
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /sessions/{sessionId}/commands:
+    post:
+      tags:
+        - Commands
+      summary: Execute a shell command
+      description: |
+        Executes a shell command in the sandbox directory.
+        The command runs with the working directory set to the sandbox path.
+      operationId: executeCommand
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommandRequest"
+      responses:
+        "200":
+          description: Command executed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "408":
+          description: Command timeout
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /sessions/{sessionId}/code:
+    post:
+      tags:
+        - Code
+      summary: Execute code
+      description: |
+        Uploads and executes code in the sandbox.
+        The code is executed with the appropriate interpreter.
+      operationId: executeCode
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - code
+              properties:
+                language:
+                  type: string
+                  description: Programming language of the code
+                  enum: [python, javascript, bash]
+                  default: python
+                code:
+                  type: string
+                  description: Code snippet to execute
+                  example: |
+                    import sys
+                    print(f"Python version: {sys.version}")
+                    print("Hello from sandbox!")
+                timeout:
+                  type: integer
+                  description: Execution timeout in seconds
+                  default: 60
+                  minimum: 1
+                  maximum: 300
+      responses:
+        "200":
+          description: Code executed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "408":
+          description: Execution timeout
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /sessions/{sessionId}/files:
+    post:
+      tags:
+        - Files
+      summary: Upload a file
+      description: Upload a file to the sandbox directory
+      operationId: uploadFile
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - name: path
+          in: query
+          description: Destination path in sandbox (relative)
+          schema:
+            type: string
+            example: "scripts/test.py"
+        - name: overwrite
+          in: query
+          description: Overwrite existing file
+          schema:
+            type: boolean
+            default: false
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "201":
+          description: File uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileInfo"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: File already exists (when overwrite=false)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: File too large
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    get:
+      tags:
+        - Files
+      summary: Download a file
+      description: Download a file from the sandbox directory
+      operationId: downloadFile
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - name: filePath
+          in: query
+          description: Path to the file (relative to sandbox root)
+          schema:
+            type: string
+            example: "results.txt"
+      responses:
+        "200":
+          description: File content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            text/plain:
+              schema:
+                type: string
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: 'attachment; filename="<filename>"'
+            Content-Length:
+              schema:
+                type: integer
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /health:
+    get:
+      tags:
+        - System
+      summary: Health check
+      description: Check if the API is healthy
+      operationId: healthCheck
+      security: []
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "healthy"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token authentication
+
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      description: Unique session identifier
+      schema:
+        type: string
+        format: uuid
+      example: "550e8400-e29b-41d4-a716-446655440000"
+
+  schemas:
+    Session:
+      type: object
+      required:
+        - sessionId
+        - status
+        - createdAt
+        - expiresAt
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+          description: Unique session identifier
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        status:
+          type: string
+          enum: [running, paused]
+          description: Current session status
+        createdAt:
+          type: string
+          format: date-time
+          description: Session creation timestamp
+        expiresAt:
+          type: string
+          format: date-time
+          description: Session expiration timestamp
+        lastActivityAt:
+          type: string
+          format: date-time
+          description: Timestamp of last activity
+        metadata:
+          type: object
+          additionalProperties: true
+          description: User-provided metadata
+    CommandRequest:
+      type: object
+      required:
+        - command
+      properties:
+        command:
+          type: string
+          description: Shell command to execute
+          example: "ls -la"
+        timeout:
+          type: integer
+          description: Execution timeout in seconds
+          default: 60
+          minimum: 1
+          maximum: 300
+        env:
+          type: object
+          additionalProperties:
+            type: string
+          description: Environment variables to set
+          example:
+            DEBUG: "true"
+            PATH: "/usr/local/bin:/usr/bin:/bin"
+
+    CommandResult:
+      type: object
+      required:
+        - status
+        - exitCode
+      properties:
+        status:
+          type: string
+          enum: [completed, failed, timeout]
+          description: Command execution status
+        exitCode:
+          type: integer
+          description: Process exit code (null if still running)
+          nullable: true
+        stdout:
+          type: string
+          description: Standard output
+        stderr:
+          type: string
+          description: Standard error output
+
+    FileInfo:
+      type: object
+      required:
+        - name
+        - path
+        - type
+        - size
+      properties:
+        name:
+          type: string
+          description: File name
+          example: "script.py"
+        path:
+          type: string
+          description: Relative path from sandbox root
+          example: "scripts/script.py"
+        type:
+          type: string
+          enum: [file, directory, symlink]
+          description: File type
+        size:
+          type: integer
+          format: int64
+          description: File size in bytes
+        permissions:
+          type: string
+          description: Unix file permissions
+          example: "rw-r--r--"
+        createdAt:
+          type: string
+          format: date-time
+        modifiedAt:
+          type: string
+          format: date-time
+        checksum:
+          type: string
+          description: MD5 checksum of file content
+          example: "5d41402abc4b2a76b9719d911017c592"
+
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Error code
+          example: "SESSION_NOT_FOUND"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "The requested session does not exist or has expired"
+        details:
+          type: object
+          additionalProperties: true
+          description: Additional error details
+        timestamp:
+          type: string
+          format: date-time
+        requestId:
+          type: string
+          description: Unique request identifier for debugging
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid parameters
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "INVALID_PARAMETER"
+            message: "The command parameter is required"
+            timestamp: "2025-10-23T10:30:00Z"
+
+    Unauthorized:
+      description: Unauthorized - authentication required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "UNAUTHORIZED"
+            message: "Invalid or missing authentication token"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "SESSION_NOT_FOUND"
+            message: "The requested session does not exist or has expired"
+
+    TooManyRequests:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+      headers:
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+            format: int64
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "INTERNAL_ERROR"
+            message: "An unexpected error occurred"
+            requestId: "req-123-abc"

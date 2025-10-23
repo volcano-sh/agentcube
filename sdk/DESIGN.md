@@ -1,7 +1,8 @@
 # Python Sandbox SDK – Hybrid Design (REST + HTTP CONNECT + SSH/SFTP)
 
 Version: 2.0  
-Status: Proposed
+Status: Implemented  
+Compatibility: Sandbox API v1.0.0 (see `api-spec/sandbox-api-spec.yaml`)
 
 ## 1. Introduction
 
@@ -33,13 +34,13 @@ This preserves the reliability and streaming characteristics of SSH/SFTP while k
 Client-side SDK components:
 
 - SessionsClient (REST): Manages sessions via HTTPS against `POST/GET/DELETE /sessions`.
-- HTTPConnectTunnel: Issues `CONNECT /sessions/{sessionId}/tunnel` to the API server with `Authorization: Bearer <token>`, then exposes a socket-like object.
+- HTTPConnectTunnel: Issues `CONNECT /sessions/{sessionId}` to the API server with `Proxy-Authorization: Bearer <token>`, then exposes a socket-like object.
 - SessionSSHClient: Builds an SSH/SFTP connection over the tunnel for commands and file transfers.
 
 High-level flow:
 
 1) Create session (REST) → receive `sessionId` and metadata.  
-2) Open HTTP CONNECT tunnel to `/sessions/{sessionId}/tunnel` on the same API server.  
+2) Open HTTP CONNECT tunnel to `/sessions/{sessionId}` on the same API server.  
 3) Authenticate SSH over that tunnel (password or key).  
 4) Execute commands and SFTP operations.  
 5) Delete session (REST) to clean up.
@@ -52,7 +53,7 @@ Each session corresponds to a sandboxed environment on the server. The server en
 
 ### HTTP CONNECT Tunnel (API Server as Proxy)
 
-- The SDK connects to the API server (same `api_url`) and sends `CONNECT /sessions/{sessionId}/tunnel HTTP/1.1` with `Authorization: Bearer …`.
+- The SDK connects to the API server (same `api_url`) and sends `CONNECT /sessions/{sessionId} HTTP/1.1` with `Proxy-Authorization: Bearer …`.
 - On `200 Connection Established`, the socket becomes a raw TCP tunnel to the backend sandbox for that session.
 - The SDK then performs a normal SSH handshake through this tunnel.
 
@@ -65,32 +66,90 @@ Each session corresponds to a sandboxed environment on the server. The server en
 
 ### 5.1 SessionsClient (REST)
 
-Responsibilities:
-- `create_session(ttl, image, metadata) -> Session`
-- `list_sessions(limit, offset) -> {sessions, total, …}`
-- `get_session(session_id) -> Session`
-- `delete_session(session_id) -> None`
+Constructor:
 
-Errors: `UnauthorizedError`, `SessionNotFoundError`, `RateLimitError`, `SandboxOperationError`, `SandboxConnectionError`.
+```
+SessionsClient(
+    api_url: str,
+    bearer_token: str,
+    timeout: int = 30,
+    verify_ssl: bool = True,
+)
+```
+
+Responsibilities:
+- `create_session(ttl: int = 3600, image: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> Session`
+    - Optional: `ssh_public_key: Optional[str]` — if provided, sent as `sshPublicKey` in the request body to authorize an SSH public key for the session.
+- `list_sessions(limit: int = 50, offset: int = 0) -> Dict[str, Any]`  with keys: `sessions: List[Session]`, `total`, `limit`, `offset`
+- `get_session(session_id: str) -> Session`
+- `delete_session(session_id: str) -> None`
+
+Validation and behavior:
+- `ttl` accepted range typically `[60, 28800]`.
+- `limit` in `[1, 100]`, `offset >= 0`.
+
+Errors raised:
+- `UnauthorizedError` (HTTP 401)
+- `SessionNotFoundError` (HTTP 404)
+- `RateLimitError` (HTTP 429) — exposes `limit`, `remaining`, `reset` from response headers
+- `SandboxOperationError` (other 4xx/5xx)
+- `SandboxConnectionError` (network/TLS issues)
 
 ### 5.2 HTTPConnectTunnel
 
+Constructor:
+
+```
+HTTPConnectTunnel(
+    api_url: str,
+    bearer_token: str,
+    session_id: str,
+    connect_path_template: str = "/sessions/{sessionId}",
+    timeout: int = 10,
+    verify_ssl: bool = True,
+    extra_headers: Optional[Dict[str, str]] = None,
+)
+```
+
 Responsibilities:
-- `open() -> socket.socket`: Issues CONNECT to `/sessions/{sessionId}/tunnel` on the API server; returns a TLS-wrapped or plain socket based on `api_url`.
+- `open() -> socket.socket`: Issues `CONNECT` to the API server at `connect_path_template` with `Authorization: Bearer <token>`. Returns a socket suitable for SSH; HTTPS is used when `api_url` is `https` (TLS verification controlled by `verify_ssl`). Non-200 responses raise `SandboxConnectionError` with the status line.
 - `close()`: Closes the tunnel.
 
-Notes: Uses the same Bearer token as REST; no new gateway introduced.
+Notes:
+- Uses the same Bearer token as REST; no separate gateway is introduced.
 
 ### 5.3 SessionSSHClient
 
-Responsibilities:
-- `connect() / close()` and context manager support.
-- `run_command(command: str, timeout: int = 60) -> {stdout, stderr, exit_code}`
+Constructor:
+
+```
+SessionSSHClient(
+    api_url: str,
+    bearer_token: str,
+    session_id: str,
+    username: str,
+    password: Optional[str] = None,
+    pkey: Optional[paramiko.PKey] = None,
+    timeout: int = 20,
+    verify_ssl: bool = True,
+    connect_path_template: str = "/sessions/{sessionId}",
+    host_key_policy: Optional[paramiko.MissingHostKeyPolicy] = None,
+    get_pty: bool = False,
+)
+```
+
+Responsibilities and behavior:
+- Context manager support: `__enter__/__exit__` to automatically connect/close.
+- `connect()`: Opens the HTTP CONNECT tunnel, then performs Paramiko SSH connection using the tunnel socket (`sock=...`). By default, agent and key lookups may be disabled; host key policy defaults to Paramiko's `AutoAddPolicy` if none is provided.
+- `run_command(command: str, timeout: int = 60) -> Dict[str, Any]` returns `{ "stdout": str, "stderr": str, "exit_code": int }`. If `get_pty=True`, allocates a PTY for the command.
+- `open_sftp() -> paramiko.SFTPClient`
 - `upload_file(local_path: str, remote_path: str) -> None`
 - `download_file(remote_path: str, local_path: str) -> None`
-- `open_sftp() -> paramiko.SFTPClient`
+- `close()`: Closes SFTP, SSH, and the underlying tunnel in order.
 
-Construction parameters include: `api_url`, `bearer_token`, `session_id`, `username`, and optional `password` or `pkey`. A `get_pty` flag enables PTY allocation for interactive commands.
+Errors:
+- `SandboxOperationError` on SSH/SFTP failures or misuse (e.g., calling operations before `connect`).
+- `SandboxConnectionError` propagated from tunnel failures.
 
 ## 6. Error Handling
 
@@ -105,10 +164,11 @@ SandboxAPIError (Base)
 └── SandboxOperationError     # Other 4xx/5xx and SSH/SFTP operation failures
 ```
 
-Examples:
-- CONNECT returns non-200 → `SandboxConnectionError` with reason line.
-- SSH handshake fails → `SandboxOperationError` with Paramiko error message.
-- REST DELETE 404 → `SessionNotFoundError`.
+REST response handling:
+- Maps common HTTP statuses to dedicated exceptions (`401` → `UnauthorizedError`, `404` → `SessionNotFoundError`, `429` → `RateLimitError`).
+- `RateLimitError` exposes `limit`, `remaining`, and `reset` from `X-RateLimit-*` headers when present.
+- Non-JSON error bodies are handled gracefully with generic messages.
+- DELETE operations may return `200` or `204` on success.
 
 ## 7. Dependencies
 
@@ -155,19 +215,28 @@ with SessionsClient(api_url=API_URL, bearer_token=TOKEN) as sessions:
 
 - All REST endpoints use HTTPS + Bearer tokens.
 - The CONNECT handshake is sent over HTTPS; the tunnel then carries SSH.
+- `verify_ssl` controls certificate verification for CONNECT/TLS (recommended `True` in production).
 - The server must verify that the caller is authorized for the referenced `sessionId` during CONNECT and route only to the correct sandbox.
 - Optionally enforce short tunnel timeouts and idle timeouts server-side.
 - Host key policies: default is `AutoAddPolicy` for ease-of-use; production users may supply stricter policies.
 
 ## 10. Server-Side Expectations (for CONNECT)
 
-- Endpoint: `CONNECT /sessions/{sessionId}/tunnel HTTP/1.1` with `Authorization: Bearer <token>`.
+- Endpoint: `CONNECT /sessions/{sessionId} HTTP/1.1` with `Proxy-Authorization: Bearer <token>`.
 - On success: return `HTTP/1.1 200 Connection Established` and forward bytes bidirectionally to the sandbox’s SSH endpoint for that session.
 - On failure: return appropriate status (e.g., 401, 404, 429, 5xx).
 
-## 11. Open Items / Future Work
+## 11. Environment Variables
 
+These are used by examples and can simplify configuration during development:
+
+- `SANDBOX_API_URL`: Default base URL for REST and tunnel target.
+- `SANDBOX_API_TOKEN`: Default bearer token.
+
+## 12. Limitations and Future Work
+
+- `run_command` is synchronous and collects output at the end; streaming callbacks or non-blocking reads may be added.
+- No direct wrappers for REST `/commands` and `/files` in this client; SSH/SFTP is the primary data plane, though REST endpoints exist on the server.
 - Optional token-based SSH auth mapping (skip username/password if server supports it).
-- Command output streaming callbacks (line-by-line) using non-blocking channels.
-- Async SDK variant using `asyncssh` and an async HTTP client.
+- Async SDK variant using `asyncssh` and an async HTTP client could be provided.
 

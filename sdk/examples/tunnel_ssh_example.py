@@ -10,7 +10,7 @@ Requirements:
 
 This demonstrates:
 1) Creating a session via REST
-2) Opening an HTTP CONNECT tunnel to /sessions/{id}/tunnel
+2) Opening an HTTP CONNECT tunnel to /sessions/{id}
 3) Running SSH commands and SFTP transfers through the tunnel
 4) Deleting the session via REST
 """

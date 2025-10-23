@@ -183,7 +183,8 @@ class SessionsClient:
         self,
         ttl: int = 3600,
         image: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        ssh_public_key: Optional[str] = None,
     ) -> Session:
         """
         Create a new sandbox session.
@@ -192,6 +193,7 @@ class SessionsClient:
             ttl: Time-to-live in seconds (default 3600, min 60, max 28800)
             image: Sandbox environment image to use
             metadata: Optional metadata to attach to the session
+            ssh_public_key: Optional OpenSSH-formatted public key (e.g., ssh-ed25519, ecdsa-sha2-nistp256, ssh-rsa)
         
         Returns:
             Session object representing the created session
@@ -219,6 +221,10 @@ class SessionsClient:
             payload['image'] = image
         if metadata:
             payload['metadata'] = metadata
+        if ssh_public_key:
+            if not isinstance(ssh_public_key, str) or not ssh_public_key.strip():
+                raise ValueError("ssh_public_key must be a non-empty string when provided")
+            payload['sshPublicKey'] = ssh_public_key
         
         try:
             response = self._session.post(
@@ -359,6 +365,68 @@ class SessionsClient:
         except requests.exceptions.RequestException as e:
             raise SandboxConnectionError(f"Failed to connect to API: {e}")
     
+    def run_code(
+        self,
+        session_id: str,
+        code: str,
+        language: str = "python",
+        timeout: int = 60,
+    ) -> Dict[str, Any]:
+        """
+        Execute code in the sandbox via the REST API.
+
+        This uses the /sessions/{sessionId}/code endpoint defined in the API spec.
+
+        Args:
+            session_id: Unique session identifier (UUID)
+            code: Code snippet to execute (required)
+            language: Programming language (one of: 'python', 'javascript', 'bash'). Default: 'python'
+            timeout: Execution timeout in seconds (min 1, max 300). Default: 60
+
+        Returns:
+            A dictionary matching CommandResult schema:
+            { 'status': 'completed'|'failed'|'timeout', 'exitCode': int|None, 'stdout': str, 'stderr': str }
+
+        Raises:
+            ValueError: If parameters are invalid
+            SandboxConnectionError: On network/TLS failures
+            UnauthorizedError: If authentication fails
+            SessionNotFoundError: If the session doesn't exist
+            SandboxOperationError: For other API errors
+
+        Example:
+            >>> client = SessionsClient(api_url='...', bearer_token='...')
+            >>> result = client.run_code(session_id, code='print("hi")', language='python', timeout=30)
+            >>> print(result['stdout'])
+        """
+        if not session_id:
+            raise ValueError("session_id is required")
+        if not isinstance(code, str) or code.strip() == "":
+            raise ValueError("code must be a non-empty string")
+        allowed_languages = {"python", "javascript", "bash"}
+        if language not in allowed_languages:
+            raise ValueError(f"language must be one of {sorted(allowed_languages)}, got {language}")
+        if not (1 <= int(timeout) <= 300):
+            raise ValueError(f"timeout must be between 1 and 300 seconds, got {timeout}")
+
+        payload = {
+            "language": language,
+            "code": code,
+            "timeout": int(timeout),
+        }
+
+        try:
+            response = self._session.post(
+                f"{self.api_url}/sessions/{session_id}/code",
+                json=payload,
+                timeout=self.timeout,
+                verify=self.verify_ssl,
+            )
+            data = self._handle_response(response)
+            return data
+        except requests.exceptions.RequestException as e:
+            raise SandboxConnectionError(f"Failed to connect to API: {e}")
+    
     def close(self):
         """Close the HTTP session"""
         self._session.close()
@@ -386,7 +454,7 @@ class HTTPConnectTunnel:
         api_url: str,
         bearer_token: str,
         session_id: str,
-        connect_path_template: str = "/sessions/{sessionId}/tunnel",
+        connect_path_template: str = "/sessions/{sessionId}",
         timeout: int = 10,
         verify_ssl: bool = True,
         extra_headers: Optional[Dict[str, str]] = None,
@@ -434,7 +502,7 @@ class HTTPConnectTunnel:
         req_lines = [
             f"CONNECT {path} HTTP/1.1",
             f"Host: {host}",
-            f"Authorization: Bearer {self.token}",
+            f"Proxy-Authorization: Bearer {self.token}",
             "Proxy-Connection: keep-alive",
         ]
         for k, v in self.extra_headers.items():
@@ -505,7 +573,7 @@ class SessionSSHClient:
         pkey: Optional[paramiko.PKey] = None,
         timeout: int = 20,
         verify_ssl: bool = True,
-        connect_path_template: str = "/sessions/{sessionId}/tunnel",
+        connect_path_template: str = "/sessions/{sessionId}",
         host_key_policy: Optional[paramiko.MissingHostKeyPolicy] = None,
         get_pty: bool = False,
     ):

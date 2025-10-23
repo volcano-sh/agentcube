@@ -1,4 +1,4 @@
-openapi: 3.0.3
+openapi: 3.1.2
 info:
   title: Sandbox API
   description: |
@@ -10,6 +10,12 @@ info:
     - **Session**: A temporary, isolated environment with a unique session ID
     - **Sandbox**: An isolated environment where all operations are executed, 1:1 map with session
     - **Automatic Cleanup**: Sessions expire after TTL or can be explicitly deleted
+
+    ## Data plane via HTTP CONNECT (hybrid)
+
+    - Session lifecycle is managed via REST over HTTPS.
+    - For streaming command execution and file transfer, clients may establish an HTTP CONNECT tunnel to a specific session using the same API host: `CONNECT /sessions/{sessionId}`.
+    - The CONNECT request must include a bearer token in the `Proxy-Authorization: Bearer <token>` header. On success, the server responds with `200 Connection Established` and forwards raw TCP bytes to the sandbox backend (e.g., SSH/SFTP).
 
   version: 1.0.0
   contact:
@@ -63,6 +69,13 @@ paths:
                   type: string
                   description: Sandbox environment image
                   default: "a default image"
+                sshPublicKey:
+                  type: string
+                  description: |
+                    Optional SSH public key to authorize for SSH access to this session. Provide an OpenSSH-formatted
+                    public key (e.g., ssh-ed25519, ecdsa-sha2-nistp256, or ssh-rsa). The server will install this key
+                    into the sandbox's authorized keys for the session user.
+                  example: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB2VExampleBase64KeyMaterial user@example"
                 metadata:
                   type: object
                   additionalProperties: true
@@ -378,6 +391,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: JWT token authentication
+    proxyBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Bearer token used in the `Proxy-Authorization` header for HTTP CONNECT requests.
 
   parameters:
     SessionId:

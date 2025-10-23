@@ -39,7 +39,8 @@ session = client.create_session()
 session = client.create_session(
     ttl=7200,                    # 60-28800 seconds
     image='python:3.11',         # Optional
-    metadata={'user': 'alice'}   # Optional
+    metadata={'user': 'alice'},  # Optional
+    ssh_public_key='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB2VExampleBase64KeyMaterial user@example'  # Optional
 )
 ```
 
@@ -73,6 +74,19 @@ print(result['offset'])        # Offset used
 ## Delete Session
 ```python
 client.delete_session('session-uuid')
+```
+
+## Run Code
+```python
+result = client.run_code(
+    session_id='session-uuid',
+    code='print("Hello")',
+    language='python',   # 'python' | 'javascript' | 'bash'
+    timeout=30           # 1..300 seconds
+)
+print(result['status'], result['exitCode'])
+print(result['stdout'])
+print(result['stderr'])
 ```
 
 ## Context Manager (Recommended)
@@ -162,6 +176,8 @@ if seconds_left < 300:  # Less than 5 minutes
 | TTL | 60 | 28800 | 3600 |
 | List Limit | 1 | 100 | 50 |
 | List Offset | 0 | ∞ | 0 |
+| Code Timeout | 1 | 300 | 60 |
+| Language | - | - | python |
 
 ## Environment Variables
 ```bash

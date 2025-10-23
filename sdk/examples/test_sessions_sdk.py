@@ -214,6 +214,52 @@ def example_session_lifecycle():
         print(f"   ✓ Session terminated and cleaned up")
 
 
+def example_run_code():
+    """Example running code via REST /sessions/{sessionId}/code"""
+    print("\n" + "=" * 60)
+    print("Example 7: Run Code via REST")
+    print("=" * 60)
+
+    with SessionsClient(
+        api_url='http://localhost:8080/v1',
+        bearer_token='your-bearer-token-here'
+    ) as client:
+        # Create a session (Python image recommended for Python code)
+        session = client.create_session(ttl=600, image='python:3.11', metadata={'example': 'run_code'})
+        print(f"   ✓ Session: {session.session_id[:8]}...")
+
+        # Run Python code
+        print("\n1. Running Python code...")
+        py = client.run_code(
+            session_id=session.session_id,
+            language='python',
+            code='import platform; print("PY:", platform.python_version())',
+            timeout=30,
+        )
+        print(f"   ✓ Status: {py['status']} (exit={py['exitCode']})")
+        if py.get('stdout'):
+            print("   stdout:")
+            print("   " + py['stdout'].replace('\n', '\n   ').rstrip())
+        if py.get('stderr'):
+            print("   stderr:")
+            print("   " + py['stderr'].replace('\n', '\n   ').rstrip())
+
+        # Run a Bash snippet
+        print("\n2. Running Bash snippet...")
+        sh = client.run_code(
+            session_id=session.session_id,
+            language='bash',
+            code='echo BASH: $(uname -s) && ls -1 | head -n 5',
+            timeout=20,
+        )
+        print(f"   ✓ Status: {sh['status']} (exit={sh['exitCode']})")
+        print("   " + sh.get('stdout', '').replace('\n', '\n   ').rstrip())
+
+        # Cleanup
+        client.delete_session(session.session_id)
+        print("\n   ✓ Cleaned up session")
+
+
 def example_batch_operations():
     """Example of batch operations on sessions"""
     print("\n" + "=" * 60)
@@ -266,6 +312,7 @@ def main():
         example_error_handling()
         example_session_lifecycle()
         example_batch_operations()
+        example_run_code()
         
         print("\n" + "=" * 60)
         print("✓ All examples completed!")

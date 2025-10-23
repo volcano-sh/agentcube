@@ -82,7 +82,8 @@ Create a new sandbox session.
 session = client.create_session(
     ttl: int = 3600,
     image: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
+    ssh_public_key: Optional[str] = None,
 ) -> Session
 ```
 
@@ -90,6 +91,7 @@ session = client.create_session(
 - `ttl`: Time-to-live in seconds (min: 60, max: 28800, default: 3600)
 - `image`: Sandbox environment image (e.g., `'python:3.11'`, `'ubuntu:22.04'`)
 - `metadata`: Optional metadata dictionary
+- `ssh_public_key`: Optional OpenSSH-formatted public key to authorize for SSH (e.g., `ssh-ed25519 AAAA... user@host`)
 
 **Returns:** `Session` object
 
@@ -109,7 +111,8 @@ session = client.create_session(
         'user': 'alice',
         'project': 'data-analysis',
         'environment': 'production'
-    }
+    },
+    ssh_public_key='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB2VExampleBase64KeyMaterial user@example'
 )
 ```
 
@@ -184,6 +187,52 @@ client.delete_session(session_id: str) -> None
 **Example:**
 ```python
 client.delete_session('550e8400-e29b-41d4-a716-446655440000')
+```
+
+##### run_code()
+
+Execute code inside a sandbox session via the REST API.
+
+```python
+result = client.run_code(
+    session_id: str,
+    code: str,
+    language: str = "python",   # one of: 'python', 'javascript', 'bash'
+    timeout: int = 60            # seconds, 1..300
+) -> Dict[str, Any]
+```
+
+**Parameters:**
+- `session_id`: Target session UUID
+- `code`: Code snippet to execute
+- `language`: Programming language (`python` | `javascript` | `bash`)
+- `timeout`: Execution timeout in seconds (min: 1, max: 300)
+
+**Returns:** `CommandResult` dict
+- `status`: `completed` | `failed` | `timeout`
+- `exitCode`: integer or null
+- `stdout`: string
+- `stderr`: string
+
+**Raises:**
+- `ValueError`: If parameters are invalid
+- `UnauthorizedError`: If authentication fails
+- `SessionNotFoundError`: If the session doesn't exist
+- `RateLimitError`: If rate limit exceeded
+- `SandboxOperationError`: For other API errors
+- `SandboxConnectionError`: If connection fails
+
+**Example:**
+```python
+result = client.run_code(
+    session_id=session.session_id,
+    language='python',
+    code='import sys; print(sys.version.split()[0])',
+    timeout=30,
+)
+print(result['status'], result['exitCode'])
+print(result['stdout'])
+print(result['stderr'])
 ```
 
 ### Session Class
@@ -394,6 +443,42 @@ with SessionsClient(api_url='...', bearer_token='...') as client:
     # Cleanup
     for session in sessions:
         client.delete_session(session.session_id)
+```
+
+### Example 5: Run Code in a Session
+
+```python
+from sandbox_sessions_sdk import SessionsClient
+
+API_URL = 'http://localhost:8080/v1'
+TOKEN = 'your-bearer-token-here'
+
+with SessionsClient(api_url=API_URL, bearer_token=TOKEN) as client:
+    # Create a session with Python image
+    session = client.create_session(ttl=600, image='python:3.11', metadata={'example': 'run_code'})
+
+    # Run Python code
+    py = client.run_code(
+        session_id=session.session_id,
+        language='python',
+        code='print("Hello from Python!")',
+        timeout=30,
+    )
+    print('Python:', py['status'], py['exitCode'])
+    print(py['stdout'])
+
+    # Run Bash command
+    sh = client.run_code(
+        session_id=session.session_id,
+        language='bash',
+        code='echo $SHELL && ls -1 | head -n 3',
+        timeout=20,
+    )
+    print('Bash:', sh['status'])
+    print(sh['stdout'])
+
+    # Cleanup
+    client.delete_session(session.session_id)
 ```
 
 ## Environment Variables

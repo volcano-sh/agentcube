@@ -1,11 +1,11 @@
 .PHONY: build run clean test deps
 
-# 构建目标
+# Build targets
 build:
 	@echo "Building pico-apiserver..."
 	go build -o bin/pico-apiserver ./cmd/pico-apiserver
 
-# 运行服务器（开发模式）
+# Run server (development mode)
 run:
 	@echo "Running pico-apiserver..."
 	go run ./cmd/pico-apiserver/main.go \
@@ -14,7 +14,7 @@ run:
 		--ssh-username=sandbox \
 		--ssh-port=22
 
-# 运行服务器（使用 kubeconfig）
+# Run server (with kubeconfig)
 run-local:
 	@echo "Running pico-apiserver with local kubeconfig..."
 	go run ./cmd/pico-apiserver/main.go \
@@ -24,62 +24,94 @@ run-local:
 		--ssh-username=sandbox \
 		--ssh-port=22
 
-# 清理构建文件
+# Clean build artifacts
 clean:
 	@echo "Cleaning..."
 	rm -rf bin/
 	rm -f pico-apiserver
 
-# 安装依赖
+# Install dependencies
 deps:
 	@echo "Downloading dependencies..."
 	go mod download
 	go mod tidy
 
-# 更新依赖
+# Update dependencies
 update-deps:
 	@echo "Updating dependencies..."
 	go get -u ./...
 	go mod tidy
 
-# 运行测试
+# Run tests
 test:
 	@echo "Running tests..."
 	go test -v ./...
 
-# 代码格式化
+# Format code
 fmt:
 	@echo "Formatting code..."
 	go fmt ./...
 
-# 代码检查
+# Run linter
 lint:
 	@echo "Running linter..."
 	golangci-lint run ./...
 
-# 构建 Docker 镜像
+# Build Docker image
 docker-build:
 	@echo "Building Docker image..."
 	docker build -t pico-apiserver:latest .
 
-# 安装到系统
+# Install to system
 install: build
 	@echo "Installing pico-apiserver..."
 	sudo cp bin/pico-apiserver /usr/local/bin/
 
-# 显示帮助信息
+# Docker and Kubernetes targets
+docker-build:
+	@echo "Building Docker image..."
+	docker build -t pico-apiserver:latest .
+
+docker-push:
+	@echo "Pushing Docker image..."
+	docker push pico-apiserver:latest
+
+k8s-deploy:
+	@echo "Deploying to Kubernetes..."
+	kubectl apply -f k8s/pico-apiserver.yaml
+
+k8s-delete:
+	@echo "Deleting from Kubernetes..."
+	kubectl delete -f k8s/pico-apiserver.yaml
+
+k8s-logs:
+	@echo "Showing logs..."
+	kubectl logs -n pico -l app=pico-apiserver -f
+
+# Load image to kind cluster
+kind-load:
+	@echo "Loading image to kind..."
+	kind load docker-image pico-apiserver:latest
+
+# Show help message
 help:
 	@echo "Available targets:"
-	@echo "  build        - Build the binary"
-	@echo "  run          - Run in development mode"
-	@echo "  run-local    - Run with local kubeconfig"
-	@echo "  clean        - Clean build artifacts"
-	@echo "  deps         - Download dependencies"
-	@echo "  update-deps  - Update dependencies"
-	@echo "  test         - Run tests"
-	@echo "  fmt          - Format code"
-	@echo "  lint         - Run linter"
-	@echo "  docker-build - Build Docker image"
-	@echo "  install      - Install to /usr/local/bin"
-	@echo "  help         - Show this help message"
+	@echo "  build         - Build the binary"
+	@echo "  run           - Run in development mode"
+	@echo "  run-local     - Run with local kubeconfig"
+	@echo "  clean         - Clean build artifacts"
+	@echo "  deps          - Download dependencies"
+	@echo "  update-deps   - Update dependencies"
+	@echo "  test          - Run tests"
+	@echo "  fmt           - Format code"
+	@echo "  lint          - Run linter"
+	@echo "  docker-build  - Build Docker image"
+	@echo "  docker-push   - Push Docker image"
+	@echo "  k8s-deploy    - Deploy to Kubernetes"
+	@echo "  k8s-delete    - Delete from Kubernetes"
+	@echo "  k8s-logs      - Show pod logs"
+	@echo "  k8s-restart   - Restart deployment"
+	@echo "  kind-load     - Load image to kind cluster"
+	@echo "  install       - Install to /usr/local/bin"
+	@echo "  help          - Show this help message"
 

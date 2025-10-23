@@ -1,0 +1,68 @@
+# Pico API Server Configuration Example
+#
+# Usage:
+# 1. Copy this file to config.yaml
+# 2. Modify settings as needed
+# 3. Pass configuration via command line (currently only command line args supported)
+
+# Server configuration
+server:
+  port: "8080"
+  
+  # TLS configuration (optional)
+  enable_tls: false
+  tls_cert: "/path/to/cert.pem"
+  tls_key: "/path/to/key.pem"
+
+# Kubernetes configuration
+kubernetes:
+  # Kubeconfig file path
+  # If empty, will use in-cluster configuration
+  kubeconfig: ""
+  
+  # Namespace for creating Sandbox resources
+  namespace: "default"
+
+# SSH configuration
+ssh:
+  # SSH username (for connecting to sandbox pods)
+  username: "sandbox"
+  
+  # SSH port
+  port: 22
+
+# Authentication configuration
+auth:
+  # JWT secret (for validating Bearer tokens)
+  # If empty, will skip authentication (development only)
+  jwt_secret: ""
+
+# Session configuration
+session:
+  # Default TTL (seconds)
+  default_ttl: 3600
+  
+  # Minimum TTL (seconds)
+  min_ttl: 60
+  
+  # Maximum TTL (seconds)
+  max_ttl: 28800
+  
+  # Cleanup interval for expired sessions (seconds)
+  cleanup_interval: 300
+
+# Logging configuration
+logging:
+  # Log level: debug, info, warn, error
+  level: "info"
+  
+  # Log format: json, text
+  format: "text"
+
+# Proxy configuration
+proxy:
+  # Connection timeout (seconds)
+  connect_timeout: 10
+  
+  # I/O timeout (seconds)
+  io_timeout: 300

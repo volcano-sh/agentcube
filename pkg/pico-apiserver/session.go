@@ -94,7 +94,8 @@ func (s *SessionStore) CleanExpired() int {
 
 // CreateSessionRequest represents the request structure for creating a session
 type CreateSessionRequest struct {
-	TTL      int                    `json:"ttl,omitempty"`
-	Image    string                 `json:"image,omitempty"`
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	TTL          int                    `json:"ttl,omitempty"`
+	Image        string                 `json:"image,omitempty"`
+	SSHPublicKey string                 `json:"sshPublicKey,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 }

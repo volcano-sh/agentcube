@@ -6,18 +6,18 @@ bin/
 *.so
 *.dylib
 
-# Test binary, built with `go test -c`
+# Test binaries
 *.test
+test-integration/ssh-key-test
 
 # Output of the go coverage tool
 *.out
 
-# Go workspace file
-go.work
-go.work.sum
-
 # Dependency directories
 vendor/
+
+# Go workspace file
+go.work
 
 # IDE files
 .vscode/
@@ -30,27 +30,23 @@ vendor/
 .DS_Store
 Thumbs.db
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
+# Build artifacts
 dist/
 build/
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Virtual environments
-venv/
-env/
-ENV/
 
 # Logs
 *.log
 
+# Kubernetes config
+kubeconfig
+*.kubeconfig
+
+# Secrets
+*.pem
+*.key
+!**/tls.key
+*.crt
+
 # Temporary files
-*.tmp
 tmp/
 temp/
-

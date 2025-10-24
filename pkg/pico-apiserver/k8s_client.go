@@ -84,13 +84,22 @@ type SandboxInfo struct {
 }
 
 // CreateSandbox creates a new Sandbox CRD resource using the agent-sandbox types
-func (c *K8sClient) CreateSandbox(ctx context.Context, sessionID, image string, metadata map[string]interface{}) (*SandboxInfo, error) {
+func (c *K8sClient) CreateSandbox(ctx context.Context, sessionID, image, sshPublicKey string, metadata map[string]interface{}) (*SandboxInfo, error) {
 	// Use first 8 characters of session ID for sandbox name
 	sandboxName := fmt.Sprintf("sandbox-%s", sessionID[:8])
 
 	// Use default sandbox image if not specified
 	if image == "" {
 		image = "sandbox:latest"
+	}
+
+	// Prepare container environment variables
+	env := []corev1.EnvVar{}
+	if sshPublicKey != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "SSH_PUBLIC_KEY",
+			Value: sshPublicKey,
+		})
 	}
 
 	// Create Sandbox object using agent-sandbox types
@@ -117,6 +126,7 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sessionID, image string, 
 							Name:            "sandbox",
 							Image:           image,
 							ImagePullPolicy: corev1.PullIfNotPresent,
+							Env:             env,
 						},
 					},
 				},

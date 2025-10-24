@@ -37,7 +37,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := uuid.New().String()
 
 	// Create Kubernetes Sandbox CRD
-	sandbox, err := s.k8sClient.CreateSandbox(r.Context(), sessionID, req.Image, req.Metadata)
+	sandbox, err := s.k8sClient.CreateSandbox(r.Context(), sessionID, req.Image, req.SSHPublicKey, req.Metadata)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "SANDBOX_CREATE_FAILED", err.Error())
 		return

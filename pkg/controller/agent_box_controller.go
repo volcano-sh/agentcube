@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -100,14 +101,9 @@ func (r *SandboxReconciler) nonRunningSandbox(sandbox *sandboxv1alpha1.Sandbox) 
 
 func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) string {
 	for _, condition := range sandbox.Status.Conditions {
-		if condition.Type == "Ready" && condition.Status == "True" {
+		if condition.Type == string(sandboxv1alpha1.SandboxConditionReady) && condition.Status == metav1.ConditionTrue {
 			return "Running"
 		}
 	}
-
-	if sandbox.Status.Phase == "Running" {
-		return "Running"
-	}
-
 	return "Unknown"
 }

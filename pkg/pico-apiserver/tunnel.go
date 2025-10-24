@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -78,20 +79,39 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("HTTP CONNECT tunnel established for session %s", sessionID)
 
-	// Start bidirectional transparent proxy
-	go s.proxyData(clientConn, backendConn, sessionID, "client->backend")
-	go s.proxyData(backendConn, clientConn, sessionID, "backend->client")
-
 	// Update session last activity time
 	session.LastActivityAt = time.Now()
 	s.sessionStore.Set(sessionID, session)
+
+	// Start bidirectional transparent proxy with proper synchronization
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Client -> Backend
+	go func() {
+		defer wg.Done()
+		s.proxyDataOneWay(backendConn, clientConn, sessionID, "client->backend")
+	}()
+
+	// Backend -> Client
+	go func() {
+		defer wg.Done()
+		s.proxyDataOneWay(clientConn, backendConn, sessionID, "backend->client")
+	}()
+
+	// Wait for both directions to complete
+	wg.Wait()
+
+	// Close connections after both directions are done
+	clientConn.Close()
+	backendConn.Close()
+
+	log.Printf("HTTP CONNECT tunnel closed for session %s", sessionID)
 }
 
-// proxyData transparently forwards data between two connections
-func (s *Server) proxyData(dst io.WriteCloser, src io.ReadCloser, sessionID, direction string) {
-	defer dst.Close()
-	defer src.Close()
-
+// proxyDataOneWay forwards data in one direction without closing connections
+// Connection closing is handled by the caller to avoid double-close issues
+func (s *Server) proxyDataOneWay(dst io.Writer, src io.Reader, sessionID, direction string) {
 	written, err := io.Copy(dst, src)
 	if err != nil {
 		log.Printf("Proxy %s for session %s closed with error (transferred %d bytes): %v",
@@ -99,6 +119,12 @@ func (s *Server) proxyData(dst io.WriteCloser, src io.ReadCloser, sessionID, dir
 	} else {
 		log.Printf("Proxy %s for session %s closed gracefully (transferred %d bytes)",
 			direction, sessionID, written)
+	}
+
+	// Attempt TCP half-close if supported (close write side but keep read side open)
+	// This allows the other direction to finish sending remaining data
+	if tcpConn, ok := dst.(*net.TCPConn); ok {
+		tcpConn.CloseWrite()
 	}
 }
 

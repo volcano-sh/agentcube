@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	agentsv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 )
 
 // K8sClient encapsulates the Kubernetes client
@@ -19,11 +22,12 @@ type K8sClient struct {
 	clientset     *kubernetes.Clientset
 	dynamicClient dynamic.Interface
 	namespace     string
+	scheme        *runtime.Scheme
 }
 
 // Sandbox CRD GroupVersionResource
 var sandboxGVR = schema.GroupVersionResource{
-	Group:    "agent-sandbox.k8s.io",
+	Group:    "agents.x-k8s.io",
 	Version:  "v1alpha1",
 	Resource: "sandboxes",
 }
@@ -59,10 +63,17 @@ func NewK8sClient(kubeconfig, namespace string) (*K8sClient, error) {
 		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
+	// Create scheme and register agent-sandbox types
+	scheme := runtime.NewScheme()
+	if err := agentsv1alpha1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add agent-sandbox scheme: %w", err)
+	}
+
 	return &K8sClient{
 		clientset:     clientset,
 		dynamicClient: dynamicClient,
 		namespace:     namespace,
+		scheme:        scheme,
 	}, nil
 }
 
@@ -72,37 +83,53 @@ type SandboxInfo struct {
 	Namespace string
 }
 
-// CreateSandbox creates a new Sandbox CRD resource
+// CreateSandbox creates a new Sandbox CRD resource using the agent-sandbox types
 func (c *K8sClient) CreateSandbox(ctx context.Context, sessionID, image string, metadata map[string]interface{}) (*SandboxInfo, error) {
-	// Construct Sandbox CRD object
-	// Note: This structure needs to be adjusted according to the actual agent-sandbox CRD specification
-	sandboxName := fmt.Sprintf("sandbox-%s", sessionID[:8]) // Use first 8 characters of session ID
+	// Use first 8 characters of session ID for sandbox name
+	sandboxName := fmt.Sprintf("sandbox-%s", sessionID[:8])
 
-	sandbox := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "agent-sandbox.k8s.io/v1alpha1",
-			"kind":       "Sandbox",
-			"metadata": map[string]interface{}{
-				"name":      sandboxName,
-				"namespace": c.namespace,
-				"labels": map[string]interface{}{
-					"session-id": sessionID,
-					"managed-by": "pico-apiserver",
+	// Create Sandbox object using agent-sandbox types
+	sandbox := &agentsv1alpha1.Sandbox{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "agents.x-k8s.io/v1alpha1",
+			Kind:       "Sandbox",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      sandboxName,
+			Namespace: c.namespace,
+			Labels: map[string]string{
+				"session-id": sessionID,
+				"managed-by": "pico-apiserver",
+			},
+			Annotations: convertToStringMap(metadata),
+		},
+		Spec: agentsv1alpha1.SandboxSpec{
+			PodTemplate: agentsv1alpha1.PodTemplate{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "sandbox",
+							Image: image,
+						},
+					},
 				},
-				"annotations": metadata,
 			},
-			"spec": map[string]interface{}{
-				"image": image,
-				// TODO: Add more fields according to actual CRD specification
-				// e.g.: resources, volumes, network, etc.
-			},
+			// Add more fields as needed from the agent-sandbox CRD spec
 		},
 	}
+
+	// Convert to unstructured for dynamic client
+	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(sandbox)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert sandbox to unstructured: %w", err)
+	}
+
+	unstructuredSandbox := &unstructured.Unstructured{Object: unstructuredObj}
 
 	// Create Sandbox CRD
 	created, err := c.dynamicClient.Resource(sandboxGVR).Namespace(c.namespace).Create(
 		ctx,
-		sandbox,
+		unstructuredSandbox,
 		metav1.CreateOptions{},
 	)
 	if err != nil {
@@ -198,4 +225,15 @@ func (c *K8sClient) WaitForSandboxReady(ctx context.Context, sandboxName string,
 			}
 		}
 	}
+}
+
+// convertToStringMap converts map[string]interface{} to map[string]string for annotations
+func convertToStringMap(m map[string]interface{}) map[string]string {
+	result := make(map[string]string)
+	for k, v := range m {
+		if v != nil {
+			result[k] = fmt.Sprintf("%v", v)
+		}
+	}
+	return result
 }

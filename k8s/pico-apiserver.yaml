@@ -20,7 +20,7 @@ kind: ClusterRole
 metadata:
   name: pico-apiserver
 rules:
-  - apiGroups: ["agent-sandbox.k8s.io"]
+  - apiGroups: ["agents.x-k8s.io"]
     resources: ["sandboxes"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]

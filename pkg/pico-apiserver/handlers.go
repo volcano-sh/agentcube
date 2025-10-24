@@ -43,24 +43,31 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create session object
-	now := time.Now()
-	session := &Session{
-		SessionID:      sessionID,
-		Status:         "running",
-		CreatedAt:      now,
-		ExpiresAt:      now.Add(time.Duration(req.TTL) * time.Second),
-		LastActivityAt: now,
-		Metadata:       req.Metadata,
-		SandboxName:    sandbox.Name,
+	resultChan := s.sandboxController.WatchSandboxOnce(sandbox.Namespace, sandbox.Name)
+	session := &Session{}
+
+	select {
+	case result := <-resultChan:
+		// Create session object
+		now := time.Now()
+		session = &Session{
+			SessionID:      sessionID,
+			Status:         result.Status,
+			CreatedAt:      now,
+			ExpiresAt:      now.Add(time.Duration(req.TTL) * time.Second),
+			LastActivityAt: now,
+			Metadata:       req.Metadata,
+			SandboxName:    result.Name,
+		}
+
+		// Store session
+		s.sessionStore.Set(sessionID, session)
+		respondJSON(w, http.StatusOK, session)
+		return
+	case <-time.After(time.Duration(req.TTL) * time.Second):
+		respondError(w, http.StatusInternalServerError, "SANDBOX_TIMEOUT", "Sandbox creation timed out")
+		return
 	}
-
-	// Store session
-	s.sessionStore.Set(sessionID, session)
-
-	// TODO: Start TTL expiration cleanup goroutine
-
-	respondJSON(w, http.StatusOK, session)
 }
 
 // handleListSessions handles listing all sessions requests

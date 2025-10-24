@@ -7,20 +7,22 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/agent-box/pico-apiserver/pkg/controller"
 	"github.com/gorilla/mux"
 )
 
 // Server is the main structure for pico-apiserver
 type Server struct {
-	config       *Config
-	router       *mux.Router
-	httpServer   *http.Server
-	k8sClient    *K8sClient
-	sessionStore *SessionStore
+	config            *Config
+	router            *mux.Router
+	httpServer        *http.Server
+	k8sClient         *K8sClient
+	sandboxController *controller.SandboxReconciler
+	sessionStore      *SessionStore
 }
 
 // NewServer creates a new API server instance
-func NewServer(config *Config) (*Server, error) {
+func NewServer(config *Config, sandboxController *controller.SandboxReconciler) (*Server, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
 	}
@@ -35,9 +37,10 @@ func NewServer(config *Config) (*Server, error) {
 	sessionStore := NewSessionStore()
 
 	server := &Server{
-		config:       config,
-		k8sClient:    k8sClient,
-		sessionStore: sessionStore,
+		config:            config,
+		k8sClient:         k8sClient,
+		sessionStore:      sessionStore,
+		sandboxController: sandboxController,
 	}
 
 	// Setup routes

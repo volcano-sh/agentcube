@@ -98,25 +98,3 @@ type CreateSessionRequest struct {
 	Image    string                 `json:"image,omitempty"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
-
-// CommandRequest represents the request structure for executing a command
-type CommandRequest struct {
-	Command string            `json:"command"`
-	Timeout int               `json:"timeout,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-}
-
-// CommandResult represents command execution results
-type CommandResult struct {
-	Status   string `json:"status"` // "completed", "failed", "timeout"
-	ExitCode int    `json:"exitCode"`
-	Stdout   string `json:"stdout,omitempty"`
-	Stderr   string `json:"stderr,omitempty"`
-}
-
-// CodeRequest represents the request structure for executing code
-type CodeRequest struct {
-	Language string `json:"language,omitempty"` // "python", "javascript", "bash"
-	Code     string `json:"code"`
-	Timeout  int    `json:"timeout,omitempty"`
-}

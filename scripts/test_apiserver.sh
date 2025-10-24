@@ -23,7 +23,7 @@ SESSION_RESPONSE=$(curl -s -X POST "$API_URL/v1/sessions" \
   -H "Content-Type: application/json" \
   -d '{
     "ttl": 3600,
-    "image": "python:3.11",
+    "image": "sandbox:latest",
     "metadata": {
       "test": "example"
     }

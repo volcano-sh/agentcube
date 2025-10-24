@@ -88,6 +88,11 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sessionID, image string, 
 	// Use first 8 characters of session ID for sandbox name
 	sandboxName := fmt.Sprintf("sandbox-%s", sessionID[:8])
 
+	// Use default sandbox image if not specified
+	if image == "" {
+		image = "sandbox:latest"
+	}
+
 	// Create Sandbox object using agent-sandbox types
 	sandbox := &agentsv1alpha1.Sandbox{
 		TypeMeta: metav1.TypeMeta{
@@ -108,8 +113,9 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sessionID, image string, 
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  "sandbox",
-							Image: image,
+							Name:            "sandbox",
+							Image:           image,
+							ImagePullPolicy: corev1.PullIfNotPresent,
 						},
 					},
 				},

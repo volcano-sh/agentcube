@@ -93,6 +93,39 @@ kind-load:
 	@echo "Loading image to kind..."
 	kind load docker-image pico-apiserver:latest
 
+# Sandbox image targets
+SANDBOX_IMAGE ?= sandbox:latest
+IMAGE_REGISTRY ?= ""
+
+sandbox-build:
+	@echo "Building sandbox image..."
+	docker build -t $(SANDBOX_IMAGE) images/sandbox/
+
+sandbox-push: sandbox-build
+	@if [ -z "$(IMAGE_REGISTRY)" ]; then \
+		echo "Error: IMAGE_REGISTRY not set. Usage: make sandbox-push IMAGE_REGISTRY=your-registry.com"; \
+		exit 1; \
+	fi
+	@echo "Tagging and pushing sandbox image to $(IMAGE_REGISTRY)/$(SANDBOX_IMAGE)..."
+	docker tag $(SANDBOX_IMAGE) $(IMAGE_REGISTRY)/$(SANDBOX_IMAGE)
+	docker push $(IMAGE_REGISTRY)/$(SANDBOX_IMAGE)
+
+sandbox-test:
+	@echo "Testing sandbox image locally..."
+	docker run -d -p 2222:22 --name sandbox-test $(SANDBOX_IMAGE)
+	@echo "Sandbox running on port 2222. Test with: ssh -p 2222 sandbox@localhost"
+	@echo "Password: sandbox"
+	@echo "Stop with: make sandbox-test-stop"
+
+sandbox-test-stop:
+	@echo "Stopping and removing sandbox test container..."
+	docker stop sandbox-test || true
+	docker rm sandbox-test || true
+
+sandbox-kind-load:
+	@echo "Loading sandbox image to kind..."
+	kind load docker-image $(SANDBOX_IMAGE)
+
 # Show help message
 help:
 	@echo "Available targets:"
@@ -109,9 +142,14 @@ help:
 	@echo "  docker-push   - Push Docker image"
 	@echo "  k8s-deploy    - Deploy to Kubernetes"
 	@echo "  k8s-delete    - Delete from Kubernetes"
-	@echo "  k8s-logs      - Show pod logs"
-	@echo "  k8s-restart   - Restart deployment"
-	@echo "  kind-load     - Load image to kind cluster"
-	@echo "  install       - Install to /usr/local/bin"
-	@echo "  help          - Show this help message"
+	@echo "  k8s-logs           - Show pod logs"
+	@echo "  k8s-restart        - Restart deployment"
+	@echo "  kind-load          - Load image to kind cluster"
+	@echo "  sandbox-build      - Build sandbox image"
+	@echo "  sandbox-push       - Push sandbox image to registry"
+	@echo "  sandbox-test       - Test sandbox image locally"
+	@echo "  sandbox-test-stop  - Stop sandbox test container"
+	@echo "  sandbox-kind-load  - Load sandbox image to kind"
+	@echo "  install            - Install to /usr/local/bin"
+	@echo "  help               - Show this help message"
 

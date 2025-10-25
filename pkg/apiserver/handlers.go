@@ -2,6 +2,7 @@ package apiserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -33,12 +34,20 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract user information from context
+	userToken, userNamespace, serviceAccount, serviceAccountName := extractUserInfo(r)
+
+	if userToken == "" || userNamespace == "" || serviceAccountName == "" {
+		respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Unable to extract user credentials")
+		return
+	}
+
 	// Generate sandbox ID
 	sandboxID := uuid.New().String()
 
 	// Calculate sandbox name and namespace before creating
 	sandboxName := "sandbox-" + sandboxID[:8]
-	namespace := s.config.Namespace
+	namespace := userNamespace
 
 	// CRITICAL: Register watcher BEFORE creating sandbox
 	// This ensures we don't miss the Running state notification
@@ -47,10 +56,16 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	// Get creation time BEFORE creating sandbox to ensure consistency
 	now := time.Now()
 
-	// Now create Kubernetes Sandbox CRD with the unified timestamp
-	_, err := s.k8sClient.CreateSandbox(r.Context(), sandboxName, sandboxID, req.Image, req.SSHPublicKey, s.config.RuntimeClassName, req.TTL, req.Metadata, now)
+	// Create sandbox using user's K8s client
+	userClient, clientErr := s.k8sClient.GetOrCreateUserK8sClient(userToken, userNamespace, serviceAccountName)
+	if clientErr != nil {
+		respondError(w, http.StatusInternalServerError, "CLIENT_CREATION_FAILED", clientErr.Error())
+		return
+	}
+	_, err := userClient.CreateSandbox(r.Context(), sandboxID, sandboxName, req.Image, req.SSHPublicKey, s.config.RuntimeClassName, req.TTL, req.Metadata, now, serviceAccountName)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "SANDBOX_CREATE_FAILED", err.Error())
+		respondError(w, http.StatusForbidden, "SANDBOX_CREATE_FAILED",
+			fmt.Sprintf("Failed to create sandbox (service account: %s, namespace: %s): %v", serviceAccount, userNamespace, err))
 		return
 	}
 
@@ -60,13 +75,15 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		// We can retrieve it from the store now, or construct the response directly
 		// Use the same timestamp that was used in CreateSandbox
 		sandbox := &Sandbox{
-			SandboxID:      sandboxID,
-			Status:         result.Status,
-			CreatedAt:      now,
-			ExpiresAt:      now.Add(time.Duration(req.TTL) * time.Second),
-			LastActivityAt: now,
-			Metadata:       req.Metadata,
-			SandboxName:    sandboxName,
+			SandboxID:             sandboxID,
+			Status:                result.Status,
+			CreatedAt:             now,
+			ExpiresAt:             now.Add(time.Duration(req.TTL) * time.Second),
+			LastActivityAt:        now,
+			Metadata:              req.Metadata,
+			SandboxName:           sandboxName,
+			Namespace:             namespace,
+			CreatorServiceAccount: serviceAccountName,
 		}
 
 		// The store will be updated by the informer when the CRD is created
@@ -82,6 +99,14 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 
 // handleListSandboxes handles listing all sandboxes requests
 func (s *Server) handleListSandboxes(w http.ResponseWriter, r *http.Request) {
+	// Extract user information from context
+	_, _, _, serviceAccountName := extractUserInfo(r)
+
+	if serviceAccountName == "" {
+		respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Unable to extract user credentials")
+		return
+	}
+
 	// Get limit and offset from query parameters
 	limit := getIntQueryParam(r, "limit", 50)
 	offset := getIntQueryParam(r, "offset", 0)
@@ -91,9 +116,18 @@ func (s *Server) handleListSandboxes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get all sandboxes
+	// Get all sandboxes from store
 	allSandboxes := s.sandboxStore.List()
-	total := len(allSandboxes)
+
+	// Filter sandboxes: users can only see their own sandboxes
+	var filteredSandboxes []*Sandbox
+	for _, sandbox := range allSandboxes {
+		if sandbox.CreatorServiceAccount == serviceAccountName {
+			filteredSandboxes = append(filteredSandboxes, sandbox)
+		}
+	}
+
+	total := len(filteredSandboxes)
 
 	// Apply pagination
 	start := offset
@@ -105,7 +139,7 @@ func (s *Server) handleListSandboxes(w http.ResponseWriter, r *http.Request) {
 		end = total
 	}
 
-	sandboxes := allSandboxes[start:end]
+	sandboxes := filteredSandboxes[start:end]
 
 	response := map[string]interface{}{
 		"sandboxes": sandboxes,
@@ -128,6 +162,20 @@ func (s *Server) handleGetSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract user information from context
+	_, _, _, serviceAccountName := extractUserInfo(r)
+
+	if serviceAccountName == "" {
+		respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Unable to extract user credentials")
+		return
+	}
+
+	// Check if user has access to this sandbox
+	if !s.checkSandboxAccess(sandbox, serviceAccountName) {
+		respondError(w, http.StatusForbidden, "FORBIDDEN", "You don't have permission to access this sandbox")
+		return
+	}
+
 	respondJSON(w, http.StatusOK, sandbox)
 }
 
@@ -142,10 +190,32 @@ func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete Kubernetes Sandbox CRD
+	// Extract user information from context
+	userToken, userNamespace, serviceAccount, serviceAccountName := extractUserInfo(r)
+
+	if userToken == "" || userNamespace == "" || serviceAccountName == "" {
+		respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Unable to extract user credentials")
+		return
+	}
+
+	// Check if user has access to this sandbox
+	if !s.checkSandboxAccess(sandbox, serviceAccountName) {
+		respondError(w, http.StatusForbidden, "FORBIDDEN", "You don't have permission to delete this sandbox")
+		return
+	}
+
+	// Delete sandbox using user's K8s client
 	// The informer will automatically delete it from the store when the CRD is deleted
-	if err := s.k8sClient.DeleteSandbox(r.Context(), sandbox.SandboxName); err != nil {
-		respondError(w, http.StatusInternalServerError, "SANDBOX_DELETE_FAILED", err.Error())
+	userClient, clientErr := s.k8sClient.GetOrCreateUserK8sClient(userToken, userNamespace, serviceAccountName)
+	if clientErr != nil {
+		respondError(w, http.StatusInternalServerError, "CLIENT_CREATION_FAILED", clientErr.Error())
+		return
+	}
+	err := userClient.DeleteSandbox(r.Context(), sandbox.Namespace, sandbox.SandboxName)
+
+	if err != nil {
+		respondError(w, http.StatusForbidden, "SANDBOX_DELETE_FAILED",
+			fmt.Sprintf("Failed to delete sandbox (service account: %s, namespace: %s): %v", serviceAccount, sandbox.Namespace, err))
 		return
 	}
 

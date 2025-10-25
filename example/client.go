@@ -63,10 +63,16 @@ func main() {
 	log.Printf("Configuration:")
 	log.Printf("  API URL: %s", apiURL)
 	log.Printf("  Sandbox Image: %s", sandboxImage)
-	if authToken != "" {
-		log.Printf("  Auth Token: <provided>")
+
+	if authToken == "" {
+		log.Println("⚠️  WARNING: API_TOKEN environment variable not set")
+		log.Println("   Attempting to proceed without authentication token")
+		log.Println("   Set API_TOKEN to authenticate with the API server")
+		log.Println()
+	} else {
+		log.Println("✅ API authentication token loaded from environment")
+		log.Println()
 	}
-	log.Println()
 
 	// Step 1: Generate SSH key pair
 	log.Println("Step 1: Generating SSH key pair...")

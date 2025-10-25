@@ -24,6 +24,8 @@ import (
 var (
 	// Annotation key for last activity time
 	LastActivityAnnotationKey = "last-activity-time"
+	// Annotation key for creator service account
+	CreatorServiceAccountAnnotationKey = "creator-service-account"
 )
 
 // K8sClient encapsulates the Kubernetes client
@@ -33,6 +35,8 @@ type K8sClient struct {
 	namespace       string
 	scheme          *runtime.Scheme
 	restConfig      *rest.Config
+	baseConfig      *rest.Config // Store base config for creating user clients
+	clientCache     *ClientCache // LRU cache for user clients
 	dynamicInformer dynamicinformer.DynamicSharedInformerFactory
 }
 
@@ -86,6 +90,8 @@ func NewK8sClient(namespace string) (*K8sClient, error) {
 		namespace:       namespace,
 		scheme:          scheme,
 		restConfig:      config,
+		baseConfig:      config,
+		clientCache:     NewClientCache(100, 30*time.Minute), // Cache up to 100 clients, 30min TTL
 		dynamicInformer: dynamicinformer.NewFilteredDynamicSharedInformerFactory(dynamicClient, 0, namespace, nil),
 	}, nil
 }
@@ -96,8 +102,64 @@ type SandboxInfo struct {
 	Namespace string
 }
 
-// CreateSandbox creates a new Sandbox CRD resource using the agent-sandbox types
-func (c *K8sClient) CreateSandbox(ctx context.Context, sandboxName, sandboxID, image, sshPublicKey, runtimeClassName string, ttl int, metadata map[string]interface{}, createdAt time.Time) (*SandboxInfo, error) {
+// UserK8sClient creates a temporary Kubernetes client using user's token
+type UserK8sClient struct {
+	dynamicClient dynamic.Interface
+	namespace     string
+}
+
+// NewUserK8sClient creates a K8s client using the provided user token
+// This method creates a new client without using cache (for direct creation)
+func (c *K8sClient) NewUserK8sClient(userToken, namespace string) (*UserK8sClient, error) {
+	// Create a new config based on base config but with user's token
+	config := rest.CopyConfig(c.baseConfig)
+	config.BearerToken = userToken
+	config.BearerTokenFile = "" // Clear token file if any
+
+	// Create dynamic client with user's token
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic client with user token: %w", err)
+	}
+
+	return &UserK8sClient{
+		dynamicClient: dynamicClient,
+		namespace:     namespace,
+	}, nil
+}
+
+// GetOrCreateUserK8sClient gets a cached client or creates a new one if not found
+// Uses service account name and namespace as cache key
+// If token doesn't match cached entry, removes old entry and creates new one
+func (c *K8sClient) GetOrCreateUserK8sClient(userToken, namespace, serviceAccountName string) (*UserK8sClient, error) {
+	// Create cache key
+	cacheKey := makeCacheKey(namespace, serviceAccountName)
+
+	// Try to get from cache
+	if cachedClient := c.clientCache.GetWithToken(cacheKey, userToken); cachedClient != nil {
+		return cachedClient, nil
+	}
+
+	// If cache entry exists but token doesn't match, remove it
+	// This handles token rotation scenarios
+	if c.clientCache.Get(cacheKey) != nil {
+		c.clientCache.Remove(cacheKey)
+	}
+
+	// Create new client
+	client, err := c.NewUserK8sClient(userToken, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store in cache
+	c.clientCache.Set(cacheKey, userToken, client)
+
+	return client, nil
+}
+
+// buildSandboxObject builds a Sandbox object from parameters
+func buildSandboxObject(namespace, sandboxID, sandboxName, image, sshPublicKey, runtimeClassName string, ttl int, metadata map[string]interface{}, createdAt time.Time, creatorServiceAccount string) *agentsv1alpha1.Sandbox {
 	// Use default sandbox image if not specified
 	if image == "" {
 		image = "sandbox:latest"
@@ -137,7 +199,7 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sandboxName, sandboxID, i
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sandboxName,
-			Namespace: c.namespace,
+			Namespace: namespace,
 			Labels: map[string]string{
 				"sandbox-id":   sandboxID,
 				"managed-by":   "agentcube-apiserver",
@@ -149,16 +211,26 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sandboxName, sandboxID, i
 			PodTemplate: agentsv1alpha1.PodTemplate{
 				Spec: podSpec,
 			},
-			// Add more fields as needed from the agent-sandbox CRD spec
 		},
 	}
 	// Use the provided creation time as the initial active time to ensure consistency
-	sandbox.Annotations[LastActivityAnnotationKey] = createdAt.Format(time.RFC3339)
+	if !createdAt.IsZero() {
+		sandbox.Annotations[LastActivityAnnotationKey] = createdAt.Format(time.RFC3339)
+	}
 	// Store TTL in annotations so informer can calculate expiresAt
 	if ttl > 0 {
 		sandbox.Annotations["ttl"] = fmt.Sprintf("%d", ttl)
 	}
+	// Store creator service account in annotations for authorization
+	if creatorServiceAccount != "" {
+		sandbox.Annotations[CreatorServiceAccountAnnotationKey] = creatorServiceAccount
+	}
 
+	return sandbox
+}
+
+// createSandbox creates a Sandbox using the provided dynamic client
+func createSandbox(ctx context.Context, client dynamic.Interface, namespace string, sandbox *agentsv1alpha1.Sandbox) (*SandboxInfo, error) {
 	// Convert to unstructured for dynamic client
 	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(sandbox)
 	if err != nil {
@@ -167,14 +239,14 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sandboxName, sandboxID, i
 
 	unstructuredSandbox := &unstructured.Unstructured{Object: unstructuredObj}
 
-	// Create Sandbox CRD
-	created, err := c.dynamicClient.Resource(SandboxGVR).Namespace(c.namespace).Create(
+	// Create Sandbox
+	created, err := client.Resource(SandboxGVR).Namespace(namespace).Create(
 		ctx,
 		unstructuredSandbox,
 		metav1.CreateOptions{},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create sandbox CRD: %w", err)
+		return nil, fmt.Errorf("failed to create sandbox: %w", err)
 	}
 
 	return &SandboxInfo{
@@ -183,17 +255,28 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sandboxName, sandboxID, i
 	}, nil
 }
 
-// DeleteSandbox deletes a Sandbox CRD resource
-func (c *K8sClient) DeleteSandbox(ctx context.Context, sandboxName string) error {
-	err := c.dynamicClient.Resource(SandboxGVR).Namespace(c.namespace).Delete(
+// deleteSandbox deletes a Sandbox using the provided dynamic client
+func deleteSandbox(ctx context.Context, client dynamic.Interface, namespace, sandboxName string) error {
+	err := client.Resource(SandboxGVR).Namespace(namespace).Delete(
 		ctx,
 		sandboxName,
 		metav1.DeleteOptions{},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to delete sandbox CRD: %w", err)
+		return fmt.Errorf("failed to delete sandbox: %w", err)
 	}
 	return nil
+}
+
+// CreateSandbox creates a new Sandbox using user's permissions
+func (u *UserK8sClient) CreateSandbox(ctx context.Context, sandboxID, sandboxName, image, sshPublicKey, runtimeClassName string, ttl int, metadata map[string]interface{}, createdAt time.Time, creatorServiceAccount string) (*SandboxInfo, error) {
+	sandbox := buildSandboxObject(u.namespace, sandboxID, sandboxName, image, sshPublicKey, runtimeClassName, ttl, metadata, createdAt, creatorServiceAccount)
+	return createSandbox(ctx, u.dynamicClient, u.namespace, sandbox)
+}
+
+// DeleteSandbox deletes a Sandbox resource using user's permissions
+func (u *UserK8sClient) DeleteSandbox(ctx context.Context, namespace, sandboxName string) error {
+	return deleteSandbox(ctx, u.dynamicClient, namespace, sandboxName)
 }
 
 // GetSandboxPodIP gets the IP address of the pod corresponding to the Sandbox

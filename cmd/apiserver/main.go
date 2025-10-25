@@ -33,15 +33,15 @@ func init() {
 
 func main() {
 	var (
-		port             = flag.String("port", "8080", "API server port")
-		namespace        = flag.String("namespace", "default", "Kubernetes namespace for sandboxes")
-		sshUsername      = flag.String("ssh-username", "sandbox", "Default SSH username for sandbox pods")
-		sshPort          = flag.Int("ssh-port", 22, "SSH port on sandbox pods")
-		runtimeClassName = flag.String("runtime-class-name", "kuasar-vmm", "RuntimeClassName for sandbox pods")
-		enableTLS        = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
-		tlsCert          = flag.String("tls-cert", "", "Path to TLS certificate file")
-		tlsKey           = flag.String("tls-key", "", "Path to TLS key file")
-		jwtSecret        = flag.String("jwt-secret", "", "JWT secret for token validation (optional)")
+		port                       = flag.String("port", "8080", "API server port")
+		namespace                  = flag.String("namespace", "default", "Kubernetes namespace for sandboxes")
+		sshUsername                = flag.String("ssh-username", "sandbox", "Default SSH username for sandbox pods")
+		sshPort                    = flag.Int("ssh-port", 22, "SSH port on sandbox pods")
+		runtimeClassName           = flag.String("runtime-class-name", "kuasar-vmm", "RuntimeClassName for sandbox pods")
+		enableTLS                  = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
+		tlsCert                    = flag.String("tls-cert", "", "Path to TLS certificate file")
+		tlsKey                     = flag.String("tls-key", "", "Path to TLS key file")
+		agentCubeAPIServiceAccount = flag.String("agentcube-api-service-account", "agentcube-apiserver", "Service account name for agentcube-apiserver (has admin privileges)")
 	)
 
 	// Parse command line flags
@@ -74,15 +74,15 @@ func main() {
 
 	// Create API server configuration
 	config := &apiserver.Config{
-		Port:             *port,
-		Namespace:        *namespace,
-		SSHUsername:      *sshUsername,
-		SSHPort:          *sshPort,
-		RuntimeClassName: *runtimeClassName,
-		EnableTLS:        *enableTLS,
-		TLSCert:          *tlsCert,
-		TLSKey:           *tlsKey,
-		JWTSecret:        *jwtSecret,
+		Port:                       *port,
+		Namespace:                  *namespace,
+		SSHUsername:                *sshUsername,
+		SSHPort:                    *sshPort,
+		RuntimeClassName:           *runtimeClassName,
+		EnableTLS:                  *enableTLS,
+		TLSCert:                    *tlsCert,
+		TLSKey:                     *tlsKey,
+		AgentCubeAPIServiceAccount: *agentCubeAPIServiceAccount,
 	}
 
 	// Create and initialize API server

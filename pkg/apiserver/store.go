@@ -15,13 +15,15 @@ import (
 
 // Sandbox represents a sandbox instance
 type Sandbox struct {
-	SandboxID      string                 `json:"sandboxId"`
-	Status         string                 `json:"status"` // "running" or "paused"
-	CreatedAt      time.Time              `json:"createdAt"`
-	ExpiresAt      time.Time              `json:"expiresAt"`
-	LastActivityAt time.Time              `json:"lastActivityAt,omitempty"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
-	SandboxName    string                 `json:"-"` // Kubernetes Sandbox CRD name
+	SandboxID             string                 `json:"sandboxId"`
+	Status                string                 `json:"status"` // "running" or "paused"
+	CreatedAt             time.Time              `json:"createdAt"`
+	ExpiresAt             time.Time              `json:"expiresAt"`
+	LastActivityAt        time.Time              `json:"lastActivityAt,omitempty"`
+	Metadata              map[string]interface{} `json:"metadata,omitempty"`
+	SandboxName           string                 `json:"-"` // Kubernetes Sandbox CRD name
+	Namespace             string                 `json:"-"` // Kubernetes namespace where sandbox is created
+	CreatorServiceAccount string                 `json:"-"` // Service account that created this sandbox
 }
 
 // SandboxStore manages in-memory sandbox storage synchronized with Kubernetes
@@ -245,13 +247,20 @@ func convertK8sSandboxToSandbox(unstructuredObj *unstructured.Unstructured) (*Sa
 	}
 
 	sandbox := &Sandbox{
-		SandboxID:      sandboxID,
-		Status:         status,
-		CreatedAt:      createdAt,
-		ExpiresAt:      expiresAt,
-		LastActivityAt: lastActivityAt,
-		Metadata:       metadata,
-		SandboxName:    sandboxCRD.GetName(),
+		SandboxID:             sandboxID,
+		Status:                status,
+		CreatedAt:             createdAt,
+		ExpiresAt:             expiresAt,
+		LastActivityAt:        lastActivityAt,
+		Metadata:              metadata,
+		SandboxName:           sandboxCRD.GetName(),
+		Namespace:             sandboxCRD.GetNamespace(),
+		CreatorServiceAccount: "", // Will be set from annotations if available
+	}
+
+	// Try to get creator service account from annotations
+	if creatorSA, ok := sandboxCRD.GetAnnotations()[CreatorServiceAccountAnnotationKey]; ok {
+		sandbox.CreatorServiceAccount = creatorSA
 	}
 
 	return sandbox, nil

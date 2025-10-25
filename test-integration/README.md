@@ -8,7 +8,11 @@ This test program demonstrates and validates SSH key-based authentication for pi
 2. **Creates Session**: Sends the public key to pico-apiserver when creating a session (waits for sandbox to be running)
 3. **Establishes Tunnel**: Creates an HTTP CONNECT tunnel to the sandbox
 4. **SSH Connection**: Connects via SSH using private key authentication (no password!)
-5. **Executes Commands**: Runs test commands to verify everything works
+5. **Executes Commands**: Runs basic test commands to verify SSH connectivity
+6. **Uploads File**: Uses SFTP to upload a Python script to the sandbox
+7. **Executes Script**: Runs the Python script which generates output data
+8. **Downloads File**: Uses SFTP to download the generated output file
+9. **Verifies Output**: Validates the downloaded file content
 
 ## Prerequisites
 
@@ -68,7 +72,7 @@ Step 3: Establishing HTTP CONNECT tunnel...
 Step 4: Connecting via SSH with private key authentication...
 ✅ SSH connection established with key-based auth
 
-Step 5: Executing test commands...
+Step 5: Executing basic test commands...
    [1/5] Executing: whoami
       Output: sandbox
    [2/5] Executing: pwd
@@ -80,6 +84,32 @@ Step 5: Executing test commands...
    [5/5] Executing: uname -a
       Output: Linux sandbox-d6bdc5a3 5.15.0-91-generic ...
 
+Step 6: Uploading Python script via SFTP...
+✅ Python script uploaded to /workspace/fibonacci.py
+
+Step 7: Executing Python script in sandbox...
+   Script output:
+   ✅ Generated 20 Fibonacci numbers
+      Sum: 6765
+      Output written to: /workspace/output.json
+
+Step 8: Downloading generated output file...
+✅ Output file downloaded to /tmp/sandbox_output.json
+
+Step 9: Verifying downloaded file...
+   File contents:
+   {
+     "algorithm": "Fibonacci Sequence",
+     "count": 20,
+     "message": "Generated successfully in sandbox!",
+     "numbers": [0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597, 2584, 4181],
+     "sum": 6765,
+     "timestamp": "2025-10-25T12:34:56.789012"
+   }
+✅ Verified: Generated 20 Fibonacci numbers
+✅ Verified: Sum = 6765
+✅ Verified: Message = "Generated successfully in sandbox!"
+
 ===========================================
 🎉 All tests passed successfully!
 ===========================================
@@ -89,9 +119,14 @@ Summary:
   ✅ Session created with public key
   ✅ HTTP CONNECT tunnel established
   ✅ SSH connection with key-based auth
-  ✅ Commands executed successfully
+  ✅ Basic commands executed successfully
+  ✅ Python script uploaded via SFTP
+  ✅ Python script executed in sandbox
+  ✅ Output file downloaded via SFTP
+  ✅ Downloaded file verified
 
 Session ID: d6bdc5a3-c963-4c0f-be75-bb8083739883
+Downloaded file: /tmp/sandbox_output.json
 ```
 
 ## How it Works
@@ -142,6 +177,32 @@ config := &ssh.ClientConfig{
     },
 }
 ```
+
+### 5. File Transfer via SFTP
+
+The test uses SFTP (SSH File Transfer Protocol) over the established SSH connection:
+
+**Upload**:
+```go
+sftpClient, _ := sftp.NewClient(sshClient)
+remoteFile, _ := sftpClient.Create("/workspace/fibonacci.py")
+remoteFile.Write([]byte(pythonScript))
+```
+
+**Download**:
+```go
+sftpClient, _ := sftp.NewClient(sshClient)
+remoteFile, _ := sftpClient.Open("/workspace/output.json")
+io.Copy(localFile, remoteFile)
+```
+
+### 6. Python Script Execution
+
+The uploaded Python script:
+- Generates 20 Fibonacci numbers
+- Creates a JSON file with results
+- Includes timestamp and metadata
+- Demonstrates code execution capability
 
 ## Troubleshooting
 

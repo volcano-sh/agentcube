@@ -12,8 +12,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -87,8 +90,8 @@ func main() {
 	log.Println("✅ SSH connection established with key-based auth")
 	log.Println()
 
-	// Step 5: Execute test commands
-	log.Println("Step 5: Executing test commands...")
+	// Step 5: Execute basic test commands
+	log.Println("Step 5: Executing basic test commands...")
 
 	commands := []string{
 		"whoami",
@@ -105,7 +108,103 @@ func main() {
 			log.Printf("      ⚠️  Command failed: %v", err)
 			continue
 		}
-		log.Printf("      Output: %s", output)
+		log.Printf("      Output: %s", strings.TrimSpace(output))
+	}
+	log.Println()
+
+	// Step 6: Upload Python script via SFTP
+	log.Println("Step 6: Uploading Python script via SFTP...")
+	pythonScript := `#!/usr/bin/env python3
+# Fibonacci generator script
+import sys
+import json
+from datetime import datetime
+
+def generate_fibonacci(n):
+    """Generate first n Fibonacci numbers"""
+    fib = [0, 1]
+    for i in range(2, n):
+        fib.append(fib[i-1] + fib[i-2])
+    return fib[:n]
+
+def main():
+    # Generate Fibonacci numbers
+    n = 20
+    fibonacci = generate_fibonacci(n)
+    
+    # Create output data
+    output_data = {
+        "timestamp": datetime.now().isoformat(),
+        "algorithm": "Fibonacci Sequence",
+        "count": n,
+        "numbers": fibonacci,
+        "sum": sum(fibonacci),
+        "message": "Generated successfully in sandbox!"
+    }
+    
+    # Write to output file
+    with open('/workspace/output.json', 'w') as f:
+        json.dump(output_data, f, indent=2)
+    
+    print(f"✅ Generated {n} Fibonacci numbers")
+    print(f"   Sum: {sum(fibonacci)}")
+    print(f"   Output written to: /workspace/output.json")
+
+if __name__ == "__main__":
+    main()
+`
+
+	err = uploadFile(sshClient, pythonScript, "/workspace/fibonacci.py")
+	if err != nil {
+		log.Fatalf("Failed to upload Python script: %v", err)
+	}
+	log.Println("✅ Python script uploaded to /workspace/fibonacci.py")
+	log.Println()
+
+	// Step 7: Execute Python script
+	log.Println("Step 7: Executing Python script in sandbox...")
+	output, err := executeCommand(sshClient, "python3 /workspace/fibonacci.py")
+	if err != nil {
+		log.Fatalf("Failed to execute Python script: %v", err)
+	}
+	log.Printf("   Script output:\n%s", indentOutput(output))
+	log.Println()
+
+	// Step 8: Download generated file
+	log.Println("Step 8: Downloading generated output file...")
+	localOutputPath := "/tmp/sandbox_output.json"
+	err = downloadFile(sshClient, "/workspace/output.json", localOutputPath)
+	if err != nil {
+		log.Fatalf("Failed to download output file: %v", err)
+	}
+	log.Printf("✅ Output file downloaded to %s", localOutputPath)
+	log.Println()
+
+	// Step 9: Verify downloaded file
+	log.Println("Step 9: Verifying downloaded file...")
+	fileContent, err := os.ReadFile(localOutputPath)
+	if err != nil {
+		log.Fatalf("Failed to read downloaded file: %v", err)
+	}
+
+	var outputData map[string]interface{}
+	if err := json.Unmarshal(fileContent, &outputData); err != nil {
+		log.Fatalf("Failed to parse JSON output: %v", err)
+	}
+
+	log.Println("   File contents:")
+	prettyJSON, _ := json.MarshalIndent(outputData, "   ", "  ")
+	log.Printf("%s\n", prettyJSON)
+
+	// Verify the data
+	if numbers, ok := outputData["numbers"].([]interface{}); ok {
+		log.Printf("✅ Verified: Generated %d Fibonacci numbers", len(numbers))
+	}
+	if sum, ok := outputData["sum"].(float64); ok {
+		log.Printf("✅ Verified: Sum = %.0f", sum)
+	}
+	if message, ok := outputData["message"].(string); ok {
+		log.Printf("✅ Verified: Message = \"%s\"", message)
 	}
 	log.Println()
 
@@ -119,9 +218,14 @@ func main() {
 	log.Println("  ✅ Session created with public key")
 	log.Println("  ✅ HTTP CONNECT tunnel established")
 	log.Println("  ✅ SSH connection with key-based auth")
-	log.Println("  ✅ Commands executed successfully")
+	log.Println("  ✅ Basic commands executed successfully")
+	log.Println("  ✅ Python script uploaded via SFTP")
+	log.Println("  ✅ Python script executed in sandbox")
+	log.Println("  ✅ Output file downloaded via SFTP")
+	log.Println("  ✅ Downloaded file verified")
 	log.Println()
 	log.Printf("Session ID: %s", sessionID)
+	log.Printf("Downloaded file: %s", localOutputPath)
 	log.Println()
 }
 
@@ -276,4 +380,86 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// uploadFile uploads a file to the remote server via SFTP
+func uploadFile(sshClient *ssh.Client, content, remotePath string) error {
+	// Create SFTP client
+	sftpClient, err := sftp.NewClient(sshClient)
+	if err != nil {
+		return fmt.Errorf("failed to create SFTP client: %w", err)
+	}
+	defer sftpClient.Close()
+
+	// Ensure remote directory exists
+	remoteDir := filepath.Dir(remotePath)
+	if err := sftpClient.MkdirAll(remoteDir); err != nil {
+		// Ignore error if directory already exists
+		if !os.IsExist(err) {
+			return fmt.Errorf("failed to create remote directory: %w", err)
+		}
+	}
+
+	// Create remote file
+	remoteFile, err := sftpClient.Create(remotePath)
+	if err != nil {
+		return fmt.Errorf("failed to create remote file: %w", err)
+	}
+	defer remoteFile.Close()
+
+	// Write content
+	_, err = remoteFile.Write([]byte(content))
+	if err != nil {
+		return fmt.Errorf("failed to write to remote file: %w", err)
+	}
+
+	return nil
+}
+
+// downloadFile downloads a file from the remote server via SFTP
+func downloadFile(sshClient *ssh.Client, remotePath, localPath string) error {
+	// Create SFTP client
+	sftpClient, err := sftp.NewClient(sshClient)
+	if err != nil {
+		return fmt.Errorf("failed to create SFTP client: %w", err)
+	}
+	defer sftpClient.Close()
+
+	// Open remote file
+	remoteFile, err := sftpClient.Open(remotePath)
+	if err != nil {
+		return fmt.Errorf("failed to open remote file: %w", err)
+	}
+	defer remoteFile.Close()
+
+	// Ensure local directory exists
+	localDir := filepath.Dir(localPath)
+	if err := os.MkdirAll(localDir, 0755); err != nil {
+		return fmt.Errorf("failed to create local directory: %w", err)
+	}
+
+	// Create local file
+	localFile, err := os.Create(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to create local file: %w", err)
+	}
+	defer localFile.Close()
+
+	// Copy content
+	_, err = io.Copy(localFile, remoteFile)
+	if err != nil {
+		return fmt.Errorf("failed to copy file content: %w", err)
+	}
+
+	return nil
+}
+
+// indentOutput adds indentation to each line of the output
+func indentOutput(output string) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	var indented []string
+	for _, line := range lines {
+		indented = append(indented, "   "+line)
+	}
+	return strings.Join(indented, "\n")
 }

@@ -1,0 +1,15 @@
+bin/
+.git/
+.gitignore
+*.md
+Dockerfile
+k8s/
+sdk/
+api-spec/
+scripts/
+config.example.yaml
+.vscode/
+.idea/
+*.swp
+*.swo
+

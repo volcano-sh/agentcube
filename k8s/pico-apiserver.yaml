@@ -1,0 +1,113 @@
+# All-in-one deployment file for pico-apiserver
+# Apply with: kubectl apply -f k8s/all-in-one.yaml
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pico
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pico-apiserver
+  namespace: pico
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pico-apiserver
+rules:
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pico-apiserver
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pico-apiserver
+subjects:
+  - kind: ServiceAccount
+    name: pico-apiserver
+    namespace: pico
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pico-apiserver
+  namespace: pico
+  labels:
+    app: pico-apiserver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pico-apiserver
+  template:
+    metadata:
+      labels:
+        app: pico-apiserver
+    spec:
+      serviceAccountName: pico-apiserver
+      containers:
+        - name: pico-apiserver
+          image: pico-apiserver:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          args:
+            - --port=8080
+            - --namespace=default
+            - --ssh-username=sandbox
+            - --ssh-port=22
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pico-apiserver
+  namespace: pico
+  labels:
+    app: pico-apiserver
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app: pico-apiserver
+

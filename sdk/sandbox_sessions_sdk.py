@@ -1,8 +1,10 @@
 """
-Sandbox API Python SDK - Session Management
+Sandbox API Python SDK - Sandbox Management (with session compatibility)
 
-This module provides a Python client for managing sandbox sessions
-via the REST API defined in sandbox-api-spec.yaml.
+This module provides a Python client for managing sandboxes via REST and
+connecting over HTTP CONNECT + SSH/SFTP. It now uses sandbox-first naming
+(/sandboxes, sandboxId) with backward-compatible aliases for the older
+session-based API.
 """
 
 import requests
@@ -16,9 +18,12 @@ import paramiko
 
 
 class SessionStatus(Enum):
-    """Session status enumeration"""
+    """Session status enumeration (alias for SandboxStatus)"""
     RUNNING = "running"
     PAUSED = "paused"
+
+# Backward/forward alias
+SandboxStatus = SessionStatus
 
 
 class SandboxAPIError(Exception):
@@ -62,12 +67,19 @@ class RateLimitError(SandboxAPIError):
         self.reset = reset
 
 
-class Session:
+class Sandbox:
     """
-    Represents a sandbox session.
+    Represents a sandbox instance. Compatible with legacy session objects.
     """
     def __init__(self, data: Dict[str, Any]):
-        self.session_id: str = data['sessionId']
+        # Accept either sandboxId (new) or sessionId (legacy)
+        sid = data.get('sandboxId') or data.get('sessionId')
+        if not sid:
+            raise ValueError("Missing sandboxId/sessionId in response data")
+        self.sandbox_id: str = sid
+        # Backward-compat alias
+        self.session_id: str = sid
+
         self.status: SessionStatus = SessionStatus(data['status'])
         self.created_at: datetime = datetime.fromisoformat(data['createdAt'].replace('Z', '+00:00'))
         self.expires_at: datetime = datetime.fromisoformat(data['expiresAt'].replace('Z', '+00:00'))
@@ -76,24 +88,22 @@ class Session:
             self.last_activity_at = datetime.fromisoformat(data['lastActivityAt'].replace('Z', '+00:00'))
         self.metadata: Dict[str, Any] = data.get('metadata', {})
         self._raw_data = data
-    
+
     def to_dict(self) -> Dict[str, Any]:
-        """Convert session to dictionary"""
+        """Convert sandbox to dictionary"""
         return self._raw_data.copy()
-    
+
     def __repr__(self) -> str:
-        return f"Session(id={self.session_id}, status={self.status.value}, expires_at={self.expires_at})"
+        return f"Sandbox(id={self.sandbox_id}, status={self.status.value}, expires_at={self.expires_at})"
+
+# Backward-compat alias
+Session = Sandbox
 
 
-class SessionsClient:
+class SandboxClient:
     """
-    Client for managing sandbox sessions via REST API.
-    
-    This client handles all /sessions endpoints including:
-    - Creating new sessions
-    - Listing active sessions
-    - Getting session details
-    - Deleting sessions
+    Client for managing sandboxes via REST API (/sandboxes endpoints).
+    Backward-compatible wrapper methods are available via SessionsClient.
     """
     
     def __init__(
@@ -104,7 +114,7 @@ class SessionsClient:
         verify_ssl: bool = True
     ):
         """
-        Initialize the Sessions API client.
+        Initialize the Sandbox API client.
         
         Args:
             api_url: Base URL of the sandbox API (e.g., "https://api.sandbox.example.com/v1")
@@ -179,15 +189,16 @@ class SessionsClient:
         
         return response_data
     
-    def create_session(
+    # New sandbox-first API
+    def create_sandbox(
         self,
         ttl: int = 3600,
         image: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         ssh_public_key: Optional[str] = None,
-    ) -> Session:
+    ) -> Sandbox:
         """
-        Create a new sandbox session.
+        Create a new sandbox.
         
         Args:
             ttl: Time-to-live in seconds (default 3600, min 60, max 28800)
@@ -196,7 +207,7 @@ class SessionsClient:
             ssh_public_key: Optional OpenSSH-formatted public key (e.g., ssh-ed25519, ecdsa-sha2-nistp256, ssh-rsa)
         
         Returns:
-            Session object representing the created session
+            Sandbox object representing the created sandbox
         
         Raises:
             SandboxConnectionError: If connection fails
@@ -205,13 +216,13 @@ class SessionsClient:
             SandboxOperationError: For other errors
         
         Example:
-            >>> client = SessionsClient(api_url='...', bearer_token='...')
-            >>> session = client.create_session(
+            >>> client = SandboxClient(api_url='...', bearer_token='...')
+            >>> sandbox = client.create_sandbox(
             ...     ttl=7200,
             ...     image='python:3.11',
             ...     metadata={'user': 'john', 'project': 'test'}
             ... )
-            >>> print(session.session_id)
+            >>> print(sandbox.sandbox_id)
         """
         if not 60 <= ttl <= 28800:
             raise ValueError(f"TTL must be between 60 and 28800 seconds, got {ttl}")
@@ -228,32 +239,32 @@ class SessionsClient:
         
         try:
             response = self._session.post(
-                f"{self.api_url}/sessions",
+                f"{self.api_url}/sandboxes",
                 json=payload,
                 timeout=self.timeout,
                 verify=self.verify_ssl
             )
             
             data = self._handle_response(response)
-            return Session(data)
+            return Sandbox(data)
             
         except requests.exceptions.RequestException as e:
             raise SandboxConnectionError(f"Failed to connect to API: {e}")
     
-    def list_sessions(
+    def list_sandboxes(
         self,
         limit: int = 50,
         offset: int = 0
     ) -> Dict[str, Any]:
         """
-        List all active sessions for the authenticated user.
+        List all active sandboxes for the authenticated user.
         
         Args:
             limit: Maximum number of sessions to return (default 50, max 100)
             offset: Number of sessions to skip (for pagination)
         
         Returns:
-            Dictionary with 'sessions', 'total', 'limit', and 'offset'
+            Dictionary with 'sandboxes', 'total', 'limit', and 'offset'
         
         Raises:
             SandboxConnectionError: If connection fails
@@ -262,11 +273,10 @@ class SessionsClient:
             SandboxOperationError: For other errors
         
         Example:
-            >>> client = SessionsClient(api_url='...', bearer_token='...')
-            >>> result = client.list_sessions(limit=10)
-            >>> for session_data in result['sessions']:
-            ...     session = Session(session_data)
-            ...     print(session.session_id)
+            >>> client = SandboxClient(api_url='...', bearer_token='...')
+            >>> result = client.list_sandboxes(limit=10)
+            >>> for sbox in result['sandboxes']:
+            ...     print(sbox.sandbox_id)
         """
         if not 1 <= limit <= 100:
             raise ValueError(f"Limit must be between 1 and 100, got {limit}")
@@ -275,30 +285,37 @@ class SessionsClient:
         
         try:
             response = self._session.get(
-                f"{self.api_url}/sessions",
+                f"{self.api_url}/sandboxes",
                 params={'limit': limit, 'offset': offset},
                 timeout=self.timeout,
                 verify=self.verify_ssl
             )
             
             data = self._handle_response(response)
-            # Convert session data to Session objects
-            if 'sessions' in data:
-                data['sessions'] = [Session(s) for s in data['sessions']]
+            # Convert sandbox data to Sandbox objects, support legacy key
+            if 'sandboxes' in data:
+                data['sandboxes'] = [Sandbox(s) for s in data['sandboxes']]
+            elif 'sessions' in data:  # legacy
+                data = {
+                    'sandboxes': [Sandbox(s) for s in data.get('sessions', [])],
+                    'total': data.get('total'),
+                    'limit': data.get('limit'),
+                    'offset': data.get('offset'),
+                }
             return data
             
         except requests.exceptions.RequestException as e:
             raise SandboxConnectionError(f"Failed to connect to API: {e}")
     
-    def get_session(self, session_id: str) -> Session:
+    def get_sandbox(self, sandbox_id: str) -> Sandbox:
         """
-        Get details about a specific session.
+        Get details about a specific sandbox.
         
         Args:
-            session_id: Unique session identifier (UUID)
+            sandbox_id: Unique sandbox identifier (UUID)
         
         Returns:
-            Session object with session details
+            Sandbox object with details
         
         Raises:
             SandboxConnectionError: If connection fails
@@ -307,36 +324,36 @@ class SessionsClient:
             SandboxOperationError: For other errors
         
         Example:
-            >>> client = SessionsClient(api_url='...', bearer_token='...')
-            >>> session = client.get_session('550e8400-e29b-41d4-a716-446655440000')
-            >>> print(f"Status: {session.status}")
-            >>> print(f"Expires: {session.expires_at}")
+            >>> client = SandboxClient(api_url='...', bearer_token='...')
+            >>> sbox = client.get_sandbox('550e8400-e29b-41d4-a716-446655440000')
+            >>> print(f"Status: {sbox.status}")
+            >>> print(f"Expires: {sbox.expires_at}")
         """
-        if not session_id:
-            raise ValueError("session_id is required")
+        if not sandbox_id:
+            raise ValueError("sandbox_id is required")
         
         try:
             response = self._session.get(
-                f"{self.api_url}/sessions/{session_id}",
+                f"{self.api_url}/sandboxes/{sandbox_id}",
                 timeout=self.timeout,
                 verify=self.verify_ssl
             )
             
             data = self._handle_response(response)
-            return Session(data)
+            return Sandbox(data)
             
         except requests.exceptions.RequestException as e:
             raise SandboxConnectionError(f"Failed to connect to API: {e}")
     
-    def delete_session(self, session_id: str) -> None:
+    def delete_sandbox(self, sandbox_id: str) -> None:
         """
-        Delete a sandbox session.
+        Delete a sandbox.
         
-        Terminates the session and removes the sandbox.
+        Terminates the sandbox and removes all its resources.
         All files and data in the sandbox will be permanently deleted.
         
         Args:
-            session_id: Unique session identifier (UUID)
+            sandbox_id: Unique sandbox identifier (UUID)
         
         Raises:
             SandboxConnectionError: If connection fails
@@ -345,15 +362,15 @@ class SessionsClient:
             SandboxOperationError: For other errors
         
         Example:
-            >>> client = SessionsClient(api_url='...', bearer_token='...')
-            >>> client.delete_session('550e8400-e29b-41d4-a716-446655440000')
+            >>> client = SandboxClient(api_url='...', bearer_token='...')
+            >>> client.delete_sandbox('550e8400-e29b-41d4-a716-446655440000')
         """
-        if not session_id:
-            raise ValueError("session_id is required")
+        if not sandbox_id:
+            raise ValueError("sandbox_id is required")
         
         try:
             response = self._session.delete(
-                f"{self.api_url}/sessions/{session_id}",
+                f"{self.api_url}/sandboxes/{sandbox_id}",
                 timeout=self.timeout,
                 verify=self.verify_ssl
             )
@@ -365,9 +382,46 @@ class SessionsClient:
         except requests.exceptions.RequestException as e:
             raise SandboxConnectionError(f"Failed to connect to API: {e}")
     
+    def pause_sandbox(self, sandbox_id: str) -> Sandbox:
+        """
+        Pause a running sandbox. Returns the updated Sandbox.
+
+        Raises 409 Conflict if the sandbox is not in a pausable state.
+        """
+        if not sandbox_id:
+            raise ValueError("sandbox_id is required")
+        try:
+            response = self._session.post(
+                f"{self.api_url}/sandboxes/{sandbox_id}/pause",
+                timeout=self.timeout,
+                verify=self.verify_ssl,
+            )
+            data = self._handle_response(response)
+            return Sandbox(data)
+        except requests.exceptions.RequestException as e:
+            raise SandboxConnectionError(f"Failed to connect to API: {e}")
+
+    def resume_sandbox(self, sandbox_id: str) -> Sandbox:
+        """
+        Resume a paused sandbox. Returns the updated Sandbox.
+
+        Raises 409 Conflict if the sandbox is not in a resumable state.
+        """
+        if not sandbox_id:
+            raise ValueError("sandbox_id is required")
+        try:
+            response = self._session.post(
+                f"{self.api_url}/sandboxes/{sandbox_id}/resume",
+                timeout=self.timeout,
+                verify=self.verify_ssl,
+            )
+            data = self._handle_response(response)
+            return Sandbox(data)
+        except requests.exceptions.RequestException as e:
+            raise SandboxConnectionError(f"Failed to connect to API: {e}")
     def run_code(
         self,
-        session_id: str,
+        sandbox_id: str,
         code: str,
         language: str = "python",
         timeout: int = 60,
@@ -375,10 +429,10 @@ class SessionsClient:
         """
         Execute code in the sandbox via the REST API.
 
-        This uses the /sessions/{sessionId}/code endpoint defined in the API spec.
+        This uses the /sandboxes/{sandboxId}/code endpoint defined in the API spec.
 
         Args:
-            session_id: Unique session identifier (UUID)
+            sandbox_id: Unique sandbox identifier (UUID)
             code: Code snippet to execute (required)
             language: Programming language (one of: 'python', 'javascript', 'bash'). Default: 'python'
             timeout: Execution timeout in seconds (min 1, max 300). Default: 60
@@ -391,16 +445,16 @@ class SessionsClient:
             ValueError: If parameters are invalid
             SandboxConnectionError: On network/TLS failures
             UnauthorizedError: If authentication fails
-            SessionNotFoundError: If the session doesn't exist
+            SessionNotFoundError: If the sandbox doesn't exist
             SandboxOperationError: For other API errors
 
         Example:
-            >>> client = SessionsClient(api_url='...', bearer_token='...')
-            >>> result = client.run_code(session_id, code='print("hi")', language='python', timeout=30)
+            >>> client = SandboxClient(api_url='...', bearer_token='...')
+            >>> result = client.run_code(sandbox_id, code='print("hi")', language='python', timeout=30)
             >>> print(result['stdout'])
         """
-        if not session_id:
-            raise ValueError("session_id is required")
+        if not sandbox_id:
+            raise ValueError("sandbox_id is required")
         if not isinstance(code, str) or code.strip() == "":
             raise ValueError("code must be a non-empty string")
         allowed_languages = {"python", "javascript", "bash"}
@@ -417,7 +471,7 @@ class SessionsClient:
 
         try:
             response = self._session.post(
-                f"{self.api_url}/sessions/{session_id}/code",
+                f"{self.api_url}/sandboxes/{sandbox_id}/code",
                 json=payload,
                 timeout=self.timeout,
                 verify=self.verify_ssl,
@@ -453,8 +507,9 @@ class HTTPConnectTunnel:
         self,
         api_url: str,
         bearer_token: str,
-        session_id: str,
-        connect_path_template: str = "/sessions/{sessionId}",
+        session_id: Optional[str] = None,
+        sandbox_id: Optional[str] = None,
+        connect_path_template: str = "/sandboxes/{sandboxId}",
         timeout: int = 10,
         verify_ssl: bool = True,
         extra_headers: Optional[Dict[str, str]] = None,
@@ -462,6 +517,7 @@ class HTTPConnectTunnel:
         self.api_url = api_url.rstrip('/')
         self.token = bearer_token
         self.session_id = session_id
+        self.sandbox_id = sandbox_id or session_id
         self.connect_path_template = connect_path_template
         self.timeout = timeout
         self.verify_ssl = verify_ssl
@@ -497,8 +553,9 @@ class HTTPConnectTunnel:
         else:
             sock = base_sock
 
-        # Build CONNECT request; server routes by path (session-scoped)
-        path = self.connect_path_template.format(sessionId=self.session_id)
+        # Build CONNECT request; server routes by path (sandbox-scoped)
+        # Support both placeholders for compatibility
+        path = self.connect_path_template.format(sessionId=self.sandbox_id, sandboxId=self.sandbox_id)
         req_lines = [
             f"CONNECT {path} HTTP/1.1",
             f"Host: {host}",
@@ -550,7 +607,7 @@ class HTTPConnectTunnel:
                 self._socket = None
 
 
-class SessionSSHClient:
+class SandboxSSHClient:
     """
     SSH/SFTP client that connects to the sandbox via the API server using
     an HTTP CONNECT tunnel. The API server transparently redirects traffic
@@ -567,19 +624,21 @@ class SessionSSHClient:
         self,
         api_url: str,
         bearer_token: str,
-        session_id: str,
         username: str,
+        session_id: Optional[str] = None,
+        sandbox_id: Optional[str] = None,
         password: Optional[str] = None,
         pkey: Optional[paramiko.PKey] = None,
         timeout: int = 20,
         verify_ssl: bool = True,
-        connect_path_template: str = "/sessions/{sessionId}",
+        connect_path_template: str = "/sandboxes/{sandboxId}",
         host_key_policy: Optional[paramiko.MissingHostKeyPolicy] = None,
         get_pty: bool = False,
     ):
         self.api_url = api_url
         self.token = bearer_token
         self.session_id = session_id
+        self.sandbox_id = sandbox_id or session_id
         self.username = username
         self.password = password
         self.pkey = pkey
@@ -606,6 +665,7 @@ class SessionSSHClient:
             api_url=self.api_url,
             bearer_token=self.token,
             session_id=self.session_id,
+            sandbox_id=self.sandbox_id,
             connect_path_template=self.connect_path_template,
             timeout=self.timeout,
             verify_ssl=self.verify_ssl,
@@ -620,7 +680,7 @@ class SessionSSHClient:
         # but Paramiko still requires a value for host key policies. We pass the
         # session ID as a logical hostname for known_hosts separation if needed.
         ssh.connect(
-            hostname=f"session-{self.session_id}",
+            hostname=f"sandbox-{self.sandbox_id}",
             username=self.username,
             password=self.password,
             pkey=self.pkey,
@@ -683,6 +743,57 @@ class SessionSSHClient:
             finally:
                 self._tunnel = None
 
+# Backward-compatible alias for SSH client
+SessionSSHClient = SandboxSSHClient
+
+
+class SessionsClient(SandboxClient):
+    """Backward-compatible session-based client.
+
+    Delegates to SandboxClient but preserves legacy method names and return shapes.
+    """
+
+    # Legacy create
+    def create_session(
+        self,
+        ttl: int = 3600,
+        image: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        ssh_public_key: Optional[str] = None,
+    ) -> Session:
+        return self.create_sandbox(ttl=ttl, image=image, metadata=metadata, ssh_public_key=ssh_public_key)
+
+    def list_sessions(self, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+        res = self.list_sandboxes(limit=limit, offset=offset)
+        # Map back to legacy shape with 'sessions'
+        return {
+            'sessions': [Session(s.to_dict()) if isinstance(s, Sandbox) else s for s in res.get('sandboxes', [])],
+            'total': res.get('total'),
+            'limit': res.get('limit'),
+            'offset': res.get('offset'),
+        }
+
+    def get_session(self, session_id: str) -> Session:
+        return self.get_sandbox(session_id)
+
+    def delete_session(self, session_id: str) -> None:
+        return self.delete_sandbox(session_id)
+
+    def run_code(
+        self,
+        session_id: str,
+        code: str,
+        language: str = "python",
+        timeout: int = 60,
+    ) -> Dict[str, Any]:
+        return super().run_code(sandbox_id=session_id, code=code, language=language, timeout=timeout)
+
+    def pause_session(self, session_id: str) -> Session:
+        return self.pause_sandbox(session_id)
+
+    def resume_session(self, session_id: str) -> Session:
+        return self.resume_sandbox(session_id)
+
 
 # Example usage
 if __name__ == '__main__':
@@ -693,10 +804,10 @@ if __name__ == '__main__':
     bearer_token = os.environ.get('SANDBOX_API_TOKEN', 'your-token-here')
     
     try:
-        with SessionsClient(api_url=api_url, bearer_token=bearer_token) as client:
+        with SandboxClient(api_url=api_url, bearer_token=bearer_token) as client:
             # Create a new session
-            print("Creating session...")
-            session = client.create_session(
+            print("Creating sandbox...")
+            sandbox = client.create_sandbox(
                 ttl=7200,
                 image='python:3.11',
                 metadata={
@@ -705,34 +816,34 @@ if __name__ == '__main__':
                     'environment': 'development'
                 }
             )
-            print(f"✓ Created session: {session.session_id}")
-            print(f"  Status: {session.status.value}")
-            print(f"  Created: {session.created_at}")
-            print(f"  Expires: {session.expires_at}")
-            print(f"  Metadata: {session.metadata}")
+            print(f"✓ Created sandbox: {sandbox.sandbox_id}")
+            print(f"  Status: {sandbox.status.value}")
+            print(f"  Created: {sandbox.created_at}")
+            print(f"  Expires: {sandbox.expires_at}")
+            print(f"  Metadata: {sandbox.metadata}")
             
             # Get session details
-            print(f"\nFetching session details...")
-            fetched_session = client.get_session(session.session_id)
-            print(f"✓ Session status: {fetched_session.status.value}")
+            print(f"\nFetching sandbox details...")
+            fetched_sandbox = client.get_sandbox(sandbox.sandbox_id)
+            print(f"✓ Sandbox status: {fetched_sandbox.status.value}")
             
             # List all sessions
-            print(f"\nListing all sessions...")
-            result = client.list_sessions(limit=10)
-            print(f"✓ Total sessions: {result['total']}")
-            for s in result['sessions']:
-                print(f"  - {s.session_id} ({s.status.value})")
+            print(f"\nListing all sandboxes...")
+            result = client.list_sandboxes(limit=10)
+            print(f"✓ Total sandboxes: {result['total']}")
+            for s in result['sandboxes']:
+                print(f"  - {s.sandbox_id} ({s.status.value})")
             
             # Delete the session
-            print(f"\nDeleting session {session.session_id}...")
-            client.delete_session(session.session_id)
-            print(f"✓ Session deleted")
+            print(f"\nDeleting sandbox {sandbox.sandbox_id}...")
+            client.delete_sandbox(sandbox.sandbox_id)
+            print(f"✓ Sandbox deleted")
             
             # Try to get deleted session (should fail)
             try:
-                client.get_session(session.session_id)
+                client.get_sandbox(sandbox.sandbox_id)
             except SessionNotFoundError:
-                print("✓ Session no longer exists (as expected)")
+                print("✓ Sandbox no longer exists (as expected)")
             
     except UnauthorizedError as e:
         print(f"❌ Authentication failed: {e.message}")
@@ -740,7 +851,7 @@ if __name__ == '__main__':
         print(f"❌ Rate limit exceeded: {e.message}")
         print(f"   Limit: {e.limit}, Remaining: {e.remaining}, Reset: {e.reset}")
     except SessionNotFoundError as e:
-        print(f"❌ Session not found: {e.message}")
+        print(f"❌ Sandbox not found: {e.message}")
     except SandboxOperationError as e:
         print(f"❌ Operation failed: {e.message}")
         if e.error_code:

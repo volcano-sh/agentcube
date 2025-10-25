@@ -7,14 +7,13 @@ info:
 
     ## Key Concepts
 
-    - **Session**: A temporary, isolated environment with a unique session ID
-    - **Sandbox**: An isolated environment where all operations are executed, 1:1 map with session
-    - **Automatic Cleanup**: Sessions expire after TTL or can be explicitly deleted
+    - **Sandbox**: A temporary, isolated environment with a unique sandbox ID
+    - **Automatic Cleanup**: Sandboxes expire after TTL or can be explicitly deleted
 
     ## Data plane via HTTP CONNECT (hybrid)
 
-    - Session lifecycle is managed via REST over HTTPS.
-    - For streaming command execution and file transfer, clients may establish an HTTP CONNECT tunnel to a specific session using the same API host: `CONNECT /sessions/{sessionId}`.
+    - Sandbox lifecycle is managed via REST over HTTPS.
+    - For streaming command execution and file transfer, clients may establish an HTTP CONNECT tunnel to a specific sandbox using the same API host: `CONNECT /sandboxes/{sandboxId}`.
     - The CONNECT request must include a bearer token in the `Proxy-Authorization: Bearer <token>` header. On success, the server responds with `200 Connection Established` and forwards raw TCP bytes to the sandbox backend (e.g., SSH/SFTP).
 
   version: 1.0.0
@@ -32,8 +31,8 @@ security:
   - bearerAuth: []
 
 tags:
-  - name: Sessions
-    description: Manage sandbox sessions
+  - name: Sandboxes
+    description: Manage sandboxes
   - name: Commands
     description: Execute commands in sandbox
   - name: Files
@@ -42,16 +41,16 @@ tags:
     description: Execute code snippets
 
 paths:
-  /sessions:
+  /sandboxes:
     post:
       tags:
-        - Sessions
-      summary: Create a new sandbox session
+        - Sandboxes
+      summary: Create a new sandbox
       description: |
-        Creates a new isolated sandbox environment with a unique session ID.
+        Creates a new isolated sandbox environment with a unique sandbox ID.
         The sandbox is automatically created by the server and will be
-        cleaned up when the session expires or is explicitly deleted.
-      operationId: createSession
+        cleaned up when the sandbox expires or is explicitly deleted.
+      operationId: createSandbox
       requestBody:
         required: false
         content:
@@ -72,24 +71,24 @@ paths:
                 sshPublicKey:
                   type: string
                   description: |
-                    Optional SSH public key to authorize for SSH access to this session. Provide an OpenSSH-formatted
+                    Optional SSH public key to authorize for SSH access to this sandbox. Provide an OpenSSH-formatted
                     public key (e.g., ssh-ed25519, ecdsa-sha2-nistp256, or ssh-rsa). The server will install this key
-                    into the sandbox's authorized keys for the session user.
+                    into the sandbox's authorized keys for the sandbox user.
                   example: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB2VExampleBase64KeyMaterial user@example"
                 metadata:
                   type: object
                   additionalProperties: true
-                  description: Optional metadata to attach to the session
+                  description: Optional metadata to attach to the sandbox
                   example:
                     user: "john.doe"
                     project: "test-automation"
       responses:
         "200":
-          description: Session created successfully
+          description: Sandbox created successfully
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Session"
+                $ref: "#/components/schemas/Sandbox"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -101,10 +100,10 @@ paths:
 
     get:
       tags:
-        - Sessions
-      summary: List all active sessions
-      description: Returns a list of all active sandbox sessions for the authenticated user
-      operationId: listSessions
+        - Sandboxes
+      summary: List all active sandboxes
+      description: Returns a list of all active sandboxes for the authenticated user
+      operationId: listSandboxes
       parameters:
         - name: limit
           in: query
@@ -119,16 +118,16 @@ paths:
             default: 0
       responses:
         "200":
-          description: List of sessions
+          description: List of sandboxes
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  sessions:
+                  sandboxes:
                     type: array
                     items:
-                      $ref: "#/components/schemas/Session"
+                      $ref: "#/components/schemas/Sandbox"
                   total:
                     type: integer
                   limit:
@@ -138,46 +137,92 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /sessions/{sessionId}:
+  /sandboxes/{sandboxId}:
     get:
       tags:
-        - Sessions
-      summary: Get session details
-      description: Retrieve information about a specific sandbox session
-      operationId: getSession
+        - Sandboxes
+      summary: Get sandbox details
+      description: Retrieve information about a specific sandbox
+      operationId: getSandbox
       parameters:
-        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/SandboxId"
       responses:
         "200":
-          description: Session details
+          description: Sandbox details
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Session"
+                $ref: "#/components/schemas/Sandbox"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /sandboxes/{sandboxId}/pause:
+    post:
+      tags:
+        - Sandboxes
+      summary: Pause a sandbox
+      description: Transitions the sandbox to the paused state.
+      operationId: pauseSandbox
+      parameters:
+        - $ref: "#/components/parameters/SandboxId"
+      responses:
+        "200":
+          description: Sandbox paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sandbox"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /sandboxes/{sandboxId}/resume:
+    post:
+      tags:
+        - Sandboxes
+      summary: Resume a sandbox
+      description: Transitions the sandbox to the running state.
+      operationId: resumeSandbox
+      parameters:
+        - $ref: "#/components/parameters/SandboxId"
+      responses:
+        "200":
+          description: Sandbox resumed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sandbox"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
     delete:
       tags:
-        - Sessions
-      summary: Delete a sandbox session
+        - Sandboxes
+      summary: Delete a sandbox
       description: |
-        Terminates the session and removes the sandbox.
+        Terminates the sandbox and removes all resources.
         All files and data in the sandbox will be permanently deleted.
-      operationId: deleteSession
+      operationId: deleteSandbox
       parameters:
-        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/SandboxId"
       responses:
         "200":
-          description: Session deleted successfully
+          description: Sandbox deleted successfully
         "404":
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /sessions/{sessionId}/commands:
+  /sandboxes/{sandboxId}/commands:
     post:
       tags:
         - Commands
@@ -187,7 +232,7 @@ paths:
         The command runs with the working directory set to the sandbox path.
       operationId: executeCommand
       parameters:
-        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/SandboxId"
       requestBody:
         required: true
         content:
@@ -214,7 +259,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /sessions/{sessionId}/code:
+  /sandboxes/{sandboxId}/code:
     post:
       tags:
         - Code
@@ -224,7 +269,7 @@ paths:
         The code is executed with the appropriate interpreter.
       operationId: executeCode
       parameters:
-        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/SandboxId"
       requestBody:
         required: true
         content:
@@ -268,7 +313,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /sessions/{sessionId}/files:
+  /sandboxes/{sandboxId}/files:
     post:
       tags:
         - Files
@@ -276,7 +321,7 @@ paths:
       description: Upload a file to the sandbox directory
       operationId: uploadFile
       parameters:
-        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/SandboxId"
         - name: path
           in: query
           description: Destination path in sandbox (relative)
@@ -333,7 +378,7 @@ paths:
       description: Download a file from the sandbox directory
       operationId: downloadFile
       parameters:
-        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/SandboxId"
         - name: filePath
           in: query
           description: Path to the file (relative to sandbox root)
@@ -398,42 +443,42 @@ components:
       description: Bearer token used in the `Proxy-Authorization` header for HTTP CONNECT requests.
 
   parameters:
-    SessionId:
-      name: sessionId
+    SandboxId:
+      name: sandboxId
       in: path
       required: true
-      description: Unique session identifier
+      description: Unique sandbox identifier
       schema:
         type: string
         format: uuid
       example: "550e8400-e29b-41d4-a716-446655440000"
 
   schemas:
-    Session:
+    Sandbox:
       type: object
       required:
-        - sessionId
+        - sandboxId
         - status
         - createdAt
         - expiresAt
       properties:
-        sessionId:
+        sandboxId:
           type: string
           format: uuid
-          description: Unique session identifier
+          description: Unique sandbox identifier
           example: "550e8400-e29b-41d4-a716-446655440000"
         status:
           type: string
           enum: [running, paused]
-          description: Current session status
+          description: Current sandbox status
         createdAt:
           type: string
           format: date-time
-          description: Session creation timestamp
+          description: Sandbox creation timestamp
         expiresAt:
           type: string
           format: date-time
-          description: Session expiration timestamp
+          description: Sandbox expiration timestamp
         lastActivityAt:
           type: string
           format: date-time
@@ -580,8 +625,8 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
           example:
-            error: "SESSION_NOT_FOUND"
-            message: "The requested session does not exist or has expired"
+            error: "SANDBOX_NOT_FOUND"
+            message: "The requested sandbox does not exist or has expired"
 
     TooManyRequests:
       description: Rate limit exceeded
@@ -611,3 +656,13 @@ components:
             error: "INTERNAL_ERROR"
             message: "An unexpected error occurred"
             requestId: "req-123-abc"
+
+    Conflict:
+      description: Invalid state for requested operation
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "INVALID_STATE"
+            message: "Sandbox is already paused or cannot be paused"

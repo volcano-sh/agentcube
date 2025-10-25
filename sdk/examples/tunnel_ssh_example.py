@@ -1,5 +1,5 @@
 """
-Example: Sessions (REST) + SSH/SFTP over HTTP CONNECT via the same API server.
+Example: Sandboxes (REST) + SSH/SFTP over HTTP CONNECT via the same API server.
 
 Requirements:
 - Environment variables:
@@ -9,15 +9,15 @@ Requirements:
   - Optional: SANDBOX_SSH_PASSWORD or SANDBOX_SSH_KEY (path to private key)
 
 This demonstrates:
-1) Creating a session via REST
-2) Opening an HTTP CONNECT tunnel to /sessions/{id}
+1) Creating a sandbox via REST
+2) Opening an HTTP CONNECT tunnel to /sandboxes/{id}
 3) Running SSH commands and SFTP transfers through the tunnel
-4) Deleting the session via REST
+4) Deleting the sandbox via REST
 """
 
 import os
 import tempfile
-from sandbox_sessions_sdk import SessionsClient, SessionSSHClient, UnauthorizedError, SandboxConnectionError, SandboxOperationError
+from sandbox_sessions_sdk import SandboxClient, SandboxSSHClient, UnauthorizedError, SandboxConnectionError, SandboxOperationError
 import paramiko
 
 
@@ -44,20 +44,20 @@ def main():
                 print(f"Failed to load private key: {e}")
                 return
 
-    session = None
+    sandbox = None
     try:
-        # 1) Create a session via REST
-        with SessionsClient(api_url=api_url, bearer_token=token) as client:
-            print("Creating session...")
-            session = client.create_session(ttl=1800, image="python:3.11", metadata={"example": "tunnel"})
-            print(f"✓ Created session: {session.session_id}")
+        # 1) Create a sandbox via REST
+        with SandboxClient(api_url=api_url, bearer_token=token) as client:
+            print("Creating sandbox...")
+            sandbox = client.create_sandbox(ttl=1800, image="python:3.11", metadata={"example": "tunnel"})
+            print(f"✓ Created sandbox: {sandbox.sandbox_id}")
 
         # 2) Use SSH/SFTP via HTTP CONNECT on the same API server
         print("Connecting SSH over HTTP CONNECT tunnel...")
-        with SessionSSHClient(
+        with SandboxSSHClient(
             api_url=api_url,
             bearer_token=token,
-            session_id=session.session_id,
+            sandbox_id=sandbox.sandbox_id,
             username=username,
             password=password,
             pkey=pkey,
@@ -83,11 +83,11 @@ def main():
             ssh.download_file(remote_path, download_path)
             print(f"Downloaded {remote_path} -> {download_path}")
 
-        # 3) Cleanup the session via REST
-        with SessionsClient(api_url=api_url, bearer_token=token) as client:
-            print("Deleting session...")
-            client.delete_session(session.session_id)
-            print("✓ Session deleted")
+        # 3) Cleanup the sandbox via REST
+        with SandboxClient(api_url=api_url, bearer_token=token) as client:
+            print("Deleting sandbox...")
+            client.delete_sandbox(sandbox.sandbox_id)
+            print("✓ Sandbox deleted")
 
     except UnauthorizedError as e:
         print(f"Authentication error: {e.message}")

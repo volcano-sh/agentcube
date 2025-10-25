@@ -1,60 +1,58 @@
 """
-Test/Example usage of the Sandbox Sessions SDK
+Test/Example usage of the Sandbox SDK
 
-This file demonstrates how to use the SessionsClient to interact
-with the Sandbox API's session management endpoints.
+This file demonstrates how to use the SandboxClient to interact
+with the Sandbox API's sandbox management endpoints.
 """
 
 import os
 import time
 from datetime import datetime
 from sandbox_sessions_sdk import (
-    SessionsClient, 
-    Session,
-    SessionStatus,
+    SandboxClient,
     SandboxAPIError,
     SandboxConnectionError,
     SessionNotFoundError,
     UnauthorizedError,
-    RateLimitError
+    RateLimitError,
 )
 
 
 def example_basic_usage():
-    """Basic example of creating and managing a session"""
+    """Basic example of creating and managing a sandbox"""
     print("=" * 60)
-    print("Example 1: Basic Session Management")
+    print("Example 1: Basic Sandbox Management")
     print("=" * 60)
     
     # Initialize client
-    client = SessionsClient(
+    client = SandboxClient(
         api_url='http://localhost:8080/v1',
         bearer_token='your-bearer-token-here'
     )
     
     try:
-        # Create a session
-        print("\n1. Creating a new session...")
-        session = client.create_session(
+        # Create a sandbox
+        print("\n1. Creating a new sandbox...")
+        sandbox = client.create_sandbox(
             ttl=3600,  # 1 hour
             image='python:3.11',
             metadata={'example': 'basic_usage'}
         )
-        print(f"   ✓ Session created: {session.session_id}")
-        print(f"   - Status: {session.status.value}")
-        print(f"   - Expires at: {session.expires_at}")
+        print(f"   ✓ Sandbox created: {sandbox.sandbox_id}")
+        print(f"   - Status: {sandbox.status.value}")
+        print(f"   - Expires at: {sandbox.expires_at}")
         
-        # Get session details
-        print("\n2. Fetching session details...")
-        fetched = client.get_session(session.session_id)
-        print(f"   ✓ Session found")
+        # Get sandbox details
+        print("\n2. Fetching sandbox details...")
+        fetched = client.get_sandbox(sandbox.sandbox_id)
+        print(f"   ✓ Sandbox found")
         print(f"   - Created: {fetched.created_at}")
         print(f"   - Metadata: {fetched.metadata}")
         
-        # Delete session
-        print("\n3. Deleting session...")
-        client.delete_session(session.session_id)
-        print(f"   ✓ Session deleted")
+        # Delete sandbox
+        print("\n3. Deleting sandbox...")
+        client.delete_sandbox(sandbox.sandbox_id)
+        print(f"   ✓ Sandbox deleted")
         
     except SandboxAPIError as e:
         print(f"   ✗ Error: {e.message}")
@@ -68,65 +66,65 @@ def example_context_manager():
     print("Example 2: Using Context Manager")
     print("=" * 60)
     
-    with SessionsClient(
+    with SandboxClient(
         api_url='http://localhost:8080/v1',
         bearer_token='your-bearer-token-here'
     ) as client:
         
-        print("\n1. Creating session with custom TTL...")
-        session = client.create_session(
+        print("\n1. Creating sandbox with custom TTL...")
+        sandbox = client.create_sandbox(
             ttl=7200,  # 2 hours
             metadata={'example': 'context_manager', 'priority': 'high'}
         )
-        print(f"   ✓ Session ID: {session.session_id}")
+        print(f"   ✓ Sandbox ID: {sandbox.sandbox_id}")
         
         # Client automatically closes when exiting context
 
 
-def example_list_sessions():
-    """Example of listing and paginating through sessions"""
+def example_list_sandboxes():
+    """Example of listing and paginating through sandboxes"""
     print("\n" + "=" * 60)
-    print("Example 3: Listing Sessions")
+    print("Example 3: Listing Sandboxes")
     print("=" * 60)
     
-    with SessionsClient(
+    with SandboxClient(
         api_url='http://localhost:8080/v1',
         bearer_token='your-bearer-token-here'
     ) as client:
         
-        # Create a few test sessions
-        print("\n1. Creating multiple test sessions...")
-        session_ids = []
+        # Create a few test sandboxes
+        print("\n1. Creating multiple test sandboxes...")
+        sandbox_ids = []
         for i in range(3):
-            session = client.create_session(
+            sandbox = client.create_sandbox(
                 ttl=1800,
                 metadata={'example': 'listing', 'index': i}
             )
-            session_ids.append(session.session_id)
-            print(f"   ✓ Created session {i+1}: {session.session_id[:8]}...")
+            sandbox_ids.append(sandbox.sandbox_id)
+            print(f"   ✓ Created sandbox {i+1}: {sandbox.sandbox_id[:8]}...")
         
-        # List all sessions
-        print("\n2. Listing all sessions...")
-        result = client.list_sessions(limit=10, offset=0)
-        print(f"   ✓ Total sessions: {result['total']}")
-        print(f"   ✓ Returned: {len(result['sessions'])} sessions")
+        # List all sandboxes
+        print("\n2. Listing all sandboxes...")
+        result = client.list_sandboxes(limit=10, offset=0)
+        print(f"   ✓ Total sandboxes: {result['total']}")
+        print(f"   ✓ Returned: {len(result['sandboxes'])} sandboxes")
         
-        for session in result['sessions']:
-            print(f"   - {session.session_id}")
-            print(f"     Status: {session.status.value}")
-            print(f"     Metadata: {session.metadata}")
+        for sandbox in result['sandboxes']:
+            print(f"   - {sandbox.sandbox_id}")
+            print(f"     Status: {sandbox.status.value}")
+            print(f"     Metadata: {sandbox.metadata}")
         
         # Pagination example
         if result['total'] > 5:
             print("\n3. Paginating (showing next 5)...")
-            result2 = client.list_sessions(limit=5, offset=5)
-            print(f"   ✓ Returned {len(result2['sessions'])} more sessions")
+            result2 = client.list_sandboxes(limit=5, offset=5)
+            print(f"   ✓ Returned {len(result2['sandboxes'])} more sandboxes")
         
         # Cleanup
-        print("\n4. Cleaning up test sessions...")
-        for session_id in session_ids:
-            client.delete_session(session_id)
-            print(f"   ✓ Deleted {session_id[:8]}...")
+        print("\n4. Cleaning up test sandboxes...")
+        for sandbox_id in sandbox_ids:
+            client.delete_sandbox(sandbox_id)
+            print(f"   ✓ Deleted {sandbox_id[:8]}...")
 
 
 def example_error_handling():
@@ -135,30 +133,30 @@ def example_error_handling():
     print("Example 4: Error Handling")
     print("=" * 60)
     
-    client = SessionsClient(
+    client = SandboxClient(
         api_url='http://localhost:8080/v1',
         bearer_token='your-bearer-token-here'
     )
     
     try:
-        # Try to get non-existent session
-        print("\n1. Attempting to get non-existent session...")
+        # Try to get non-existent sandbox
+        print("\n1. Attempting to get non-existent sandbox...")
         try:
-            client.get_session('00000000-0000-0000-0000-000000000000')
+            client.get_sandbox('00000000-0000-0000-0000-000000000000')
         except SessionNotFoundError as e:
             print(f"   ✓ Caught SessionNotFoundError: {e.message}")
         
         # Try invalid TTL
-        print("\n2. Attempting to create session with invalid TTL...")
+        print("\n2. Attempting to create sandbox with invalid TTL...")
         try:
-            client.create_session(ttl=30)  # Too short (min is 60)
+            client.create_sandbox(ttl=30)  # Too short (min is 60)
         except ValueError as e:
             print(f"   ✓ Caught ValueError: {e}")
         
         # Try invalid pagination
         print("\n3. Attempting to list with invalid limit...")
         try:
-            client.list_sessions(limit=150)  # Too high (max is 100)
+            client.list_sandboxes(limit=150)  # Too high (max is 100)
         except ValueError as e:
             print(f"   ✓ Caught ValueError: {e}")
         
@@ -166,20 +164,20 @@ def example_error_handling():
         client.close()
 
 
-def example_session_lifecycle():
-    """Example showing complete session lifecycle"""
+def example_sandbox_lifecycle():
+    """Example showing complete sandbox lifecycle"""
     print("\n" + "=" * 60)
-    print("Example 5: Complete Session Lifecycle")
+    print("Example 5: Complete Sandbox Lifecycle")
     print("=" * 60)
     
-    with SessionsClient(
+    with SandboxClient(
         api_url='http://localhost:8080/v1',
         bearer_token='your-bearer-token-here'
     ) as client:
         
-        # Create session with specific image and metadata
-        print("\n1. Creating session with detailed configuration...")
-        session = client.create_session(
+        # Create sandbox with specific image and metadata
+        print("\n1. Creating sandbox with detailed configuration...")
+        sandbox = client.create_sandbox(
             ttl=3600,
             image='ubuntu:22.04',
             metadata={
@@ -190,14 +188,14 @@ def example_session_lifecycle():
                 'timestamp': datetime.utcnow().isoformat()
             }
         )
-        print(f"   ✓ Session created: {session.session_id}")
+        print(f"   ✓ Sandbox created: {sandbox.sandbox_id}")
         print(f"   - Image: ubuntu:22.04")
         print(f"   - TTL: 3600 seconds")
-        print(f"   - Metadata entries: {len(session.metadata)}")
+        print(f"   - Metadata entries: {len(sandbox.metadata)}")
         
-        # Check session status
-        print("\n2. Checking session status...")
-        current = client.get_session(session.session_id)
+        # Check sandbox status
+        print("\n2. Checking sandbox status...")
+        current = client.get_sandbox(sandbox.sandbox_id)
         time_until_expiry = (current.expires_at - datetime.now(current.expires_at.tzinfo)).total_seconds()
         print(f"   ✓ Status: {current.status.value}")
         print(f"   - Time until expiry: {time_until_expiry:.0f} seconds")
@@ -209,29 +207,29 @@ def example_session_lifecycle():
         # etc.
         
         # Cleanup
-        print("\n3. Terminating session...")
-        client.delete_session(session.session_id)
-        print(f"   ✓ Session terminated and cleaned up")
+        print("\n3. Terminating sandbox...")
+        client.delete_sandbox(sandbox.sandbox_id)
+        print(f"   ✓ Sandbox terminated and cleaned up")
 
 
 def example_run_code():
-    """Example running code via REST /sessions/{sessionId}/code"""
+    """Example running code via REST /sandboxes/{sandboxId}/code"""
     print("\n" + "=" * 60)
     print("Example 7: Run Code via REST")
     print("=" * 60)
 
-    with SessionsClient(
+    with SandboxClient(
         api_url='http://localhost:8080/v1',
         bearer_token='your-bearer-token-here'
     ) as client:
-        # Create a session (Python image recommended for Python code)
-        session = client.create_session(ttl=600, image='python:3.11', metadata={'example': 'run_code'})
-        print(f"   ✓ Session: {session.session_id[:8]}...")
+        # Create a sandbox (Python image recommended for Python code)
+        sandbox = client.create_sandbox(ttl=600, image='python:3.11', metadata={'example': 'run_code'})
+        print(f"   ✓ Sandbox: {sandbox.sandbox_id[:8]}...")
 
         # Run Python code
         print("\n1. Running Python code...")
         py = client.run_code(
-            session_id=session.session_id,
+            sandbox_id=sandbox.sandbox_id,
             language='python',
             code='import platform; print("PY:", platform.python_version())',
             timeout=30,
@@ -247,7 +245,7 @@ def example_run_code():
         # Run a Bash snippet
         print("\n2. Running Bash snippet...")
         sh = client.run_code(
-            session_id=session.session_id,
+            sandbox_id=sandbox.sandbox_id,
             language='bash',
             code='echo BASH: $(uname -s) && ls -1 | head -n 5',
             timeout=20,
@@ -256,44 +254,70 @@ def example_run_code():
         print("   " + sh.get('stdout', '').replace('\n', '\n   ').rstrip())
 
         # Cleanup
-        client.delete_session(session.session_id)
-        print("\n   ✓ Cleaned up session")
+        client.delete_sandbox(sandbox.sandbox_id)
+        print("\n   ✓ Cleaned up sandbox")
 
 
 def example_batch_operations():
-    """Example of batch operations on sessions"""
+    """Example of batch operations on sandboxes"""
     print("\n" + "=" * 60)
     print("Example 6: Batch Operations")
     print("=" * 60)
     
-    with SessionsClient(
+    with SandboxClient(
         api_url='http://localhost:8080/v1',
         bearer_token='your-bearer-token-here'
     ) as client:
         
-        # Create multiple sessions
-        print("\n1. Creating batch of sessions...")
-        sessions = []
+        # Create multiple sandboxes
+        print("\n1. Creating batch of sandboxes...")
+        sandboxes = []
         for env in ['development', 'staging', 'production']:
-            session = client.create_session(
+            sandbox = client.create_sandbox(
                 ttl=1800,
                 image='python:3.11',
                 metadata={'environment': env, 'batch': 'test'}
             )
-            sessions.append(session)
-            print(f"   ✓ Created {env} session: {session.session_id[:8]}...")
+            sandboxes.append(sandbox)
+            print(f"   ✓ Created {env} sandbox: {sandbox.sandbox_id[:8]}...")
         
-        # Get details for all sessions
-        print("\n2. Fetching details for all sessions...")
-        for session in sessions:
-            details = client.get_session(session.session_id)
+        # Get details for all sandboxes
+        print("\n2. Fetching details for all sandboxes...")
+        for sandbox in sandboxes:
+            details = client.get_sandbox(sandbox.sandbox_id)
             print(f"   - {details.metadata['environment']}: {details.status.value}")
         
-        # Cleanup all sessions
-        print("\n3. Cleaning up all sessions...")
-        for session in sessions:
-            client.delete_session(session.session_id)
-        print(f"   ✓ Deleted {len(sessions)} sessions")
+        # Cleanup all sandboxes
+        print("\n3. Cleaning up all sandboxes...")
+        for sandbox in sandboxes:
+            client.delete_sandbox(sandbox.sandbox_id)
+        print(f"   ✓ Deleted {len(sandboxes)} sandboxes")
+
+
+def example_pause_resume():
+    """Example of pausing and resuming a sandbox"""
+    print("\n" + "=" * 60)
+    print("Example 7: Pause and Resume Sandbox")
+    print("=" * 60)
+
+    with SandboxClient(
+        api_url='http://localhost:8080/v1',
+        bearer_token='your-bearer-token-here'
+    ) as client:
+        sandbox = client.create_sandbox(ttl=900, image='python:3.11', metadata={'example': 'pause_resume'})
+        print(f"   ✓ Created: {sandbox.sandbox_id}")
+
+        # Pause
+        paused = client.pause_sandbox(sandbox.sandbox_id)
+        print(f"   ✓ Paused → status: {paused.status.value}")
+
+        # Resume
+        resumed = client.resume_sandbox(sandbox.sandbox_id)
+        print(f"   ✓ Resumed → status: {resumed.status.value}")
+
+        # Cleanup
+        client.delete_sandbox(sandbox.sandbox_id)
+        print("   ✓ Deleted sandbox")
 
 
 def main():
@@ -308,11 +332,12 @@ def main():
     try:
         example_basic_usage()
         example_context_manager()
-        example_list_sessions()
+        example_list_sandboxes()
         example_error_handling()
-        example_session_lifecycle()
+        example_sandbox_lifecycle()
         example_batch_operations()
         example_run_code()
+        example_pause_resume()
         
         print("\n" + "=" * 60)
         print("✓ All examples completed!")

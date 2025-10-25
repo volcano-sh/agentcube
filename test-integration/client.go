@@ -67,15 +67,8 @@ func main() {
 	log.Printf("✅ Session created: %s", sessionID)
 	log.Println()
 
-	// Step 3: Wait for sandbox to be ready
-	log.Println("Step 3: Waiting for sandbox to be ready...")
-	log.Println("   (This may take 30-60 seconds for pod to start)")
-	time.Sleep(30 * time.Second)
-	log.Println("✅ Waited for sandbox initialization")
-	log.Println()
-
-	// Step 4: Establish HTTP CONNECT tunnel
-	log.Println("Step 4: Establishing HTTP CONNECT tunnel...")
+	// Step 3: Establish HTTP CONNECT tunnel
+	log.Println("Step 3: Establishing HTTP CONNECT tunnel...")
 	tunnelConn, err := establishTunnel(apiURL, sessionID)
 	if err != nil {
 		log.Fatalf("Failed to establish tunnel: %v", err)
@@ -84,8 +77,8 @@ func main() {
 	log.Println("✅ HTTP CONNECT tunnel established")
 	log.Println()
 
-	// Step 5: Connect via SSH using private key
-	log.Println("Step 5: Connecting via SSH with private key authentication...")
+	// Step 4: Connect via SSH using private key
+	log.Println("Step 4: Connecting via SSH with private key authentication...")
 	sshClient, err := connectSSHWithKey(tunnelConn, privateKey)
 	if err != nil {
 		log.Fatalf("Failed to connect via SSH: %v", err)
@@ -94,8 +87,8 @@ func main() {
 	log.Println("✅ SSH connection established with key-based auth")
 	log.Println()
 
-	// Step 6: Execute test commands
-	log.Println("Step 6: Executing test commands...")
+	// Step 5: Execute test commands
+	log.Println("Step 5: Executing test commands...")
 
 	commands := []string{
 		"whoami",

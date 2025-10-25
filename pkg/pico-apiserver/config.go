@@ -5,10 +5,6 @@ type Config struct {
 	// Port is the port the API server listens on
 	Port string
 
-	// Kubeconfig is the path to the Kubernetes configuration file
-	// If empty, in-cluster configuration will be used
-	Kubeconfig string
-
 	// Namespace is the Kubernetes namespace where Sandbox CRDs are created
 	Namespace string
 

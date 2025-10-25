@@ -33,21 +33,21 @@ var sandboxGVR = schema.GroupVersionResource{
 }
 
 // NewK8sClient creates a new Kubernetes client
-func NewK8sClient(kubeconfig, namespace string) (*K8sClient, error) {
+func NewK8sClient(namespace string) (*K8sClient, error) {
 	var config *rest.Config
 	var err error
 
-	if kubeconfig != "" {
-		// Use provided kubeconfig file
-		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+	// Try in-cluster config first
+	config, err = rest.InClusterConfig()
+	if err != nil {
+		// If not in cluster, use default kubeconfig loading rules
+		// This will check KUBECONFIG env var, then ~/.kube/config
+		loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+		configOverrides := &clientcmd.ConfigOverrides{}
+		kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
+		config, err = kubeConfig.ClientConfig()
 		if err != nil {
-			return nil, fmt.Errorf("failed to build config from kubeconfig: %w", err)
-		}
-	} else {
-		// Use in-cluster configuration
-		config, err = rest.InClusterConfig()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
+			return nil, fmt.Errorf("failed to load kubeconfig: %w", err)
 		}
 	}
 

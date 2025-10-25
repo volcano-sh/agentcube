@@ -36,28 +36,34 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// Generate session ID
 	sessionID := uuid.New().String()
 
-	// Create Kubernetes Sandbox CRD
-	sandbox, err := s.k8sClient.CreateSandbox(r.Context(), sessionID, req.Image, req.SSHPublicKey, req.Metadata)
+	// Calculate sandbox name and namespace before creating
+	// This matches the naming in k8s_client.go CreateSandbox()
+	sandboxName := "sandbox-" + sessionID[:8]
+	namespace := s.config.Namespace
+
+	// CRITICAL: Register watcher BEFORE creating sandbox
+	// This ensures we don't miss the Running state notification
+	resultChan := s.sandboxController.WatchSandboxOnce(r.Context(), namespace, sandboxName)
+
+	// Now create Kubernetes Sandbox CRD
+	_, err := s.k8sClient.CreateSandbox(r.Context(), sessionID, req.Image, req.SSHPublicKey, req.Metadata)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "SANDBOX_CREATE_FAILED", err.Error())
 		return
 	}
 
-	resultChan := s.sandboxController.WatchSandboxOnce(sandbox.Namespace, sandbox.Name)
-	session := &Session{}
-
 	select {
 	case result := <-resultChan:
 		// Create session object
 		now := time.Now()
-		session = &Session{
+		session := &Session{
 			SessionID:      sessionID,
 			Status:         result.Status,
 			CreatedAt:      now,
 			ExpiresAt:      now.Add(time.Duration(req.TTL) * time.Second),
 			LastActivityAt: now,
 			Metadata:       req.Metadata,
-			SandboxName:    result.Name,
+			SandboxName:    sandboxName,
 		}
 
 		// Store session

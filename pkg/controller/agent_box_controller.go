@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -17,8 +18,8 @@ type SandboxReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	StatusNotifier  chan SandboxStatusUpdate
 	pendingRequests map[types.NamespacedName]chan SandboxStatusUpdate
+	mu              sync.RWMutex // Protect pendingRequests map
 }
 
 type SandboxStatusUpdate struct {
@@ -34,47 +35,53 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	status := getSandboxStatus(sandbox)
-	resultChan, exists := r.pendingRequests[req.NamespacedName]
 
-	if exists && status == "Running" {
-		select {
-		case resultChan <- SandboxStatusUpdate{
-			Namespace: sandbox.Namespace,
-			Name:      sandbox.Name,
-			Status:    status,
-		}:
-			// delete chan to above memory leak.
-			// Since it's an unbuffered channel, channel is only deleted once it has been read from the channel.
+	// Check for pending requests with proper locking
+	if status == "Running" {
+		fmt.Printf("Sandbox %s/%s is running, sending notification\n", sandbox.Namespace, sandbox.Name)
+		r.mu.Lock()
+		resultChan, exists := r.pendingRequests[req.NamespacedName]
+		if exists {
+			fmt.Printf("Found %d pending requests for sandbox %s/%s\n", len(r.pendingRequests), sandbox.Namespace, sandbox.Name)
+			// Remove from map before sending to avoid memory leak
 			delete(r.pendingRequests, req.NamespacedName)
-		default:
+		} else {
+			fmt.Printf("No pending requests found for sandbox %s/%s, pendingRequests: %v\n", sandbox.Namespace, sandbox.Name, r.pendingRequests)
+		}
+		r.mu.Unlock()
+
+		if exists {
+			// Send notification outside the lock to avoid deadlock
+			select {
+			case resultChan <- SandboxStatusUpdate{
+				Namespace: sandbox.Namespace,
+				Name:      sandbox.Name,
+				Status:    status,
+			}:
+				fmt.Printf("Notified waiter about sandbox %s/%s reaching Running state\n",
+					sandbox.Namespace, sandbox.Name)
+			default:
+				fmt.Printf("Warning: resultChan is full for sandbox %s/%s\n",
+					sandbox.Namespace, sandbox.Name)
+			}
 		}
 	}
 
-	if status == "Running" && r.StatusNotifier != nil {
-		select {
-		case r.StatusNotifier <- SandboxStatusUpdate{
-			Namespace: sandbox.Namespace,
-			Name:      sandbox.Name,
-			Status:    status,
-		}:
-			fmt.Printf("Notified handler about sandbox %s/%s reaching Running state\n",
-				sandbox.Namespace, sandbox.Name)
-		default:
-			fmt.Printf("Warning: StatusNotifier channel is full, could not notify about sandbox %s/%s\n",
-				sandbox.Namespace, sandbox.Name)
-		}
-	}
 	return ctrl.Result{}, nil
 }
 
-func (r *SandboxReconciler) WatchSandboxOnce(namespace, name string) <-chan SandboxStatusUpdate {
+func (r *SandboxReconciler) WatchSandboxOnce(ctx context.Context, namespace, name string) <-chan SandboxStatusUpdate {
 	resultChan := make(chan SandboxStatusUpdate, 1)
+	key := types.NamespacedName{Namespace: namespace, Name: name}
 
+	// Not running yet, register for future notification
+	r.mu.Lock()
 	if r.pendingRequests == nil {
 		r.pendingRequests = make(map[types.NamespacedName]chan SandboxStatusUpdate)
 	}
-	key := types.NamespacedName{Namespace: namespace, Name: name}
 	r.pendingRequests[key] = resultChan
+	fmt.Printf("Registered for future notification for sandbox %s/%s\n", key.Namespace, key.Name)
+	r.mu.Unlock()
 
 	return resultChan
 }

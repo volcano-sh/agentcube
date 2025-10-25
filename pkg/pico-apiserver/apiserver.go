@@ -28,7 +28,7 @@ func NewServer(config *Config, sandboxController *controller.SandboxReconciler) 
 	}
 
 	// Create Kubernetes client
-	k8sClient, err := NewK8sClient(config.Kubeconfig, config.Namespace)
+	k8sClient, err := NewK8sClient(config.Namespace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}

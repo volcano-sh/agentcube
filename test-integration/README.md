@@ -5,11 +5,10 @@ This test program demonstrates and validates SSH key-based authentication for pi
 ## What it does
 
 1. **Generates SSH Key Pair**: Creates an Ed25519 public/private key pair
-2. **Creates Session**: Sends the public key to pico-apiserver when creating a session
-3. **Waits for Sandbox**: Allows time for the Kubernetes pod to start
-4. **Establishes Tunnel**: Creates an HTTP CONNECT tunnel to the sandbox
-5. **SSH Connection**: Connects via SSH using private key authentication (no password!)
-6. **Executes Commands**: Runs test commands to verify everything works
+2. **Creates Session**: Sends the public key to pico-apiserver when creating a session (waits for sandbox to be running)
+3. **Establishes Tunnel**: Creates an HTTP CONNECT tunnel to the sandbox
+4. **SSH Connection**: Connects via SSH using private key authentication (no password!)
+5. **Executes Commands**: Runs test commands to verify everything works
 
 ## Prerequisites
 
@@ -53,16 +52,23 @@ make client
 
 ```
 ===========================================
-Client Test
+SSH Key-based Authentication Test
 ===========================================
 
 Step 1: Generating SSH key pair...
-✅ Client test completed successfully
+✅ SSH key pair generated
+   Public key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB2VExampleBa...
 
-Step 5: Connecting via SSH with private key authentication...
+Step 2: Creating session with SSH public key...
+✅ Session created: d6bdc5a3-c963-4c0f-be75-bb8083739883
+
+Step 3: Establishing HTTP CONNECT tunnel...
+✅ HTTP CONNECT tunnel established
+
+Step 4: Connecting via SSH with private key authentication...
 ✅ SSH connection established with key-based auth
 
-Step 6: Executing test commands...
+Step 5: Executing test commands...
    [1/5] Executing: whoami
       Output: sandbox
    [2/5] Executing: pwd
@@ -113,9 +119,9 @@ The public key is sent in the session creation request:
 
 ### 3. Sandbox Setup
 
-pico-apiserver passes the public key to the sandbox via `SSH_PUBLIC_KEY` environment variable.
+创建session时，pico-apiserver会等待sandbox运行到running状态后才返回。它将公钥通过`SSH_PUBLIC_KEY`环境变量传递给sandbox。
 
-The sandbox's `entrypoint.sh` installs it:
+sandbox的`entrypoint.sh`会安装公钥：
 
 ```bash
 if [ -n "$SSH_PUBLIC_KEY" ]; then
@@ -145,7 +151,7 @@ config := &ssh.ClientConfig{
 Error: failed to connect: connection refused
 ```
 
-**Solution**: Ensure pico-apiserver is running:
+**解决方案**: 确保pico-apiserver正在运行:
 ```bash
 # Local
 make run
@@ -154,13 +160,13 @@ make run
 kubectl get pods -l app=pico-apiserver
 ```
 
-### Sandbox Not Ready
+### Session Creation Timeout
 
 ```
-Error: SSH handshake failed: connection reset by peer
+Error: failed to create session: request timeout
 ```
 
-**Solution**: Increase wait time or check pod status:
+**解决方案**: Sandbox创建可能需要较长时间（拉取镜像、启动pod等），检查pod状态：
 ```bash
 kubectl get pods -l managed-by=pico-apiserver
 kubectl logs <sandbox-pod-name>

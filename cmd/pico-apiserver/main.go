@@ -40,7 +40,7 @@ func main() {
 		enableTLS   = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
 		tlsCert     = flag.String("tls-cert", "", "Path to TLS certificate file")
 		tlsKey      = flag.String("tls-key", "", "Path to TLS key file")
-		jwtSecret   = flag.String("jwt-secret", "", "JWT secret for token validation (optional)")
+		disableAuth = flag.Bool("disable-auth", false, "Disable authentication (for development only)")
 	)
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
@@ -77,7 +77,12 @@ func main() {
 		EnableTLS:   *enableTLS,
 		TLSCert:     *tlsCert,
 		TLSKey:      *tlsKey,
-		JWTSecret:   *jwtSecret,
+		DisableAuth: *disableAuth,
+	}
+
+	// Warn if authentication is disabled
+	if *disableAuth {
+		log.Println("WARNING: Authentication is disabled. This should only be used in development environments!")
 	}
 
 	// Create and initialize API server

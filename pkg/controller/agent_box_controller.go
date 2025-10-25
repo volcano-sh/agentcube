@@ -86,21 +86,6 @@ func (r *SandboxReconciler) WatchSandboxOnce(ctx context.Context, namespace, nam
 	return resultChan
 }
 
-func (r *SandboxReconciler) HandleSandboxRequest(ctx context.Context, namespace, name string) error {
-	sandbox := &sandboxv1alpha1.Sandbox{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, sandbox); err != nil {
-		return err
-	}
-
-	status := getSandboxStatus(sandbox)
-
-	if status == "Running" {
-		return nil
-	} else {
-		return fmt.Errorf("sandbox %s/%s is not in Running state", namespace, name)
-	}
-}
-
 func (r *SandboxReconciler) nonRunningSandbox(sandbox *sandboxv1alpha1.Sandbox) {
 	fmt.Printf("Processing non-running sandbox %s/%s with status %s\n",
 		sandbox.Namespace, sandbox.Name, getSandboxStatus(sandbox))

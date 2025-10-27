@@ -1,106 +1,213 @@
 package picolet
 
 import (
-	"bytes"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
+	"context"
 	"testing"
+	"time"
 
-	"github.com/gorilla/mux"
-	corev1 "k8s.io/api/core/v1"
+	"github.com/stretchr/testify/assert"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/scale/scheme"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-func TestDeleteSandboxHandler(t *testing.T) {
+func TestPicoletReconciler_Reconcile_WithLastActivity(t *testing.T) {
 	testScheme := runtime.NewScheme()
 	utilruntime.Must(scheme.AddToScheme(testScheme))
 	utilruntime.Must(sandboxv1alpha1.AddToScheme(testScheme))
 
-	// create fake sandbox client
-	sandbox := &sandboxv1alpha1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-sandbox",
-			Namespace: "default",
-		},
-		Spec: sandboxv1alpha1.SandboxSpec{
-			PodTemplate: sandboxv1alpha1.PodTemplate{
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{
+	now := time.Now()
+
+	tests := []struct {
+		name              string
+		sandbox           *sandboxv1alpha1.Sandbox
+		expectDeletion    bool
+		expectRequeue     bool
+		expectedRequeueAt time.Duration
+	}{
+		{
+			name: "Sandbox with recent activity should not be deleted",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-sandbox",
+					Namespace: "default",
+					Annotations: map[string]string{
+						"last-activity-time": now.Add(-5 * time.Minute).Format(time.RFC3339),
+					},
+				},
+				Status: sandboxv1alpha1.SandboxStatus{
+					Conditions: []metav1.Condition{
 						{
-							Name:  "test-container",
-							Image: "test-image",
+							Type:   string(sandboxv1alpha1.SandboxConditionReady),
+							Status: metav1.ConditionTrue,
 						},
 					},
 				},
 			},
+			expectDeletion:    false,
+			expectRequeue:     true,
+			expectedRequeueAt: 10 * time.Minute,
+		},
+		{
+			name: "Sandbox with expired activity should be deleted",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-sandbox",
+					Namespace: "default",
+					Annotations: map[string]string{
+						"last-activity-time": now.Add(-20 * time.Minute).Format(time.RFC3339),
+					},
+				},
+				Status: sandboxv1alpha1.SandboxStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:   string(sandboxv1alpha1.SandboxConditionReady),
+							Status: metav1.ConditionTrue,
+						},
+					},
+				},
+			},
+			expectDeletion: true,
+			expectRequeue:  false,
+		},
+		{
+			name: "Non-running sandbox should not be processed",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-sandbox",
+					Namespace: "default",
+					Annotations: map[string]string{
+						"last-activity-time": now.Add(-20 * time.Minute).Format(time.RFC3339),
+					},
+				},
+				Status: sandboxv1alpha1.SandboxStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:   string(sandboxv1alpha1.SandboxConditionReady),
+							Status: metav1.ConditionFalse,
+						},
+					},
+				},
+			},
+			expectDeletion: false,
+			expectRequeue:  false,
 		},
 	}
-	// create fake client with the sandbox object
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(testScheme).
-		WithObjects(sandbox).
-		Build()
 
-	picolet := &Picolet{
-		sandboxClient: fakeClient,
-		router:        mux.NewRouter(),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(testScheme).
+				WithObjects(tt.sandbox).
+				Build()
+
+			reconciler := &PicoletReconciler{
+				Client: fakeClient,
+				Scheme: testScheme,
+			}
+
+			result, err := reconciler.Reconcile(context.Background(), reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      tt.sandbox.Name,
+					Namespace: tt.sandbox.Namespace,
+				},
+			})
+			assert.NoError(t, err)
+
+			if tt.expectRequeue {
+				assert.True(t, result.RequeueAfter > 0)
+				if tt.expectedRequeueAt > 0 {
+					assert.InDelta(t, tt.expectedRequeueAt.Seconds(), result.RequeueAfter.Seconds(), 5.0)
+				}
+			} else {
+				assert.Equal(t, time.Duration(0), result.RequeueAfter)
+			}
+
+			deletedSandbox := &sandboxv1alpha1.Sandbox{}
+			err = fakeClient.Get(context.Background(), types.NamespacedName{
+				Name:      tt.sandbox.Name,
+				Namespace: tt.sandbox.Namespace,
+			}, deletedSandbox)
+
+			if tt.expectDeletion {
+				assert.Error(t, err)
+				assert.True(t, errors.IsNotFound(err))
+			} else {
+				assert.NoError(t, err)
+			}
+		})
 	}
-	picolet.setupRoutes()
+}
 
-	// Test request for successful deletion
-	t.Run("ValidDeleteRequest", func(t *testing.T) {
-		requestBody := `{"Name": "test-sandbox", "namespace": "default"}`
-		req := httptest.NewRequest("POST", "/delete", bytes.NewBufferString(requestBody))
-		req.Header.Set("Content-Type", "application/json")
+func TestSandboxIsRunning(t *testing.T) {
+	tests := []struct {
+		name     string
+		sandbox  *sandboxv1alpha1.Sandbox
+		expected bool
+	}{
+		{
+			name: "Sandbox with ready condition true",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				Status: sandboxv1alpha1.SandboxStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:   string(sandboxv1alpha1.SandboxConditionReady),
+							Status: metav1.ConditionTrue,
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "Sandbox with ready condition false",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				Status: sandboxv1alpha1.SandboxStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:   string(sandboxv1alpha1.SandboxConditionReady),
+							Status: metav1.ConditionFalse,
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Sandbox with no ready condition",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				Status: sandboxv1alpha1.SandboxStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:   "OtherCondition",
+							Status: metav1.ConditionTrue,
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Sandbox with empty conditions",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				Status: sandboxv1alpha1.SandboxStatus{
+					Conditions: []metav1.Condition{},
+				},
+			},
+			expected: false,
+		},
+	}
 
-		rr := httptest.NewRecorder()
-		picolet.router.ServeHTTP(rr, req)
-
-		if status := rr.Code; status != http.StatusOK {
-			t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
-		}
-
-		var response SandboxResponse
-		if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
-			t.Errorf("failed to parse response: %v", err)
-		}
-
-		if !response.Success {
-			t.Errorf("expected success=true, got success=false")
-		}
-	})
-
-	// invalid request body test
-	t.Run("InvalidRequestMissingFields", func(t *testing.T) {
-		requestBody := `{"Name": ""}`
-		req := httptest.NewRequest("POST", "/delete", bytes.NewBufferString(requestBody))
-		req.Header.Set("Content-Type", "application/json")
-
-		rr := httptest.NewRecorder()
-		picolet.router.ServeHTTP(rr, req)
-
-		if status := rr.Code; status != http.StatusBadRequest {
-			t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusBadRequest)
-		}
-	})
-
-	// test deletion of non-existent sandbox
-	t.Run("NonExistentSandbox", func(t *testing.T) {
-		requestBody := `{"Name": "non-existent", "namespace": "default"}`
-		req := httptest.NewRequest("POST", "/delete", bytes.NewBufferString(requestBody))
-		req.Header.Set("Content-Type", "application/json")
-
-		rr := httptest.NewRecorder()
-		picolet.router.ServeHTTP(rr, req)
-
-		if status := rr.Code; status != http.StatusInternalServerError {
-			t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusInternalServerError)
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := sandboxIsRunning(tt.sandbox)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }

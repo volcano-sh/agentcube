@@ -86,11 +86,6 @@ func (r *SandboxReconciler) WatchSandboxOnce(ctx context.Context, namespace, nam
 	return resultChan
 }
 
-func (r *SandboxReconciler) nonRunningSandbox(sandbox *sandboxv1alpha1.Sandbox) {
-	fmt.Printf("Processing non-running sandbox %s/%s with status %s\n",
-		sandbox.Namespace, sandbox.Name, getSandboxStatus(sandbox))
-}
-
 func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) string {
 	for _, condition := range sandbox.Status.Conditions {
 		if condition.Type == string(sandboxv1alpha1.SandboxConditionReady) && condition.Status == metav1.ConditionTrue {

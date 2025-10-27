@@ -1,50 +1,54 @@
 package main
 
 import (
-	"context"
-	"flag"
-	"log"
+	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/agent-box/pico-apiserver/pkg/picolet"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes/scheme"
+	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+	ctrl "sigs.k8s.io/controller-runtime"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
+var (
+	schemeBuilder = runtime.NewScheme()
+)
+
+func init() {
+	utilruntime.Must(scheme.AddToScheme(schemeBuilder))
+	utilruntime.Must(sandboxv1alpha1.AddToScheme(schemeBuilder))
+}
+
 func main() {
-	var (
-		port       = flag.String("port", "9090", "Picolet server port")
-		kubeconfig = flag.String("kubeconfig", "", "Path to kubeconfig file")
-	)
-	flag.Parse()
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Scheme: schemeBuilder,
+		Metrics: metricsserver.Options{
+			BindAddress: "0", // Disable metrics server
+		},
+		HealthProbeBindAddress: "0", // Disable health probe server
 
-	picoletInstance, err := picolet.NewPicolet(":"+*port, *kubeconfig)
+	})
 	if err != nil {
-		log.Fatalf("Failed to create picolet: %v", err)
+		fmt.Fprintf(os.Stderr, "unable to start manager: %v\n", err)
+		os.Exit(1)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	errCh := make(chan error, 1)
-
-	go func() {
-		if err := picoletInstance.Start(ctx); err != nil {
-			errCh <- err
-		}
-	}()
-
-	log.Printf("Picolet started on port %s", *port)
-
-	select {
-	case <-sigCh:
-		log.Println("Received shutdown signal")
-	case err := <-errCh:
-		log.Printf("Picolet error: %v", err)
+	err = ctrl.NewControllerManagedBy(mgr).
+		For(&sandboxv1alpha1.Sandbox{}).
+		Complete(&picolet.PicoletReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "unable to create controller: %v\n", err)
+		os.Exit(1)
 	}
 
-	cancel()
-	log.Println("Picolet stopped")
+	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+		fmt.Fprintf(os.Stderr, "problem running manager: %v\n", err)
+		os.Exit(1)
+	}
 }

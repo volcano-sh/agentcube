@@ -25,6 +25,12 @@ const (
 	defaultTTL    = 3600
 )
 
+var (
+	// authToken is the Bearer token for authentication
+	// Set via API_TOKEN environment variable
+	authToken string
+)
+
 // CreateSessionRequest matches the API spec
 type CreateSessionRequest struct {
 	TTL          int                    `json:"ttl,omitempty"`
@@ -50,6 +56,17 @@ func main() {
 	log.Println()
 
 	apiURL := getEnv("API_URL", defaultAPIURL)
+	authToken = os.Getenv("API_TOKEN")
+
+	if authToken == "" {
+		log.Println("⚠️  WARNING: API_TOKEN environment variable not set")
+		log.Println("   Attempting to proceed without authentication token")
+		log.Println("   Set API_TOKEN to authenticate with the API server")
+		log.Println()
+	} else {
+		log.Println("✅ API authentication token loaded from environment")
+		log.Println()
+	}
 
 	// Step 1: Generate SSH key pair
 	log.Println("Step 1: Generating SSH key pair...")
@@ -265,11 +282,26 @@ func createSessionWithSSHKey(apiURL, publicKey string) (string, error) {
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	resp, err := http.Post(
+	// Create HTTP request with authentication
+	httpReq, err := http.NewRequest(
+		"POST",
 		fmt.Sprintf("%s/v1/sessions", apiURL),
-		"application/json",
 		bytes.NewBuffer(jsonData),
 	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	// Add Authorization header if token is available
+	if authToken != "" {
+		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", authToken))
+	}
+
+	// Send request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return "", fmt.Errorf("failed to send request: %w", err)
 	}
@@ -313,6 +345,12 @@ func establishTunnel(apiURL, sessionID string) (net.Conn, error) {
 	connectReq := fmt.Sprintf("CONNECT /v1/sessions/%s/tunnel HTTP/1.1\r\n", sessionID)
 	connectReq += fmt.Sprintf("Host: %s\r\n", host)
 	connectReq += "User-Agent: ssh-key-test/1.0\r\n"
+
+	// Add Authorization header if token is available
+	if authToken != "" {
+		connectReq += fmt.Sprintf("Authorization: Bearer %s\r\n", authToken)
+	}
+
 	connectReq += "\r\n"
 
 	if _, err := conn.Write([]byte(connectReq)); err != nil {

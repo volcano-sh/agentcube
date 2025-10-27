@@ -22,7 +22,4 @@ type Config struct {
 
 	// TLSKey is the path to the TLS private key file
 	TLSKey string
-
-	// DisableAuth disables authentication (for development only)
-	DisableAuth bool
 }

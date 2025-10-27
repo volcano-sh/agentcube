@@ -14,13 +14,6 @@ import (
 // authMiddleware provides service account token authentication middleware
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// If authentication is disabled, skip validation (development only)
-		if s.config.DisableAuth {
-			log.Printf("WARNING: Authentication is disabled - allowing unauthenticated request")
-			next(w, r)
-			return
-		}
-
 		// Extract token from Authorization header
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {

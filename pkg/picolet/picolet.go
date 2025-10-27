@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	SandboxExpirationInterval = 15 * time.Minute
+	SessionExpirationTimeout = 15 * time.Minute
 )
 
 // PicoletReconciler reconciles a Sandbox object
@@ -43,7 +43,7 @@ func (r *PicoletReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 			}
 
-			expirationTime := lastActivity.Add(SandboxExpirationInterval)
+			expirationTime := lastActivity.Add(SessionExpirationTimeout)
 			// Delete sandbox if expired
 			if time.Now().After(expirationTime) {
 				if err := r.Delete(ctx, sandbox); err != nil {
@@ -53,11 +53,6 @@ func (r *PicoletReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				}
 			} else {
 				return ctrl.Result{RequeueAfter: expirationTime.Sub(time.Now())}, nil
-			}
-		} else {
-			sandbox.Annotations[picoapiserver.LastActivityAnnotationKey] = time.Now().Format(time.RFC3339)
-			if err := r.Update(ctx, sandbox); err != nil {
-				return ctrl.Result{}, err
 			}
 		}
 	}

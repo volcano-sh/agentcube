@@ -40,7 +40,6 @@ func main() {
 		enableTLS   = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
 		tlsCert     = flag.String("tls-cert", "", "Path to TLS certificate file")
 		tlsKey      = flag.String("tls-key", "", "Path to TLS key file")
-		jwtSecret   = flag.String("jwt-secret", "", "JWT secret for token validation (optional)")
 	)
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
@@ -77,7 +76,6 @@ func main() {
 		EnableTLS:   *enableTLS,
 		TLSCert:     *tlsCert,
 		TLSKey:      *tlsKey,
-		JWTSecret:   *jwtSecret,
 	}
 
 	// Create and initialize API server

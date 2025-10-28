@@ -2,6 +2,7 @@ package picoapiserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -33,22 +34,39 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract user information from context
+	userToken, _ := r.Context().Value(contextKeyUserToken).(string)
+	userNamespace, _ := r.Context().Value(contextKeyNamespace).(string)
+	serviceAccount, _ := r.Context().Value(contextKeyServiceAccount).(string)
+
+	if userToken == "" || userNamespace == "" {
+		respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Unable to extract user credentials")
+		return
+	}
+
+	// Create K8s client with user's token
+	userClient, err := s.k8sClient.NewUserK8sClient(userToken, userNamespace)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "CLIENT_CREATION_FAILED", err.Error())
+		return
+	}
+
 	// Generate session ID
 	sessionID := uuid.New().String()
 
 	// Calculate sandbox name and namespace before creating
 	// This matches the naming in k8s_client.go CreateSandbox()
 	sandboxName := "sandbox-" + sessionID[:8]
-	namespace := s.config.Namespace
 
 	// CRITICAL: Register watcher BEFORE creating sandbox
 	// This ensures we don't miss the Running state notification
-	resultChan := s.sandboxController.WatchSandboxOnce(r.Context(), namespace, sandboxName)
+	resultChan := s.sandboxController.WatchSandboxOnce(r.Context(), userNamespace, sandboxName)
 
-	// Now create Kubernetes Sandbox CRD
-	_, err := s.k8sClient.CreateSandbox(r.Context(), sessionID, req.Image, req.SSHPublicKey, req.Metadata)
+	// Now create Kubernetes Sandbox CRD using user's permissions
+	_, err = userClient.CreateSandbox(r.Context(), sessionID, req.Image, req.SSHPublicKey, req.Metadata)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "SANDBOX_CREATE_FAILED", err.Error())
+		respondError(w, http.StatusForbidden, "SANDBOX_CREATE_FAILED",
+			fmt.Sprintf("Failed to create sandbox (service account: %s, namespace: %s): %v", serviceAccount, userNamespace, err))
 		return
 	}
 
@@ -138,9 +156,27 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete Kubernetes Sandbox CRD
-	if err := s.k8sClient.DeleteSandbox(r.Context(), session.SandboxName); err != nil {
-		respondError(w, http.StatusInternalServerError, "SANDBOX_DELETE_FAILED", err.Error())
+	// Extract user information from context
+	userToken, _ := r.Context().Value(contextKeyUserToken).(string)
+	userNamespace, _ := r.Context().Value(contextKeyNamespace).(string)
+	serviceAccount, _ := r.Context().Value(contextKeyServiceAccount).(string)
+
+	if userToken == "" || userNamespace == "" {
+		respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Unable to extract user credentials")
+		return
+	}
+
+	// Create K8s client with user's token
+	userClient, err := s.k8sClient.NewUserK8sClient(userToken, userNamespace)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "CLIENT_CREATION_FAILED", err.Error())
+		return
+	}
+
+	// Delete Kubernetes Sandbox CRD using user's permissions
+	if err := userClient.DeleteSandbox(r.Context(), session.SandboxName); err != nil {
+		respondError(w, http.StatusForbidden, "SANDBOX_DELETE_FAILED",
+			fmt.Sprintf("Failed to delete sandbox (service account: %s, namespace: %s): %v", serviceAccount, userNamespace, err))
 		return
 	}
 

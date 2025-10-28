@@ -37,5 +37,5 @@ USER apiserver
 EXPOSE 8080
 
 ENTRYPOINT ["/app/pico-apiserver"]
-CMD ["--port=8080", "--namespace=default"]
+CMD ["--port=8080", "--namespace=default", "--runtime-class-name=kuasar-vmm"]
 

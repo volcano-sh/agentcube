@@ -46,7 +46,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	resultChan := s.sandboxController.WatchSandboxOnce(r.Context(), namespace, sandboxName)
 
 	// Now create Kubernetes Sandbox CRD
-	_, err := s.k8sClient.CreateSandbox(r.Context(), sessionID, req.Image, req.SSHPublicKey, req.Metadata)
+	_, err := s.k8sClient.CreateSandbox(r.Context(), sessionID, req.Image, req.SSHPublicKey, s.config.RuntimeClassName, req.Metadata)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "SANDBOX_CREATE_FAILED", err.Error())
 		return

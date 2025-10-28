@@ -18,7 +18,8 @@ run:
 		--port=8080 \
 		--namespace=default \
 		--ssh-username=sandbox \
-		--ssh-port=22
+		--ssh-port=22 \
+		--runtime-class-name=kuasar-vmm
 
 # Run server (with kubeconfig)
 run-local:
@@ -28,7 +29,8 @@ run-local:
 		--kubeconfig=${HOME}/.kube/config \
 		--namespace=default \
 		--ssh-username=sandbox \
-		--ssh-port=22
+		--ssh-port=22 \
+		--runtime-class-name=kuasar-vmm
 
 # Clean build artifacts
 clean:

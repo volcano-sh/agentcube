@@ -14,6 +14,9 @@ type Config struct {
 	// SSHPort is the SSH port on sandbox pods
 	SSHPort int
 
+	// RuntimeClassName is the RuntimeClassName for sandbox pods
+	RuntimeClassName string
+
 	// EnableTLS enables HTTPS
 	EnableTLS bool
 

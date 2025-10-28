@@ -2,6 +2,7 @@ package picoapiserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -10,11 +11,17 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	agentsv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+)
+
+var (
+	// Annotation key for last activity time
+	LastActivityAnnotationKey = "last-activity-time"
 )
 
 // K8sClient encapsulates the Kubernetes client
@@ -134,6 +141,8 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sessionID, image, sshPubl
 			// Add more fields as needed from the agent-sandbox CRD spec
 		},
 	}
+	// Use the creation time as the initial active time
+	sandbox.Annotations[LastActivityAnnotationKey] = time.Now().Format(time.RFC3339)
 
 	// Convert to unstructured for dynamic client
 	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(sandbox)
@@ -274,6 +283,37 @@ func (c *K8sClient) WaitForSandboxReady(ctx context.Context, sandboxName string,
 			}
 		}
 	}
+}
+
+func (c *K8sClient) UpdateSandboxLastActivityWithPatch(ctx context.Context, sandboxName string, timestamp time.Time) error {
+	// Prepare the patch data
+	patchData := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"annotations": map[string]string{
+				LastActivityAnnotationKey: timestamp.Format(time.RFC3339),
+			},
+		},
+	}
+
+	// Convert to JSON
+	patchBytes, err := json.Marshal(patchData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal patch data: %w", err)
+	}
+
+	// Apply the patch using json merge patch
+	_, err = c.dynamicClient.Resource(sandboxGVR).Namespace(c.namespace).Patch(
+		ctx,
+		sandboxName,
+		types.MergePatchType,
+		patchBytes,
+		metav1.PatchOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to patch sandbox %s: %w", sandboxName, err)
+	}
+
+	return nil
 }
 
 // convertToStringMap converts map[string]interface{} to map[string]string for annotations

@@ -90,6 +90,12 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	// Client -> Backend
 	go func() {
 		defer wg.Done()
+		// update sandbox last activity timestamp
+		// TODO: improve here to reduce the processing latency of the cmd command
+		err := s.k8sClient.UpdateSandboxLastActivityWithPatch(r.Context(), session.SandboxName, session.LastActivityAt)
+		if err != nil {
+			log.Printf("Failed to updat last activity time for sandbox %s, err %v", session.SandboxName, err)
+		}
 		s.proxyDataOneWay(backendConn, clientConn, sessionID, "client->backend")
 	}()
 

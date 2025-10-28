@@ -1,10 +1,5 @@
-#!/bin/bash
+#!/bin/sh
 set -e
-
-# Generate SSH host keys if they don't exist
-if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
-    sudo ssh-keygen -A
-fi
 
 # Setup SSH public key if provided via environment variable
 if [ -n "$SSH_PUBLIC_KEY" ]; then
@@ -19,5 +14,5 @@ fi
 
 # Start SSH daemon
 echo "Starting SSH daemon..."
-exec sudo /usr/sbin/sshd -D -e
+exec /usr/sbin/sshd -D -e
 

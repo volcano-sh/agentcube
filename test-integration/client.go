@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	defaultAPIURL = "http://localhost:8080"
-	defaultTTL    = 3600
+	defaultAPIURL       = "http://localhost:8080"
+	defaultTTL          = 3600
+	defaultSandboxImage = "sandbox:latest"
 )
 
 // CreateSessionRequest matches the API spec
@@ -50,6 +51,12 @@ func main() {
 	log.Println()
 
 	apiURL := getEnv("API_URL", defaultAPIURL)
+	sandboxImage := getEnv("SANDBOX_IMAGE", defaultSandboxImage)
+
+	log.Printf("Configuration:")
+	log.Printf("  API URL: %s", apiURL)
+	log.Printf("  Sandbox Image: %s", sandboxImage)
+	log.Println()
 
 	// Step 1: Generate SSH key pair
 	log.Println("Step 1: Generating SSH key pair...")
@@ -63,7 +70,7 @@ func main() {
 
 	// Step 2: Create session with public key
 	log.Println("Step 2: Creating session with SSH public key...")
-	sessionID, err := createSessionWithSSHKey(apiURL, publicKey)
+	sessionID, err := createSessionWithSSHKey(apiURL, publicKey, sandboxImage)
 	if err != nil {
 		log.Fatalf("Failed to create session: %v", err)
 	}
@@ -250,10 +257,10 @@ func generateSSHKeyPair() (publicKey string, privateKey ssh.Signer, err error) {
 }
 
 // createSessionWithSSHKey creates a session with the SSH public key
-func createSessionWithSSHKey(apiURL, publicKey string) (string, error) {
+func createSessionWithSSHKey(apiURL, publicKey, image string) (string, error) {
 	req := CreateSessionRequest{
 		TTL:          defaultTTL,
-		Image:        "sandbox:latest",
+		Image:        image,
 		SSHPublicKey: publicKey,
 		Metadata: map[string]interface{}{
 			"test": "ssh-key-auth",

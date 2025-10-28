@@ -63,24 +63,44 @@ lint:
 	@echo "Running linter..."
 	golangci-lint run ./...
 
-# Build Docker image
-docker-build:
-	@echo "Building Docker image..."
-	docker build -t pico-apiserver:latest .
-
 # Install to system
 install: build
 	@echo "Installing pico-apiserver..."
 	sudo cp bin/pico-apiserver /usr/local/bin/
 
+# Docker image variables
+APISERVER_IMAGE ?= pico-apiserver:latest
+IMAGE_REGISTRY ?= ""
+
 # Docker and Kubernetes targets
 docker-build:
 	@echo "Building Docker image..."
-	docker build -t pico-apiserver:latest .
+	docker build -t $(APISERVER_IMAGE) .
 
-docker-push:
-	@echo "Pushing Docker image..."
-	docker push pico-apiserver:latest
+# Multi-architecture build (supports amd64, arm64)
+docker-buildx:
+	@echo "Building multi-architecture Docker image..."
+	docker buildx build --platform linux/amd64,linux/arm64 -t $(APISERVER_IMAGE) .
+
+# Multi-architecture build and push
+docker-buildx-push:
+	@if [ -z "$(IMAGE_REGISTRY)" ]; then \
+		echo "Error: IMAGE_REGISTRY not set. Usage: make docker-buildx-push IMAGE_REGISTRY=your-registry.com"; \
+		exit 1; \
+	fi
+	@echo "Building and pushing multi-architecture Docker image to $(IMAGE_REGISTRY)/$(APISERVER_IMAGE)..."
+	docker buildx build --platform linux/amd64,linux/arm64 \
+		-t $(IMAGE_REGISTRY)/$(APISERVER_IMAGE) \
+		--push .
+
+docker-push: docker-build
+	@if [ -z "$(IMAGE_REGISTRY)" ]; then \
+		echo "Error: IMAGE_REGISTRY not set. Usage: make docker-push IMAGE_REGISTRY=your-registry.com"; \
+		exit 1; \
+	fi
+	@echo "Tagging and pushing Docker image to $(IMAGE_REGISTRY)/$(APISERVER_IMAGE)..."
+	docker tag $(APISERVER_IMAGE) $(IMAGE_REGISTRY)/$(APISERVER_IMAGE)
+	docker push $(IMAGE_REGISTRY)/$(APISERVER_IMAGE)
 
 k8s-deploy:
 	@echo "Deploying to Kubernetes..."
@@ -97,11 +117,10 @@ k8s-logs:
 # Load image to kind cluster
 kind-load:
 	@echo "Loading image to kind..."
-	kind load docker-image pico-apiserver:latest
+	kind load docker-image $(APISERVER_IMAGE)
 
 # Sandbox image targets
 SANDBOX_IMAGE ?= sandbox:latest
-IMAGE_REGISTRY ?= ""
 
 sandbox-build:
 	@echo "Building sandbox image..."
@@ -115,6 +134,22 @@ sandbox-push: sandbox-build
 	@echo "Tagging and pushing sandbox image to $(IMAGE_REGISTRY)/$(SANDBOX_IMAGE)..."
 	docker tag $(SANDBOX_IMAGE) $(IMAGE_REGISTRY)/$(SANDBOX_IMAGE)
 	docker push $(IMAGE_REGISTRY)/$(SANDBOX_IMAGE)
+
+# Multi-architecture build for sandbox (supports amd64, arm64)
+sandbox-buildx:
+	@echo "Building multi-architecture sandbox image..."
+	docker buildx build --platform linux/amd64,linux/arm64 -t $(SANDBOX_IMAGE) images/sandbox/
+
+# Multi-architecture build and push for sandbox
+sandbox-buildx-push:
+	@if [ -z "$(IMAGE_REGISTRY)" ]; then \
+		echo "Error: IMAGE_REGISTRY not set. Usage: make sandbox-buildx-push IMAGE_REGISTRY=your-registry.com"; \
+		exit 1; \
+	fi
+	@echo "Building and pushing multi-architecture sandbox image to $(IMAGE_REGISTRY)/$(SANDBOX_IMAGE)..."
+	docker buildx build --platform linux/amd64,linux/arm64 \
+		-t $(IMAGE_REGISTRY)/$(SANDBOX_IMAGE) \
+		--push images/sandbox/
 
 sandbox-test:
 	@echo "Testing sandbox image locally..."
@@ -158,31 +193,58 @@ SESSION_ID ?= ""
 # Show help message
 help:
 	@echo "Available targets:"
-	@echo "  build         - Build the binary"
-	@echo "  run           - Run in development mode"
-	@echo "  run-local     - Run with local kubeconfig"
-	@echo "  clean         - Clean build artifacts"
-	@echo "  deps          - Download dependencies"
-	@echo "  update-deps   - Update dependencies"
-	@echo "  test          - Run tests"
-	@echo "  fmt           - Format code"
-	@echo "  lint          - Run linter"
-	@echo "  docker-build  - Build Docker image"
-	@echo "  docker-push   - Push Docker image"
-	@echo "  k8s-deploy    - Deploy to Kubernetes"
-	@echo "  k8s-delete    - Delete from Kubernetes"
-	@echo "  k8s-logs           - Show pod logs"
-	@echo "  k8s-restart        - Restart deployment"
-	@echo "  kind-load          - Load image to kind cluster"
-	@echo "  sandbox-build      - Build sandbox image"
-	@echo "  sandbox-push       - Push sandbox image to registry"
+	@echo ""
+	@echo "Build targets:"
+	@echo "  build              - Build the binary"
+	@echo "  build-all          - Build all binaries"
+	@echo "  build-test-tunnel  - Build test-tunnel tool"
+	@echo "  install            - Install to /usr/local/bin"
+	@echo ""
+	@echo "Development targets:"
+	@echo "  run                - Run in development mode"
+	@echo "  run-local          - Run with local kubeconfig"
+	@echo "  test               - Run tests"
+	@echo "  fmt                - Format code"
+	@echo "  lint               - Run linter"
+	@echo "  clean              - Clean build artifacts"
+	@echo "  deps               - Download dependencies"
+	@echo "  update-deps        - Update dependencies"
+	@echo ""
+	@echo "Docker targets (pico-apiserver):"
+	@echo "  docker-build       - Build Docker image (current platform)"
+	@echo "  docker-buildx      - Build multi-arch image (amd64, arm64)"
+	@echo "  docker-buildx-push - Build and push multi-arch image (requires IMAGE_REGISTRY)"
+	@echo "  docker-push        - Push Docker image (requires IMAGE_REGISTRY)"
+	@echo ""
+	@echo "Sandbox targets:"
+	@echo "  sandbox-build      - Build sandbox image (current platform)"
+	@echo "  sandbox-buildx     - Build multi-arch sandbox (amd64, arm64)"
+	@echo "  sandbox-buildx-push - Build and push multi-arch sandbox (requires IMAGE_REGISTRY)"
+	@echo "  sandbox-push       - Push sandbox image to registry (requires IMAGE_REGISTRY)"
 	@echo "  sandbox-test       - Test sandbox image locally"
 	@echo "  sandbox-test-stop  - Stop sandbox test container"
 	@echo "  sandbox-kind-load  - Load sandbox image to kind"
+	@echo ""
+	@echo "Kubernetes targets:"
+	@echo "  k8s-deploy         - Deploy to Kubernetes"
+	@echo "  k8s-delete         - Delete from Kubernetes"
+	@echo "  k8s-logs           - Show pod logs"
+	@echo "  kind-load          - Load pico-apiserver image to kind cluster"
+	@echo ""
+	@echo "Test targets:"
 	@echo "  test-tunnel        - Test tunnel connection (requires SESSION_ID)"
 	@echo "  test-tunnel-build  - Build and test tunnel connection"
-	@echo "  build-test-tunnel  - Build test-tunnel tool"
-	@echo "  build-all          - Build all binaries"
-	@echo "  install            - Install to /usr/local/bin"
-	@echo "  help               - Show this help message"
+	@echo ""
+	@echo "Variables:"
+	@echo "  APISERVER_IMAGE    - pico-apiserver image name (default: pico-apiserver:latest)"
+	@echo "  SANDBOX_IMAGE      - Sandbox image name (default: sandbox:latest)"
+	@echo "  IMAGE_REGISTRY     - Container registry URL (required for push targets)"
+	@echo "  API_URL            - API URL for tests (default: http://localhost:8080)"
+	@echo "  SESSION_ID         - Session ID for tunnel tests"
+	@echo "  TOKEN              - Auth token for API requests"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make docker-build APISERVER_IMAGE=my-api:v1.0"
+	@echo "  make docker-buildx-push IMAGE_REGISTRY=docker.io/myuser"
+	@echo "  make sandbox-buildx-push IMAGE_REGISTRY=ghcr.io/myorg SANDBOX_IMAGE=sandbox:v2"
 

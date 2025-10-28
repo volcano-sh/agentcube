@@ -1,6 +1,10 @@
 # Multi-stage build for pico-apiserver
 FROM golang:1.24.9-alpine AS builder
 
+# Build arguments for multi-architecture support
+ARG TARGETOS=linux
+ARG TARGETARCH
+
 WORKDIR /workspace
 
 # Copy go mod files
@@ -11,8 +15,10 @@ RUN go mod download
 COPY cmd/ cmd/
 COPY pkg/ pkg/
 
-# Build
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o pico-apiserver ./cmd/pico-apiserver
+# Build with dynamic architecture support
+# Supports amd64, arm64, arm/v7, etc.
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -o pico-apiserver ./cmd/pico-apiserver
 
 # Runtime image
 FROM alpine:3.19

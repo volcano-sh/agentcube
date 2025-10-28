@@ -301,7 +301,7 @@ func (c *K8sClient) UpdateSandboxLastActivityWithPatch(ctx context.Context, sand
 		return fmt.Errorf("failed to marshal patch data: %w", err)
 	}
 
-	// Apply the patch using strategic merge patch
+	// Apply the patch using json merge patch
 	_, err = c.dynamicClient.Resource(sandboxGVR).Namespace(c.namespace).Patch(
 		ctx,
 		sandboxName,

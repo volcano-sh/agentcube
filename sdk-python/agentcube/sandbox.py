@@ -1,0 +1,139 @@
+from enum import Enum
+
+from typing import Dict, Any, List, Optional, Tuple
+from agentcube.clients import SandboxClient, SandboxSSHClient
+
+import agentcube.clients.constants as constants
+import agentcube.utils.exceptions as exceptions
+from agentcube.utils.utils import get_env
+
+class SandboxStatus(Enum):
+    """Immutable state enum with transition validation"""
+    RUNNING = "Running"
+    PENDING = "Pending"
+    FAILED = "Failed"
+    UNKNOWN = "Unknown"
+
+class Sandbox:
+    def __init__(
+            self,
+            ttl: int = constants.DEFAULT_TTL,
+            image: str = constants.DEFAULT_IMAGE,
+            api_url: Optional[str] = None
+        ):
+        self.ttl = ttl
+        self.image = image
+        self.api_url = api_url or get_env("API_URL", constants.DEFAULT_API_URL)
+
+        self._client = SandboxClient(api_url=self.api_url)
+        public_key, private_key = SandboxSSHClient.generate_ssh_key_pair()
+        self.id = self._client.create_sandbox(
+            ttl=self.ttl, 
+            image=self.image, 
+            ssh_public_key=public_key
+        )
+
+        sock = self._client.establish_tunnel(self.id)
+        self._executor = SandboxSSHClient(
+            private_key=private_key, 
+            tunnel_sock=sock
+        )
+    
+    def __exit__(self):   
+        self.cleanup()
+
+    def is_running(self) -> bool:
+        session_info = self._client.get_sandbox(self.id)
+        if session_info:
+            return session_info["status"] == SandboxStatus.RUNNING.value
+        else:
+            raise exceptions.SandboxNotFoundError(f"Sandbox {self.id} not found")
+    
+    def get_info(self) -> Dict[str, Any]:
+        """Retrieve the latest sandbox information from the server
+        
+        Returns:
+            Dictionary containing sandbox information
+        """
+        session_info = self._client.get_sandbox(self.id)
+        if session_info:
+            return session_info
+        else:
+            raise exceptions.SandboxNotFoundError(f"Sandbox {self.id} not found")
+    
+    def list_sandboxes(self) -> List[Dict[str, Any]]:
+        """List all sandboxes from the server
+        
+        Returns:
+            List of dictionaries containing sandbox information
+        """
+        return self._client.list_sandboxes()
+    
+    def stop(self) -> bool:
+        self.cleanup()
+        return self._client.delete_sandbox(self.id)
+    
+    def execute_command(self, command: str) -> str:
+        """Execute a command over SSH
+        
+        Args:
+            command: Command to execute
+            
+        Returns:
+            Command output
+        """
+        if not self.is_running():
+            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
+        return self._executor.execute_command(command)
+    
+    def write_file(
+        self,
+        content: str,
+        remote_path: str
+    ) -> None:
+        """Upload file content to remote server via SFTP
+        
+        Args:
+            content: Content to write to remote file
+            remote_path: Path on remote server to upload to
+        """
+        if not self.is_running():
+            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
+        self._executor.write_file(content, remote_path)
+
+    def upload_file(
+        self,
+        local_path: str,
+        remote_path: str
+    ) -> None:
+        """Upload file from local path to remote server via SFTP
+        
+        Args:
+            local_path: Path on local machine to upload from
+            remote_path: Path on remote server to upload to
+        """
+        if not self.is_running():
+            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
+        self._executor.upload_file(local_path, remote_path)
+
+    def download_file(
+        self,
+        remote_path: str,
+        local_path: str
+    ) -> str:
+        """Download file content from remote server via SFTP
+        
+        Args:
+            remote_path: Path on remote server to download from
+        Returns:
+            Content of the downloaded file
+        """
+        if not self.is_running():
+            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
+        return self._executor.download_file(remote_path, local_path)
+
+    def cleanup(self):
+        """Clean up resources associated with the sandbox"""
+        self._executor.cleanup()
+        
+    

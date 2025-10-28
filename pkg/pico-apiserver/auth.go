@@ -11,6 +11,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+type contextKey string
+
+const (
+	contextKeyUserToken          contextKey = "userToken"
+	contextKeyServiceAccount     contextKey = "serviceAccount"
+	contextKeyServiceAccountName contextKey = "serviceAccountName"
+	contextKeyNamespace          contextKey = "namespace"
+)
+
 // authMiddleware provides service account token authentication middleware
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -43,17 +52,25 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// Verify the token is from the expected service account
-		if !s.isAuthorizedServiceAccount(serviceAccount) {
-			log.Printf("Unauthorized service account: %s", serviceAccount)
-			respondError(w, http.StatusForbidden, "FORBIDDEN", "Service account not authorized")
-			return
-		}
-
 		log.Printf("Authenticated request from service account: %s", serviceAccount)
 
-		// Token validation passed, continue processing request
-		next(w, r)
+		// Extract namespace from service account username
+		// Format: system:serviceaccount:<namespace>:<serviceaccount-name>
+		saParts := strings.Split(serviceAccount, ":")
+		var namespace, serviceAccountName string
+		if len(saParts) == 4 && saParts[0] == "system" && saParts[1] == "serviceaccount" {
+			namespace = saParts[2]
+			serviceAccountName = saParts[3]
+		}
+
+		// Store user information in request context
+		ctx := context.WithValue(r.Context(), contextKeyUserToken, token)
+		ctx = context.WithValue(ctx, contextKeyServiceAccount, serviceAccount)
+		ctx = context.WithValue(ctx, contextKeyServiceAccountName, serviceAccountName)
+		ctx = context.WithValue(ctx, contextKeyNamespace, namespace)
+
+		// Token validation passed, continue processing request with updated context
+		next(w, r.WithContext(ctx))
 	}
 }
 
@@ -85,15 +102,4 @@ func (s *Server) validateServiceAccountToken(ctx context.Context, token string) 
 	// Kubernetes service account username format: system:serviceaccount:<namespace>:<serviceaccount-name>
 	username := result.Status.User.Username
 	return true, username, nil
-}
-
-// isAuthorizedServiceAccount checks if the service account is authorized
-func (s *Server) isAuthorizedServiceAccount(username string) bool {
-	// Allow tokens from pico-apiserver service account in the same namespace
-	expectedPrefix := fmt.Sprintf("system:serviceaccount:%s:pico-apiserver", s.config.Namespace)
-
-	// Also allow tokens from pico-apiserver service account in pico namespace (for backward compatibility)
-	picoNamespacePrefix := "system:serviceaccount:pico:pico-apiserver"
-
-	return strings.HasPrefix(username, expectedPrefix) || strings.HasPrefix(username, picoNamespacePrefix)
 }

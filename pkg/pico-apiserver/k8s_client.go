@@ -23,6 +23,7 @@ type K8sClient struct {
 	dynamicClient dynamic.Interface
 	namespace     string
 	scheme        *runtime.Scheme
+	baseConfig    *rest.Config // Store base config for creating user clients
 }
 
 // Sandbox CRD GroupVersionResource
@@ -74,6 +75,7 @@ func NewK8sClient(namespace string) (*K8sClient, error) {
 		dynamicClient: dynamicClient,
 		namespace:     namespace,
 		scheme:        scheme,
+		baseConfig:    config,
 	}, nil
 }
 
@@ -83,8 +85,33 @@ type SandboxInfo struct {
 	Namespace string
 }
 
-// CreateSandbox creates a new Sandbox CRD resource using the agent-sandbox types
-func (c *K8sClient) CreateSandbox(ctx context.Context, sessionID, image, sshPublicKey string, metadata map[string]interface{}) (*SandboxInfo, error) {
+// UserK8sClient creates a temporary Kubernetes client using user's token
+type UserK8sClient struct {
+	dynamicClient dynamic.Interface
+	namespace     string
+}
+
+// NewUserK8sClient creates a K8s client using the provided user token
+func (c *K8sClient) NewUserK8sClient(userToken, namespace string) (*UserK8sClient, error) {
+	// Create a new config based on base config but with user's token
+	config := rest.CopyConfig(c.baseConfig)
+	config.BearerToken = userToken
+	config.BearerTokenFile = "" // Clear token file if any
+
+	// Create dynamic client with user's token
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic client with user token: %w", err)
+	}
+
+	return &UserK8sClient{
+		dynamicClient: dynamicClient,
+		namespace:     namespace,
+	}, nil
+}
+
+// CreateSandbox creates a new Sandbox using user's permissions
+func (u *UserK8sClient) CreateSandbox(ctx context.Context, sessionID, image, sshPublicKey string, metadata map[string]interface{}) (*SandboxInfo, error) {
 	// Use first 8 characters of session ID for sandbox name
 	sandboxName := fmt.Sprintf("sandbox-%s", sessionID[:8])
 
@@ -110,7 +137,7 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sessionID, image, sshPubl
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sandboxName,
-			Namespace: c.namespace,
+			Namespace: u.namespace,
 			Labels: map[string]string{
 				"session-id":   sessionID,
 				"managed-by":   "pico-apiserver",
@@ -143,8 +170,8 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sessionID, image, sshPubl
 
 	unstructuredSandbox := &unstructured.Unstructured{Object: unstructuredObj}
 
-	// Create Sandbox CRD
-	created, err := c.dynamicClient.Resource(sandboxGVR).Namespace(c.namespace).Create(
+	// Create Sandbox CRD using user's permissions
+	created, err := u.dynamicClient.Resource(sandboxGVR).Namespace(u.namespace).Create(
 		ctx,
 		unstructuredSandbox,
 		metav1.CreateOptions{},
@@ -159,9 +186,9 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sessionID, image, sshPubl
 	}, nil
 }
 
-// DeleteSandbox deletes a Sandbox CRD resource
-func (c *K8sClient) DeleteSandbox(ctx context.Context, sandboxName string) error {
-	err := c.dynamicClient.Resource(sandboxGVR).Namespace(c.namespace).Delete(
+// DeleteSandbox deletes a Sandbox CRD resource using user's permissions
+func (u *UserK8sClient) DeleteSandbox(ctx context.Context, sandboxName string) error {
+	err := u.dynamicClient.Resource(sandboxGVR).Namespace(u.namespace).Delete(
 		ctx,
 		sandboxName,
 		metav1.DeleteOptions{},

@@ -19,6 +19,60 @@ This test program demonstrates and validates SSH key-based authentication for pi
 - pico-apiserver running (locally or in Kubernetes)
 - Sandbox image built with SSH key support
 - Kubernetes cluster with agent-sandbox controller (if deploying sandboxes)
+- Service Account with appropriate RBAC permissions (see below)
+
+## Permission Model
+
+**Important:** pico-apiserver now uses a caller-permission-based operation model. This means:
+
+1. **All operations are executed using the caller's Service Account Token**
+   - When creating a Sandbox, it's created in the caller's namespace using their permissions
+   - When deleting a Sandbox, it's deleted using the caller's permissions
+
+2. **The caller's Service Account must have appropriate RBAC permissions**
+   - Must have `create` permission for `sandboxes` resources (in their namespace)
+   - Must have `delete` permission for `sandboxes` resources (in their namespace)
+   - Must have `get` and `list` permissions to view Sandbox status
+
+3. **Sandboxes are created in the caller's namespace**
+   - No longer centrally created in pico-apiserver's namespace
+   - Each Service Account manages Sandboxes in their own namespace
+
+### RBAC Configuration Example
+
+Configure necessary permissions for your Service Account:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: my-app
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sandbox-manager
+  namespace: default
+rules:
+- apiGroups: ["agents.x-k8s.io"]
+  resources: ["sandboxes"]
+  verbs: ["create", "delete", "get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: my-app-sandbox-manager
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: sandbox-manager
+subjects:
+- kind: ServiceAccount
+  name: my-app
+  namespace: default
+```
 
 ## Building
 
@@ -30,31 +84,49 @@ go build -o client client.go
 
 ## Running
 
-### Default (local pico-apiserver)
+### Using Your Service Account Token
+
+**Important:** Use a Service Account Token that has permissions to create/delete Sandboxes.
 
 ```bash
-# 1. Generate and export token
-export API_TOKEN=$(kubectl create token pico-apiserver -n pico --duration=24h)
+# 1. Generate token for your Service Account
+# Replace my-app if using a different Service Account name
+export API_TOKEN=$(kubectl create token my-app -n default --duration=24h)
 
 # 2. Run client
 ./client
 ```
 
-### Custom API URL
+Sandboxes will be created in the `default` namespace.
+
+### Using Custom API URL
 
 ```bash
+# Replace with your Service Account information
+export API_TOKEN=$(kubectl create token my-app -n default --duration=24h)
 API_URL=http://your-server:8080 ./client
 ```
 
-### From project root
+### From Project Root
 
 ```bash
-# 1. Generate and export token
+# 1. Generate token
+export API_TOKEN=$(kubectl create token my-app -n default --duration=24h)
+
+# 2. Run directly
+go run ./example/client.go
+```
+
+### Test Example (using pico namespace)
+
+If you want to test using the pico-apiserver Service Account in the pico namespace:
+
+```bash
+# 1. Ensure pico-apiserver SA has permissions to create Sandboxes in pico namespace
 export API_TOKEN=$(kubectl create token pico-apiserver -n pico --duration=24h)
 
 # 2. Run client
-# Run directly
-go run ./example/client.go
+./client
 ```
 
 ## Expected Output
@@ -63,6 +135,8 @@ go run ./example/client.go
 ===========================================
 SSH Key-based Authentication Test
 ===========================================
+
+✅ API authentication token loaded from environment
 
 Step 1: Generating SSH key pair...
 ✅ SSH key pair generated
@@ -132,4 +206,63 @@ Summary:
 
 Session ID: d6bdc5a3-c963-4c0f-be75-bb8083739883
 Downloaded file: /tmp/sandbox_output.json
+```
+
+## Common Errors
+
+### 403 Forbidden - Insufficient Permissions
+
+If you see an error like:
+
+```
+Failed to create session: request failed with status 403: {
+  "error": "SANDBOX_CREATE_FAILED",
+  "message": "Failed to create sandbox (service account: system:serviceaccount:default:my-app, namespace: default): ..."
+}
+```
+
+**Cause:** Your Service Account doesn't have permissions to create Sandboxes in its namespace.
+
+**Solution:**
+
+1. Check Service Account's RBAC permissions:
+```bash
+kubectl auth can-i create sandboxes.agents.x-k8s.io \
+  --as=system:serviceaccount:default:my-app \
+  -n default
+```
+
+2. If it returns "no", apply the RBAC configuration (see "Permission Model" section above)
+
+3. Verify permissions are effective:
+```bash
+kubectl auth can-i create sandboxes.agents.x-k8s.io \
+  --as=system:serviceaccount:default:my-app \
+  -n default
+# Should return "yes"
+```
+
+### 401 Unauthorized
+
+If you see:
+
+```
+Failed to create session: request failed with status 401: {
+  "error": "UNAUTHORIZED",
+  "message": "Missing authorization header"
+}
+```
+
+**Solution:** Make sure `API_TOKEN` environment variable is set:
+
+```bash
+export API_TOKEN=$(kubectl create token my-app -n default --duration=24h)
+```
+
+### Token Expired
+
+Tokens are valid for 24 hours by default. If expired, regenerate it:
+
+```bash
+export API_TOKEN=$(kubectl create token my-app -n default --duration=24h)
 ```

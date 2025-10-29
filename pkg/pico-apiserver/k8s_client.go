@@ -91,10 +91,7 @@ type SandboxInfo struct {
 }
 
 // CreateSandbox creates a new Sandbox CRD resource using the agent-sandbox types
-func (c *K8sClient) CreateSandbox(ctx context.Context, sessionID, image, sshPublicKey, runtimeClassName string, metadata map[string]interface{}) (*SandboxInfo, error) {
-	// Use first 8 characters of session ID for sandbox name
-	sandboxName := fmt.Sprintf("sandbox-%s", sessionID[:8])
-
+func (c *K8sClient) CreateSandbox(ctx context.Context, sandboxName, sandboxID, image, sshPublicKey, runtimeClassName string, metadata map[string]interface{}) (*SandboxInfo, error) {
 	// Use default sandbox image if not specified
 	if image == "" {
 		image = "sandbox:latest"
@@ -109,6 +106,23 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sessionID, image, sshPubl
 		})
 	}
 
+	// Create PodSpec
+	podSpec := corev1.PodSpec{
+		Containers: []corev1.Container{
+			{
+				Name:            "sandbox",
+				Image:           image,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				Env:             env,
+			},
+		},
+	}
+
+	// Set RuntimeClassName only if it's not empty
+	if runtimeClassName != "" {
+		podSpec.RuntimeClassName = &runtimeClassName
+	}
+
 	// Create Sandbox object using agent-sandbox types
 	sandbox := &agentsv1alpha1.Sandbox{
 		TypeMeta: metav1.TypeMeta{
@@ -119,7 +133,7 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sessionID, image, sshPubl
 			Name:      sandboxName,
 			Namespace: c.namespace,
 			Labels: map[string]string{
-				"session-id":   sessionID,
+				"sandbox-id":   sandboxID,
 				"managed-by":   "pico-apiserver",
 				"sandbox-name": sandboxName,
 			},
@@ -127,17 +141,7 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sessionID, image, sshPubl
 		},
 		Spec: agentsv1alpha1.SandboxSpec{
 			PodTemplate: agentsv1alpha1.PodTemplate{
-				Spec: corev1.PodSpec{
-					RuntimeClassName: &runtimeClassName,
-					Containers: []corev1.Container{
-						{
-							Name:            "sandbox",
-							Image:           image,
-							ImagePullPolicy: corev1.PullIfNotPresent,
-							Env:             env,
-						},
-					},
-				},
+				Spec: podSpec,
 			},
 			// Add more fields as needed from the agent-sandbox CRD spec
 		},

@@ -19,12 +19,12 @@ import (
 // This is the core functionality: acting as a transparent proxy between client and sandbox pod
 func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	sessionID := vars["sessionId"]
+	sandboxID := vars["sandboxId"]
 
-	// Check if session exists
-	session := s.sessionStore.Get(sessionID)
-	if session == nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
+	// Check if sandbox exists
+	sandbox := s.sandboxStore.Get(sandboxID)
+	if sandbox == nil {
+		http.Error(w, "Sandbox not found", http.StatusNotFound)
 		return
 	}
 
@@ -35,16 +35,16 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get sandbox pod IP and SSH port
-	podIP, err := s.k8sClient.GetSandboxPodIP(r.Context(), session.SandboxName)
+	podIP, err := s.k8sClient.GetSandboxPodIP(r.Context(), sandbox.SandboxName)
 	if err != nil {
-		log.Printf("Failed to get pod IP for session %s: %v", sessionID, err)
+		log.Printf("Failed to get pod IP for sandbox %s: %v", sandboxID, err)
 		http.Error(w, "Sandbox not ready", http.StatusServiceUnavailable)
 		return
 	}
 
 	// Connect to sandbox pod SSH service
 	sshAddr := net.JoinHostPort(podIP, strconv.Itoa(s.config.SSHPort))
-	log.Printf("Establishing SSH tunnel to %s for session %s", sshAddr, sessionID)
+	log.Printf("Establishing SSH tunnel to %s for sandbox %s", sshAddr, sandboxID)
 
 	backendConn, err := net.DialTimeout("tcp", sshAddr, 10*time.Second)
 	if err != nil {
@@ -77,11 +77,11 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("HTTP CONNECT tunnel established for session %s", sessionID)
+	log.Printf("HTTP CONNECT tunnel established for sandbox %s", sandboxID)
 
-	// Update session last activity time
-	session.LastActivityAt = time.Now()
-	s.sessionStore.Set(sessionID, session)
+	// Update sandbox last activity time
+	sandbox.LastActivityAt = time.Now()
+	s.sandboxStore.Set(sandboxID, sandbox)
 
 	// Start bidirectional transparent proxy with proper synchronization
 	var wg sync.WaitGroup
@@ -92,17 +92,17 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		defer wg.Done()
 		// update sandbox last activity timestamp
 		// TODO: improve here to reduce the processing latency of the cmd command
-		err := s.k8sClient.UpdateSandboxLastActivityWithPatch(r.Context(), session.SandboxName, session.LastActivityAt)
+		err := s.k8sClient.UpdateSandboxLastActivityWithPatch(r.Context(), sandbox.SandboxName, sandbox.LastActivityAt)
 		if err != nil {
-			log.Printf("Failed to updat last activity time for sandbox %s, err %v", session.SandboxName, err)
+			log.Printf("Failed to updat last activity time for sandbox %s, err %v", sandbox.SandboxName, err)
 		}
-		s.proxyDataOneWay(backendConn, clientConn, sessionID, "client->backend")
+		s.proxyDataOneWay(backendConn, clientConn, sandboxID, "client->backend")
 	}()
 
 	// Backend -> Client
 	go func() {
 		defer wg.Done()
-		s.proxyDataOneWay(clientConn, backendConn, sessionID, "backend->client")
+		s.proxyDataOneWay(clientConn, backendConn, sandboxID, "backend->client")
 	}()
 
 	// Wait for both directions to complete
@@ -112,19 +112,19 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	clientConn.Close()
 	backendConn.Close()
 
-	log.Printf("HTTP CONNECT tunnel closed for session %s", sessionID)
+	log.Printf("HTTP CONNECT tunnel closed for sandbox %s", sandboxID)
 }
 
 // proxyDataOneWay forwards data in one direction without closing connections
 // Connection closing is handled by the caller to avoid double-close issues
-func (s *Server) proxyDataOneWay(dst io.Writer, src io.Reader, sessionID, direction string) {
+func (s *Server) proxyDataOneWay(dst io.Writer, src io.Reader, sandboxID, direction string) {
 	written, err := io.Copy(dst, src)
 	if err != nil {
-		log.Printf("Proxy %s for session %s closed with error (transferred %d bytes): %v",
-			direction, sessionID, written, err)
+		log.Printf("Proxy %s for sandbox %s closed with error (transferred %d bytes): %v",
+			direction, sandboxID, written, err)
 	} else {
-		log.Printf("Proxy %s for session %s closed gracefully (transferred %d bytes)",
-			direction, sessionID, written)
+		log.Printf("Proxy %s for sandbox %s closed gracefully (transferred %d bytes)",
+			direction, sandboxID, written)
 	}
 
 	// Attempt TCP half-close if supported (close write side but keep read side open)

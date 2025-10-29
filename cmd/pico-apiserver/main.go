@@ -44,9 +44,12 @@ func main() {
 		jwtSecret        = flag.String("jwt-secret", "", "JWT secret for token validation (optional)")
 	)
 
+	// Parse command line flags
+	flag.Parse()
+
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 
-	// Setup controller manager (this will parse flags including --kubeconfig)
+	// Setup controller manager
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: schemeBuilder,
 		Metrics: metricsserver.Options{

@@ -26,17 +26,23 @@ const (
 	defaultSandboxImage = "sandbox:latest"
 )
 
-// CreateSessionRequest matches the API spec
-type CreateSessionRequest struct {
+var (
+	// authToken is the Bearer token for authentication
+	// Set via API_TOKEN environment variable
+	authToken string
+)
+
+// CreateSandboxRequest matches the API spec
+type CreateSandboxRequest struct {
 	TTL          int                    `json:"ttl,omitempty"`
 	Image        string                 `json:"image,omitempty"`
 	SSHPublicKey string                 `json:"sshPublicKey,omitempty"`
 	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 }
 
-// SessionResponse matches the API response
-type SessionResponse struct {
-	SessionID      string                 `json:"sessionId"`
+// Sandbox matches the API response
+type Sandbox struct {
+	SandboxID      string                 `json:"sandboxId"`
 	Status         string                 `json:"status"`
 	CreatedAt      string                 `json:"createdAt"`
 	ExpiresAt      string                 `json:"expiresAt"`
@@ -52,10 +58,14 @@ func main() {
 
 	apiURL := getEnv("API_URL", defaultAPIURL)
 	sandboxImage := getEnv("SANDBOX_IMAGE", defaultSandboxImage)
+	authToken = os.Getenv("API_TOKEN")
 
 	log.Printf("Configuration:")
 	log.Printf("  API URL: %s", apiURL)
 	log.Printf("  Sandbox Image: %s", sandboxImage)
+	if authToken != "" {
+		log.Printf("  Auth Token: <provided>")
+	}
 	log.Println()
 
 	// Step 1: Generate SSH key pair
@@ -68,18 +78,18 @@ func main() {
 	log.Printf("   Public key: %s", publicKey[:50]+"...")
 	log.Println()
 
-	// Step 2: Create session with public key
-	log.Println("Step 2: Creating session with SSH public key...")
-	sessionID, err := createSessionWithSSHKey(apiURL, publicKey, sandboxImage)
+	// Step 2: Create sandbox with public key
+	log.Println("Step 2: Creating sandbox with SSH public key...")
+	sandboxID, err := createSandboxWithSSHKey(apiURL, publicKey, sandboxImage)
 	if err != nil {
-		log.Fatalf("Failed to create session: %v", err)
+		log.Fatalf("Failed to create sandbox: %v", err)
 	}
-	log.Printf("✅ Session created: %s", sessionID)
+	log.Printf("✅ Sandbox created: %s", sandboxID)
 	log.Println()
 
 	// Step 3: Establish HTTP CONNECT tunnel
 	log.Println("Step 3: Establishing HTTP CONNECT tunnel...")
-	tunnelConn, err := establishTunnel(apiURL, sessionID)
+	tunnelConn, err := establishTunnel(apiURL, sandboxID)
 	if err != nil {
 		log.Fatalf("Failed to establish tunnel: %v", err)
 	}
@@ -222,7 +232,7 @@ if __name__ == "__main__":
 	log.Println()
 	log.Println("Summary:")
 	log.Println("  ✅ SSH key pair generated")
-	log.Println("  ✅ Session created with public key")
+	log.Println("  ✅ Sandbox created with public key")
 	log.Println("  ✅ HTTP CONNECT tunnel established")
 	log.Println("  ✅ SSH connection with key-based auth")
 	log.Println("  ✅ Basic commands executed successfully")
@@ -231,7 +241,7 @@ if __name__ == "__main__":
 	log.Println("  ✅ Output file downloaded via SFTP")
 	log.Println("  ✅ Downloaded file verified")
 	log.Println()
-	log.Printf("Session ID: %s", sessionID)
+	log.Printf("Sandbox ID: %s", sandboxID)
 	log.Printf("Downloaded file: %s", localOutputPath)
 	log.Println()
 }
@@ -256,9 +266,9 @@ func generateSSHKeyPair() (publicKey string, privateKey ssh.Signer, err error) {
 	return pubKeyStr[:len(pubKeyStr)-1], signer, nil // Remove trailing newline
 }
 
-// createSessionWithSSHKey creates a session with the SSH public key
-func createSessionWithSSHKey(apiURL, publicKey, image string) (string, error) {
-	req := CreateSessionRequest{
+// createSandboxWithSSHKey creates a sandbox with the SSH public key
+func createSandboxWithSSHKey(apiURL, publicKey, image string) (string, error) {
+	req := CreateSandboxRequest{
 		TTL:          defaultTTL,
 		Image:        image,
 		SSHPublicKey: publicKey,
@@ -272,11 +282,26 @@ func createSessionWithSSHKey(apiURL, publicKey, image string) (string, error) {
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	resp, err := http.Post(
-		fmt.Sprintf("%s/v1/sessions", apiURL),
-		"application/json",
+	// Create HTTP request with authentication
+	httpReq, err := http.NewRequest(
+		"POST",
+		fmt.Sprintf("%s/sandboxes", apiURL),
 		bytes.NewBuffer(jsonData),
 	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	// Add Authorization header if token is available
+	if authToken != "" {
+		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", authToken))
+	}
+
+	// Send request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return "", fmt.Errorf("failed to send request: %w", err)
 	}
@@ -287,16 +312,16 @@ func createSessionWithSSHKey(apiURL, publicKey, image string) (string, error) {
 		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var sessionResp SessionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&sessionResp); err != nil {
+	var sandbox Sandbox
+	if err := json.NewDecoder(resp.Body).Decode(&sandbox); err != nil {
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	return sessionResp.SessionID, nil
+	return sandbox.SandboxID, nil
 }
 
 // establishTunnel establishes an HTTP CONNECT tunnel
-func establishTunnel(apiURL, sessionID string) (net.Conn, error) {
+func establishTunnel(apiURL, sandboxID string) (net.Conn, error) {
 	// Parse API URL to get host
 	var host string
 	if len(apiURL) > 7 && apiURL[:7] == "http://" {
@@ -317,9 +342,15 @@ func establishTunnel(apiURL, sessionID string) (net.Conn, error) {
 	}
 
 	// Send CONNECT request
-	connectReq := fmt.Sprintf("CONNECT /v1/sessions/%s/tunnel HTTP/1.1\r\n", sessionID)
+	connectReq := fmt.Sprintf("CONNECT /sandboxes/%s HTTP/1.1\r\n", sandboxID)
 	connectReq += fmt.Sprintf("Host: %s\r\n", host)
 	connectReq += "User-Agent: ssh-key-test/1.0\r\n"
+
+	// Add Authorization header if token is available
+	if authToken != "" {
+		connectReq += fmt.Sprintf("Authorization: Bearer %s\r\n", authToken)
+	}
+
 	connectReq += "\r\n"
 
 	if _, err := conn.Write([]byte(connectReq)); err != nil {

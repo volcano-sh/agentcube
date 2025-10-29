@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// Session represents a sandbox session
-type Session struct {
-	SessionID      string                 `json:"sessionId"`
+// Sandbox represents a sandbox instance
+type Sandbox struct {
+	SandboxID      string                 `json:"sandboxId"`
 	Status         string                 `json:"status"` // "running" or "paused"
 	CreatedAt      time.Time              `json:"createdAt"`
 	ExpiresAt      time.Time              `json:"expiresAt"`
@@ -16,84 +16,84 @@ type Session struct {
 	SandboxName    string                 `json:"-"` // Kubernetes Sandbox CRD name
 }
 
-// SessionStore manages in-memory session storage
-type SessionStore struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
+// SandboxStore manages in-memory sandbox storage
+type SandboxStore struct {
+	mu        sync.RWMutex
+	sandboxes map[string]*Sandbox
 }
 
-// NewSessionStore creates a new session store
-func NewSessionStore() *SessionStore {
-	return &SessionStore{
-		sessions: make(map[string]*Session),
+// NewSandboxStore creates a new sandbox store
+func NewSandboxStore() *SandboxStore {
+	return &SandboxStore{
+		sandboxes: make(map[string]*Sandbox),
 	}
 }
 
-// Set sets or updates a session
-func (s *SessionStore) Set(sessionID string, session *Session) {
+// Set sets or updates a sandbox
+func (s *SandboxStore) Set(sandboxID string, sandbox *Sandbox) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sessions[sessionID] = session
+	s.sandboxes[sandboxID] = sandbox
 }
 
-// Get gets a session
-func (s *SessionStore) Get(sessionID string) *Session {
+// Get gets a sandbox
+func (s *SandboxStore) Get(sandboxID string) *Sandbox {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	session, exists := s.sessions[sessionID]
+	sandbox, exists := s.sandboxes[sandboxID]
 	if !exists {
 		return nil
 	}
 
 	// Check if expired
-	if time.Now().After(session.ExpiresAt) {
+	if time.Now().After(sandbox.ExpiresAt) {
 		return nil
 	}
 
-	return session
+	return sandbox
 }
 
-// Delete deletes a session
-func (s *SessionStore) Delete(sessionID string) {
+// Delete deletes a sandbox
+func (s *SandboxStore) Delete(sandboxID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.sessions, sessionID)
+	delete(s.sandboxes, sandboxID)
 }
 
-// List lists all non-expired sessions
-func (s *SessionStore) List() []*Session {
+// List lists all non-expired sandboxes
+func (s *SandboxStore) List() []*Sandbox {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	now := time.Now()
-	var sessions []*Session
-	for _, session := range s.sessions {
-		if now.Before(session.ExpiresAt) {
-			sessions = append(sessions, session)
+	var sandboxes []*Sandbox
+	for _, sandbox := range s.sandboxes {
+		if now.Before(sandbox.ExpiresAt) {
+			sandboxes = append(sandboxes, sandbox)
 		}
 	}
-	return sessions
+	return sandboxes
 }
 
-// CleanExpired cleans up expired sessions
-func (s *SessionStore) CleanExpired() int {
+// CleanExpired cleans up expired sandboxes
+func (s *SandboxStore) CleanExpired() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	now := time.Now()
 	count := 0
-	for sessionID, session := range s.sessions {
-		if now.After(session.ExpiresAt) {
-			delete(s.sessions, sessionID)
+	for sandboxID, sandbox := range s.sandboxes {
+		if now.After(sandbox.ExpiresAt) {
+			delete(s.sandboxes, sandboxID)
 			count++
 		}
 	}
 	return count
 }
 
-// CreateSessionRequest represents the request structure for creating a session
-type CreateSessionRequest struct {
+// CreateSandboxRequest represents the request structure for creating a sandbox
+type CreateSandboxRequest struct {
 	TTL          int                    `json:"ttl,omitempty"`
 	Image        string                 `json:"image,omitempty"`
 	SSHPublicKey string                 `json:"sshPublicKey,omitempty"`

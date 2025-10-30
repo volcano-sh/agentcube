@@ -1,4 +1,5 @@
 import os
+import shlex
 import socket
 from typing import Dict, List, Optional, Tuple
 import paramiko
@@ -90,8 +91,59 @@ class SandboxSSHClient :
         self,
         language: str,
         code: str,
-        ) -> Tuple[Optional[str], Optional[str]]:
-        pass
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Run code snippet in the specified language over SSH
+        
+        Args:
+            language: Programming language of the code snippet (e.g., "python", "bash")
+            code: Code snippet to execute
+        Returns:
+            Tuple of (stdout, stderr) from code execution. 
+            If execution fails, stdout is None and stderr contains error info.
+        """
+        lang = language.lower()
+        lang_aliases = {
+            "python": ["python", "py", "python3"],
+            "bash": ["bash", "sh", "shell"]
+        }
+
+        target_lang = None
+        for std_lang, aliases in lang_aliases.items():
+            if lang in aliases:
+                target_lang = std_lang
+                break
+        if not target_lang:
+            raise ValueError(f"Unsupported language: {language}. Supported: {list(lang_aliases.keys())}")
+
+        if target_lang == "python":
+            quoted_code = shlex.quote(code)
+            command = f"python3 -c {quoted_code}"
+        elif target_lang == "bash":
+            quoted_code = shlex.quote(code)
+            command = f"bash -c {quoted_code}"
+
+        ssh_client = self._ssh_client or self.connect_ssh()
+        if not ssh_client:
+            raise ConnectionError("No SSH connection established. Please call connect_ssh first.")
+
+        try:
+            stdin, stdout, stderr = ssh_client.exec_command(command, timeout=30)
+            exit_status = stdout.channel.recv_exit_status()
+        except Exception as e:
+            return None, f"Command execution failed: {str(e)}"
+
+        try:
+            output = stdout.read().decode("utf-8", errors="replace").strip()
+            error = stderr.read().decode("utf-8", errors="replace").strip()
+        except UnicodeDecodeError:
+            output = stdout.read().decode("latin-1").strip()
+            error = stderr.read().decode("latin-1").strip()
+
+        if exit_status != 0:
+            error = f"Exit code {exit_status}: {error}" if error else f"Command failed with exit code {exit_status}"
+            return None, error
+
+        return output, None
 
     def write_file(
         self,

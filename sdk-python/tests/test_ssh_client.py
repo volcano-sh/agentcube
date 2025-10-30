@@ -101,11 +101,19 @@ print(f"Generated {n} Fibonacci numbers")
         with open(local_path, 'r') as f:
             data = json.load(f)
         log.info(f"   Generated {data['count']} numbers, sum: {data['sum']}")
-        
+
+        #10. Run Code
+        log.info("Step 10: Running code snippet via SSH...")
+        stdout, stderr = ssh_client.run_code(
+            language="py",
+            code="print('Hello from Python!'); import sys; print('Python version:', sys.version.split()[0])"
+        )
+        print(f"✅ Python Output: {stdout}")
+         
         log.info("\n===========================================")
         log.info("🎉 All operations completed successfully")
         log.info("===========================================")
-         
+
     except Exception as e:
         log.error(f"\n❌ Error: {str(e)}")
     finally:

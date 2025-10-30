@@ -73,6 +73,7 @@ spec:
             - --namespace=default
             - --ssh-username=sandbox
             - --ssh-port=22
+            - --runtime-class-name=
           resources:
             requests:
               cpu: 100m

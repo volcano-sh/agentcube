@@ -96,8 +96,18 @@ print(f"Generated {n} Fibonacci numbers")
         log.info("🎉 All operations completed successfully")
         log.info("===========================================")
 
-        # 9. Stop sandbox
-        log.info("\nStep 9: Stop sandbox...")
+        # 9. Run Code
+        log.info("\nStep 9: Running code in sandbox...")
+                #10. Run Code
+        log.info("Step 10: Running code snippet via SSH...")
+        stdout, stderr = sandbox.run_code(
+            language="py",
+            code="print('Hello from Python!'); import sys; print('Python version:', sys.version.split()[0])"
+        )
+        print(f"✅ Python Output: {stdout}")
+         
+        # 10. Stop sandbox
+        log.info("\nStep 10: Stop sandbox...")
         if sandbox.stop():
             log.info(f"✅ Sandbox {sandbox.id} deleted\n")
         else:

@@ -16,9 +16,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleCreateSession handles session creation requests
-func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
-	var req CreateSessionRequest
+// handleCreateSandbox handles sandbox creation requests
+func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
+	var req CreateSandboxRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
 		return
@@ -33,12 +33,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate session ID
-	sessionID := uuid.New().String()
+	// Generate sandbox ID
+	sandboxID := uuid.New().String()
 
 	// Calculate sandbox name and namespace before creating
-	// This matches the naming in k8s_client.go CreateSandbox()
-	sandboxName := "sandbox-" + sessionID[:8]
+	sandboxName := "sandbox-" + sandboxID[:8]
 	namespace := s.config.Namespace
 
 	// CRITICAL: Register watcher BEFORE creating sandbox
@@ -46,7 +45,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	resultChan := s.sandboxController.WatchSandboxOnce(r.Context(), namespace, sandboxName)
 
 	// Now create Kubernetes Sandbox CRD
-	_, err := s.k8sClient.CreateSandbox(r.Context(), sessionID, req.Image, req.SSHPublicKey, s.config.RuntimeClassName, req.Metadata)
+	_, err := s.k8sClient.CreateSandbox(r.Context(), sandboxName, sandboxID, req.Image, req.SSHPublicKey, s.config.RuntimeClassName, req.Metadata)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "SANDBOX_CREATE_FAILED", err.Error())
 		return
@@ -54,10 +53,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	select {
 	case result := <-resultChan:
-		// Create session object
+		// Create sandbox object
 		now := time.Now()
-		session := &Session{
-			SessionID:      sessionID,
+		sandbox := &Sandbox{
+			SandboxID:      sandboxID,
 			Status:         result.Status,
 			CreatedAt:      now,
 			ExpiresAt:      now.Add(time.Duration(req.TTL) * time.Second),
@@ -66,9 +65,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			SandboxName:    sandboxName,
 		}
 
-		// Store session
-		s.sessionStore.Set(sessionID, session)
-		respondJSON(w, http.StatusOK, session)
+		// Store sandbox
+		s.sandboxStore.Set(sandboxID, sandbox)
+		respondJSON(w, http.StatusOK, sandbox)
 		return
 	case <-time.After(time.Duration(req.TTL) * time.Second):
 		respondError(w, http.StatusInternalServerError, "SANDBOX_TIMEOUT", "Sandbox creation timed out")
@@ -76,8 +75,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleListSessions handles listing all sessions requests
-func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
+// handleListSandboxes handles listing all sandboxes requests
+func (s *Server) handleListSandboxes(w http.ResponseWriter, r *http.Request) {
 	// Get limit and offset from query parameters
 	limit := getIntQueryParam(r, "limit", 50)
 	offset := getIntQueryParam(r, "offset", 0)
@@ -87,9 +86,9 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get all sessions
-	allSessions := s.sessionStore.List()
-	total := len(allSessions)
+	// Get all sandboxes
+	allSandboxes := s.sandboxStore.List()
+	total := len(allSandboxes)
 
 	// Apply pagination
 	start := offset
@@ -101,53 +100,53 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		end = total
 	}
 
-	sessions := allSessions[start:end]
+	sandboxes := allSandboxes[start:end]
 
 	response := map[string]interface{}{
-		"sessions": sessions,
-		"total":    total,
-		"limit":    limit,
-		"offset":   offset,
+		"sandboxes": sandboxes,
+		"total":     total,
+		"limit":     limit,
+		"offset":    offset,
 	}
 
 	respondJSON(w, http.StatusOK, response)
 }
 
-// handleGetSession handles getting a single session request
-func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
+// handleGetSandbox handles getting a single sandbox request
+func (s *Server) handleGetSandbox(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	sessionID := vars["sessionId"]
+	sandboxID := vars["sandboxId"]
 
-	session := s.sessionStore.Get(sessionID)
-	if session == nil {
-		respondError(w, http.StatusNotFound, "SESSION_NOT_FOUND", "Session not found or expired")
+	sandbox := s.sandboxStore.Get(sandboxID)
+	if sandbox == nil {
+		respondError(w, http.StatusNotFound, "SANDBOX_NOT_FOUND", "Sandbox not found or expired")
 		return
 	}
 
-	respondJSON(w, http.StatusOK, session)
+	respondJSON(w, http.StatusOK, sandbox)
 }
 
-// handleDeleteSession handles session deletion requests
-func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
+// handleDeleteSandbox handles sandbox deletion requests
+func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	sessionID := vars["sessionId"]
+	sandboxID := vars["sandboxId"]
 
-	session := s.sessionStore.Get(sessionID)
-	if session == nil {
-		respondError(w, http.StatusNotFound, "SESSION_NOT_FOUND", "Session not found or expired")
+	sandbox := s.sandboxStore.Get(sandboxID)
+	if sandbox == nil {
+		respondError(w, http.StatusNotFound, "SANDBOX_NOT_FOUND", "Sandbox not found or expired")
 		return
 	}
 
 	// Delete Kubernetes Sandbox CRD
-	if err := s.k8sClient.DeleteSandbox(r.Context(), session.SandboxName); err != nil {
+	if err := s.k8sClient.DeleteSandbox(r.Context(), sandbox.SandboxName); err != nil {
 		respondError(w, http.StatusInternalServerError, "SANDBOX_DELETE_FAILED", err.Error())
 		return
 	}
 
 	// Delete from store
-	s.sessionStore.Delete(sessionID)
+	s.sandboxStore.Delete(sandboxID)
 
 	respondJSON(w, http.StatusOK, map[string]string{
-		"message": "Session deleted successfully",
+		"message": "Sandbox deleted successfully",
 	})
 }

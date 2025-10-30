@@ -18,7 +18,7 @@ type Server struct {
 	httpServer        *http.Server
 	k8sClient         *K8sClient
 	sandboxController *controller.SandboxReconciler
-	sessionStore      *SessionStore
+	sandboxStore      *SandboxStore
 }
 
 // NewServer creates a new API server instance
@@ -33,13 +33,13 @@ func NewServer(config *Config, sandboxController *controller.SandboxReconciler) 
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
-	// Create session store
-	sessionStore := NewSessionStore()
+	// Create sandbox store
+	sandboxStore := NewSandboxStore()
 
 	server := &Server{
 		config:            config,
 		k8sClient:         k8sClient,
-		sessionStore:      sessionStore,
+		sandboxStore:      sandboxStore,
 		sandboxController: sandboxController,
 	}
 
@@ -53,23 +53,25 @@ func NewServer(config *Config, sandboxController *controller.SandboxReconciler) 
 func (s *Server) setupRoutes() {
 	s.router = mux.NewRouter()
 
-	// API v1 routes
-	v1 := s.router.PathPrefix("/v1").Subrouter()
-
 	// Health check (no authentication required)
 	s.router.HandleFunc("/health", s.handleHealth).Methods("GET")
 
-	// Session management endpoints
-	v1.HandleFunc("/sessions", s.authMiddleware(s.handleCreateSession)).Methods("POST")
-	v1.HandleFunc("/sessions", s.authMiddleware(s.handleListSessions)).Methods("GET")
-	v1.HandleFunc("/sessions/{sessionId}", s.authMiddleware(s.handleGetSession)).Methods("GET")
-	v1.HandleFunc("/sessions/{sessionId}", s.authMiddleware(s.handleDeleteSession)).Methods("DELETE")
+	// API v1 routes
+	v1 := s.router.PathPrefix("/v1").Subrouter()
+
+	// Sandbox management endpoints
+	v1.HandleFunc("/sandboxes", s.handleCreateSandbox).Methods("POST")
+	v1.HandleFunc("/sandboxes", s.handleListSandboxes).Methods("GET")
+	v1.HandleFunc("/sandboxes/{sandboxId}", s.handleGetSandbox).Methods("GET")
+	v1.HandleFunc("/sandboxes/{sandboxId}", s.handleDeleteSandbox).Methods("DELETE")
 
 	// HTTP CONNECT tunnel endpoint - for SSH/SFTP proxy
-	// All operations (command execution, file transfer, etc.) are handled through this tunnel
-	v1.HandleFunc("/sessions/{sessionId}/tunnel", s.authMiddleware(s.handleTunnel))
+	// Path: /v1/sandboxes/{sandboxId} with CONNECT method
+	v1.HandleFunc("/sandboxes/{sandboxId}", s.handleTunnel)
 
-	// Logging middleware
+	// Apply middleware (auth first, then logging)
+	// Auth middleware excludes /health, logging middleware also excludes /health
+	s.router.Use(s.authMiddleware)
 	s.router.Use(s.loggingMiddleware)
 }
 
@@ -109,9 +111,15 @@ func (s *Server) Start(ctx context.Context) error {
 	return s.httpServer.ListenAndServe()
 }
 
-// loggingMiddleware logs each request
+// loggingMiddleware logs each request (except /health)
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip logging for health check endpoint
+		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		start := time.Now()
 		log.Printf("%s %s %s", r.Method, r.RequestURI, r.RemoteAddr)
 		next.ServeHTTP(w, r)

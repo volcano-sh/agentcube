@@ -56,17 +56,22 @@ func (s *Server) setupRoutes() {
 	// Health check (no authentication required)
 	s.router.HandleFunc("/health", s.handleHealth).Methods("GET")
 
-	// Sandbox management endpoints (no /v1 prefix)
-	s.router.HandleFunc("/sandboxes", s.authMiddleware(s.handleCreateSandbox)).Methods("POST")
-	s.router.HandleFunc("/sandboxes", s.authMiddleware(s.handleListSandboxes)).Methods("GET")
-	s.router.HandleFunc("/sandboxes/{sandboxId}", s.authMiddleware(s.handleGetSandbox)).Methods("GET")
-	s.router.HandleFunc("/sandboxes/{sandboxId}", s.authMiddleware(s.handleDeleteSandbox)).Methods("DELETE")
+	// API v1 routes
+	v1 := s.router.PathPrefix("/v1").Subrouter()
+
+	// Sandbox management endpoints
+	v1.HandleFunc("/sandboxes", s.handleCreateSandbox).Methods("POST")
+	v1.HandleFunc("/sandboxes", s.handleListSandboxes).Methods("GET")
+	v1.HandleFunc("/sandboxes/{sandboxId}", s.handleGetSandbox).Methods("GET")
+	v1.HandleFunc("/sandboxes/{sandboxId}", s.handleDeleteSandbox).Methods("DELETE")
 
 	// HTTP CONNECT tunnel endpoint - for SSH/SFTP proxy
-	// Path: /sandboxes/{sandboxId} with CONNECT method
-	s.router.HandleFunc("/sandboxes/{sandboxId}", s.authMiddleware(s.handleTunnel))
+	// Path: /v1/sandboxes/{sandboxId} with CONNECT method
+	v1.HandleFunc("/sandboxes/{sandboxId}", s.handleTunnel)
 
-	// Logging middleware
+	// Apply middleware (auth first, then logging)
+	// Auth middleware excludes /health, logging middleware also excludes /health
+	s.router.Use(s.authMiddleware)
 	s.router.Use(s.loggingMiddleware)
 }
 
@@ -110,7 +115,7 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Skip logging for health check endpoint
-		if r.RequestURI == "/health" {
+		if r.URL.Path == "/health" {
 			next.ServeHTTP(w, r)
 			return
 		}

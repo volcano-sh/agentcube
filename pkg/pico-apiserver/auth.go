@@ -6,11 +6,17 @@ import (
 )
 
 // authMiddleware provides simple authentication middleware
-func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip authentication for health check endpoint
+		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// If no JWT secret is configured, skip validation (development only)
 		if s.config.JWTSecret == "" {
-			next(w, r)
+			next.ServeHTTP(w, r)
 			return
 		}
 
@@ -39,8 +45,8 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		// Token validation passed, continue processing request
-		next(w, r)
-	}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // validateToken validates JWT token (placeholder implementation)

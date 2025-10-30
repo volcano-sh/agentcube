@@ -285,7 +285,7 @@ func createSandboxWithSSHKey(apiURL, publicKey, image string) (string, error) {
 	// Create HTTP request with authentication
 	httpReq, err := http.NewRequest(
 		"POST",
-		fmt.Sprintf("%s/sandboxes", apiURL),
+		fmt.Sprintf("%s/v1/sandboxes", apiURL),
 		bytes.NewBuffer(jsonData),
 	)
 	if err != nil {
@@ -342,7 +342,7 @@ func establishTunnel(apiURL, sandboxID string) (net.Conn, error) {
 	}
 
 	// Send CONNECT request
-	connectReq := fmt.Sprintf("CONNECT /sandboxes/%s HTTP/1.1\r\n", sandboxID)
+	connectReq := fmt.Sprintf("CONNECT /v1/sandboxes/%s HTTP/1.1\r\n", sandboxID)
 	connectReq += fmt.Sprintf("Host: %s\r\n", host)
 	connectReq += "User-Agent: ssh-key-test/1.0\r\n"
 

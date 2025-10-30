@@ -86,6 +86,35 @@ class Sandbox:
             raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
         return self._executor.execute_command(command)
     
+    def execute_commands(self, commands: List[str]) -> Dict[str, str]:
+        """Execute multiple commands over SSH
+        
+        Args:
+            commands: List of commands to execute
+            
+        Returns:
+            Dictionary mapping commands to their outputs
+        """
+        if not self.is_running():
+            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
+        return self._executor.execute_commands(commands)
+    
+    def run_code(
+        self,
+        language: str,
+        code: str,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Run code snippet in the specified language over SSH
+        
+        Args:
+            language: Programming language of the code snippet (e.g., "python", "bash")
+            code: Code snippet to execute
+        Returns:
+            Tuple of (stdout, stderr) from code execution. 
+            If execution fails, stdout is None and stderr contains error info.
+        """
+        return self._executor.run_code(language, code)
+
     def write_file(
         self,
         content: str,

@@ -49,23 +49,25 @@ class SandboxClient:
         if ssh_public_key :
             req_data["sshPublicKey"] = ssh_public_key
 
-        url = f"{self.api_url}/v1/sessions"
+        url = f"{self.api_url}/v1/sandboxes"
         response = requests.post(
             url,
             headers={"Content-Type": "application/json"},
             data=json.dumps(req_data)
         )
         
+        print(response)
+
         if response.status_code != 200:
             raise Exception(f"Failed to create session: {response.status_code} - {response.text}")
         
         session_data = response.json()
-        return session_data.get("sessionId")
+        return session_data.get("sandboxId")
     
-    def get_sandbox(self, session_id: str) -> Optional[Dict[str, Any]]:
+    def get_sandbox(self, sandbox_id: str) -> Optional[Dict[str, Any]]:
         """Get session details by ID"""
         try:
-            url = f"{self.api_url}/v1/sessions/{session_id}"
+            url = f"{self.api_url}/v1/sandboxes/{sandbox_id}"
             response = requests.get(
                 url,
                 headers={"Content-Type": "application/json"}
@@ -82,7 +84,7 @@ class SandboxClient:
     def list_sandboxes(self) -> List[Dict[str, Any]]:
         """List all sessions"""
         try:
-            url = f"{self.api_url}/v1/sessions"
+            url = f"{self.api_url}/v1/sandboxes"
             response = requests.get(
                 url,
                 headers={"Content-Type": "application/json"}
@@ -93,10 +95,10 @@ class SandboxClient:
             self.logger.error(f"Session listing failed: {str(e)}")
             return []
     
-    def delete_sandbox(self, session_id: str) -> bool:
+    def delete_sandbox(self, sandbox_id: str) -> bool:
         """Delete a session and clean up cached SSH key"""
         try:
-            url = f"{self.api_url}/v1/sessions/{session_id}"
+            url = f"{self.api_url}/v1/sandboxes/{sandbox_id}"
             response = requests.delete(
                 url,
                 timeout=30
@@ -109,55 +111,62 @@ class SandboxClient:
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Session deletion failed: {str(e)}")
 
-    def establish_tunnel(self, session_id: str) -> socket.socket:
-        """Establish an HTTP CONNECT tunnel to the session
-        
-        Args:
-            session_id: Session ID to connect to (uses current session if not provided)
-            
-        Returns:
-            Established tunnel socket connection
-        """
-        session_id = session_id
-        if not session_id:
-            raise Exception("No session ID specified. Please create a session first.")
-        
-        # Parse API address
+    def establish_tunnel(self, sandbox_id: str, auth_token: str = "") -> socket.socket:
+        # 1. Remove http:// prefix
         if self.api_url.startswith("http://"):
-            host_part = self.api_url[7:]
+            host = self.api_url[7:]
         else:
-            host_part = self.api_url
-        
-        # Handle port number
-        if ":" in host_part:
-            host, port_str = host_part.split(":", 1)
-            port = int(port_str)
-        else:
-            host = host_part
-            port = 8080
-        
-        # Establish TCP connection
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            host = self.api_url
+
+        # 2. Add default port 8080 if no port specified
+        if ':' not in host or host.count('[') != host.count(']'):
+            host += ":8080"
+
+        # 3. Connect with 10s timeout
+        sock = socket.socket()
         sock.settimeout(10.0)
-        sock.connect((host, port))
-        
-        # Send CONNECT request
-        connect_path = f"/v1/sessions/{session_id}/tunnel"
-        request = (
-            f"CONNECT {connect_path} HTTP/1.1\r\n"
-            f"Host: {host}:{port}\r\n"
-            "User-Agent: pico-client/1.0 (python)\r\n"
-            "\r\n"
-        )
-        sock.sendall(request.encode())
-        
-        # Verify response
-        response = sock.recv(4096).decode()
-        if not response.startswith("HTTP/1.1 200"):
+        try:
+            sock.connect((host.rsplit(':', 1)[0], int(host.rsplit(':', 1)[1])))
+        except Exception as e:
             sock.close()
-            raise Exception(f"Tunnel establishment failed: {response}")
+            raise RuntimeError(f"failed to connect: {e}")
+
+        # 4. Build and send CONNECT request
+        req = f"CONNECT /v1/sandboxes/{sandbox_id} HTTP/1.1\r\n"
+        req += f"Host: {host}\r\n"
+        req += "User-Agent: ssh-key-test/1.0\r\n"
+        if auth_token:
+            req += f"Authorization: Bearer {auth_token}\r\n"
+        req += "\r\n"
         
-        self.tunnel_sock = sock
+        try:
+            sock.sendall(req.encode())
+        except Exception as e:
+            sock.close()
+            raise RuntimeError(f"failed to send CONNECT: {e}")
+
+        # 5. Read response until headers end
+        response = b""
+        try:
+            while b"\r\n\r\n" not in response:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                response += chunk
+            
+            # Parse status code from first line
+            first_line = response.split(b"\r\n", 1)[0]
+            status_code = int(first_line.split()[1])
+            
+            if status_code != 200:
+                sock.close()
+                raise RuntimeError(f"CONNECT failed with status {status_code}")
+                
+        except Exception as e:
+            sock.close()
+            raise RuntimeError(f"failed to read response: {e}")
+
+        # 6. Return connected socket (tunnel established)
         return sock
     
     def cleanup(self):

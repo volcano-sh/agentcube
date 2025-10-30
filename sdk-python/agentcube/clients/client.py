@@ -4,13 +4,14 @@ import socket
 
 import requests
 from typing import Tuple, Dict, Any, Optional, List
+from urllib.parse import urlparse
 
 from agentcube.utils.log import get_logger
 import agentcube.clients.constants as constants
 from agentcube.utils.utils import get_env
 
 class SandboxClient:
-    """Pico API Server client class that encapsulates session management, SSH connections, 
+    """Pico API Server client class that encapsulates sandbox management, SSH connections, 
     and file transfer functionalities"""
     
     def __init__(self, api_url: Optional[str] = None):
@@ -30,16 +31,16 @@ class SandboxClient:
         ssh_public_key: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> str:
-        """Create a new session on the Pico server
+        """Create a new sandbox on the Pico server
         
         Args:
-            ttl: Session timeout in seconds
+            ttl: sandbox timeout in seconds
             image: Container image to use
             ssh_public_key: SSH public key for authentication
-            metadata: Optional session metadata
+            metadata: Optional sandbox metadata
             
         Returns:
-            Created session ID and session details
+            Created sandbox ID and sandbox details
         """
         req_data = {
             "ttl": ttl,
@@ -49,54 +50,52 @@ class SandboxClient:
         if ssh_public_key :
             req_data["sshPublicKey"] = ssh_public_key
 
-        url = f"{self.api_url}/v1/sessions"
+        url = f"{self.api_url}/v1/sandboxes"
         response = requests.post(
             url,
             headers={"Content-Type": "application/json"},
             data=json.dumps(req_data)
         )
-        
+
         if response.status_code != 200:
-            raise Exception(f"Failed to create session: {response.status_code} - {response.text}")
+            raise Exception(f"Failed to create sandbox: {response.status_code} - {response.text}")
         
-        session_data = response.json()
-        return session_data.get("sessionId")
+        sandbox_data = response.json()
+        return sandbox_data.get("sandboxId")
     
-    def get_sandbox(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Get session details by ID"""
+    def get_sandbox(self, sandbox_id: str) -> Optional[Dict[str, Any]]:
+        """Get sandbox details by ID"""
         try:
-            url = f"{self.api_url}/v1/sessions/{session_id}"
+            url = f"{self.api_url}/v1/sandboxes/{sandbox_id}"
             response = requests.get(
                 url,
                 headers={"Content-Type": "application/json"}
             )
-            print(url)
-            print(response)
             if response.status_code == 404:
                 return None
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            self.logger.error(f"Session query failed: {str(e)}")
+            self.logger.error(f"sandbox query failed: {str(e)}")
     
     def list_sandboxes(self) -> List[Dict[str, Any]]:
-        """List all sessions"""
+        """List all sandboxs"""
         try:
-            url = f"{self.api_url}/v1/sessions"
+            url = f"{self.api_url}/v1/sandboxes"
             response = requests.get(
                 url,
                 headers={"Content-Type": "application/json"}
             )
             response.raise_for_status()
-            return response.json().get("sessions", [])
+            return response.json().get("sandboxs", [])
         except requests.exceptions.RequestException as e:
-            self.logger.error(f"Session listing failed: {str(e)}")
+            self.logger.error(f"sandbox listing failed: {str(e)}")
             return []
     
-    def delete_sandbox(self, session_id: str) -> bool:
-        """Delete a session and clean up cached SSH key"""
+    def delete_sandbox(self, sandbox_id: str) -> bool:
+        """Delete a sandbox and clean up cached SSH key"""
         try:
-            url = f"{self.api_url}/v1/sessions/{session_id}"
+            url = f"{self.api_url}/v1/sandboxes/{sandbox_id}"
             response = requests.delete(
                 url,
                 timeout=30
@@ -107,57 +106,73 @@ class SandboxClient:
             
             return True
         except requests.exceptions.RequestException as e:
-            self.logger.error(f"Session deletion failed: {str(e)}")
+            self.logger.error(f"sandbox deletion failed: {str(e)}")
 
-    def establish_tunnel(self, session_id: str) -> socket.socket:
-        """Establish an HTTP CONNECT tunnel to the session
-        
+    def establish_tunnel(self, sandbox_id: str, auth_token: str = "") -> socket.socket:
+        """Establish an HTTP CONNECT tunnel to the sandbox.
+
         Args:
-            session_id: Session ID to connect to (uses current session if not provided)
-            
+            sandbox_id: The ID of the sandbox to connect to.
+            auth_token: Optional authentication token for the CONNECT request.
+
         Returns:
-            Established tunnel socket connection
+            The socket for the established tunnel.
+
+        Raises:
+            RuntimeError: If the tunnel establishment fails at any step.
         """
-        session_id = session_id
-        if not session_id:
-            raise Exception("No session ID specified. Please create a session first.")
-        
-        # Parse API address
-        if self.api_url.startswith("http://"):
-            host_part = self.api_url[7:]
-        else:
-            host_part = self.api_url
-        
-        # Handle port number
-        if ":" in host_part:
-            host, port_str = host_part.split(":", 1)
-            port = int(port_str)
-        else:
-            host = host_part
-            port = 8080
-        
-        # Establish TCP connection
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if not sandbox_id:
+            raise ValueError("sandbox_id cannot be empty")
+
+        parsed_url = urlparse(self.api_url)
+        hostname = parsed_url.hostname
+        port = parsed_url.port or 8080
+
+        # Connect with 10s timeout
+        sock = socket.socket()
         sock.settimeout(10.0)
-        sock.connect((host, port))
-        
-        # Send CONNECT request
-        connect_path = f"/v1/sessions/{session_id}/tunnel"
-        request = (
-            f"CONNECT {connect_path} HTTP/1.1\r\n"
-            f"Host: {host}:{port}\r\n"
-            "User-Agent: pico-client/1.0 (python)\r\n"
-            "\r\n"
-        )
-        sock.sendall(request.encode())
-        
-        # Verify response
-        response = sock.recv(4096).decode()
-        if not response.startswith("HTTP/1.1 200"):
+        try:
+            sock.connect((hostname, port))
+        except Exception as e:
             sock.close()
-            raise Exception(f"Tunnel establishment failed: {response}")
+            raise RuntimeError(f"failed to connect: {e}")
+
+        # Build and send CONNECT request
+        req = f"CONNECT /v1/sandboxes/{sandbox_id} HTTP/1.1\r\n"
+        req += f"Host: {hostname}:{port}\r\n"
+        req += "User-Agent: agentcube-sdk-python/1.0\r\n"
+        if auth_token:
+            req += f"Proxy-Authorization: Bearer {auth_token}\r\n"
+        req += "\r\n"
         
-        self.tunnel_sock = sock
+        try:
+            sock.sendall(req.encode())
+        except Exception as e:
+            sock.close()
+            raise RuntimeError(f"failed to send CONNECT: {e}")
+
+        # Read response until headers end
+        response = b""
+        try:
+            while b"\r\n\r\n" not in response:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                response += chunk
+            
+            # Parse status code from first line
+            first_line = response.split(b"\r\n", 1)[0]
+            status_code = int(first_line.split()[1])
+            
+            if status_code != 200:
+                sock.close()
+                raise RuntimeError(f"CONNECT failed with status {status_code}")
+                
+        except Exception as e:
+            sock.close()
+            raise RuntimeError(f"failed to read response: {e}")
+
+        # Return connected socket (tunnel established)
         return sock
     
     def cleanup(self):

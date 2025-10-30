@@ -15,15 +15,15 @@ def main():
         log.info("SSH Key-based Authentication Test")
         log.info("===========================================\n")
         
-        # 1. Create session with SSH key
-        log.info("Step 1: Creating session with SSH key...")
+        # 1. Create sandbox with SSH key
+        log.info("Step 1: Creating sandbox with SSH key...")
         sandbox = Sandbox()
-        log.info(f"✅ Session created: {sandbox.id}\n")
+        log.info(f"✅ sandbox created: {sandbox.id}\n")
 
-        # 2. get session info
-        log.info("Step 2: Retrieving session info...")
-        session_info = sandbox.get_info()
-        log.info(f"   Session Info: {json.dumps(session_info, indent=2)}\n")
+        # 2. get sandbox info
+        log.info("Step 2: Retrieving sandbox info...")
+        sandbox_info = sandbox.get_info()
+        log.info(f"   sandbox Info: {json.dumps(sandbox_info, indent=2)}\n")
 
         # 3. Execute test commands
         log.info("Step 3: Executing test commands...")
@@ -95,14 +95,13 @@ print(f"Generated {n} Fibonacci numbers")
         log.info("\n===========================================")
         log.info("🎉 All operations completed successfully")
         log.info("===========================================")
-
+         
         # 9. Stop sandbox
         log.info("\nStep 9: Stop sandbox...")
         if sandbox.stop():
             log.info(f"✅ Sandbox {sandbox.id} deleted\n")
         else:
             log.error(f"❌ Failed to delete sandbox {sandbox.id}\n")
-        
         
     except Exception as e:
         log.error(f"\n❌ Error: {str(e)}")

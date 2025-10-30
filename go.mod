@@ -1,4 +1,4 @@
-module github.com/agent-box/pico-apiserver
+module github.com/volcano-sh/agentcube
 
 go 1.24.4
 

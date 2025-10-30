@@ -2,31 +2,35 @@
 
 # Build targets
 build:
-	@echo "Building pico-apiserver..."
-	go build -o bin/pico-apiserver ./cmd/pico-apiserver
+	@echo "Building agentcube-apiserver..."
+	go build -o bin/agentcube-apiserver ./cmd/apiserver
+
+build-agentd:
+	@echo "Building agentd..."
+	go build -o bin/agentd ./cmd/agentd
 
 build-test-tunnel:
 	@echo "Building test-tunnel..."
 	go build -o bin/test-tunnel ./cmd/test-tunnel
 
-build-all: build build-test-tunnel
+build-all: build build-agentd build-test-tunnel
 
 # Run server (development mode)
 run:
-	@echo "Running pico-apiserver..."
-	go run ./cmd/pico-apiserver/main.go \
+	@echo "Running agentcube-apiserver..."
+	go run ./cmd/apiserver/main.go \
 		--port=8080 \
-		--namespace=default \
+		--namespace=agentcube \
 		--ssh-username=sandbox \
 		--ssh-port=22
 
 # Run server (with kubeconfig)
 run-local:
-	@echo "Running pico-apiserver with local kubeconfig..."
-	go run ./cmd/pico-apiserver/main.go \
+	@echo "Running agentcube-apiserver with local kubeconfig..."
+	go run ./cmd/apiserver/main.go \
 		--port=8080 \
 		--kubeconfig=${HOME}/.kube/config \
-		--namespace=default \
+		--namespace=agentcube \
 		--ssh-username=sandbox \
 		--ssh-port=22
 
@@ -34,7 +38,7 @@ run-local:
 clean:
 	@echo "Cleaning..."
 	rm -rf bin/
-	rm -f pico-apiserver
+	rm -f agentcube-apiserver agentd
 
 # Install dependencies
 deps:
@@ -65,11 +69,11 @@ lint:
 
 # Install to system
 install: build
-	@echo "Installing pico-apiserver..."
-	sudo cp bin/pico-apiserver /usr/local/bin/
+	@echo "Installing agentcube-apiserver..."
+	sudo cp bin/agentcube-apiserver /usr/local/bin/
 
 # Docker image variables
-APISERVER_IMAGE ?= pico-apiserver:latest
+APISERVER_IMAGE ?= agentcube-apiserver:latest
 IMAGE_REGISTRY ?= ""
 
 # Docker and Kubernetes targets
@@ -104,15 +108,15 @@ docker-push: docker-build
 
 k8s-deploy:
 	@echo "Deploying to Kubernetes..."
-	kubectl apply -f k8s/pico-apiserver.yaml
+	kubectl apply -f k8s/agentcube-apiserver.yaml
 
 k8s-delete:
 	@echo "Deleting from Kubernetes..."
-	kubectl delete -f k8s/pico-apiserver.yaml
+	kubectl delete -f k8s/agentcube-apiserver.yaml
 
 k8s-logs:
 	@echo "Showing logs..."
-	kubectl logs -n pico -l app=pico-apiserver -f
+	kubectl logs -n agentcube -l app=agentcube-apiserver -f
 
 # Load image to kind cluster
 kind-load:
@@ -196,6 +200,7 @@ help:
 	@echo ""
 	@echo "Build targets:"
 	@echo "  build              - Build the binary"
+	@echo "  build-agentd       - Build agentd binary"
 	@echo "  build-all          - Build all binaries"
 	@echo "  build-test-tunnel  - Build test-tunnel tool"
 	@echo "  install            - Install to /usr/local/bin"
@@ -210,7 +215,7 @@ help:
 	@echo "  deps               - Download dependencies"
 	@echo "  update-deps        - Update dependencies"
 	@echo ""
-	@echo "Docker targets (pico-apiserver):"
+	@echo "Docker targets (agentcube-apiserver):"
 	@echo "  docker-build       - Build Docker image (current platform)"
 	@echo "  docker-buildx      - Build multi-arch image (amd64, arm64)"
 	@echo "  docker-buildx-push - Build and push multi-arch image (requires IMAGE_REGISTRY)"
@@ -229,14 +234,14 @@ help:
 	@echo "  k8s-deploy         - Deploy to Kubernetes"
 	@echo "  k8s-delete         - Delete from Kubernetes"
 	@echo "  k8s-logs           - Show pod logs"
-	@echo "  kind-load          - Load pico-apiserver image to kind cluster"
+	@echo "  kind-load          - Load agentcube-apiserver image to kind cluster"
 	@echo ""
 	@echo "Test targets:"
 	@echo "  test-tunnel        - Test tunnel connection (requires SESSION_ID)"
 	@echo "  test-tunnel-build  - Build and test tunnel connection"
 	@echo ""
 	@echo "Variables:"
-	@echo "  APISERVER_IMAGE    - pico-apiserver image name (default: pico-apiserver:latest)"
+	@echo "  APISERVER_IMAGE    - agentcube-apiserver image name (default: agentcube-apiserver:latest)"
 	@echo "  SANDBOX_IMAGE      - Sandbox image name (default: sandbox:latest)"
 	@echo "  IMAGE_REGISTRY     - Container registry URL (required for push targets)"
 	@echo "  API_URL            - API URL for tests (default: http://localhost:8080)"

@@ -1,6 +1,6 @@
-package picoapiserver
+package apiserver
 
-// Config contains configuration parameters for pico-apiserver
+// Config contains configuration parameters for apiserver
 type Config struct {
 	// Port is the port the API server listens on
 	Port string

@@ -1,4 +1,4 @@
-package picoapiserver
+package apiserver
 
 import (
 	"context"
@@ -134,7 +134,7 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sandboxName, sandboxID, i
 			Namespace: c.namespace,
 			Labels: map[string]string{
 				"sandbox-id":   sandboxID,
-				"managed-by":   "pico-apiserver",
+				"managed-by":   "agentcube-apiserver",
 				"sandbox-name": sandboxName,
 			},
 			Annotations: convertToStringMap(metadata),

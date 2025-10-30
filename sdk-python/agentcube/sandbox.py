@@ -43,9 +43,9 @@ class Sandbox:
         self.cleanup()
 
     def is_running(self) -> bool:
-        session_info = self._client.get_sandbox(self.id)
-        if session_info:
-            return session_info["status"] == SandboxStatus.RUNNING.value
+        sandbox_info = self._client.get_sandbox(self.id)
+        if sandbox_info:
+            return sandbox_info["status"] == SandboxStatus.RUNNING.value
         else:
             raise exceptions.SandboxNotFoundError(f"Sandbox {self.id} not found")
     
@@ -55,9 +55,9 @@ class Sandbox:
         Returns:
             Dictionary containing sandbox information
         """
-        session_info = self._client.get_sandbox(self.id)
-        if session_info:
-            return session_info
+        sandbox_info = self._client.get_sandbox(self.id)
+        if sandbox_info:
+            return sandbox_info
         else:
             raise exceptions.SandboxNotFoundError(f"Sandbox {self.id} not found")
     
@@ -86,6 +86,19 @@ class Sandbox:
             raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
         return self._executor.execute_command(command)
     
+    def execute_commands(self, commands: List[str]) -> Dict[str, str]:
+        """Execute multiple commands over SSH
+        
+        Args:
+            commands: List of commands to execute
+            
+        Returns:
+            Dictionary mapping commands to their outputs
+        """
+        if not self.is_running():
+            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
+        return self._executor.execute_commands(commands)
+
     def write_file(
         self,
         content: str,

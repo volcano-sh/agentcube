@@ -1,0 +1,26 @@
+[project]
+name = "agentcube"
+version = "0.0.1"
+description = "Python SDK for managing Kubernetes sandboxes"
+readme = "README.md"
+
+# TODO: need to update it in a follow up
+authors = [
+    { name = "Senbo Fu", email = "senbof@gmail.com" }
+]
+
+dependencies = [
+    "paramiko>=3.4.0",
+]
+
+[tool.setuptools]
+packages = ["agentcube"]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "--strict-markers --import-mode=importlib"
+testpaths = ["tests"]

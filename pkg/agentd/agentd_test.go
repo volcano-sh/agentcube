@@ -1,4 +1,4 @@
-package picolet
+package agentd
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-func TestPicoletReconciler_Reconcile_WithLastActivity(t *testing.T) {
+func TestAgentdReconciler_Reconcile_WithLastActivity(t *testing.T) {
 	testScheme := runtime.NewScheme()
 	utilruntime.Must(scheme.AddToScheme(testScheme))
 	utilruntime.Must(sandboxv1alpha1.AddToScheme(testScheme))
@@ -107,7 +107,7 @@ func TestPicoletReconciler_Reconcile_WithLastActivity(t *testing.T) {
 				WithObjects(tt.sandbox).
 				Build()
 
-			reconciler := &PicoletReconciler{
+			reconciler := &AgentdReconciler{
 				Client: fakeClient,
 				Scheme: testScheme,
 			}

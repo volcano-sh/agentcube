@@ -18,8 +18,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	controller "github.com/agent-box/pico-apiserver/pkg/controller"
-	picoapiserver "github.com/agent-box/pico-apiserver/pkg/pico-apiserver"
+	apiserver "github.com/volcano-sh/agentcube/pkg/apiserver"
+	controller "github.com/volcano-sh/agentcube/pkg/controller"
 )
 
 var (
@@ -73,7 +73,7 @@ func main() {
 	}
 
 	// Create API server configuration
-	config := &picoapiserver.Config{
+	config := &apiserver.Config{
 		Port:             *port,
 		Namespace:        *namespace,
 		SSHUsername:      *sshUsername,
@@ -86,7 +86,7 @@ func main() {
 	}
 
 	// Create and initialize API server
-	server, err := picoapiserver.NewServer(config, sandboxReconciler)
+	server, err := apiserver.NewServer(config, sandboxReconciler)
 	if err != nil {
 		log.Fatalf("Failed to create API server: %v", err)
 	}
@@ -109,7 +109,7 @@ func main() {
 	// Start API server in goroutine
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("Starting pico-apiserver on port %s", *port)
+		log.Printf("Starting agentcube-apiserver on port %s", *port)
 		if err := server.Start(ctx); err != nil {
 			errCh <- err
 		}

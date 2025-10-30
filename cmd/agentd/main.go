@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/agent-box/pico-apiserver/pkg/picolet"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+
+	"github.com/volcano-sh/agentcube/pkg/agentd"
 )
 
 var (
@@ -38,7 +39,7 @@ func main() {
 
 	err = ctrl.NewControllerManagedBy(mgr).
 		For(&sandboxv1alpha1.Sandbox{}).
-		Complete(&picolet.PicoletReconciler{
+		Complete(&agentd.AgentdReconciler{
 			Client: mgr.GetClient(),
 			Scheme: mgr.GetScheme(),
 		})

@@ -1,24 +1,24 @@
-# All-in-one deployment file for pico-apiserver
-# Apply with: kubectl apply -f k8s/all-in-one.yaml
+# All-in-one deployment file for agentcube-apiserver
+# Apply with: kubectl apply -f k8s/agentcube-apiserver.yaml
 
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: pico
+  name: agentcube
 
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: pico-apiserver
-  namespace: pico
+  name: agentcube-apiserver
+  namespace: agentcube
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: pico-apiserver
+  name: agentcube-apiserver
 rules:
   - apiGroups: ["agents.x-k8s.io"]
     resources: ["sandboxes"]
@@ -31,38 +31,38 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: pico-apiserver
+  name: agentcube-apiserver
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: pico-apiserver
+  name: agentcube-apiserver
 subjects:
   - kind: ServiceAccount
-    name: pico-apiserver
-    namespace: pico
+    name: agentcube-apiserver
+    namespace: agentcube
 
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: pico-apiserver
-  namespace: pico
+  name: agentcube-apiserver
+  namespace: agentcube
   labels:
-    app: pico-apiserver
+    app: agentcube-apiserver
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: pico-apiserver
+      app: agentcube-apiserver
   template:
     metadata:
       labels:
-        app: pico-apiserver
+        app: agentcube-apiserver
     spec:
-      serviceAccountName: pico-apiserver
+      serviceAccountName: agentcube-apiserver
       containers:
-        - name: pico-apiserver
-          image: pico-apiserver:latest
+        - name: agentcube-apiserver
+          image: agentcube-apiserver:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -70,9 +70,6 @@ spec:
               protocol: TCP
           args:
             - --port=8080
-            - --namespace=default
-            - --ssh-username=sandbox
-            - --ssh-port=22
           resources:
             requests:
               cpu: 100m
@@ -97,10 +94,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: pico-apiserver
-  namespace: pico
+  name: agentcube-apiserver
+  namespace: agentcube
   labels:
-    app: pico-apiserver
+    app: agentcube-apiserver
 spec:
   type: ClusterIP
   ports:
@@ -109,5 +106,4 @@ spec:
       protocol: TCP
       name: http
   selector:
-    app: pico-apiserver
-
+    app: agentcube-apiserver

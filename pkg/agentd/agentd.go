@@ -1,4 +1,4 @@
-package picolet
+package agentd
 
 import (
 	"context"
@@ -10,20 +10,20 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	picoapiserver "github.com/agent-box/pico-apiserver/pkg/pico-apiserver"
+	apiserver "github.com/volcano-sh/agentcube/pkg/apiserver"
 )
 
 var (
 	SessionExpirationTimeout = 15 * time.Minute
 )
 
-// PicoletReconciler reconciles a Sandbox object
-type PicoletReconciler struct {
+// AgentdReconciler reconciles a Sandbox object
+type AgentdReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
-func (r *PicoletReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *AgentdReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	sandbox := &sandboxv1alpha1.Sandbox{}
 	err := r.Get(ctx, req.NamespacedName, sandbox)
 	if err != nil {
@@ -33,7 +33,7 @@ func (r *PicoletReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 
-	lastActivityStr, exists := sandbox.Annotations[picoapiserver.LastActivityAnnotationKey]
+	lastActivityStr, exists := sandbox.Annotations[apiserver.LastActivityAnnotationKey]
 	var lastActivity time.Time
 	if exists && lastActivityStr != "" {
 		lastActivity, err = time.Parse(time.RFC3339, lastActivityStr)
@@ -50,7 +50,7 @@ func (r *PicoletReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				}
 			}
 		} else {
-			return ctrl.Result{RequeueAfter: expirationTime.Sub(time.Now())}, nil
+			return ctrl.Result{RequeueAfter: time.Until(expirationTime)}, nil
 		}
 	}
 
@@ -58,7 +58,7 @@ func (r *PicoletReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *PicoletReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *AgentdReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&sandboxv1alpha1.Sandbox{}).
 		Complete(r)

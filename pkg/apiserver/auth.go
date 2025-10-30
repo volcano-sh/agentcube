@@ -1,4 +1,4 @@
-package picoapiserver
+package apiserver
 
 import (
 	"net/http"

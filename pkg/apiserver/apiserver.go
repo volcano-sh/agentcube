@@ -1,4 +1,4 @@
-package picoapiserver
+package apiserver
 
 import (
 	"context"
@@ -7,11 +7,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/agent-box/pico-apiserver/pkg/controller"
 	"github.com/gorilla/mux"
+
+	"github.com/volcano-sh/agentcube/pkg/controller"
 )
 
-// Server is the main structure for pico-apiserver
+// Server is the main structure for apiserver
 type Server struct {
 	config            *Config
 	router            *mux.Router

@@ -37,5 +37,4 @@ USER apiserver
 EXPOSE 8080
 
 ENTRYPOINT ["/app/agentcube-apiserver"]
-CMD ["--port=8080", "--namespace=agentcube"]
-
+CMD ["--port=8080"]

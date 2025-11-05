@@ -16,12 +16,12 @@ def main():
         log.info("SSH Key-based Authentication Test")
         log.info("===========================================\n")
         
-        # 1. Create session with SSH key
-        log.info("Step 1: Creating session with SSH key...")
+        # 1. Create sandbox with SSH key
+        log.info("Step 1: Creating sandbox with SSH key...")
         client = SandboxClient()
         public_key, private_key = SandboxSSHClient.generate_ssh_key_pair()
         sandbox_id = client.create_sandbox(ssh_public_key=public_key)
-        log.info(f"✅ Session created: {sandbox_id}\n")
+        log.info(f"✅ sandbox created: {sandbox_id}\n")
         
         # 2. Establish tunnel
         log.info("Step 2: Establishing HTTP tunnel...")
@@ -101,11 +101,11 @@ print(f"Generated {n} Fibonacci numbers")
         with open(local_path, 'r') as f:
             data = json.load(f)
         log.info(f"   Generated {data['count']} numbers, sum: {data['sum']}")
-        
+
         log.info("\n===========================================")
         log.info("🎉 All operations completed successfully")
         log.info("===========================================")
-         
+
     except Exception as e:
         log.error(f"\n❌ Error: {str(e)}")
     finally:

@@ -45,7 +45,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	resultChan := s.sandboxController.WatchSandboxOnce(r.Context(), namespace, sandboxName)
 
 	// Now create Kubernetes Sandbox CRD
-	_, err := s.k8sClient.CreateSandbox(r.Context(), sandboxName, sandboxID, req.Image, req.SSHPublicKey, s.config.RuntimeClassName, req.Metadata)
+	_, err := s.k8sClient.CreateSandbox(r.Context(), sandboxName, sandboxID, req.Image, req.SSHPublicKey, s.config.RuntimeClassName, req.TTL, req.Metadata)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "SANDBOX_CREATE_FAILED", err.Error())
 		return
@@ -53,7 +53,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 
 	select {
 	case result := <-resultChan:
-		// Create sandbox object
+		// Informer will automatically update the store when the sandbox CRD is created
+		// We can retrieve it from the store now, or construct the response directly
 		now := time.Now()
 		sandbox := &Sandbox{
 			SandboxID:      sandboxID,
@@ -65,8 +66,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 			SandboxName:    sandboxName,
 		}
 
-		// Store sandbox
-		s.sandboxStore.Set(sandboxID, sandbox)
+		// The store will be updated by the informer when the CRD is created
+		// We can also manually set it here for immediate response, but informer will sync it
 		respondJSON(w, http.StatusOK, sandbox)
 		return
 	case <-time.After(time.Duration(req.TTL) * time.Second):
@@ -138,14 +139,13 @@ func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Delete Kubernetes Sandbox CRD
+	// The informer will automatically delete it from the store when the CRD is deleted
 	if err := s.k8sClient.DeleteSandbox(r.Context(), sandbox.SandboxName); err != nil {
 		respondError(w, http.StatusInternalServerError, "SANDBOX_DELETE_FAILED", err.Error())
 		return
 	}
 
-	// Delete from store
-	s.sandboxStore.Delete(sandboxID)
-
+	// Note: Don't manually delete from store - informer will handle it
 	respondJSON(w, http.StatusOK, map[string]string{
 		"message": "Sandbox deleted successfully",
 	})

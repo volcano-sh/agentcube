@@ -13,8 +13,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	agentsv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 )
@@ -26,14 +28,16 @@ var (
 
 // K8sClient encapsulates the Kubernetes client
 type K8sClient struct {
-	clientset     *kubernetes.Clientset
-	dynamicClient dynamic.Interface
-	namespace     string
-	scheme        *runtime.Scheme
+	clientset       *kubernetes.Clientset
+	dynamicClient   dynamic.Interface
+	namespace       string
+	scheme          *runtime.Scheme
+	restConfig      *rest.Config
+	dynamicInformer dynamicinformer.DynamicSharedInformerFactory
 }
 
 // Sandbox CRD GroupVersionResource
-var sandboxGVR = schema.GroupVersionResource{
+var SandboxGVR = schema.GroupVersionResource{
 	Group:    "agents.x-k8s.io",
 	Version:  "v1alpha1",
 	Resource: "sandboxes",
@@ -77,10 +81,12 @@ func NewK8sClient(namespace string) (*K8sClient, error) {
 	}
 
 	return &K8sClient{
-		clientset:     clientset,
-		dynamicClient: dynamicClient,
-		namespace:     namespace,
-		scheme:        scheme,
+		clientset:       clientset,
+		dynamicClient:   dynamicClient,
+		namespace:       namespace,
+		scheme:          scheme,
+		restConfig:      config,
+		dynamicInformer: dynamicinformer.NewFilteredDynamicSharedInformerFactory(dynamicClient, 0, namespace, nil),
 	}, nil
 }
 
@@ -91,7 +97,7 @@ type SandboxInfo struct {
 }
 
 // CreateSandbox creates a new Sandbox CRD resource using the agent-sandbox types
-func (c *K8sClient) CreateSandbox(ctx context.Context, sandboxName, sandboxID, image, sshPublicKey, runtimeClassName string, metadata map[string]interface{}) (*SandboxInfo, error) {
+func (c *K8sClient) CreateSandbox(ctx context.Context, sandboxName, sandboxID, image, sshPublicKey, runtimeClassName string, ttl int, metadata map[string]interface{}) (*SandboxInfo, error) {
 	// Use default sandbox image if not specified
 	if image == "" {
 		image = "sandbox:latest"
@@ -148,6 +154,10 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sandboxName, sandboxID, i
 	}
 	// Use the creation time as the initial active time
 	sandbox.Annotations[LastActivityAnnotationKey] = time.Now().Format(time.RFC3339)
+	// Store TTL in annotations so informer can calculate expiresAt
+	if ttl > 0 {
+		sandbox.Annotations["ttl"] = fmt.Sprintf("%d", ttl)
+	}
 
 	// Convert to unstructured for dynamic client
 	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(sandbox)
@@ -158,7 +168,7 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sandboxName, sandboxID, i
 	unstructuredSandbox := &unstructured.Unstructured{Object: unstructuredObj}
 
 	// Create Sandbox CRD
-	created, err := c.dynamicClient.Resource(sandboxGVR).Namespace(c.namespace).Create(
+	created, err := c.dynamicClient.Resource(SandboxGVR).Namespace(c.namespace).Create(
 		ctx,
 		unstructuredSandbox,
 		metav1.CreateOptions{},
@@ -175,7 +185,7 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sandboxName, sandboxID, i
 
 // DeleteSandbox deletes a Sandbox CRD resource
 func (c *K8sClient) DeleteSandbox(ctx context.Context, sandboxName string) error {
-	err := c.dynamicClient.Resource(sandboxGVR).Namespace(c.namespace).Delete(
+	err := c.dynamicClient.Resource(SandboxGVR).Namespace(c.namespace).Delete(
 		ctx,
 		sandboxName,
 		metav1.DeleteOptions{},
@@ -263,7 +273,7 @@ func (c *K8sClient) WaitForSandboxReady(ctx context.Context, sandboxName string,
 			return fmt.Errorf("timeout waiting for sandbox to be ready")
 		case <-ticker.C:
 			// Check Sandbox status
-			sandbox, err := c.dynamicClient.Resource(sandboxGVR).Namespace(c.namespace).Get(
+			sandbox, err := c.dynamicClient.Resource(SandboxGVR).Namespace(c.namespace).Get(
 				ctx,
 				sandboxName,
 				metav1.GetOptions{},
@@ -307,7 +317,7 @@ func (c *K8sClient) UpdateSandboxLastActivityWithPatch(ctx context.Context, sand
 	}
 
 	// Apply the patch using json merge patch
-	_, err = c.dynamicClient.Resource(sandboxGVR).Namespace(c.namespace).Patch(
+	_, err = c.dynamicClient.Resource(SandboxGVR).Namespace(c.namespace).Patch(
 		ctx,
 		sandboxName,
 		types.MergePatchType,
@@ -330,4 +340,9 @@ func convertToStringMap(m map[string]interface{}) map[string]string {
 		}
 	}
 	return result
+}
+
+// GetSandboxInformer returns a shared informer for Sandbox CRD
+func (c *K8sClient) GetSandboxInformer() cache.SharedInformer {
+	return c.dynamicInformer.ForResource(SandboxGVR).Informer()
 }

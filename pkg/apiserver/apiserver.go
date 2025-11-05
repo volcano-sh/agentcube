@@ -50,6 +50,12 @@ func NewServer(config *Config, sandboxController *controller.SandboxReconciler) 
 	return server, nil
 }
 
+// InitializeStore initializes the sandbox store with Kubernetes informer
+func (s *Server) InitializeStore(ctx context.Context) error {
+	informer := s.k8sClient.GetSandboxInformer()
+	return s.sandboxStore.InitializeWithInformer(ctx, informer, s.k8sClient, s.config.Namespace)
+}
+
 // setupRoutes configures HTTP routes
 func (s *Server) setupRoutes() {
 	s.router = mux.NewRouter()
@@ -78,6 +84,11 @@ func (s *Server) setupRoutes() {
 
 // Start starts the API server
 func (s *Server) Start(ctx context.Context) error {
+	// Initialize store with informer before starting server
+	if err := s.InitializeStore(ctx); err != nil {
+		return fmt.Errorf("failed to initialize sandbox store: %w", err)
+	}
+
 	addr := ":" + s.config.Port
 
 	s.httpServer = &http.Server{
@@ -92,6 +103,8 @@ func (s *Server) Start(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 		log.Println("Shutting down server...")
+		// Stop the sandbox store informer
+		s.sandboxStore.Stop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {

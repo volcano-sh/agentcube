@@ -91,17 +91,25 @@ print(f"Generated {n} Fibonacci numbers")
         with open(local_path, 'r') as f:
             data = json.load(f)
         log.info(f"   Generated {data['count']} numbers, sum: {data['sum']}")
-        
-        log.info("\n===========================================")
-        log.info("🎉 All operations completed successfully")
-        log.info("===========================================")
-         
-        # 9. Stop sandbox
-        log.info("\nStep 9: Stop sandbox...")
+
+        # 9. Run Code
+        log.info("\nStep 9: Running code in sandbox...")
+        stdout = sandbox.run_code(
+            language="py",
+            code="print('Hello from Python!'); import sys; print('Python version:', sys.version.split()[0])"
+        )
+        print(f"✅ Python Output: {stdout}")
+
+        # 10. Stop sandbox
+        log.info("\nStep 10: Stop sandbox...")
         if sandbox.stop():
             log.info(f"✅ Sandbox {sandbox.id} deleted\n")
         else:
             log.error(f"❌ Failed to delete sandbox {sandbox.id}\n")
+        
+        log.info("\n===========================================")
+        log.info("🎉 All operations completed successfully")
+        log.info("===========================================")
         
     except Exception as e:
         log.error(f"\n❌ Error: {str(e)}")

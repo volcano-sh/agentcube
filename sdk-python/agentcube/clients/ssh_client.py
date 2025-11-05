@@ -1,4 +1,5 @@
 import os
+import shlex
 import socket
 from typing import Dict, List, Optional, Tuple
 import paramiko
@@ -41,27 +42,29 @@ class SandboxSSHClient :
                 timeout=constants.DEFAULT_TIMEOUT,        
                 banner_timeout=constants.DEFAULT_BANNER_TIMEOUT
             )
-            self._ssh_client = ssh_client
             return ssh_client
         except paramiko.SSHException as e:
             raise paramiko.SSHException(f"SSH handshake failed: {str(e)}") from e
     
-    def execute_command(self, command: str) -> str:
+    def execute_command(self, command: str, timeout: float = 30) -> str:
         """Execute a command over SSH
         
         Args:
             command: Command to execute
             ssh_client: SSH client instance (uses current connection if not provided)
-            
+            timeout: Command execution timeout in seconds
         Returns:
             Command output
         """
     
-        ssh_client = self._ssh_client or self.connect_ssh()
+        if self._ssh_client is None:
+            self._ssh_client = self.connect_ssh()
+
+        ssh_client = self._ssh_client 
         if not ssh_client:
-            raise Exception("No SSH connection established. Please call connect_ssh first.")
+            raise ConnectionError("No SSH connection established. Please call connect_ssh first.")
         
-        stdin, stdout, stderr = ssh_client.exec_command(command)
+        stdin, stdout, stderr = ssh_client.exec_command(command, timeout)
         exit_status = stdout.channel.recv_exit_status()
         
         output = stdout.read().decode().strip()
@@ -90,9 +93,40 @@ class SandboxSSHClient :
         self,
         language: str,
         code: str,
-        ) -> Tuple[Optional[str], Optional[str]]:
-        pass
-    
+        timeout: float = 30
+    ) -> str:
+        """Run code snippet in the specified language over SSH
+        
+        Args:
+            language: Programming language of the code snippet (e.g., "python", "bash")
+            code: Code snippet to execute
+            timeout: Execution timeout in seconds
+        Returns:
+            Tuple of (stdout, stderr) from code execution. 
+            If execution fails, stdout is None and stderr contains error info.
+        """
+        lang = language.lower()
+        lang_aliases = {
+            "python": ["python", "py", "python3"],
+            "bash": ["bash", "sh", "shell"]
+        }
+
+        target_lang = None
+        for std_lang, aliases in lang_aliases.items():
+            if lang in aliases:
+                target_lang = std_lang
+                break
+        if not target_lang:
+            raise ValueError(f"Unsupported language: {language}. Supported: {list(lang_aliases.keys())}")
+
+        quoted_code = shlex.quote(code)
+        if target_lang == "python":
+            command = f"python3 -c {quoted_code}"
+        elif target_lang == "bash":
+            command = f"bash -c {quoted_code}"
+
+        return self.execute_command(command, timeout)
+
     def write_file(
         self,
         content: str,

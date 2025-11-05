@@ -106,6 +106,14 @@ print(f"Generated {n} Fibonacci numbers")
         log.info("🎉 All operations completed successfully")
         log.info("===========================================")
 
+        #10. Run Code
+        log.info("Step 10: Running code snippet via SSH...")
+        stdout = ssh_client.run_code(
+            language="py",
+            code="print('Hello from Python!'); import sys; print('Python version:', sys.version.split()[0])"
+        )
+        print(f"✅ Python Output: {stdout}")
+         
     except Exception as e:
         log.error(f"\n❌ Error: {str(e)}")
     finally:

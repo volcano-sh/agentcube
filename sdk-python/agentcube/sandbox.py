@@ -59,10 +59,10 @@ class Sandbox:
             exc_tb: Exception traceback if an exception occurred, None otherwise
             
         Returns:
-            False to propagate any exception that occurred
+            None to propagate any exception that occurred
         """
         self.cleanup()
-        return False
+        return None
 
     def is_running(self) -> bool:
         """Check if the sandbox is in running state
@@ -135,7 +135,6 @@ class CodeInterpreterClient(Sandbox):
             image: Container image to use for the sandbox
             api_url: API server URL (defaults to environment variable API_URL or DEFAULT_API_URL)
         """
-        # Initialize executor to None first
         self._executor = None
         
         # Generate SSH key pair for secure connection

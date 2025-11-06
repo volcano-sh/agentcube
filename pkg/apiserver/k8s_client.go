@@ -97,7 +97,7 @@ type SandboxInfo struct {
 }
 
 // CreateSandbox creates a new Sandbox CRD resource using the agent-sandbox types
-func (c *K8sClient) CreateSandbox(ctx context.Context, sandboxName, sandboxID, image, sshPublicKey, runtimeClassName string, ttl int, metadata map[string]interface{}) (*SandboxInfo, error) {
+func (c *K8sClient) CreateSandbox(ctx context.Context, sandboxName, sandboxID, image, sshPublicKey, runtimeClassName string, ttl int, metadata map[string]interface{}, createdAt time.Time) (*SandboxInfo, error) {
 	// Use default sandbox image if not specified
 	if image == "" {
 		image = "sandbox:latest"
@@ -152,8 +152,8 @@ func (c *K8sClient) CreateSandbox(ctx context.Context, sandboxName, sandboxID, i
 			// Add more fields as needed from the agent-sandbox CRD spec
 		},
 	}
-	// Use the creation time as the initial active time
-	sandbox.Annotations[LastActivityAnnotationKey] = time.Now().Format(time.RFC3339)
+	// Use the provided creation time as the initial active time to ensure consistency
+	sandbox.Annotations[LastActivityAnnotationKey] = createdAt.Format(time.RFC3339)
 	// Store TTL in annotations so informer can calculate expiresAt
 	if ttl > 0 {
 		sandbox.Annotations["ttl"] = fmt.Sprintf("%d", ttl)

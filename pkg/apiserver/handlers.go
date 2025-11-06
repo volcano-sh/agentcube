@@ -44,8 +44,11 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	// This ensures we don't miss the Running state notification
 	resultChan := s.sandboxController.WatchSandboxOnce(r.Context(), namespace, sandboxName)
 
-	// Now create Kubernetes Sandbox CRD
-	_, err := s.k8sClient.CreateSandbox(r.Context(), sandboxName, sandboxID, req.Image, req.SSHPublicKey, s.config.RuntimeClassName, req.TTL, req.Metadata)
+	// Get creation time BEFORE creating sandbox to ensure consistency
+	now := time.Now()
+
+	// Now create Kubernetes Sandbox CRD with the unified timestamp
+	_, err := s.k8sClient.CreateSandbox(r.Context(), sandboxName, sandboxID, req.Image, req.SSHPublicKey, s.config.RuntimeClassName, req.TTL, req.Metadata, now)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "SANDBOX_CREATE_FAILED", err.Error())
 		return
@@ -55,7 +58,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	case result := <-resultChan:
 		// Informer will automatically update the store when the sandbox CRD is created
 		// We can retrieve it from the store now, or construct the response directly
-		now := time.Now()
+		// Use the same timestamp that was used in CreateSandbox
 		sandbox := &Sandbox{
 			SandboxID:      sandboxID,
 			Status:         result.Status,

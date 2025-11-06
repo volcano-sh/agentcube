@@ -66,9 +66,9 @@ class TestSandboxBase(unittest.TestCase):
 class TestCodeInterpreterClient(unittest.TestCase):
     """Test CodeInterpreterClient class with dataplane operations"""
     
-    @patch('agentcube.sandbox.SandboxSSHClient')
     @patch('agentcube.sandbox.SandboxClient')
-    def test_code_interpreter_initialization(self, mock_client_class, mock_ssh_class):
+    @patch('agentcube.sandbox.SandboxSSHClient')
+    def test_code_interpreter_initialization(self, mock_ssh_class, mock_client_class):
         """Test that CodeInterpreterClient initializes with SSH connection"""
         # Setup mocks
         mock_client = Mock()
@@ -86,9 +86,9 @@ class TestCodeInterpreterClient(unittest.TestCase):
         mock_ssh_class.generate_ssh_key_pair.assert_called_once()
         mock_client.establish_tunnel.assert_called_once_with("test-sandbox-id")
     
-    @patch('agentcube.sandbox.SandboxSSHClient')
     @patch('agentcube.sandbox.SandboxClient')
-    def test_code_interpreter_inherits_from_sandbox(self, mock_client_class, mock_ssh_class):
+    @patch('agentcube.sandbox.SandboxSSHClient')
+    def test_code_interpreter_inherits_from_sandbox(self, mock_ssh_class, mock_client_class):
         """Test that CodeInterpreterClient inherits from Sandbox"""
         # Setup mocks
         mock_client = Mock()
@@ -103,9 +103,9 @@ class TestCodeInterpreterClient(unittest.TestCase):
         self.assertIsInstance(code_interpreter, Sandbox)
         self.assertIsInstance(code_interpreter, CodeInterpreterClient)
     
-    @patch('agentcube.sandbox.SandboxSSHClient')
     @patch('agentcube.sandbox.SandboxClient')
-    def test_code_interpreter_has_dataplane_methods(self, mock_client_class, mock_ssh_class):
+    @patch('agentcube.sandbox.SandboxSSHClient')
+    def test_code_interpreter_has_dataplane_methods(self, mock_ssh_class, mock_client_class):
         """Test that CodeInterpreterClient has dataplane methods"""
         # Setup mocks
         mock_client = Mock()
@@ -134,9 +134,9 @@ class TestCodeInterpreterClient(unittest.TestCase):
         self.assertEqual(output, "test output")
         mock_executor.execute_command.assert_called_once_with("test command")
     
-    @patch('agentcube.sandbox.SandboxSSHClient')
     @patch('agentcube.sandbox.SandboxClient')
-    def test_code_interpreter_has_lifecycle_methods(self, mock_client_class, mock_ssh_class):
+    @patch('agentcube.sandbox.SandboxSSHClient')
+    def test_code_interpreter_has_lifecycle_methods(self, mock_ssh_class, mock_client_class):
         """Test that CodeInterpreterClient inherits lifecycle methods from Sandbox"""
         # Setup mocks
         mock_client = Mock()

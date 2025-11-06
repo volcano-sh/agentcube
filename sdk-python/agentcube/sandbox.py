@@ -43,11 +43,24 @@ class Sandbox:
         )
     
     def __enter__(self):
-        """Context manager entry"""
+        """Context manager entry
+        
+        Returns:
+            self: The sandbox instance
+        """
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit"""
+        """Context manager exit - ensures cleanup is called
+        
+        Args:
+            exc_type: Exception type if an exception occurred, None otherwise
+            exc_val: Exception value if an exception occurred, None otherwise
+            exc_tb: Exception traceback if an exception occurred, None otherwise
+            
+        Returns:
+            False to propagate any exception that occurred
+        """
         self.cleanup()
         return False
 
@@ -122,6 +135,9 @@ class CodeInterpreterClient(Sandbox):
             image: Container image to use for the sandbox
             api_url: API server URL (defaults to environment variable API_URL or DEFAULT_API_URL)
         """
+        # Initialize executor to None first
+        self._executor = None
+        
         # Generate SSH key pair for secure connection
         public_key, private_key = SandboxSSHClient.generate_ssh_key_pair()
         
@@ -249,5 +265,5 @@ class CodeInterpreterClient(Sandbox):
 
     def cleanup(self):
         """Clean up resources associated with the sandbox"""
-        if hasattr(self, '_executor'):
+        if self._executor is not None:
             self._executor.cleanup()

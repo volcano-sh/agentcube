@@ -20,7 +20,8 @@ class Sandbox:
             ttl: int = constants.DEFAULT_TTL,
             image: str = constants.DEFAULT_IMAGE,
             api_url: Optional[str] = None,
-            auth_token: Optional[str] = None
+            auth_token: Optional[str] = None,
+            ssh_public_key: Optional[str] = None,
         ):
         """Initialize a sandbox instance
         
@@ -28,6 +29,7 @@ class Sandbox:
             ttl: Time-to-live in seconds for the sandbox
             image: Container image to use for the sandbox
             api_url: API server URL (defaults to environment variable API_URL or DEFAULT_API_URL)
+            ssh_public_key: Optional SSH public key for secure connection
         """
         self.ttl = ttl
         self.image = image
@@ -36,11 +38,18 @@ class Sandbox:
         self._client = SandboxClient(api_url=self.api_url, auth_token=self.auth_token)
         self.id = self._client.create_sandbox(
             ttl=self.ttl, 
-            image=self.image
+            image=self.image,
+            ssh_public_key=ssh_public_key
         )
     
-    def __exit__(self):   
+    def __enter__(self):
+        """Context manager entry"""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit"""
         self.cleanup()
+        return False
 
     def is_running(self) -> bool:
         """Check if the sandbox is in running state
@@ -113,23 +122,12 @@ class CodeInterpreterClient(Sandbox):
             image: Container image to use for the sandbox
             api_url: API server URL (defaults to environment variable API_URL or DEFAULT_API_URL)
         """
-        # Initialize base class without creating sandbox yet
-        self.ttl = ttl
-        self.image = image
-        self.api_url = api_url or get_env("API_URL", constants.DEFAULT_API_URL)
-
-        self._client = SandboxClient(api_url=self.api_url)
-        
         # Generate SSH key pair for secure connection
         public_key, private_key = SandboxSSHClient.generate_ssh_key_pair()
         
-        # Create sandbox with SSH public key
-        self.id = self._client.create_sandbox(
-            ttl=self.ttl, 
-            image=self.image, 
-            ssh_public_key=public_key
-        )
-
+        # Initialize base class with SSH public key
+        super().__init__(ttl=ttl, image=image, api_url=api_url, ssh_public_key=public_key)
+        
         # Establish tunnel and SSH connection for dataplane operations
         sock = self._client.establish_tunnel(self.id)
         self._executor = SandboxSSHClient(

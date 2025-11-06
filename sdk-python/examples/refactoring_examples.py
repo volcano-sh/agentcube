@@ -107,7 +107,9 @@ print("\\nCalculating fibonacci (iterative)...")
 def fib(n):
     if n <= 1:
         return n
+    # Initialize first two fibonacci numbers
     a, b = 0, 1
+    # Generate fibonacci sequence iteratively
     for _ in range(2, n + 1):
         a, b = b, a + b
     return b

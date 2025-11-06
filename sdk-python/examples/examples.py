@@ -9,7 +9,7 @@ def main():
     log = logging.getLogger(__name__)
     
     try:
-        # Initialize Pico client
+        # Initialize code interpreter
         
         log.info("===========================================")
         log.info("SSH Key-based Authentication Test")
@@ -17,12 +17,12 @@ def main():
         
         # 1. Create sandbox with SSH key
         log.info("Step 1: Creating sandbox with SSH key...")
-        sandbox = CodeInterpreterClient()
-        log.info(f"✅ sandbox created: {sandbox.id}\n")
+        code_interpreter = CodeInterpreterClient()
+        log.info(f"✅ sandbox created: {code_interpreter.id}\n")
 
         # 2. get sandbox info
         log.info("Step 2: Retrieving sandbox info...")
-        sandbox_info = sandbox.get_info()
+        sandbox_info = code_interpreter.get_info()
         log.info(f"   sandbox Info: {json.dumps(sandbox_info, indent=2)}\n")
 
         # 3. Execute test commands
@@ -37,7 +37,7 @@ def main():
         
         for i, cmd in enumerate(commands, 1):
             log.info(f"   [{i}/{len(commands)}] Executing: {cmd}")
-            output = sandbox.execute_command(cmd)
+            output = code_interpreter.execute_command(cmd)
             log.info(f"      Output: {output.strip()}\n")
         
         # 4. Upload File to remote
@@ -45,7 +45,7 @@ def main():
         with open("/tmp/upload.txt", "w", encoding="utf-8") as f:
             f.write("Hello Upload File")
 
-        sandbox.upload_file("/tmp/upload.txt", "/workspace/upload.txt")
+        code_interpreter.upload_file("/tmp/upload.txt", "/workspace/upload.txt")
         log.info("✅ Uploaded file to /workspace/upload.txt\n")
 
         # 5. Write Python script
@@ -71,19 +71,19 @@ with open('/workspace/output.json', 'w') as f:
     }, f, indent=2)
 print(f"Generated {n} Fibonacci numbers")
 """
-        sandbox.write_file(script_content, "/workspace/fib.py")
+        code_interpreter.write_file(script_content, "/workspace/fib.py")
         log.info("✅ Write Content to /workspace/fib.py\n")
         
         # 6. Execute script
         log.info("Step 6: Executing Python script...")
-        output = sandbox.execute_command("python3 /workspace/fib.py")
+        output = code_interpreter.execute_command("python3 /workspace/fib.py")
         log.info(f"   Output: {output.strip()}\n")
         
         # 7. Download result file
         log.info("Step 7: Downloading output file...")
         local_path = "/tmp/pico_output.json"
-        sandbox.download_file("/workspace/output.json", local_path)
-        sandbox.download_file("/workspace/upload.txt", "/tmp/download.txt")
+        code_interpreter.download_file("/workspace/output.json", local_path)
+        code_interpreter.download_file("/workspace/upload.txt", "/tmp/download.txt")
         log.info(f"✅ File downloaded to {local_path}\n")
         
         # 8. Verify result
@@ -94,7 +94,7 @@ print(f"Generated {n} Fibonacci numbers")
 
         # 9. Run Code
         log.info("\nStep 9: Running code in sandbox...")
-        stdout = sandbox.run_code(
+        stdout = code_interpreter.run_code(
             language="py",
             code="print('Hello from Python!'); import sys; print('Python version:', sys.version.split()[0])"
         )
@@ -102,10 +102,10 @@ print(f"Generated {n} Fibonacci numbers")
 
         # 10. Stop sandbox
         log.info("\nStep 10: Stop sandbox...")
-        if sandbox.stop():
-            log.info(f"✅ Sandbox {sandbox.id} deleted\n")
+        if code_interpreter.stop():
+            log.info(f"✅ Sandbox {code_interpreter.id} deleted\n")
         else:
-            log.error(f"❌ Failed to delete sandbox {sandbox.id}\n")
+            log.error(f"❌ Failed to delete sandbox {code_interpreter.id}\n")
         
         log.info("\n===========================================")
         log.info("🎉 All operations completed successfully")

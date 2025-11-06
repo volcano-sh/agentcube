@@ -2,7 +2,7 @@
 Test the refactored Sandbox and CodeInterpreterClient classes
 """
 import unittest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from agentcube import Sandbox, CodeInterpreterClient
 from agentcube.sandbox import SandboxStatus
 
@@ -67,7 +67,7 @@ class TestCodeInterpreterClient(unittest.TestCase):
     """Test CodeInterpreterClient class with dataplane operations"""
     
     @patch('agentcube.sandbox.SandboxClient')
-    @patch('agentcube.sandbox.SandboxSSHClient')
+    @patch('agentcube.code_interpreter.SandboxSSHClient')
     def test_code_interpreter_initialization(self, mock_ssh_class, mock_client_class):
         """Test that CodeInterpreterClient initializes with SSH connection"""
         # Setup mocks
@@ -87,7 +87,7 @@ class TestCodeInterpreterClient(unittest.TestCase):
         mock_client.establish_tunnel.assert_called_once_with("test-sandbox-id")
     
     @patch('agentcube.sandbox.SandboxClient')
-    @patch('agentcube.sandbox.SandboxSSHClient')
+    @patch('agentcube.code_interpreter.SandboxSSHClient')
     def test_code_interpreter_inherits_from_sandbox(self, mock_ssh_class, mock_client_class):
         """Test that CodeInterpreterClient inherits from Sandbox"""
         # Setup mocks
@@ -104,7 +104,7 @@ class TestCodeInterpreterClient(unittest.TestCase):
         self.assertIsInstance(code_interpreter, CodeInterpreterClient)
     
     @patch('agentcube.sandbox.SandboxClient')
-    @patch('agentcube.sandbox.SandboxSSHClient')
+    @patch('agentcube.code_interpreter.SandboxSSHClient')
     def test_code_interpreter_has_dataplane_methods(self, mock_ssh_class, mock_client_class):
         """Test that CodeInterpreterClient has dataplane methods"""
         # Setup mocks
@@ -135,7 +135,7 @@ class TestCodeInterpreterClient(unittest.TestCase):
         mock_executor.execute_command.assert_called_once_with("test command")
     
     @patch('agentcube.sandbox.SandboxClient')
-    @patch('agentcube.sandbox.SandboxSSHClient')
+    @patch('agentcube.code_interpreter.SandboxSSHClient')
     def test_code_interpreter_has_lifecycle_methods(self, mock_ssh_class, mock_client_class):
         """Test that CodeInterpreterClient inherits lifecycle methods from Sandbox"""
         # Setup mocks

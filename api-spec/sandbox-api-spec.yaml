@@ -41,7 +41,7 @@ tags:
     description: Execute code snippets
 
 paths:
-  /sandboxes:
+  /v1/sandboxes:
     post:
       tags:
         - Sandboxes
@@ -137,7 +137,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /sandboxes/{sandboxId}:
+  /v1/sandboxes/{sandboxId}:
     get:
       tags:
         - Sandboxes
@@ -158,7 +158,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /sandboxes/{sandboxId}/pause:
+  /v1/sandboxes/{sandboxId}/pause:
     post:
       tags:
         - Sandboxes
@@ -181,7 +181,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /sandboxes/{sandboxId}/resume:
+  /v1/sandboxes/{sandboxId}/resume:
     post:
       tags:
         - Sandboxes
@@ -204,25 +204,25 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-    delete:
-      tags:
-        - Sandboxes
-      summary: Delete a sandbox
-      description: |
-        Terminates the sandbox and removes all resources.
-        All files and data in the sandbox will be permanently deleted.
-      operationId: deleteSandbox
-      parameters:
-        - $ref: "#/components/parameters/SandboxId"
-      responses:
-        "200":
-          description: Sandbox deleted successfully
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
+  delete:
+    tags:
+      - Sandboxes
+    summary: Delete a sandbox
+    description: |
+      Terminates the sandbox and removes all resources.
+      All files and data in the sandbox will be permanently deleted.
+    operationId: deleteSandbox
+    parameters:
+      - $ref: "#/components/parameters/SandboxId"
+    responses:
+      "200":
+        description: Sandbox deleted successfully
+      "404":
+        $ref: "#/components/responses/NotFound"
+      "401":
+        $ref: "#/components/responses/Unauthorized"
 
-  /sandboxes/{sandboxId}/commands:
+  /v1/sandboxes/{sandboxId}/commands:
     post:
       tags:
         - Commands
@@ -259,7 +259,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /sandboxes/{sandboxId}/code:
+  /v1/sandboxes/{sandboxId}/code:
     post:
       tags:
         - Code
@@ -313,7 +313,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /sandboxes/{sandboxId}/files:
+  /v1/sandboxes/{sandboxId}/files:
     post:
       tags:
         - Files

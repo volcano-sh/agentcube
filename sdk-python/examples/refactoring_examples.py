@@ -103,11 +103,14 @@ def example_code_interpreter():
 print("Python version:")
 import sys
 print(sys.version)
-print("\\nCalculating fibonacci...")
+print("\\nCalculating fibonacci (iterative)...")
 def fib(n):
     if n <= 1:
         return n
-    return fib(n-1) + fib(n-2)
+    a, b = 0, 1
+    for _ in range(2, n + 1):
+        a, b = b, a + b
+    return b
 print(f"Fibonacci(10) = {fib(10)}")
 """
         output = code_interpreter.run_code(language="python", code=python_code)

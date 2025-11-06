@@ -1,7 +1,7 @@
 import logging
 import json
 
-from agentcube import Sandbox
+from agentcube import CodeInterpreterClient
 
 def main():
     # Configure logging
@@ -17,7 +17,7 @@ def main():
         
         # 1. Create sandbox with SSH key
         log.info("Step 1: Creating sandbox with SSH key...")
-        sandbox = Sandbox()
+        sandbox = CodeInterpreterClient()
         log.info(f"✅ sandbox created: {sandbox.id}\n")
 
         # 2. get sandbox info

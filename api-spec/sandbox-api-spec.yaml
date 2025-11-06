@@ -22,9 +22,9 @@ info:
     email: support@example.com
 
 servers:
-  - url: https://api.sandbox.example.com/v1
+  - url: https://api.sandbox.example.com
     description: Production server
-  - url: http://localhost:8080/v1
+  - url: http://localhost:8080
     description: Development server
 
 security:
@@ -204,23 +204,23 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  delete:
-    tags:
-      - Sandboxes
-    summary: Delete a sandbox
-    description: |
-      Terminates the sandbox and removes all resources.
-      All files and data in the sandbox will be permanently deleted.
-    operationId: deleteSandbox
-    parameters:
-      - $ref: "#/components/parameters/SandboxId"
-    responses:
-      "200":
-        description: Sandbox deleted successfully
-      "404":
-        $ref: "#/components/responses/NotFound"
-      "401":
-        $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags:
+        - Sandboxes
+      summary: Delete a sandbox
+      description: |
+        Terminates the sandbox and removes all resources.
+        All files and data in the sandbox will be permanently deleted.
+      operationId: deleteSandbox
+      parameters:
+        - $ref: "#/components/parameters/SandboxId"
+      responses:
+        "200":
+          description: Sandbox deleted successfully
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /v1/sandboxes/{sandboxId}/commands:
     post:

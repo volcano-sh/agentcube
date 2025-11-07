@@ -88,22 +88,6 @@ func (s *SandboxStore) List() []*Sandbox {
 	return sandboxes
 }
 
-// CleanExpired cleans up expired sandboxes
-func (s *SandboxStore) CleanExpired() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := time.Now()
-	count := 0
-	for sandboxID, sandbox := range s.sandboxes {
-		if now.After(sandbox.ExpiresAt) {
-			delete(s.sandboxes, sandboxID)
-			count++
-		}
-	}
-	return count
-}
-
 // InitializeWithInformer initializes the store with an informer and performs initial sync
 func (s *SandboxStore) InitializeWithInformer(ctx context.Context, informer cache.SharedInformer, k8sClient *K8sClient, namespace string) error {
 	s.mu.Lock()
@@ -131,11 +115,6 @@ func (s *SandboxStore) InitializeWithInformer(ctx context.Context, informer cach
 		return fmt.Errorf("failed to sync informer cache")
 	}
 
-	// Perform initial sync: list all sandboxes from Kubernetes
-	if err := s.initializeFromCluster(ctx, k8sClient, namespace); err != nil {
-		return fmt.Errorf("failed to initialize from cluster: %w", err)
-	}
-
 	return nil
 }
 
@@ -147,39 +126,6 @@ func (s *SandboxStore) Stop() {
 		close(s.stopCh)
 		s.stopped = true
 	}
-}
-
-// initializeFromCluster lists all sandboxes from Kubernetes and populates the store
-func (s *SandboxStore) initializeFromCluster(ctx context.Context, k8sClient *K8sClient, namespace string) error {
-	// Since we're using an informer, we can get all objects from the informer's cache
-	// after it has synced. This avoids a separate list call.
-	store := s.informer.GetStore()
-	if store == nil {
-		return fmt.Errorf("informer store is not available")
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Get all objects from the informer cache
-	list := store.List()
-	for _, obj := range list {
-		unstructuredObj, ok := obj.(*unstructured.Unstructured)
-		if !ok {
-			continue
-		}
-
-		sandbox, err := convertK8sSandboxToSandbox(unstructuredObj)
-		if err != nil {
-			// Log error but continue processing other sandboxes
-			continue
-		}
-		if sandbox != nil && sandbox.SandboxID != "" {
-			s.sandboxes[sandbox.SandboxID] = sandbox
-		}
-	}
-
-	return nil
 }
 
 // onSandboxAdd handles sandbox add events

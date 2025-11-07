@@ -70,7 +70,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// The store will be updated by the informer when the CRD is created
-		// We can also manually set it here for immediate response, but informer will sync it
+		// but we set it here for immediate response consistency.
+		s.sandboxStore.Set(sandboxID, sandbox)
 		respondJSON(w, http.StatusOK, sandbox)
 		return
 	case <-time.After(time.Duration(req.TTL) * time.Second):

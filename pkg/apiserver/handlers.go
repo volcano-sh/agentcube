@@ -44,8 +44,11 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	// This ensures we don't miss the Running state notification
 	resultChan := s.sandboxController.WatchSandboxOnce(r.Context(), namespace, sandboxName)
 
-	// Now create Kubernetes Sandbox CRD
-	_, err := s.k8sClient.CreateSandbox(r.Context(), sandboxName, sandboxID, req.Image, req.SSHPublicKey, s.config.RuntimeClassName, req.Metadata)
+	// Get creation time BEFORE creating sandbox to ensure consistency
+	now := time.Now()
+
+	// Now create Kubernetes Sandbox CRD with the unified timestamp
+	_, err := s.k8sClient.CreateSandbox(r.Context(), sandboxName, sandboxID, req.Image, req.SSHPublicKey, s.config.RuntimeClassName, req.TTL, req.Metadata, now)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "SANDBOX_CREATE_FAILED", err.Error())
 		return
@@ -53,8 +56,9 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 
 	select {
 	case result := <-resultChan:
-		// Create sandbox object
-		now := time.Now()
+		// Informer will automatically update the store when the sandbox CRD is created
+		// We can retrieve it from the store now, or construct the response directly
+		// Use the same timestamp that was used in CreateSandbox
 		sandbox := &Sandbox{
 			SandboxID:      sandboxID,
 			Status:         result.Status,
@@ -65,7 +69,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 			SandboxName:    sandboxName,
 		}
 
-		// Store sandbox
+		// The store will be updated by the informer when the CRD is created
+		// but we set it here for immediate response consistency.
 		s.sandboxStore.Set(sandboxID, sandbox)
 		respondJSON(w, http.StatusOK, sandbox)
 		return
@@ -138,14 +143,13 @@ func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Delete Kubernetes Sandbox CRD
+	// The informer will automatically delete it from the store when the CRD is deleted
 	if err := s.k8sClient.DeleteSandbox(r.Context(), sandbox.SandboxName); err != nil {
 		respondError(w, http.StatusInternalServerError, "SANDBOX_DELETE_FAILED", err.Error())
 		return
 	}
 
-	// Delete from store
-	s.sandboxStore.Delete(sandboxID)
-
+	// Note: Don't manually delete from store - informer will handle it
 	respondJSON(w, http.StatusOK, map[string]string{
 		"message": "Sandbox deleted successfully",
 	})

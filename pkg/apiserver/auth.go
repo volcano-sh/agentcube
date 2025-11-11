@@ -122,7 +122,18 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 }
 
 // validateServiceAccountToken validates a service account token using Kubernetes TokenReview API
+// Uses LRU cache to avoid repeated API calls for the same token
 func (s *Server) validateServiceAccountToken(ctx context.Context, token string) (bool, string, error) {
+	// Check cache first
+	if found, authenticated, username := s.tokenCache.Get(token); found {
+		if authenticated {
+			return true, username, nil
+		}
+		// Token found in cache but not authenticated
+		return false, "", nil
+	}
+
+	// Cache miss, call Kubernetes API
 	// Create TokenReview request
 	tokenReview := &authv1.TokenReview{
 		Spec: authv1.TokenReviewSpec{
@@ -140,14 +151,20 @@ func (s *Server) validateServiceAccountToken(ctx context.Context, token string) 
 		return false, "", fmt.Errorf("failed to review token: %w", err)
 	}
 
-	// Check if token is authenticated
+	// Extract service account information from username
+	// Kubernetes service account username format: system:serviceaccount:<namespace>:<serviceaccount-name>
+	username := ""
+	if result.Status.Authenticated {
+		username = result.Status.User.Username
+	}
+
+	// Cache the result (both authenticated and non-authenticated tokens)
+	s.tokenCache.Set(token, result.Status.Authenticated, username)
+
 	if !result.Status.Authenticated {
 		return false, "", nil
 	}
 
-	// Extract service account information from username
-	// Kubernetes service account username format: system:serviceaccount:<namespace>:<serviceaccount-name>
-	username := result.Status.User.Username
 	return true, username, nil
 }
 

@@ -34,7 +34,6 @@ type K8sClient struct {
 	dynamicClient   dynamic.Interface
 	namespace       string
 	scheme          *runtime.Scheme
-	restConfig      *rest.Config
 	baseConfig      *rest.Config // Store base config for creating user clients
 	clientCache     *ClientCache // LRU cache for user clients
 	dynamicInformer dynamicinformer.DynamicSharedInformerFactory
@@ -89,9 +88,8 @@ func NewK8sClient(namespace string) (*K8sClient, error) {
 		dynamicClient:   dynamicClient,
 		namespace:       namespace,
 		scheme:          scheme,
-		restConfig:      config,
 		baseConfig:      config,
-		clientCache:     NewClientCache(100, 30*time.Minute), // Cache up to 100 clients, 30min TTL
+		clientCache:     NewClientCache(100), // Cache up to 100 clients
 		dynamicInformer: dynamicinformer.NewFilteredDynamicSharedInformerFactory(dynamicClient, 0, namespace, nil),
 	}, nil
 }
@@ -130,20 +128,14 @@ func (c *K8sClient) NewUserK8sClient(userToken, namespace string) (*UserK8sClien
 
 // GetOrCreateUserK8sClient gets a cached client or creates a new one if not found
 // Uses service account name and namespace as cache key
-// If token doesn't match cached entry, removes old entry and creates new one
+// If token doesn't match cached entry, Set will overwrite it
 func (c *K8sClient) GetOrCreateUserK8sClient(userToken, namespace, serviceAccountName string) (*UserK8sClient, error) {
 	// Create cache key
 	cacheKey := makeCacheKey(namespace, serviceAccountName)
 
 	// Try to get from cache
-	if cachedClient := c.clientCache.GetWithToken(cacheKey, userToken); cachedClient != nil {
+	if cachedClient := c.clientCache.Get(cacheKey, userToken); cachedClient != nil {
 		return cachedClient, nil
-	}
-
-	// If cache entry exists but token doesn't match, remove it
-	// This handles token rotation scenarios
-	if c.clientCache.Get(cacheKey) != nil {
-		c.clientCache.Remove(cacheKey)
 	}
 
 	// Create new client
@@ -152,7 +144,7 @@ func (c *K8sClient) GetOrCreateUserK8sClient(userToken, namespace, serviceAccoun
 		return nil, err
 	}
 
-	// Store in cache
+	// Store in cache (will overwrite if key exists)
 	c.clientCache.Set(cacheKey, userToken, client)
 
 	return client, nil

@@ -9,16 +9,15 @@
 6. [Implementation Details](#implementation-details)
 7. [Usage Examples](#usage-examples)
 8. [Future Extensions](#future-extensions)
-9. [Migration Guide](#migration-guide)
 
 ## Overview
 
 This document describes the architectural design for the Agentcube Python SDK refactoring that separates control plane (lifecycle management) from data plane (execution and interaction) operations.
 
 ### Version History
-- **v1.0** (Current): Initial refactored architecture with Sandbox base class and CodeInterpreterClient
+- **v0.1** (Current): Initial refactored architecture with Sandbox base class and CodeInterpreterClient
 
-## Problem Statement
+## BackGround
 
 ### Original Design Issues
 
@@ -326,45 +325,7 @@ with CodeInterpreterClient() as client:
 ```python
 class BrowserUseClient(Sandbox):
     """Browser automation client"""
-    
-    def __init__(self, ttl: int, image: str, api_url: Optional[str]):
-        super().__init__(ttl, image, api_url)
-        # Initialize browser connection (e.g., Playwright, Selenium)
-        self._browser = self._initialize_browser()
-    
-    def navigate(self, url: str) -> None:
-        """Navigate to a URL"""
-        pass
-    
-    def click(self, selector: str) -> None:
-        """Click an element"""
-        pass
-    
-    def type_text(self, selector: str, text: str) -> None:
-        """Type text into an input field"""
-        pass
-    
-    def screenshot(self, path: str) -> bytes:
-        """Take a screenshot"""
-        pass
-    
-    def get_page_content(self) -> str:
-        """Get current page HTML"""
-        pass
-    
-    def cleanup(self):
-        """Close browser connections"""
-        if self._browser:
-            self._browser.close()
-```
-
-**Use Case**:
-```python
-with BrowserUseClient() as browser:
-    browser.navigate("https://example.com")
-    browser.click("#login-button")
-    browser.type_text("#username", "user@example.com")
-    screenshot = browser.screenshot("/tmp/page.png")
+    ...
 ```
 
 ### 2. ComputerUseClient
@@ -374,49 +335,7 @@ with BrowserUseClient() as browser:
 ```python
 class ComputerUseClient(Sandbox):
     """Desktop automation client"""
-    
-    def __init__(self, ttl: int, image: str, api_url: Optional[str]):
-        super().__init__(ttl, image, api_url)
-        # Initialize VNC or remote desktop connection
-        self._desktop = self._initialize_desktop()
-    
-    def mouse_move(self, x: int, y: int) -> None:
-        """Move mouse to coordinates"""
-        pass
-    
-    def mouse_click(self, button: str = "left") -> None:
-        """Click mouse button"""
-        pass
-    
-    def keyboard_type(self, text: str) -> None:
-        """Type text"""
-        pass
-    
-    def keyboard_press(self, key: str) -> None:
-        """Press a key"""
-        pass
-    
-    def screen_capture(self) -> bytes:
-        """Capture screen"""
-        pass
-    
-    def get_window_list(self) -> List[str]:
-        """Get list of open windows"""
-        pass
-    
-    def cleanup(self):
-        """Close desktop connections"""
-        if self._desktop:
-            self._desktop.close()
-```
-
-**Use Case**:
-```python
-with ComputerUseClient() as computer:
-    computer.mouse_move(100, 200)
-    computer.mouse_click()
-    computer.keyboard_type("Hello World")
-    screen = computer.screen_capture()
+    ...
 ```
 
 ### 3. AgentHostClient
@@ -426,31 +345,7 @@ with ComputerUseClient() as computer:
 ```python
 class AgentHostClient(Sandbox):
     """AI agent hosting client"""
-    
-    def __init__(self, ttl: int, image: str, api_url: Optional[str]):
-        super().__init__(ttl, image, api_url)
-        self._agent_process = None
-    
-    def deploy_agent(self, agent_config: Dict[str, Any]) -> str:
-        """Deploy an AI agent"""
-        pass
-    
-    def invoke_agent(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Invoke the agent with input"""
-        pass
-    
-    def get_agent_logs(self) -> str:
-        """Get agent execution logs"""
-        pass
-    
-    def stop_agent(self) -> bool:
-        """Stop the running agent"""
-        pass
-    
-    def cleanup(self):
-        """Stop agent and clean up"""
-        if self._agent_process:
-            self.stop_agent()
+    ...
 ```
 
 **Use Case**:
@@ -462,7 +357,7 @@ with AgentHostClient() as host:
         "config": {...}
     })
     
-    response = host.invoke_agent({
+    response = host.invoke({
         "prompt": "What is the weather?"
     })
     print(response)
@@ -476,88 +371,8 @@ with AgentHostClient() as host:
 class MCPServerClient(Sandbox):
     """MCP server hosting client"""
     
-    def start_mcp_server(self, server_config: Dict[str, Any]) -> str:
-        """Start an MCP server"""
-        pass
-    
-    def list_tools(self) -> List[Dict[str, Any]]:
-        """List available MCP tools"""
-        pass
-    
-    def call_tool(self, tool_name: str, arguments: Dict) -> Any:
-        """Call an MCP tool"""
-        pass
-    
-    def get_server_info(self) -> Dict[str, Any]:
-        """Get MCP server information"""
-        pass
+    ...
 ```
-
-## Migration Guide
-
-### For Existing Users
-
-**Old Code**:
-```python
-from agentcube import Sandbox
-
-sandbox = Sandbox()
-sandbox.execute_command("echo hello")
-sandbox.run_code("python", "print('hello')")
-sandbox.stop()
-```
-
-**New Code**:
-```python
-from agentcube import CodeInterpreterClient
-
-code_interpreter = CodeInterpreterClient()
-code_interpreter.execute_command("echo hello")
-code_interpreter.run_code("python", "print('hello')")
-code_interpreter.stop()
-```
-
-### Migration Steps
-
-1. **Update imports**: Change `Sandbox` to `CodeInterpreterClient` for code execution use cases
-2. **Update variable names**: Use descriptive names like `code_interpreter` instead of `sandbox`
-3. **Test thoroughly**: Verify all functionality works with the new class
-4. **Use base Sandbox**: Only if you need lifecycle management without execution
-
-### Breaking Changes
-
-1. **Class Name**: The all-in-one `Sandbox` class is now split into `Sandbox` (base) and `CodeInterpreterClient` (with execution)
-2. **Import Path**: Remains the same (`from agentcube import ...`)
-3. **API Compatibility**: All methods remain the same; only class instantiation changes
-
-### Deprecation Timeline
-
-- **Current**: Both patterns supported
-- **Future**: Original monolithic `Sandbox` will be deprecated in favor of explicit client types
-
-## Design Principles
-
-### 1. Single Responsibility Principle
-Each class has one primary responsibility:
-- `Sandbox`: Lifecycle management
-- `CodeInterpreterClient`: Code execution
-- Future clients: Their specific interaction pattern
-
-### 2. Open/Closed Principle
-- Base `Sandbox` class is open for extension (inheritance) but closed for modification
-- New client types can be added without changing existing code
-
-### 3. Liskov Substitution Principle
-- All client classes can be used wherever `Sandbox` is expected
-- Subclasses preserve the base class contract
-
-### 4. Interface Segregation Principle
-- Clients only expose methods relevant to their use case
-- Base `Sandbox` doesn't force unused methods on subclasses
-
-### 5. Dependency Inversion Principle
-- High-level policy (lifecycle management) separated from low-level details (SSH, browser, desktop)
-- Clients depend on abstractions (base class) not concrete implementations
 
 ## Testing Strategy
 
@@ -603,23 +418,6 @@ Future enhancement: Connection pool for multiple sandboxes
 - Configure timeouts for long-running operations
 - Default timeout of 30 seconds for code execution
 - Configurable per operation
-
-## Security Considerations
-
-### SSH Key Management
-- Keys generated per session, never reused
-- Private keys kept in memory, never persisted
-- Keys destroyed on cleanup
-
-### Sandbox Isolation
-- Each sandbox is isolated in its own container
-- No direct network access between sandboxes
-- TTL ensures automatic cleanup
-
-### Input Validation
-- Validate command strings before execution
-- Sanitize file paths
-- Validate code snippet size limits
 
 ## Conclusion
 

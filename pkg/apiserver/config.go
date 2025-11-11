@@ -25,8 +25,4 @@ type Config struct {
 
 	// TLSKey is the path to the TLS private key file
 	TLSKey string
-
-	// AgentCubeAPIServiceAccount is the service account name for agentcube-apiserver
-	// This service account has admin privileges to access all sandboxes
-	AgentCubeAPIServiceAccount string
 }

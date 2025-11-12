@@ -19,6 +19,60 @@ This test program demonstrates and validates the api of agentcube-apiserver
 - agentcube-apiserver running (locally or in Kubernetes)
 - Sandbox image built with SSH key support
 - Kubernetes cluster with agent-sandbox controller (if deploying sandboxes)
+- Service Account with appropriate RBAC permissions (see below)
+
+## Permission Model
+
+**Important:** agentcube-apiserver now uses a caller-permission-based operation model. This means:
+
+1. **All operations are executed using the caller's Service Account Token**
+   - When creating a Sandbox, it's created in the caller's namespace using their permissions
+   - When deleting a Sandbox, it's deleted using the caller's permissions
+
+2. **The caller's Service Account must have appropriate RBAC permissions**
+   - Must have `create` permission for `sandboxes` resources (in their namespace)
+   - Must have `delete` permission for `sandboxes` resources (in their namespace)
+   - Must have `get` and `list` permissions to view Sandbox status
+
+3. **Sandboxes are created in the caller's namespace**
+   - No longer centrally created in agentcube-apiserver's namespace
+   - Each Service Account manages Sandboxes in their own namespace
+
+### RBAC Configuration Example
+
+Configure necessary permissions for your Service Account:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: my-app
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sandbox-manager
+  namespace: default
+rules:
+- apiGroups: ["agents.x-k8s.io"]
+  resources: ["sandboxes"]
+  verbs: ["create", "delete", "get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: my-app-sandbox-manager
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: sandbox-manager
+subjects:
+- kind: ServiceAccount
+  name: my-app
+  namespace: default
+```
 
 ## Building
 
@@ -30,26 +84,37 @@ go build -o client client.go
 
 ## Running
 
-### Default (local agentcube-apiserver)
+### Using Your Service Account Token
+
+**Important:** Use a Service Account Token that has permissions to create/delete Sandboxes.
 
 ```bash
+# 1. Generate token for your Service Account
+# Replace my-app if using a different Service Account name
+export API_TOKEN=$(kubectl create token my-app -n default --duration=24h)
+
+# 2. Run client
 ./client
 ```
 
-### Custom API URL
+Sandboxes will be created in the `default` namespace.
+
+### Using Custom API URL
 
 ```bash
+# Replace with your Service Account information
+export API_TOKEN=$(kubectl create token my-app -n default --duration=24h)
 API_URL=http://your-server:8080 ./client
 ```
 
-### From project root
+### From Project Root
 
 ```bash
-# Run directly
-go run ./example/client.go
+# 1. Generate token
+export API_TOKEN=$(kubectl create token my-app -n default --duration=24h)
 
-# Or use the helper target
-make client
+# 2. Run directly
+go run ./example/client.go
 ```
 
 ## Expected Output
@@ -58,6 +123,8 @@ make client
 ===========================================
 SSH Key-based Authentication Test
 ===========================================
+
+✅ API authentication token loaded from environment
 
 Step 1: Generating SSH key pair...
 ✅ SSH key pair generated

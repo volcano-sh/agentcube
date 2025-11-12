@@ -28,6 +28,19 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract user information from context for authorization
+	_, _, _, serviceAccountName := extractUserInfo(r)
+	if serviceAccountName == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Check if user has access to this sandbox
+	if !s.checkSandboxAccess(sandbox, serviceAccountName) {
+		http.Error(w, "Forbidden: You don't have permission to access this sandbox", http.StatusForbidden)
+		return
+	}
+
 	// Check if method is CONNECT
 	if r.Method != http.MethodConnect {
 		http.Error(w, "Method not allowed, use CONNECT", http.StatusMethodNotAllowed)

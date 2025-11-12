@@ -25,8 +25,4 @@ type Config struct {
 
 	// TLSKey is the path to the TLS private key file
 	TLSKey string
-
-	// JWTSecret is used to validate JWT tokens
-	// If empty, token validation will be skipped (development only)
-	JWTSecret string
 }

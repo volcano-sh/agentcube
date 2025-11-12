@@ -20,6 +20,7 @@ type Server struct {
 	k8sClient         *K8sClient
 	sandboxController *controller.SandboxReconciler
 	sandboxStore      *SandboxStore
+	tokenCache        *TokenCache
 }
 
 // NewServer creates a new API server instance
@@ -37,11 +38,15 @@ func NewServer(config *Config, sandboxController *controller.SandboxReconciler) 
 	// Create sandbox store
 	sandboxStore := NewSandboxStore()
 
+	// Create token cache (cache up to 1000 tokens, 5min TTL)
+	tokenCache := NewTokenCache(1000, 5*time.Minute)
+
 	server := &Server{
 		config:            config,
 		k8sClient:         k8sClient,
 		sandboxStore:      sandboxStore,
 		sandboxController: sandboxController,
+		tokenCache:        tokenCache,
 	}
 
 	// Setup routes

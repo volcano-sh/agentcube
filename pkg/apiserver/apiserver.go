@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gorilla/mux"
+	"github.com/gin-gonic/gin"
 
 	"github.com/volcano-sh/agentcube/pkg/controller"
 )
@@ -15,7 +15,7 @@ import (
 // Server is the main structure for apiserver
 type Server struct {
 	config            *Config
-	router            *mux.Router
+	router            *gin.Engine
 	httpServer        *http.Server
 	k8sClient         *K8sClient
 	sandboxController *controller.SandboxReconciler
@@ -63,28 +63,28 @@ func (s *Server) InitializeStore(ctx context.Context) error {
 
 // setupRoutes configures HTTP routes
 func (s *Server) setupRoutes() {
-	s.router = mux.NewRouter()
-
-	// Health check (no authentication required)
-	s.router.HandleFunc("/health", s.handleHealth).Methods("GET")
-
-	// API v1 routes
-	v1 := s.router.PathPrefix("/v1").Subrouter()
-
-	// Sandbox management endpoints
-	v1.HandleFunc("/sandboxes", s.handleCreateSandbox).Methods("POST")
-	v1.HandleFunc("/sandboxes", s.handleListSandboxes).Methods("GET")
-	v1.HandleFunc("/sandboxes/{sandboxId}", s.handleGetSandbox).Methods("GET")
-	v1.HandleFunc("/sandboxes/{sandboxId}", s.handleDeleteSandbox).Methods("DELETE")
-
-	// HTTP CONNECT tunnel endpoint - for SSH/SFTP proxy
-	// Path: /v1/sandboxes/{sandboxId} with CONNECT method
-	v1.HandleFunc("/sandboxes/{sandboxId}", s.handleTunnel)
+	s.router = gin.New()
 
 	// Apply middleware (auth first, then logging)
 	// Auth middleware excludes /health, logging middleware also excludes /health
-	s.router.Use(s.authMiddleware)
 	s.router.Use(s.loggingMiddleware)
+	s.router.Use(s.authMiddleware)
+
+	// Health check (no authentication required)
+	s.router.GET("/health", s.handleHealth)
+
+	// API v1 routes
+	v1 := s.router.Group("/v1")
+
+	// Sandbox management endpoints
+	v1.POST("/sandboxes", s.handleCreateSandbox)
+	v1.GET("/sandboxes", s.handleListSandboxes)
+	v1.GET("/sandboxes/:sandboxId", s.handleGetSandbox)
+	v1.DELETE("/sandboxes/:sandboxId", s.handleDeleteSandbox)
+
+	// HTTP CONNECT tunnel endpoint - for SSH/SFTP proxy
+	// Path: /v1/sandboxes/{sandboxId} with CONNECT method
+	v1.Handle("CONNECT", "/sandboxes/:sandboxId", s.handleTunnel)
 }
 
 // Start starts the API server
@@ -131,17 +131,15 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 // loggingMiddleware logs each request (except /health)
-func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip logging for health check endpoint
-		if r.URL.Path == "/health" {
-			next.ServeHTTP(w, r)
-			return
-		}
+func (s *Server) loggingMiddleware(c *gin.Context) {
+	// Skip logging for health check endpoint
+	if c.Request.URL.Path == "/health" {
+		c.Next()
+		return
+	}
 
-		start := time.Now()
-		log.Printf("%s %s %s", r.Method, r.RequestURI, r.RemoteAddr)
-		next.ServeHTTP(w, r)
-		log.Printf("%s %s - completed in %v", r.Method, r.RequestURI, time.Since(start))
-	})
+	start := time.Now()
+	log.Printf("%s %s %s", c.Request.Method, c.Request.RequestURI, c.ClientIP())
+	c.Next()
+	log.Printf("%s %s - completed in %v", c.Request.Method, c.Request.RequestURI, time.Since(start))
 }

@@ -65,7 +65,7 @@ func (s *Server) InitializeStore(ctx context.Context) error {
 func (s *Server) setupRoutes() {
 	s.router = gin.New()
 
-	// Apply middleware (auth first, then logging)
+	// Apply middleware (logging first, then auth)
 	// Auth middleware excludes /health, logging middleware also excludes /health
 	s.router.Use(s.loggingMiddleware)
 	s.router.Use(s.authMiddleware)

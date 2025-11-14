@@ -48,7 +48,7 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get sandbox pod IP and SSH port
-	podIP, err := s.k8sClient.GetSandboxPodIP(r.Context(), sandbox.SandboxName)
+	podIP, err := s.k8sClient.GetSandboxPodIP(r.Context(), sandbox.Namespace, sandbox.SandboxName)
 	if err != nil {
 		log.Printf("Failed to get pod IP for sandbox %s: %v", sandboxID, err)
 		http.Error(w, "Sandbox not ready", http.StatusServiceUnavailable)
@@ -105,7 +105,7 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		defer wg.Done()
 		// update sandbox last activity timestamp
 		// TODO: improve here to reduce the processing latency of the cmd command
-		err := s.k8sClient.UpdateSandboxLastActivityWithPatch(r.Context(), sandbox.SandboxName, sandbox.LastActivityAt)
+		err := s.k8sClient.UpdateSandboxLastActivityWithPatch(r.Context(), sandbox.Namespace, sandbox.SandboxName, sandbox.LastActivityAt)
 		if err != nil {
 			log.Printf("Failed to update last activity time for sandbox %s, err %v", sandbox.SandboxName, err)
 		}

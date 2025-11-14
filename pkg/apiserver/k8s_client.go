@@ -32,7 +32,6 @@ var (
 type K8sClient struct {
 	clientset       *kubernetes.Clientset
 	dynamicClient   dynamic.Interface
-	namespace       string
 	scheme          *runtime.Scheme
 	baseConfig      *rest.Config // Store base config for creating user clients
 	clientCache     *ClientCache // LRU cache for user clients
@@ -47,7 +46,7 @@ var SandboxGVR = schema.GroupVersionResource{
 }
 
 // NewK8sClient creates a new Kubernetes client
-func NewK8sClient(namespace string) (*K8sClient, error) {
+func NewK8sClient() (*K8sClient, error) {
 	var config *rest.Config
 	var err error
 
@@ -86,11 +85,10 @@ func NewK8sClient(namespace string) (*K8sClient, error) {
 	return &K8sClient{
 		clientset:       clientset,
 		dynamicClient:   dynamicClient,
-		namespace:       namespace,
 		scheme:          scheme,
 		baseConfig:      config,
 		clientCache:     NewClientCache(100), // Cache up to 100 clients
-		dynamicInformer: dynamicinformer.NewFilteredDynamicSharedInformerFactory(dynamicClient, 0, namespace, nil),
+		dynamicInformer: dynamicinformer.NewDynamicSharedInformerFactory(dynamicClient, 0),
 	}, nil
 }
 
@@ -272,11 +270,11 @@ func (u *UserK8sClient) DeleteSandbox(ctx context.Context, namespace, sandboxNam
 }
 
 // GetSandboxPodIP gets the IP address of the pod corresponding to the Sandbox
-func (c *K8sClient) GetSandboxPodIP(ctx context.Context, sandboxName string) (string, error) {
+func (c *K8sClient) GetSandboxPodIP(ctx context.Context, namespace, sandboxName string) (string, error) {
 	// Try multiple methods to find the pod
 
 	// Method 1: Try to find pod by exact name (agent-sandbox controller may create pod with same name)
-	pod, err := c.clientset.CoreV1().Pods(c.namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	pod, err := c.clientset.CoreV1().Pods(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
 	if err == nil {
 		// Found pod by exact name
 		return validateAndGetPodIP(pod)
@@ -284,7 +282,7 @@ func (c *K8sClient) GetSandboxPodIP(ctx context.Context, sandboxName string) (st
 
 	// Method 2: Find pod through label selector (sandbox-name label we set)
 	labelSelector := fmt.Sprintf("sandbox-name=%s", sandboxName)
-	pods, err := c.clientset.CoreV1().Pods(c.namespace).List(ctx, metav1.ListOptions{
+	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
 	})
 	if err == nil && len(pods.Items) > 0 {
@@ -294,7 +292,7 @@ func (c *K8sClient) GetSandboxPodIP(ctx context.Context, sandboxName string) (st
 	// Method 3: Find pod by agent-sandbox controller labels
 	// The agent-sandbox controller typically adds labels like "sandbox.agents.x-k8s.io/name"
 	labelSelector = fmt.Sprintf("sandbox.agents.x-k8s.io/name=%s", sandboxName)
-	pods, err = c.clientset.CoreV1().Pods(c.namespace).List(ctx, metav1.ListOptions{
+	pods, err = c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
 	})
 	if err == nil && len(pods.Items) > 0 {
@@ -302,7 +300,7 @@ func (c *K8sClient) GetSandboxPodIP(ctx context.Context, sandboxName string) (st
 	}
 
 	// Method 4: Find pod by owner reference (more reliable)
-	allPods, err := c.clientset.CoreV1().Pods(c.namespace).List(ctx, metav1.ListOptions{})
+	allPods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to list pods: %w", err)
 	}
@@ -335,7 +333,7 @@ func validateAndGetPodIP(pod *corev1.Pod) (string, error) {
 }
 
 // WaitForSandboxReady waits for the Sandbox to be ready
-func (c *K8sClient) WaitForSandboxReady(ctx context.Context, sandboxName string, timeout time.Duration) error {
+func (c *K8sClient) WaitForSandboxReady(ctx context.Context, namespace, sandboxName string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -348,7 +346,7 @@ func (c *K8sClient) WaitForSandboxReady(ctx context.Context, sandboxName string,
 			return fmt.Errorf("timeout waiting for sandbox to be ready")
 		case <-ticker.C:
 			// Check Sandbox status
-			sandbox, err := c.dynamicClient.Resource(SandboxGVR).Namespace(c.namespace).Get(
+			sandbox, err := c.dynamicClient.Resource(SandboxGVR).Namespace(namespace).Get(
 				ctx,
 				sandboxName,
 				metav1.GetOptions{},
@@ -375,7 +373,7 @@ func (c *K8sClient) WaitForSandboxReady(ctx context.Context, sandboxName string,
 	}
 }
 
-func (c *K8sClient) UpdateSandboxLastActivityWithPatch(ctx context.Context, sandboxName string, timestamp time.Time) error {
+func (c *K8sClient) UpdateSandboxLastActivityWithPatch(ctx context.Context, namespace, sandboxName string, timestamp time.Time) error {
 	// Prepare the patch data
 	patchData := map[string]interface{}{
 		"metadata": map[string]interface{}{
@@ -392,7 +390,7 @@ func (c *K8sClient) UpdateSandboxLastActivityWithPatch(ctx context.Context, sand
 	}
 
 	// Apply the patch using json merge patch
-	_, err = c.dynamicClient.Resource(SandboxGVR).Namespace(c.namespace).Patch(
+	_, err = c.dynamicClient.Resource(SandboxGVR).Namespace(namespace).Patch(
 		ctx,
 		sandboxName,
 		types.MergePatchType,

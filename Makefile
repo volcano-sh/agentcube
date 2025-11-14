@@ -20,7 +20,6 @@ run:
 	@echo "Running agentcube-apiserver..."
 	go run ./cmd/apiserver/main.go \
 		--port=8080 \
-		--namespace=agentcube \
 		--ssh-username=sandbox \
 		--ssh-port=22
 
@@ -30,7 +29,6 @@ run-local:
 	go run ./cmd/apiserver/main.go \
 		--port=8080 \
 		--kubeconfig=${HOME}/.kube/config \
-		--namespace=agentcube \
 		--ssh-username=sandbox \
 		--ssh-port=22
 

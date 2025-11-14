@@ -34,7 +34,6 @@ func init() {
 func main() {
 	var (
 		port             = flag.String("port", "8080", "API server port")
-		namespace        = flag.String("namespace", "default", "Kubernetes namespace for sandboxes")
 		sshUsername      = flag.String("ssh-username", "sandbox", "Default SSH username for sandbox pods")
 		sshPort          = flag.Int("ssh-port", 22, "SSH port on sandbox pods")
 		runtimeClassName = flag.String("runtime-class-name", "kuasar-vmm", "RuntimeClassName for sandbox pods")
@@ -74,7 +73,6 @@ func main() {
 	// Create API server configuration
 	config := &apiserver.Config{
 		Port:             *port,
-		Namespace:        *namespace,
 		SSHUsername:      *sshUsername,
 		SSHPort:          *sshPort,
 		RuntimeClassName: *runtimeClassName,

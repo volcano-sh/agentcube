@@ -91,7 +91,7 @@ func (s *SandboxStore) List() []*Sandbox {
 }
 
 // InitializeWithInformer initializes the store with an informer and performs initial sync
-func (s *SandboxStore) InitializeWithInformer(ctx context.Context, informer cache.SharedInformer, k8sClient *K8sClient, namespace string) error {
+func (s *SandboxStore) InitializeWithInformer(ctx context.Context, informer cache.SharedInformer, k8sClient *K8sClient) error {
 	s.mu.Lock()
 	s.informer = informer
 	s.mu.Unlock()

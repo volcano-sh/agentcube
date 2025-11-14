@@ -1,10 +1,10 @@
 package apiserver
 
 import (
-	"encoding/json"
-	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // ErrorResponse represents an API error response
@@ -17,30 +17,23 @@ type ErrorResponse struct {
 }
 
 // respondJSON sends a JSON response
-func respondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		// If encoding fails, log error but don't try to write response
-		// since WriteHeader has already been called
-		return
-	}
+func respondJSON(c *gin.Context, statusCode int, data interface{}) {
+	c.JSON(statusCode, data)
 }
 
 // respondError sends an error response
-func respondError(w http.ResponseWriter, statusCode int, errorCode, message string) {
+func respondError(c *gin.Context, statusCode int, errorCode, message string) {
 	response := ErrorResponse{
 		Error:     errorCode,
 		Message:   message,
 		Timestamp: time.Now(),
 	}
-	respondJSON(w, statusCode, response)
+	respondJSON(c, statusCode, response)
 }
 
 // getIntQueryParam gets an integer value from query parameters, returns default value if not present
-func getIntQueryParam(r *http.Request, key string, defaultValue int) int {
-	valueStr := r.URL.Query().Get(key)
+func getIntQueryParam(c *gin.Context, key string, defaultValue int) int {
+	valueStr := c.Query(key)
 	if valueStr == "" {
 		return defaultValue
 	}

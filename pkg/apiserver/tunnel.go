@@ -112,11 +112,7 @@ func (s *Server) handleTunnel(c *gin.Context) {
 		defer wg.Done()
 		// update sandbox last activity timestamp
 		// TODO: improve here to reduce the processing latency of the cmd command
-<<<<<<< HEAD
-		err := s.k8sClient.UpdateSandboxLastActivityWithPatch(r.Context(), sandbox.Namespace, sandbox.SandboxName, sandbox.LastActivityAt)
-=======
-		err := s.k8sClient.UpdateSandboxLastActivityWithPatch(c.Request.Context(), sandbox.SandboxName, sandbox.LastActivityAt)
->>>>>>> bdbafcd (replace Gorilla with Gin)
+		err := s.k8sClient.UpdateSandboxLastActivityWithPatch(c.Request.Context(), sandbox.Namespace, sandbox.SandboxName, sandbox.LastActivityAt)
 		if err != nil {
 			log.Printf("Failed to update last activity time for sandbox %s, err %v", sandbox.SandboxName, err)
 		}

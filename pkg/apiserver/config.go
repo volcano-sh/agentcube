@@ -5,9 +5,6 @@ type Config struct {
 	// Port is the port the API server listens on
 	Port string
 
-	// Namespace is the Kubernetes namespace where Sandbox CRDs are created
-	Namespace string
-
 	// SSHUsername is the default SSH username for connecting to sandbox pods
 	SSHUsername string
 

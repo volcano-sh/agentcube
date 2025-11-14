@@ -30,7 +30,7 @@ func NewServer(config *Config, sandboxController *controller.SandboxReconciler) 
 	}
 
 	// Create Kubernetes client
-	k8sClient, err := NewK8sClient(config.Namespace)
+	k8sClient, err := NewK8sClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
@@ -58,7 +58,7 @@ func NewServer(config *Config, sandboxController *controller.SandboxReconciler) 
 // InitializeStore initializes the sandbox store with Kubernetes informer
 func (s *Server) InitializeStore(ctx context.Context) error {
 	informer := s.k8sClient.GetSandboxInformer()
-	return s.sandboxStore.InitializeWithInformer(ctx, informer, s.k8sClient, s.config.Namespace)
+	return s.sandboxStore.InitializeWithInformer(ctx, informer, s.k8sClient)
 }
 
 // setupRoutes configures HTTP routes

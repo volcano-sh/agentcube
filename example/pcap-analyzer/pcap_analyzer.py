@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import os
-import sys
 import re
 import json
 import time
@@ -12,6 +11,7 @@ from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 import uvicorn
+import hashlib
 
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
@@ -67,9 +67,9 @@ MODEL_PROVIDER = "openai"
 SANDBOX_NAMESPACE = "default"
 SANDBOX_PUBLIC_KEY = os.environ.get("SANDBOX_PUBLIC_KEY")
 SANDBOX_PRIVATE_KEY = os.environ.get("SANDBOX_PRIVATE_KEY")
-SANDBOX_CPU = "200m"
-SANDBOX_MEMORY = "256Mi"
-SANDBOX_WARMUP_SEC = 20
+SANDBOX_CPU = os.environ.get("SANDBOX_CPU", "200m")
+SANDBOX_MEMORY = os.environ.get("SANDBOX_MEMORY", "256Mi")
+SANDBOX_WARMUP_SEC = int(os.environ.get("SANDBOX_WARMUP_SEC", "20"))
 
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 8000
@@ -191,7 +191,9 @@ class SandboxRunner:
     def upload_bytes(self, data: bytes, remote_path: str) -> bool:
         log.info("Uploading bytes to %s (size=%d)", remote_path, len(data) if data else 0)
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            tmp.write(data); tmp.flush(); path = tmp.name
+            tmp.write(data)
+            tmp.flush()
+            path = tmp.name
         try:
             self.upload_file(path, remote_path)
         finally:
@@ -274,7 +276,7 @@ def _extract_script(text: str) -> str:
         if isinstance(s, str) and s.strip():
             log.info("Script extracted from JSON")
             return s
-    except Exception:
+    except json.JSONDecodeError:
         pass
     m = CODE_BLOCK_RE.search(text or "")
     if m:
@@ -385,7 +387,7 @@ def _analyze_with_retries(
         for attempt in range(max_retries + 1):
             attempt_no = attempt + 1
             total_no = max_retries + 1
-            sha1 = (lambda t: __import__("hashlib").sha1(t.encode("utf-8")).hexdigest())(script or "")
+            sha1 = hashlib.sha1((script or "").encode("utf-8")).hexdigest()
 
             _sep(f"ATTEMPT {attempt_no}/{total_no} - BEGIN", char="=")
             log.info("Script meta: length=%d, sha1=%s", len(script or ""), sha1)

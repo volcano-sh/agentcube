@@ -20,7 +20,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from agentcube.sandbox import Sandbox
 
 # =========================
-# 日志配置
+# Logging configuration
 # =========================
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -29,15 +29,19 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # =========================
-# 日志分割线工具
+# Log separator helper
 # =========================
 SEP_CHAR = os.environ.get("LOG_SEP_CHAR", "=")
 SEP_WIDTH = int(os.environ.get("LOG_SEP_WIDTH", "90"))
 
 def _sep(title: str = "", char: str = None, width: int = None, level: int = logging.INFO) -> None:
     """
-    打印一条居中标题的分割线（例如：===== Title =====）
-    可通过环境变量 LOG_SEP_CHAR / LOG_SEP_WIDTH 控制样式
+    Print a centered separator line with an optional title
+    (e.g. ===== Title =====).
+
+    Style can be controlled via env vars:
+    - LOG_SEP_CHAR
+    - LOG_SEP_WIDTH
     """
     ch = (char or SEP_CHAR)[:1] or "="
     w = int(width or SEP_WIDTH)
@@ -53,7 +57,7 @@ def _sep(title: str = "", char: str = None, width: int = None, level: int = logg
     logging.log(level, line)
 
 # =========================
-# 环境变量配置
+# Environment configuration
 # =========================
 API_KEY = os.environ.get("OPENAI_API_KEY")
 API_BASE_URL = os.environ.get("OPENAI_API_BASE", "https://api.siliconflow.cn/v1")
@@ -227,7 +231,7 @@ class SandboxRunner:
         except Exception:
             log.warning("Sandbox shutdown encountered an issue", exc_info=True)
 
-# ---------------- Agents（无工具） ----------------
+# ---------------- Agents (no tools) ----------------
 def build_react_agent(llm, system_prompt: str):
     agent = create_react_agent(
         model=llm,
@@ -356,8 +360,15 @@ def _analyze_with_retries(
     max_retries: int = 2
 ) -> Dict[str, Any]:
     """
-    创建一次 sandbox，进行多轮脚本执行。失败时请求修复并重试。
-    返回: {"final_script": ..., "results": [...], "report": ...}
+    Create a single sandbox and run the script multiple times with retries.
+    On failure, ask the planner to repair the script and retry.
+
+    Returns:
+        {
+          "final_script": ...,
+          "results": [...],
+          "report": ...
+        }
     """
     start_all = time.time()
     _sep("ANALYZE WITH RETRIES - START", char="=")
@@ -447,7 +458,7 @@ def _analyze_with_retries(
     finally:
         runner.stop()
 
-# ---------------- 兼容的单轮执行函数（不建议新用） ----------------
+# ---------------- Legacy single-run execution helper (not recommended) ----------------
 def _execute_script(
     namespace: str, public_key: str, private_key: str,
     pcap_local_path: str, script: str,
@@ -511,8 +522,8 @@ def on_startup():
     model_name = MODEL_NAME
 
     if not api_key:
-        log.error("OPENAI_API_KEY 未设置")
-        raise RuntimeError("OPENAI_API_KEY 未设置（请在环境变量中提供）")
+        log.error("OPENAI_API_KEY is not set")
+        raise RuntimeError("OPENAI_API_KEY is not set (please provide it via environment variable)")
 
     LLM = ChatOpenAI(
         model=model_name,

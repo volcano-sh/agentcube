@@ -1,0 +1,15 @@
+fastapi==0.120.0
+uvicorn==0.38.0
+langchain==1.0.2
+langchain-classic==1.0.0
+langchain-community==0.4.1
+langchain-core==1.0.1
+langchain-openai==1.0.1
+langchain-text-splitters==1.0.0
+langgraph==1.0.1
+langgraph-checkpoint==3.0.0
+langgraph-prebuilt==1.0.1
+langgraph-sdk==0.2.9
+langsmith==0.4.38
+paramiko==4.0.0
+python-multipart==0.0.20

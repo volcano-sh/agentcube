@@ -1,0 +1,127 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentrun"
+version = "0.1.0"
+description = "AgentRun CLI - A developer tool for packaging, building, and deploying AI agents to AgentCube"
+readme = "README.md"
+authors = [
+    { name = "AgentCube Community", email = "agentcube@volcano.sh" }
+]
+maintainers = [
+    { name = "Layne Peng", email = "layne.peng@example.com" }
+]
+license = { text = "Apache-2.0" }
+keywords = ["ai", "agent", "kubernetes", "volcano", "agentcube", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content"
+]
+requires-python = ">=3.8"
+
+dependencies = [
+    "typer[all]>=0.9.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "httpx>=0.24.0",
+    "docker>=6.0.0",
+    "rich>=13.0.0",
+    "packaging>=23.0",
+    "importlib-resources>=6.0.0",
+    "semver>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+    "mypy>=1.5.0",
+    "pre-commit>=3.3.0",
+]
+test = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.11.0",
+    "httpx-mock>=0.10.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/volcano-sh/agentcube"
+Documentation = "https://agentcube.readthedocs.io/"
+Repository = "https://github.com/volcano-sh/agentcube/tree/main/cli-agentrun"
+Issues = "https://github.com/volcano-sh/agentcube/issues"
+
+[project.scripts]
+agentrun = "agentrun.cli.main:app"
+
+[tool.setuptools]
+packages = ["agentrun", "agentrun.cli", "agentrun.runtime", "agentrun.operations", "agentrun.services"]
+
+[tool.setuptools.package-data]
+agentrun = ["templates/**/*"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["agentrun"]
+
+[tool.mypy]
+python_version = "3.8"
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_incomplete_defs = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+strict_equality = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers --import-mode=importlib"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]

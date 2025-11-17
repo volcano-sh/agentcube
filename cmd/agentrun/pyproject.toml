@@ -65,7 +65,7 @@ test = [
 [project.urls]
 Homepage = "https://github.com/volcano-sh/agentcube"
 Documentation = "https://agentcube.readthedocs.io/"
-Repository = "https://github.com/volcano-sh/agentcube/tree/main/cli-agentrun"
+Repository = "https://github.com/volcano-sh/agentcube/tree/main/cmd/agentrun"
 Issues = "https://github.com/volcano-sh/agentcube/issues"
 
 [project.scripts]

@@ -51,7 +51,7 @@ def main():
 
     # Check if we're in the right directory
     if not Path("agentrun").exists():
-        print("❌ Error: Please run this demo from the cli-agentrun directory")
+        print("❌ Error: Please run this demo from the cmd/agentrun directory")
         sys.exit(1)
 
     # Check if virtual environment is activated

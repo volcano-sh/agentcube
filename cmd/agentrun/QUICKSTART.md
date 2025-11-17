@@ -15,7 +15,7 @@ Welcome to AgentRun CLI - a developer tool for packaging, building, and deployin
 ```bash
 # Clone the repository
 git clone https://github.com/volcano-sh/agentcube.git
-cd agentcube/cli-agentrun
+cd agentcube/cmd/agentrun
 
 # Create virtual environment
 python3 -m venv venv

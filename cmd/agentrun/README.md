@@ -45,7 +45,7 @@ pip install agentrun
 
 ```bash
 git clone https://github.com/volcano-sh/agentcube.git
-cd agentcube/cli-agentrun
+cd agentcube/cmd/agentrun
 pip install -e .
 ```
 
@@ -53,7 +53,7 @@ pip install -e .
 
 ```bash
 git clone https://github.com/volcano-sh/agentcube.git
-cd agentcube/cli-agentrun
+cd agentcube/cmd/agentrun
 pip install -e ".[dev]"
 pre-commit install
 ```

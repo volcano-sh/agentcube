@@ -222,8 +222,23 @@ This creates a fully automated, fault-tolerant, and self-healing forensic analys
 
 ### 🧰 Example Run
 
+#### build image
 ```bash
-curl -X POST "http://127.0.0.1:8000/analyze"   -H "Content-Type: application/x-www-form-urlencoded"   -d "pcap_file=@./samples/pocket.pcap""
+cd example/pcap-analyzer
+docker build -t "pcap-analyzer:latest" -f Dockerfile ../../
+```
+
+#### build deploy
+```yaml
+cd example/pcap-analyzer
+sed -i 's/my-openai-api-key/{your-api-key}/g' deployment.yaml
+kubectl apply -f deployment.yaml
+```
+
+#### request
+Obtain the pod IP by running the command "kubectl get pod -owide | grep pcap-analyzer". "./samples/pocket.pcap" need change to your file path.
+```bash
+curl -X POST "http://{pod_ip}:8000/analyze"   -H "Content-Type: application/x-www-form-urlencoded"   -d "pcap_file=@./samples/pocket.pcap""
 ```
 
 Response:

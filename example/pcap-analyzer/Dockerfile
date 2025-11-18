@@ -1,0 +1,25 @@
+# Use uv's x86_64 Python base image
+FROM --platform=linux/arm64 ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+WORKDIR /app
+
+# Copy requirements.txt
+COPY example/pcap-analyzer/requirements.txt ./
+
+# Install dependencies
+RUN uv venv
+RUN uv pip install -r requirements.txt
+
+COPY sdk-python/agentcube ./agentcube/
+COPY example/pcap-analyzer/pcap_analyzer.py ./
+
+# Set environment variables
+ENV PYTHONPATH="/app" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Expose port
+EXPOSE 8000
+
+# Run application
+CMD ["uv", "run", "pcap_analyzer.py"]

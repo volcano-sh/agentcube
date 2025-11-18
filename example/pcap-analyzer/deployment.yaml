@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pcap-analyzer
+  namespace: default
+  labels:
+    app: pcap-analyzer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pcap-analyzer
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: pcap-analyzer
+    spec:
+      imagePullSecrets:
+        - name: default-secret
+      containers:
+        - name: pcap-analyzer
+          image: pcap-analyzer:latest
+          imagePullPolicy: IfNotPresent  # 镜像拉取策略：本地无则拉取（可选：Always/IfNotPresent/Never）
+          ports:
+            - containerPort: 8000
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 200m
+              memory: 100Mi
+            limits:
+              cpu: 1
+              memory: 1Gi
+          env:
+            - name: OPENAI_API_KEY
+              value: "my-openai-api-key" # Change to your apiKey
+            - name: OPENAI_API_BASE
+              value: "https://api.siliconflow.cn/v1" # Change to your openAI api url
+            - name: OPENAI_MODEL
+              value: "Qwen/QwQ-32B"
+            - name: API_URL
+              value: "http://agentcube-apiserver.agentcube.svc.cluster.local:8080"
+          volumeMounts:
+            - name: debug-artifacts
+              mountPath: /app/debug_artifacts
+          command: ["uv"]
+          args: ["run", "pcap_analyzer.py"]
+      volumes:
+        - name: debug-artifacts
+          hostPath:
+            path: /var/log/pcap-analyzer/debug_artifacts
+      dnsPolicy: ClusterFirst
+      schedulerName: default-scheduler
+      securityContext: { }
+      terminationGracePeriodSeconds: 30
+      tolerations:
+        - effect: NoExecute
+          key: node.kubernetes.io/not-ready
+          operator: Exists
+          tolerationSeconds: 300
+        - effect: NoExecute
+          key: node.kubernetes.io/unreachable
+          operator: Exists
+          tolerationSeconds: 300

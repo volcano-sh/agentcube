@@ -6,7 +6,7 @@ Modern AI agent frameworks are increasingly complex, often involving a multi-sta
 To streamline this process, we propose a dedicated Command Line Interface (CLI) that provides:
 - Lightweight orchestration of agent development workflow, including initialization, packaging, building, testing, and publishing;
 - Extensible architecture supporting local environments, Kubernetes clusters, and multi-cloud build and deployment targets;
-- Python SDK bindings for programmatic access to CLI functionality, nabling integration into CI workflows and continuous development pipelines.
+- Python SDK bindings for programmatic access to CLI functionality, enabling integration into CI workflows and continuous development pipelines.
 
 This CLI will serve as a foundational tool enabling:
 - Rapid prototyping and local iteration of agents
@@ -21,9 +21,9 @@ A developer wants to create a new agent from scratch and publish it to AgentCube
 After completing development, the CLI enables the following steps:
 1. `agentrun pack -f ./` Packages the agent source code and runtime metadata into a structured workspace directory, preparing it for image creation
 2. `agentrun build -f ./` Builds a container image from the workspace, compatible with AgentCube’s Kubernetes-based runtime environment
-3. `agentrun publish -f /` Publishes the built agent image to AgentCube, making it available for invocation, sharing, and collaboration
+3. `agentrun publish -f ./` Publishes the built agent image to AgentCube, making it available for invocation, sharing, and collaboration
 
-Use Case 2: Check Published Agent Status
+## Use Case 2: Check Published Agent Status
 After publishing an agent to AgentCube, a developer may want to verify that the agent is fully registered and ready for use. The CLI provides a simple status check command:
 
 ```agentrun status -f ./```
@@ -33,7 +33,7 @@ This command queries AgentCube for the current state of the agent associated wit
 ## Use Case 3: Invoke published Agent
 After publishing an agent to AgentCube, a developer may want to invoke it for testing purposes or integrate it into other system components. The CLI provides a simple and consistent interface to trigger agent execution using the local workspace directory and a structured payload:
 
-```agentrun invoke -f ./ -payload {"prompt": "what is the weather today in Shanghai?"}```
+```agentrun invoke -f ./ -payload '{"prompt": "what is the weather today in Shanghai?"}'```
 
 # Scope
 In Scope:
@@ -45,13 +45,13 @@ In Scope:
 # Function Detail
 ### 1. Pack, Build and Publish 
 **Step 0:** The developer creates the agent application using any preferred framework and defines the required runtime metadata. The agent must expose an HTTP interface to support standardized invocation. The metadata should include:
-2. **Agent name** – unique identifier for the agent
-3. **Entrypoint command** – entrypoint command to launch the agent
-4. **Port** – network port exposed by the agent
-5. **Endpoint URI** – HTTP endpoint for agent invocation
-6. **Region to deploy** – required only when publishing to public cloud targets
-7. **observability_enabled** – flag to enable metrics and logging integration
-8. **build_mode** – specifies build context: `local` or `cloud`
+1. **Agent name** – unique identifier for the agent
+2. **Entrypoint command** – entrypoint command to launch the agent
+3. **Port** – network port exposed by the agent
+4. **Endpoint URI** – HTTP endpoint for agent invocation
+5. **Region to deploy** – required only when publishing to public cloud targets
+6. **observability_enabled** – flag to enable metrics and logging integration
+7. **build_mode** – specifies build context: `local` or `cloud`
 
 **Step 1:** The developer runs the `agentrun pack -f ./` command to package the agent application into a standardized workspace. This workspace includes the source code and runtime metadata required for building and deployment. 
 
@@ -61,7 +61,7 @@ The `agentrun pack` command supports options that mirror the fields defined in t
 - The CLI can validate and update the metadata config file based on the provided options, ensuring consistency and completeness.
 
 **Step 1.1** Validate Source Structure and Metadata Configuration
-The `agentrun pack` command is processed by the **pack** service, which performed a series of validation checks to ensure the agent workspace is correctly structured and compatible with downstream build and deployment steps.
+The `agentrun pack` command is processed by the **pack** service, which performs a series of validation checks to ensure the agent workspace is correctly structured and compatible with downstream build and deployment steps.
 
 The validation includes:
 1. **Language Compatibility**
@@ -356,7 +356,7 @@ This configuration file is automatically validated and updated by the CLI during
 Packages the agent application into a standardized workspace, including source code and runtime metadata, preparing it for build and deployment.
 
 **Behavior Overview**
-- If only `-f` is provided, the CLI expects a valid metadata config file `agent.yaml` in the workspace.
+- If only `-f` is provided, the CLI expects a valid metadata config file `agent_metadata.yaml` in the workspace.
 - Options passed via CLI override values in the metadata file.
 - The CLI validates and updates the metadata file to ensure consistency.
 - The packaged workspace is prepared for either local or cloud build.
@@ -533,7 +533,7 @@ agentrun publish -f <workspace_path> [OPTIONS]
 | Field         | Description                                           |
 | ------------- | ----------------------------------------------------- |
 | `version`     | Used for version tracking and rollback                |
-| `image_url`   | Required for deployment and invocation                |
+| `image.repository_url`   | Required for deployment and invocation     |
 | `build_mode`  | Confirmed or updated based on current publish context |
 | `region`      | Deployment region                                     |
 | `description` | Agent description                                     |

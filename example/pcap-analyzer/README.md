@@ -229,16 +229,16 @@ docker build -t "pcap-analyzer:latest" -f Dockerfile ../../
 ```
 
 #### build deploy
-```yaml
+```bash
 cd example/pcap-analyzer
-sed -i 's/my-openai-api-key/{your-api-key}/g' deployment.yaml
+kubectl create secret generic pcap-analyzer-secrets --from-literal=openai-api-key='YOUR_API_KEY'
 kubectl apply -f deployment.yaml
 ```
 
 #### request
 Obtain the pod IP by running the command "kubectl get pod -owide | grep pcap-analyzer". "./samples/pocket.pcap" need change to your file path.
 ```bash
-curl -X POST "http://{pod_ip}:8000/analyze"   -H "Content-Type: application/x-www-form-urlencoded"   -d "pcap_file=@./samples/pocket.pcap""
+curl -X POST "http://{pod_ip}:8000/analyze"   -H "Content-Type: application/x-www-form-urlencoded"   -d "pcap_file=@./samples/pocket.pcap"
 ```
 
 Response:

@@ -25,7 +25,7 @@ spec:
       containers:
         - name: pcap-analyzer
           image: pcap-analyzer:latest
-          imagePullPolicy: IfNotPresent  # 镜像拉取策略：本地无则拉取（可选：Always/IfNotPresent/Never）
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
               protocol: TCP
@@ -38,22 +38,18 @@ spec:
               memory: 1Gi
           env:
             - name: OPENAI_API_KEY
-              value: "my-openai-api-key" # Change to your apiKey
+              valueFrom:
+                secretKeyRef:
+                  name: pcap-analyzer-secrets
+                  key: openai-api-key
             - name: OPENAI_API_BASE
               value: "https://api.siliconflow.cn/v1" # Change to your openAI api url
             - name: OPENAI_MODEL
               value: "Qwen/QwQ-32B"
             - name: API_URL
               value: "http://agentcube-apiserver.agentcube.svc.cluster.local:8080"
-          volumeMounts:
-            - name: debug-artifacts
-              mountPath: /app/debug_artifacts
           command: ["uv"]
           args: ["run", "pcap_analyzer.py"]
-      volumes:
-        - name: debug-artifacts
-          hostPath:
-            path: /var/log/pcap-analyzer/debug_artifacts
       dnsPolicy: ClusterFirst
       schedulerName: default-scheduler
       securityContext: { }

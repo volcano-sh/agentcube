@@ -1,5 +1,5 @@
-# Use uv's x86_64 Python base image
-FROM --platform=linux/arm64 ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+# Use uv's Python base image
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 WORKDIR /app
 

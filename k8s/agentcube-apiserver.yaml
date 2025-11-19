@@ -101,6 +101,7 @@ spec:
             - name: REDIS_PASSWORD
               value: ""
           args:
+            - --runtime-class-name=
             - --port=8080
             - --runtime-class-name=
           resources:

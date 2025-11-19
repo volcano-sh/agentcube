@@ -203,6 +203,11 @@ func convertK8sSandboxToSandbox(unstructuredObj *unstructured.Unstructured) (*Sa
 		return nil, fmt.Errorf("failed to convert unstructured to Sandbox: %w", err)
 	}
 
+	return convertTypedSandboxToSandbox(&sandboxCRD)
+}
+
+// convertTypedSandboxToSandbox converts a typed Kubernetes Sandbox CRD to internal Sandbox structure
+func convertTypedSandboxToSandbox(sandboxCRD *agentsv1alpha1.Sandbox) (*Sandbox, error) {
 	// Get sandbox ID from labels (UUID)
 	labels := sandboxCRD.GetLabels()
 	sandboxID := labels["sandbox-id"]
@@ -215,7 +220,7 @@ func convertK8sSandboxToSandbox(unstructuredObj *unstructured.Unstructured) (*Sa
 	}
 
 	// Get status from conditions
-	status := getSandboxStatus(&sandboxCRD)
+	status := getSandboxStatus(sandboxCRD)
 
 	// Get creation time
 	createdAt := sandboxCRD.GetCreationTimestamp().Time

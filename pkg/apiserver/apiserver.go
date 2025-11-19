@@ -18,13 +18,13 @@ type Server struct {
 	router            *gin.Engine
 	httpServer        *http.Server
 	k8sClient         *K8sClient
-	sandboxController *controller.SandboxReconciler
+	sandboxController *SandboxReconciler
 	sandboxStore      *SandboxStore
 	tokenCache        *TokenCache
 }
 
 // NewServer creates a new API server instance
-func NewServer(config *Config, sandboxController *controller.SandboxReconciler) (*Server, error) {
+func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
 	}

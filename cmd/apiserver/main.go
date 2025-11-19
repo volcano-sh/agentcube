@@ -19,7 +19,6 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	apiserver "github.com/volcano-sh/agentcube/pkg/apiserver"
-	controller "github.com/volcano-sh/agentcube/pkg/controller"
 )
 
 var (
@@ -60,7 +59,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	sandboxReconciler := &controller.SandboxReconciler{
+	sandboxReconciler := &apiserver.SandboxReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}
@@ -124,7 +123,7 @@ func main() {
 	log.Println("Server stopped")
 }
 
-func setupControllers(mgr ctrl.Manager, reconciler *controller.SandboxReconciler) error {
+func setupControllers(mgr ctrl.Manager, reconciler *apiserver.SandboxReconciler) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&sandboxv1alpha1.Sandbox{}).
 		Complete(reconciler)

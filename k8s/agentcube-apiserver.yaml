@@ -73,6 +73,7 @@ spec:
               protocol: TCP
           args:
             - --port=8080
+            - runtime-class-name=
           resources:
             requests:
               cpu: 100m

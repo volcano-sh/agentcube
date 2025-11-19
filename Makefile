@@ -258,59 +258,7 @@ AGENT_SANDBOX_REPO ?= https://github.com/kubernetes-sigs/agent-sandbox.git
 AGENT_SANDBOX_VERSION ?= main
 
 e2e:
-	@echo "Starting E2E tests..."
-	@echo "1. Creating Kind cluster..."
-	kind create cluster --name $(E2E_CLUSTER_NAME) || true
-	
-	@echo "2. Installing agent-sandbox..."
-	rm -rf /tmp/agent-sandbox
-	git clone --depth 1 --branch $(AGENT_SANDBOX_VERSION) $(AGENT_SANDBOX_REPO) /tmp/agent-sandbox
-	
-	# Build agent-sandbox-controller image
-	docker build -t agent-sandbox-controller:latest -f /tmp/agent-sandbox/images/agent-sandbox-controller/Dockerfile /tmp/agent-sandbox
-	kind load docker-image agent-sandbox-controller:latest --name $(E2E_CLUSTER_NAME)
-	
-	kubectl apply -f /tmp/agent-sandbox/k8s/crds
-	kubectl apply -f /tmp/agent-sandbox/k8s/rbac.generated.yaml
-	
-	# Patch controller deployment to use local image
-	sed -i 's|ko://sigs.k8s.io/agent-sandbox/cmd/agent-sandbox-controller|agent-sandbox-controller:latest|g' /tmp/agent-sandbox/k8s/controller.yaml
-	# Also set imagePullPolicy to Never or IfNotPresent
-	sed -i 's|imagePullPolicy: Always|imagePullPolicy: IfNotPresent|g' /tmp/agent-sandbox/k8s/controller.yaml
-	
-	kubectl apply -f /tmp/agent-sandbox/k8s/controller.yaml
-	
-	@echo "3. Building images..."
-	make docker-build
-	make sandbox-build
-	
-	@echo "4. Loading images into Kind..."
-	kind load docker-image $(APISERVER_IMAGE) --name $(E2E_CLUSTER_NAME)
-	kind load docker-image $(SANDBOX_IMAGE) --name $(E2E_CLUSTER_NAME)
-	
-	@echo "5. Deploying agentcube-apiserver..."
-	# Ensure image pull policy is Never or IfNotPresent (it is IfNotPresent in yaml)
-	kubectl apply -f k8s/agentcube-apiserver.yaml
-	
-	@echo "6. Waiting for deployment..."
-	kubectl wait --for=condition=available --timeout=300s deployment/agentcube-apiserver -n agentcube
-	
-	@echo "7. Creating ServiceAccount and Token..."
-	kubectl create serviceaccount e2e-test -n agentcube || true
-	kubectl create clusterrolebinding e2e-test-binding --clusterrole=agentcube-apiserver --serviceaccount=agentcube:e2e-test || true
-	
-	@echo "8. Running tests..."
-	# Run tests with token and port forward
-	@API_TOKEN=$$(kubectl create token e2e-test -n agentcube --duration=24h); \
-	echo "Token created"; \
-	kubectl port-forward svc/agentcube-apiserver -n agentcube 8080:8080 > /dev/null 2>&1 & \
-	PID=$$!; \
-	echo "Port forward started with PID $$PID"; \
-	sleep 5; \
-	API_URL=http://localhost:8080 API_TOKEN=$$API_TOKEN go test -v ./test/e2e/...; \
-	TEST_EXIT_CODE=$$?; \
-	kill $$PID; \
-	exit $$TEST_EXIT_CODE
+	./test/e2e/run_e2e.sh
 
 e2e-clean:
 	@echo "Cleaning up E2E environment..."

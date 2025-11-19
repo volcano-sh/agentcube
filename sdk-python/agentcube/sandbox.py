@@ -5,27 +5,26 @@ from agentcube.clients import SandboxClient, SandboxSSHClient
 
 import agentcube.clients.constants as constants
 import agentcube.utils.exceptions as exceptions
-from agentcube.utils.utils import get_env
+from agentcube.utils.utils import get_env, read_token_from_file
 
 class SandboxStatus(Enum):
     """Immutable state enum with transition validation"""
-    RUNNING = "Running"
-    PENDING = "Pending"
-    FAILED = "Failed"
-    UNKNOWN = "Unknown"
+    RUNNING = "running"
+    PAUSED = "paused"
 
 class Sandbox:
     def __init__(
             self,
             ttl: int = constants.DEFAULT_TTL,
             image: str = constants.DEFAULT_IMAGE,
-            api_url: Optional[str] = None
+            api_url: Optional[str] = None,
+            auth_token: Optional[str] = None
         ):
         self.ttl = ttl
         self.image = image
-        self.api_url = api_url or get_env("API_URL", constants.DEFAULT_API_URL)
-
-        self._client = SandboxClient(api_url=self.api_url)
+        self.api_url = api_url or get_env(constants.API_URL_ENV, constants.DEFAULT_API_URL)
+        self.auth_token = auth_token or get_env(constants.API_TOKEN_ENV, read_token_from_file(constants.API_TOKEN_PATH))
+        self._client = SandboxClient(api_url=self.api_url, auth_token=self.auth_token)
         public_key, private_key = SandboxSSHClient.generate_ssh_key_pair()
         self.id = self._client.create_sandbox(
             ttl=self.ttl, 
@@ -45,7 +44,7 @@ class Sandbox:
     def is_running(self) -> bool:
         sandbox_info = self._client.get_sandbox(self.id)
         if sandbox_info:
-            return sandbox_info["status"] == SandboxStatus.RUNNING.value
+            return sandbox_info["status"].lower() == SandboxStatus.RUNNING.value
         else:
             raise exceptions.SandboxNotFoundError(f"Sandbox {self.id} not found")
     

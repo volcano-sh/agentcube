@@ -8,20 +8,29 @@ from urllib.parse import urlparse
 
 from agentcube.utils.log import get_logger
 import agentcube.clients.constants as constants
-from agentcube.utils.utils import get_env
+from agentcube.utils.utils import get_env, read_token_from_file
 
 class SandboxClient:
     """Pico API Server client class that encapsulates sandbox management, SSH connections, 
     and file transfer functionalities"""
     
-    def __init__(self, api_url: Optional[str] = None):
+    def __init__(
+        self, 
+        api_url: Optional[str] = None, 
+        auth_token: Optional[str] = None
+    ):
         """Initialize the client
         
         Args:
             api_url: Pico API server address. Defaults to environment variable API_URL 
                      or DEFAULT_API_URL if not provided
         """
-        self.api_url = api_url or get_env("API_URL", constants.DEFAULT_API_URL)
+        self.api_url = api_url or get_env(constants.API_URL_ENV, constants.DEFAULT_API_URL)
+        self.auth_token = auth_token or get_env("API_TOKEN", read_token_from_file(constants.API_TOKEN_PATH))
+        self.headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.auth_token}"
+        }
         self.logger = get_logger(f"{__name__}.SandboxClient")
         
     def create_sandbox(
@@ -49,11 +58,10 @@ class SandboxClient:
         }
         if ssh_public_key :
             req_data["sshPublicKey"] = ssh_public_key
-
         url = f"{self.api_url}/v1/sandboxes"
         response = requests.post(
             url,
-            headers={"Content-Type": "application/json"},
+            headers=self.headers,
             data=json.dumps(req_data)
         )
 
@@ -69,7 +77,7 @@ class SandboxClient:
             url = f"{self.api_url}/v1/sandboxes/{sandbox_id}"
             response = requests.get(
                 url,
-                headers={"Content-Type": "application/json"}
+                headers=self.headers
             )
             if response.status_code == 404:
                 return None
@@ -84,10 +92,10 @@ class SandboxClient:
             url = f"{self.api_url}/v1/sandboxes"
             response = requests.get(
                 url,
-                headers={"Content-Type": "application/json"}
+                headers=self.headers
             )
             response.raise_for_status()
-            return response.json().get("sandboxs", [])
+            return response.json().get("sandboxes", [])
         except requests.exceptions.RequestException as e:
             self.logger.error(f"sandbox listing failed: {str(e)}")
             return []
@@ -98,7 +106,8 @@ class SandboxClient:
             url = f"{self.api_url}/v1/sandboxes/{sandbox_id}"
             response = requests.delete(
                 url,
-                timeout=30
+                timeout=30,
+                headers=self.headers
             )
             if response.status_code == 404:
                 return False
@@ -108,7 +117,7 @@ class SandboxClient:
         except requests.exceptions.RequestException as e:
             self.logger.error(f"sandbox deletion failed: {str(e)}")
 
-    def establish_tunnel(self, sandbox_id: str, auth_token: str = "") -> socket.socket:
+    def establish_tunnel(self, sandbox_id: str) -> socket.socket:
         """Establish an HTTP CONNECT tunnel to the sandbox.
 
         Args:
@@ -141,8 +150,8 @@ class SandboxClient:
         req = f"CONNECT /v1/sandboxes/{sandbox_id} HTTP/1.1\r\n"
         req += f"Host: {hostname}:{port}\r\n"
         req += "User-Agent: agentcube-sdk-python/1.0\r\n"
-        if auth_token:
-            req += f"Proxy-Authorization: Bearer {auth_token}\r\n"
+        if self.auth_token:
+            req += f"Authorization: Bearer {self.auth_token}\r\n"
         req += "\r\n"
         
         try:

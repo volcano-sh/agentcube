@@ -11,47 +11,51 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/mux"
+	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/ssh"
 )
 
 // handleTunnel handles HTTP CONNECT requests, establishing a transparent SSH tunnel to the sandbox pod
 // This is the core functionality: acting as a transparent proxy between client and sandbox pod
-func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	sandboxID := vars["sandboxId"]
+func (s *Server) handleTunnel(c *gin.Context) {
+	sandboxID := c.Param("sandboxId")
 
 	// Check if sandbox exists
 	sandbox := s.sandboxStore.Get(sandboxID)
 	if sandbox == nil {
-		http.Error(w, "Sandbox not found", http.StatusNotFound)
+		c.String(http.StatusNotFound, "Sandbox not found")
+		c.Abort()
 		return
 	}
 
 	// Extract user information from context for authorization
-	_, _, _, serviceAccountName := extractUserInfo(r)
+	_, _, _, serviceAccountName := extractUserInfo(c)
 	if serviceAccountName == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		c.String(http.StatusUnauthorized, "Unauthorized")
+		c.Abort()
 		return
 	}
 
 	// Check if user has access to this sandbox
 	if !s.checkSandboxAccess(sandbox, serviceAccountName) {
-		http.Error(w, "Forbidden: You don't have permission to access this sandbox", http.StatusForbidden)
+		c.String(http.StatusForbidden, "Forbidden: You don't have permission to access this sandbox")
+		c.Abort()
 		return
 	}
 
 	// Check if method is CONNECT
-	if r.Method != http.MethodConnect {
-		http.Error(w, "Method not allowed, use CONNECT", http.StatusMethodNotAllowed)
+	if c.Request.Method != http.MethodConnect {
+		c.String(http.StatusMethodNotAllowed, "Method not allowed, use CONNECT")
+		c.Abort()
 		return
 	}
 
 	// Get sandbox pod IP and SSH port
-	podIP, err := s.k8sClient.GetSandboxPodIP(r.Context(), sandbox.Namespace, sandbox.SandboxName)
+	podIP, err := s.k8sClient.GetSandboxPodIP(c.Request.Context(), sandbox.Namespace, sandbox.SandboxName)
 	if err != nil {
 		log.Printf("Failed to get pod IP for sandbox %s: %v", sandboxID, err)
-		http.Error(w, "Sandbox not ready", http.StatusServiceUnavailable)
+		c.String(http.StatusServiceUnavailable, "Sandbox not ready")
+		c.Abort()
 		return
 	}
 
@@ -62,15 +66,17 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	backendConn, err := net.DialTimeout("tcp", sshAddr, 10*time.Second)
 	if err != nil {
 		log.Printf("Failed to connect to SSH backend %s: %v", sshAddr, err)
-		http.Error(w, "Failed to connect to sandbox", http.StatusBadGateway)
+		c.String(http.StatusBadGateway, "Failed to connect to sandbox")
+		c.Abort()
 		return
 	}
 
 	// Hijack HTTP connection
-	hijacker, ok := w.(http.Hijacker)
+	hijacker, ok := c.Writer.(http.Hijacker)
 	if !ok {
 		backendConn.Close()
-		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, "Hijacking not supported")
+		c.Abort()
 		return
 	}
 
@@ -78,6 +84,7 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		backendConn.Close()
 		log.Printf("Failed to hijack connection: %v", err)
+		c.Abort()
 		return
 	}
 
@@ -105,7 +112,7 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		defer wg.Done()
 		// update sandbox last activity timestamp
 		// TODO: improve here to reduce the processing latency of the cmd command
-		err := s.k8sClient.UpdateSandboxLastActivityWithPatch(r.Context(), sandbox.Namespace, sandbox.SandboxName, sandbox.LastActivityAt)
+		err := s.k8sClient.UpdateSandboxLastActivityWithPatch(c.Request.Context(), sandbox.Namespace, sandbox.SandboxName, sandbox.LastActivityAt)
 		if err != nil {
 			log.Printf("Failed to update last activity time for sandbox %s, err %v", sandbox.SandboxName, err)
 		}

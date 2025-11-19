@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/gin-gonic/gin"
+
 	authv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -60,65 +62,71 @@ const (
 )
 
 // authMiddleware provides service account token authentication middleware
-func (s *Server) authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip authentication for health check endpoint
-		if r.URL.Path == "/health" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		// Extract token from Authorization header
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing authorization header")
-			return
-		}
+func (s *Server) authMiddleware(c *gin.Context) {
+	// Skip authentication for health check endpoint
+	if c.Request.URL.Path == "/health" {
+		c.Next()
+		return
+	}
+	// Extract token from Authorization header
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Missing authorization header")
+		c.Abort()
+		return
+	}
 
-		// Check if it's a Bearer token
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid authorization header format")
-			return
-		}
+	// Check if it's a Bearer token
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid authorization header format")
+		c.Abort()
+		return
+	}
 
-		token := parts[1]
+	token := parts[1]
 
-		// Validate token using Kubernetes TokenReview API
-		authenticated, serviceAccount, err := s.validateServiceAccountToken(r.Context(), token)
-		if err != nil {
-			log.Printf("Token validation error: %v", err)
-			respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Token validation failed")
-			return
-		}
+	// Validate token using Kubernetes TokenReview API
+	authenticated, serviceAccount, err := s.validateServiceAccountToken(c.Request.Context(), token)
+	if err != nil {
+		log.Printf("Token validation error: %v", err)
+		respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Token validation failed")
+		c.Abort()
+		return
+	}
 
-		if !authenticated {
-			respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid or expired token")
-			return
-		}
+	if !authenticated {
+		respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid or expired token")
+		c.Abort()
+		return
+	}
 
-		log.Printf("Authenticated request from service account: %s", serviceAccount)
+	log.Printf("Authenticated request from service account: %s", serviceAccount)
 
-		// Extract namespace from service account username
-		// Format: system:serviceaccount:<namespace>:<serviceaccount-name>
-		saParts := strings.Split(serviceAccount, ":")
-		var namespace, serviceAccountName string
-		if len(saParts) == 4 && saParts[0] == "system" && saParts[1] == "serviceaccount" {
-			namespace = saParts[2]
-			serviceAccountName = saParts[3]
-		} else {
-			respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid service account format")
-			return
-		}
+	// Extract namespace from service account username
+	// Format: system:serviceaccount:<namespace>:<serviceaccount-name>
+	saParts := strings.Split(serviceAccount, ":")
+	var namespace, serviceAccountName string
+	if len(saParts) == 4 && saParts[0] == "system" && saParts[1] == "serviceaccount" {
+		namespace = saParts[2]
+		serviceAccountName = saParts[3]
+	} else {
+		respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid service account format")
+		c.Abort()
+		return
+	}
 
-		// Store user information in request context
-		ctx := context.WithValue(r.Context(), contextKeyUserToken, token)
-		ctx = context.WithValue(ctx, contextKeyServiceAccount, serviceAccount)
-		ctx = context.WithValue(ctx, contextKeyServiceAccountName, serviceAccountName)
-		ctx = context.WithValue(ctx, contextKeyNamespace, namespace)
+	// Store user information in request context
+	ctx := context.WithValue(c.Request.Context(), contextKeyUserToken, token)
+	ctx = context.WithValue(ctx, contextKeyServiceAccount, serviceAccount)
+	ctx = context.WithValue(ctx, contextKeyServiceAccountName, serviceAccountName)
+	ctx = context.WithValue(ctx, contextKeyNamespace, namespace)
 
-		// Token validation passed, continue processing request with updated context
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
+	// Update request context
+	c.Request = c.Request.WithContext(ctx)
+
+	// Token validation passed, continue processing request
+	c.Next()
 }
 
 // validateServiceAccountToken validates a service account token using Kubernetes TokenReview API
@@ -177,10 +185,10 @@ func (s *Server) checkSandboxAccess(sandbox *Sandbox, serviceAccountName string)
 // extractUserInfo extracts user information from request context
 // Returns userToken, userNamespace, serviceAccount, serviceAccountName
 // If extraction fails, returns empty strings
-func extractUserInfo(r *http.Request) (userToken, userNamespace, serviceAccount, serviceAccountName string) {
-	userToken, _ = r.Context().Value(contextKeyUserToken).(string)
-	userNamespace, _ = r.Context().Value(contextKeyNamespace).(string)
-	serviceAccount, _ = r.Context().Value(contextKeyServiceAccount).(string)
-	serviceAccountName, _ = r.Context().Value(contextKeyServiceAccountName).(string)
+func extractUserInfo(c *gin.Context) (userToken, userNamespace, serviceAccount, serviceAccountName string) {
+	userToken, _ = c.Request.Context().Value(contextKeyUserToken).(string)
+	userNamespace, _ = c.Request.Context().Value(contextKeyNamespace).(string)
+	serviceAccount, _ = c.Request.Context().Value(contextKeyServiceAccount).(string)
+	serviceAccountName, _ = c.Request.Context().Value(contextKeyServiceAccountName).(string)
 	return
 }

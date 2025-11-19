@@ -20,8 +20,6 @@ spec:
       labels:
         app: pcap-analyzer
     spec:
-      imagePullSecrets:
-        - name: default-secret
       containers:
         - name: pcap-analyzer
           image: pcap-analyzer:latest
@@ -50,16 +48,3 @@ spec:
               value: "http://agentcube-apiserver.agentcube.svc.cluster.local:8080"
           command: ["uv"]
           args: ["run", "pcap_analyzer.py"]
-      dnsPolicy: ClusterFirst
-      schedulerName: default-scheduler
-      securityContext: { }
-      terminationGracePeriodSeconds: 30
-      tolerations:
-        - effect: NoExecute
-          key: node.kubernetes.io/not-ready
-          operator: Exists
-          tolerationSeconds: 300
-        - effect: NoExecute
-          key: node.kubernetes.io/unreachable
-          operator: Exists
-          tolerationSeconds: 300

@@ -12,15 +12,24 @@ from typing import Any, Dict, Optional
 
 from agentrun.services.agentcube_service import AgentCubeService
 from agentrun.services.metadata_service import MetadataService
+from agentrun.services.k8s_provider import KubernetesProvider
 
 
 class InvokeRuntime:
     """Runtime for the invoke command."""
 
-    def __init__(self, verbose: bool = False) -> None:
+    def __init__(self, verbose: bool = False, use_k8s: bool = False) -> None:
         self.verbose = verbose
+        self.use_k8s = use_k8s
         self.metadata_service = MetadataService(verbose=verbose)
         self.agentcube_service = AgentCubeService(verbose=verbose)
+        self.k8s_provider = None
+
+        if use_k8s:
+            try:
+                self.k8s_provider = KubernetesProvider(verbose=verbose)
+            except Exception as e:
+                logger.warning(f"Failed to initialize K8s provider: {e}")
 
         if verbose:
             logging.basicConfig(level=logging.DEBUG)
@@ -165,34 +174,6 @@ class InvokeRuntime:
 
         except Exception as e:
             raise RuntimeError(f"HTTP invocation failed: {str(e)}")
-
-    def get_agent_status(self, workspace_path: Path) -> Dict[str, Any]:
-        """Get the status of the agent from the workspace."""
-        try:
-            metadata = self.metadata_service.load_metadata(workspace_path)
-
-            if not metadata.agent_id:
-                return {
-                    "status": "not_published",
-                    "message": "Agent has not been published yet"
-                }
-
-            # For MVP, return status from metadata
-            return {
-                "agent_id": metadata.agent_id,
-                "agent_name": metadata.agent_name,
-                "agent_endpoint": metadata.agent_endpoint,
-                "status": "published",
-                "version": metadata.version or "latest",
-                "language": metadata.language,
-                "build_mode": metadata.build_mode
-            }
-
-        except Exception as e:
-            return {
-                "status": "error",
-                "error": str(e)
-            }
 
 
 logger = logging.getLogger(__name__)

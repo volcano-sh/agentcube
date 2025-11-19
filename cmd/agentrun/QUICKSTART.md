@@ -29,7 +29,7 @@ pip install -e .
 
 1. **Package an existing agent:**
    ```bash
-   agentrun pack -f examples/hello-agent --agent-name "my-agent" --description "My first AI agent"
+   agentrun pack -f examples/hello-agent --agent-name "my-agent"
    ```
 
 2. **Build the container image:**
@@ -39,12 +39,16 @@ pip install -e .
 
 3. **Publish to AgentCube:**
    ```bash
-   agentrun publish -f examples/hello-agent --version "v1.0.0" --verbose
+   agentrun publish \
+      -f examples/hello-agent \
+      --image-url "taoruiw/my-agent:v1.0.0" \
+      --verbose \
+      --use-k8s
    ```
 
 4. **Invoke your agent:**
    ```bash
-   agentrun invoke -f examples/hello-agent --payload '{"prompt": "Hello, world!"}'
+   agentrun invoke -f examples/hello-agent --payload '{"prompt": "Hello World!"}'
    ```
 
 5. **Check status:**

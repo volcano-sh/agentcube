@@ -17,7 +17,7 @@ from agentrun.runtime.build_runtime import BuildRuntime
 from agentrun.runtime.invoke_runtime import InvokeRuntime
 from agentrun.runtime.pack_runtime import PackRuntime
 from agentrun.runtime.publish_runtime import PublishRuntime
-from agentrun.services.metadata_service import MetadataService
+from agentrun.runtime.status_runtime import StatusRuntime
 
 # Initialize rich console for beautiful output
 console = Console()
@@ -272,6 +272,21 @@ def publish(
         "--cloud-provider",
         help="Cloud provider name (e.g., huawei)",
     ),
+    use_k8s: bool = typer.Option(
+        False,
+        "--use-k8s",
+        help="Deploy to local Kubernetes cluster instead of AgentCube",
+    ),
+    node_port: Optional[int] = typer.Option(
+        None,
+        "--node-port",
+        help="Specific NodePort to use (30000-32767) for K8s deployment",
+    ),
+    replicas: Optional[int] = typer.Option(
+        None,
+        "--replicas",
+        help="Number of replicas for K8s deployment (default: 1)",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -279,10 +294,10 @@ def publish(
     ),
 ) -> None:
     """
-    Publish the agent image to AgentCube.
+    Publish the agent image to AgentCube or local Kubernetes cluster.
 
-    This command publishes the built agent to AgentCube, making it
-    available for invocation, sharing, and collaboration.
+    This command publishes the built agent to AgentCube or deploys it to
+    a local Kubernetes cluster for testing and development.
     """
     try:
         with Progress(
@@ -292,7 +307,7 @@ def publish(
         ) as progress:
             task = progress.add_task("Publishing agent...", total=None)
 
-            runtime = PublishRuntime(verbose=verbose)
+            runtime = PublishRuntime(verbose=verbose, use_k8s=use_k8s)
             workspace_path = Path(workspace).resolve()
 
             options = {
@@ -303,6 +318,9 @@ def publish(
                 "description": description,
                 "region": region,
                 "cloud_provider": cloud_provider,
+                "use_k8s": use_k8s,
+                "node_port": node_port,
+                "replicas": replicas,
             }
 
             # Filter out None values
@@ -315,6 +333,10 @@ def publish(
         console.print(f"✅ Successfully published agent: [bold green]{result['agent_name']}[/bold green]")
         console.print(f"🆔 Agent ID: [blue]{result['agent_id']}[/blue]")
         console.print(f"🌐 Endpoint: [blue]{result['agent_endpoint']}[/blue]")
+
+        if use_k8s and "node_port" in result:
+            console.print(f"🔌 NodePort: [blue]{result['node_port']}[/blue]")
+            console.print(f"📦 Namespace: [blue]{result.get('namespace', 'agentrun')}[/blue]")
 
     except Exception as e:
         console.print(f"❌ Error publishing agent: [red]{str(e)}[/red]")
@@ -342,6 +364,11 @@ def invoke(
         "--header",
         help="Custom HTTP headers (e.g., 'Authorization: Bearer token')",
     ),
+    use_k8s: bool = typer.Option(
+        False,
+        "--use-k8s",
+        help="Invoke agent deployed on local Kubernetes cluster",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -349,7 +376,7 @@ def invoke(
     ),
 ) -> None:
     """
-    Invoke a published agent via AgentCube.
+    Invoke a published agent via AgentCube or Kubernetes.
 
     This command sends a request to a published agent, allowing you
     to test and interact with your deployed agent.
@@ -362,7 +389,7 @@ def invoke(
         ) as progress:
             task = progress.add_task("Invoking agent...", total=None)
 
-            runtime = InvokeRuntime(verbose=verbose)
+            runtime = InvokeRuntime(verbose=verbose, use_k8s=use_k8s)
             workspace_path = Path(workspace).resolve()
 
             # Parse payload
@@ -404,6 +431,11 @@ def status(
         help="Path to the agent workspace directory",
         show_default=True,
     ),
+    use_k8s: bool = typer.Option(
+        False,
+        "--use-k8s",
+        help="Check status on local Kubernetes cluster",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -413,35 +445,65 @@ def status(
     """
     Check the status of a published agent.
 
-    This command queries AgentCube for the current state of the agent
-    associated with the workspace.
+    This command queries AgentCube or Kubernetes for the current state
+    of the agent associated with the workspace.
     """
     try:
-        runtime = InvokeRuntime(verbose=verbose)
+        runtime = StatusRuntime(verbose=verbose, use_k8s=use_k8s)
         workspace_path = Path(workspace).resolve()
 
-        metadata_service = MetadataService(verbose=verbose)
-        metadata = metadata_service.load_metadata(workspace_path)
+        status_info = runtime.get_status(workspace_path, use_k8s=use_k8s)
 
-        if not metadata.get("agent_id"):
+        if status_info.get("status") == "not_published":
             console.print("❌ No agent found. Please publish an agent first.")
             raise typer.Exit(1)
 
-        # TODO: Implement status check via AgentCube API
-        # For now, show basic metadata info
+        if status_info.get("status") == "error":
+            console.print(f"❌ Error checking status: {status_info.get('error')}")
+            raise typer.Exit(1)
 
+        # Display status information
         table = Table(title="Agent Status")
         table.add_column("Property", style="cyan")
         table.add_column("Value", style="green")
 
-        table.add_row("Agent Name", metadata.get("agent_name", "N/A"))
-        table.add_row("Agent ID", metadata.get("agent_id", "N/A"))
-        table.add_row("Version", metadata.get("version", "N/A"))
-        table.add_row("Language", metadata.get("language", "N/A"))
-        table.add_row("Build Mode", metadata.get("build_mode", "N/A"))
+        table.add_row("Agent Name", status_info.get("agent_name", "N/A"))
+        table.add_row("Agent ID", status_info.get("agent_id", "N/A"))
+        table.add_row("Status", status_info.get("status", "N/A"))
+        table.add_row("Version", status_info.get("version", "N/A"))
+        table.add_row("Language", status_info.get("language", "N/A"))
+        table.add_row("Build Mode", status_info.get("build_mode", "N/A"))
 
-        if metadata.get("agent_endpoint"):
-            table.add_row("Endpoint", metadata["agent_endpoint"])
+        if status_info.get("agent_endpoint"):
+            table.add_row("Endpoint", status_info["agent_endpoint"])
+
+        # Add last activity if available (from AgentCube)
+        if status_info.get("last_activity"):
+            table.add_row("Last Activity", status_info["last_activity"])
+
+        # Add note if available (e.g., when API is unavailable)
+        if status_info.get("note"):
+            table.add_row("Note", status_info["note"])
+
+        # Add K8s-specific information if available
+        if "k8s_deployment" in status_info:
+            k8s_info = status_info["k8s_deployment"]
+            table.add_row("Namespace", k8s_info.get("namespace", "N/A"))
+            table.add_row("NodePort", str(k8s_info.get("node_port", "N/A")))
+
+            if "replicas" in k8s_info:
+                replicas = k8s_info["replicas"]
+                table.add_row(
+                    "Replicas",
+                    f"{replicas.get('ready', 0)}/{replicas.get('desired', 0)}"
+                )
+
+            if "pods" in k8s_info:
+                pods_status = ", ".join([
+                    f"{pod['name']}: {pod['phase']}"
+                    for pod in k8s_info["pods"][:3]  # Show first 3 pods
+                ])
+                table.add_row("Pods", pods_status)
 
         console.print(table)
 

@@ -42,6 +42,9 @@ class AgentMetadata(BaseModel):
     agent_id: Optional[str] = Field(None, description="Agent ID assigned by AgentCube")
     agent_endpoint: Optional[str] = Field(None, description="Agent endpoint URL")
 
+    # Kubernetes deployment fields (filled when using K8s provider)
+    k8s_deployment: Optional[Dict[str, Any]] = Field(None, description="Kubernetes deployment information")
+
     @validator('language')
     def validate_language(cls, v):
         supported_languages = ['python', 'java']

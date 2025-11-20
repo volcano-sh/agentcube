@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/cache"
-	agentsv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 )
 
 // Sandbox represents a sandbox instance
@@ -198,11 +198,16 @@ func (s *SandboxStore) onSandboxDelete(obj interface{}) {
 // convertK8sSandboxToSandbox converts a Kubernetes Sandbox CRD to internal Sandbox structure
 func convertK8sSandboxToSandbox(unstructuredObj *unstructured.Unstructured) (*Sandbox, error) {
 	// Convert unstructured to typed Sandbox
-	var sandboxCRD agentsv1alpha1.Sandbox
+	var sandboxCRD sandboxv1alpha1.Sandbox
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.Object, &sandboxCRD); err != nil {
 		return nil, fmt.Errorf("failed to convert unstructured to Sandbox: %w", err)
 	}
 
+	return convertTypedSandboxToSandbox(&sandboxCRD)
+}
+
+// convertTypedSandboxToSandbox converts a typed Kubernetes Sandbox CRD to internal Sandbox structure
+func convertTypedSandboxToSandbox(sandboxCRD *sandboxv1alpha1.Sandbox) (*Sandbox, error) {
 	// Get sandbox ID from labels (UUID)
 	labels := sandboxCRD.GetLabels()
 	sandboxID := labels["sandbox-id"]
@@ -215,7 +220,7 @@ func convertK8sSandboxToSandbox(unstructuredObj *unstructured.Unstructured) (*Sa
 	}
 
 	// Get status from conditions
-	status := getSandboxStatus(&sandboxCRD)
+	status := getSandboxStatus(sandboxCRD)
 
 	// Get creation time
 	createdAt := sandboxCRD.GetCreationTimestamp().Time
@@ -267,10 +272,10 @@ func convertK8sSandboxToSandbox(unstructuredObj *unstructured.Unstructured) (*Sa
 }
 
 // getSandboxStatus extracts status from Sandbox CRD conditions
-func getSandboxStatus(sandbox *agentsv1alpha1.Sandbox) string {
+func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) string {
 	// Check conditions for Ready status
 	for _, condition := range sandbox.Status.Conditions {
-		if condition.Type == string(agentsv1alpha1.SandboxConditionReady) && condition.Status == metav1.ConditionTrue {
+		if condition.Type == string(sandboxv1alpha1.SandboxConditionReady) && condition.Status == metav1.ConditionTrue {
 			return "running"
 		}
 	}

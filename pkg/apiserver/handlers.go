@@ -70,19 +70,12 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 
 	select {
 	case result := <-resultChan:
-		// Informer will automatically update the store when the sandbox CRD is created
-		// We can retrieve it from the store now, or construct the response directly
-		// Use the same timestamp that was used in CreateSandbox
-		sandbox := &Sandbox{
-			SandboxID:             sandboxID,
-			Status:                result.Status,
-			CreatedAt:             now,
-			ExpiresAt:             now.Add(time.Duration(req.TTL) * time.Second),
-			LastActivityAt:        now,
-			Metadata:              req.Metadata,
-			SandboxName:           sandboxName,
-			Namespace:             namespace,
-			CreatorServiceAccount: serviceAccountName,
+		// Convert the raw sandbox CRD to internal Sandbox structure
+		sandbox, err := convertTypedSandboxToSandbox(result.Sandbox)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "CONVERSION_FAILED",
+				fmt.Sprintf("Failed to convert sandbox: %v", err))
+			return
 		}
 
 		// The store will be updated by the informer when the CRD is created

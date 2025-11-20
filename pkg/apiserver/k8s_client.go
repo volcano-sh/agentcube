@@ -18,7 +18,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
-	agentsv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 )
 
 var (
@@ -78,7 +78,7 @@ func NewK8sClient() (*K8sClient, error) {
 
 	// Create scheme and register agent-sandbox types
 	scheme := runtime.NewScheme()
-	if err := agentsv1alpha1.AddToScheme(scheme); err != nil {
+	if err := sandboxv1alpha1.AddToScheme(scheme); err != nil {
 		return nil, fmt.Errorf("failed to add agent-sandbox scheme: %w", err)
 	}
 
@@ -149,7 +149,7 @@ func (c *K8sClient) GetOrCreateUserK8sClient(userToken, namespace, serviceAccoun
 }
 
 // buildSandboxObject builds a Sandbox object from parameters
-func buildSandboxObject(namespace, sandboxID, sandboxName, image, sshPublicKey, runtimeClassName string, ttl int, metadata map[string]interface{}, createdAt time.Time, creatorServiceAccount string) *agentsv1alpha1.Sandbox {
+func buildSandboxObject(namespace, sandboxID, sandboxName, image, sshPublicKey, runtimeClassName string, ttl int, metadata map[string]interface{}, createdAt time.Time, creatorServiceAccount string) *sandboxv1alpha1.Sandbox {
 	// Use default sandbox image if not specified
 	if image == "" {
 		image = "sandbox:latest"
@@ -182,7 +182,7 @@ func buildSandboxObject(namespace, sandboxID, sandboxName, image, sshPublicKey, 
 	}
 
 	// Create Sandbox object using agent-sandbox types
-	sandbox := &agentsv1alpha1.Sandbox{
+	sandbox := &sandboxv1alpha1.Sandbox{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "agents.x-k8s.io/v1alpha1",
 			Kind:       "Sandbox",
@@ -197,8 +197,8 @@ func buildSandboxObject(namespace, sandboxID, sandboxName, image, sshPublicKey, 
 			},
 			Annotations: convertToStringMap(metadata),
 		},
-		Spec: agentsv1alpha1.SandboxSpec{
-			PodTemplate: agentsv1alpha1.PodTemplate{
+		Spec: sandboxv1alpha1.SandboxSpec{
+			PodTemplate: sandboxv1alpha1.PodTemplate{
 				Spec: podSpec,
 			},
 		},
@@ -220,7 +220,7 @@ func buildSandboxObject(namespace, sandboxID, sandboxName, image, sshPublicKey, 
 }
 
 // createSandbox creates a Sandbox using the provided dynamic client
-func createSandbox(ctx context.Context, client dynamic.Interface, namespace string, sandbox *agentsv1alpha1.Sandbox) (*SandboxInfo, error) {
+func createSandbox(ctx context.Context, client dynamic.Interface, namespace string, sandbox *sandboxv1alpha1.Sandbox) (*SandboxInfo, error) {
 	// Convert to unstructured for dynamic client
 	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(sandbox)
 	if err != nil {

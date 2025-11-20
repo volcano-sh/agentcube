@@ -1,11 +1,10 @@
-package controller
+package apiserver
 
 import (
 	"context"
 	"fmt"
 	"sync"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -23,9 +22,7 @@ type SandboxReconciler struct {
 }
 
 type SandboxStatusUpdate struct {
-	Namespace string
-	Name      string
-	Status    string
+	Sandbox *sandboxv1alpha1.Sandbox
 }
 
 func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -37,7 +34,7 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	status := getSandboxStatus(sandbox)
 
 	// Check for pending requests with proper locking
-	if status == "Running" {
+	if status == "running" {
 		fmt.Printf("Sandbox %s/%s is running, sending notification\n", sandbox.Namespace, sandbox.Name)
 		r.mu.Lock()
 		resultChan, exists := r.pendingRequests[req.NamespacedName]
@@ -54,9 +51,7 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			// Send notification outside the lock to avoid deadlock
 			select {
 			case resultChan <- SandboxStatusUpdate{
-				Namespace: sandbox.Namespace,
-				Name:      sandbox.Name,
-				Status:    status,
+				Sandbox: sandbox,
 			}:
 				fmt.Printf("Notified waiter about sandbox %s/%s reaching Running state\n",
 					sandbox.Namespace, sandbox.Name)
@@ -84,13 +79,4 @@ func (r *SandboxReconciler) WatchSandboxOnce(ctx context.Context, namespace, nam
 	r.mu.Unlock()
 
 	return resultChan
-}
-
-func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) string {
-	for _, condition := range sandbox.Status.Conditions {
-		if condition.Type == string(sandboxv1alpha1.SandboxConditionReady) && condition.Status == metav1.ConditionTrue {
-			return "Running"
-		}
-	}
-	return "Unknown"
 }

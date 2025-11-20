@@ -10,9 +10,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -26,11 +26,21 @@ const (
 	defaultSandboxImage = "sandbox:latest"
 )
 
-var (
-	// authToken is the Bearer token for authentication
-	// Set via API_TOKEN environment variable
-	authToken string
-)
+type testEnv struct {
+	apiURL       string
+	authToken    string
+	sandboxImage string
+	t            *testing.T
+}
+
+func newTestEnv(t *testing.T) *testEnv {
+	return &testEnv{
+		apiURL:       getEnv("API_URL", defaultAPIURL),
+		authToken:    os.Getenv("API_TOKEN"),
+		sandboxImage: getEnv("SANDBOX_IMAGE", defaultSandboxImage),
+		t:            t,
+	}
+}
 
 // CreateSandboxRequest matches the API spec
 type CreateSandboxRequest struct {
@@ -50,38 +60,34 @@ type Sandbox struct {
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
-func setupSandbox(t *testing.T) (string, *ssh.Client, func()) {
-	apiURL := getEnv("API_URL", defaultAPIURL)
-	sandboxImage := getEnv("SANDBOX_IMAGE", defaultSandboxImage)
-	authToken = os.Getenv("API_TOKEN")
-
+func (e *testEnv) setupSandbox() (string, *ssh.Client, func()) {
 	publicKey, privateKey, err := generateSSHKeyPair()
 	if err != nil {
-		t.Fatalf("Failed to generate SSH key pair: %v", err)
+		e.t.Fatalf("Failed to generate SSH key pair: %v", err)
 	}
 
-	sandboxID, err := createSandboxWithSSHKey(apiURL, publicKey, sandboxImage)
+	sandboxID, err := e.createSandboxWithSSHKey(publicKey)
 	if err != nil {
-		t.Fatalf("Failed to create sandbox: %v", err)
+		e.t.Fatalf("Failed to create sandbox: %v", err)
 	}
 
 	cleanup := func() {
-		if err := deleteSandbox(apiURL, sandboxID); err != nil {
-			t.Errorf("Failed to delete sandbox: %v", err)
+		if err := e.deleteSandbox(sandboxID); err != nil {
+			e.t.Errorf("Failed to delete sandbox: %v", err)
 		}
 	}
 
-	tunnelConn, err := establishTunnel(apiURL, sandboxID)
+	tunnelConn, err := e.establishTunnel(sandboxID)
 	if err != nil {
 		cleanup()
-		t.Fatalf("Failed to establish tunnel: %v", err)
+		e.t.Fatalf("Failed to establish tunnel: %v", err)
 	}
 
 	sshClient, err := connectSSHWithKey(tunnelConn, privateKey)
 	if err != nil {
 		tunnelConn.Close()
 		cleanup()
-		t.Fatalf("Failed to connect via SSH: %v", err)
+		e.t.Fatalf("Failed to connect via SSH: %v", err)
 	}
 
 	return sandboxID, sshClient, func() {
@@ -92,27 +98,26 @@ func setupSandbox(t *testing.T) (string, *ssh.Client, func()) {
 }
 
 func TestSandboxLifecycle(t *testing.T) {
-	apiURL := getEnv("API_URL", defaultAPIURL)
-	sandboxImage := getEnv("SANDBOX_IMAGE", defaultSandboxImage)
-	authToken = os.Getenv("API_TOKEN")
+	env := newTestEnv(t)
 
 	publicKey, _, err := generateSSHKeyPair()
 	if err != nil {
 		t.Fatalf("Failed to generate SSH key pair: %v", err)
 	}
 
-	sandboxID, err := createSandboxWithSSHKey(apiURL, publicKey, sandboxImage)
+	sandboxID, err := env.createSandboxWithSSHKey(publicKey)
 	if err != nil {
 		t.Fatalf("Failed to create sandbox: %v", err)
 	}
 
-	if err := deleteSandbox(apiURL, sandboxID); err != nil {
+	if err := env.deleteSandbox(sandboxID); err != nil {
 		t.Errorf("Failed to delete sandbox: %v", err)
 	}
 }
 
 func TestExecuteCommands(t *testing.T) {
-	_, sshClient, cleanup := setupSandbox(t)
+	env := newTestEnv(t)
+	_, sshClient, cleanup := env.setupSandbox()
 	defer cleanup()
 
 	commands := []string{
@@ -132,7 +137,8 @@ func TestExecuteCommands(t *testing.T) {
 }
 
 func TestFileUploadAndDownload(t *testing.T) {
-	_, sshClient, cleanup := setupSandbox(t)
+	env := newTestEnv(t)
+	_, sshClient, cleanup := env.setupSandbox()
 	defer cleanup()
 
 	pythonScript := `#!/usr/bin/env python3
@@ -231,10 +237,10 @@ func generateSSHKeyPair() (publicKey string, privateKey ssh.Signer, err error) {
 	return pubKeyStr[:len(pubKeyStr)-1], signer, nil
 }
 
-func createSandboxWithSSHKey(apiURL, publicKey, image string) (string, error) {
+func (e *testEnv) createSandboxWithSSHKey(publicKey string) (string, error) {
 	req := CreateSandboxRequest{
 		TTL:          defaultTTL,
-		Image:        image,
+		Image:        e.sandboxImage,
 		SSHPublicKey: publicKey,
 		Metadata: map[string]interface{}{
 			"test": "ssh-key-auth",
@@ -248,7 +254,7 @@ func createSandboxWithSSHKey(apiURL, publicKey, image string) (string, error) {
 
 	httpReq, err := http.NewRequest(
 		"POST",
-		fmt.Sprintf("%s/v1/sandboxes", apiURL),
+		fmt.Sprintf("%s/v1/sandboxes", e.apiURL),
 		bytes.NewBuffer(jsonData),
 	)
 	if err != nil {
@@ -256,8 +262,8 @@ func createSandboxWithSSHKey(apiURL, publicKey, image string) (string, error) {
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	if authToken != "" {
-		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", authToken))
+	if e.authToken != "" {
+		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.authToken))
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -280,18 +286,18 @@ func createSandboxWithSSHKey(apiURL, publicKey, image string) (string, error) {
 	return sandbox.SandboxID, nil
 }
 
-func deleteSandbox(apiURL, sandboxID string) error {
+func (e *testEnv) deleteSandbox(sandboxID string) error {
 	httpReq, err := http.NewRequest(
 		"DELETE",
-		fmt.Sprintf("%s/v1/sandboxes/%s", apiURL, sandboxID),
+		fmt.Sprintf("%s/v1/sandboxes/%s", e.apiURL, sandboxID),
 		nil,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	if authToken != "" {
-		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", authToken))
+	if e.authToken != "" {
+		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.authToken))
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -308,13 +314,12 @@ func deleteSandbox(apiURL, sandboxID string) error {
 	return nil
 }
 
-func establishTunnel(apiURL, sandboxID string) (net.Conn, error) {
-	var host string
-	if len(apiURL) > 7 && apiURL[:7] == "http://" {
-		host = apiURL[7:]
-	} else {
-		host = apiURL
+func (e *testEnv) establishTunnel(sandboxID string) (net.Conn, error) {
+	u, err := url.Parse(e.apiURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid API URL: %w", err)
 	}
+	host := u.Host
 
 	if _, _, err := net.SplitHostPort(host); err != nil {
 		host = net.JoinHostPort(host, "8080")
@@ -328,8 +333,8 @@ func establishTunnel(apiURL, sandboxID string) (net.Conn, error) {
 	connectReq := fmt.Sprintf("CONNECT /v1/sandboxes/%s HTTP/1.1\r\n", sandboxID)
 	connectReq += fmt.Sprintf("Host: %s\r\n", host)
 	connectReq += "User-Agent: e2e-test/1.0\r\n"
-	if authToken != "" {
-		connectReq += fmt.Sprintf("Authorization: Bearer %s\r\n", authToken)
+	if e.authToken != "" {
+		connectReq += fmt.Sprintf("Authorization: Bearer %s\r\n", e.authToken)
 	}
 	connectReq += "\r\n"
 
@@ -404,9 +409,7 @@ func uploadFile(sshClient *ssh.Client, content, remotePath string) error {
 
 	remoteDir := filepath.Dir(remotePath)
 	if err := sftpClient.MkdirAll(remoteDir); err != nil {
-		if !os.IsExist(err) {
-			return fmt.Errorf("failed to create remote directory: %w", err)
-		}
+		return fmt.Errorf("failed to create remote directory: %w", err)
 	}
 
 	remoteFile, err := sftpClient.Create(remotePath)
@@ -453,13 +456,4 @@ func downloadFile(sshClient *ssh.Client, remotePath, localPath string) error {
 	}
 
 	return nil
-}
-
-func indentOutput(output string) string {
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	var indented []string
-	for _, line := range lines {
-		indented = append(indented, "   "+line)
-	}
-	return strings.Join(indented, "\n")
 }

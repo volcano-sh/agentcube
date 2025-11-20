@@ -73,7 +73,20 @@ echo "Token created"
 kubectl port-forward svc/agentcube-apiserver -n agentcube 8080:8080 > /dev/null 2>&1 &
 PID=$!
 echo "Port forward started with PID $PID"
-sleep 5
+
+# Wait for port-forward to be ready
+echo "Waiting for port-forward..."
+for i in $(seq 1 10); do
+    if curl -sf -o /dev/null http://localhost:8080/health; then
+        echo "Port-forward is ready."
+        break
+    fi
+    if [ $i -eq 10 ]; then
+        echo "Timed out waiting for port-forward." >&2
+        exit 1
+    fi
+    sleep 1
+done
 
 # Run tests
 echo "Running Go tests..."

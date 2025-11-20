@@ -50,68 +50,70 @@ type Sandbox struct {
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
+func setupSandbox(t *testing.T) (string, *ssh.Client, func()) {
+	apiURL := getEnv("API_URL", defaultAPIURL)
+	sandboxImage := getEnv("SANDBOX_IMAGE", defaultSandboxImage)
+	authToken = os.Getenv("API_TOKEN")
+
+	publicKey, privateKey, err := generateSSHKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate SSH key pair: %v", err)
+	}
+
+	sandboxID, err := createSandboxWithSSHKey(apiURL, publicKey, sandboxImage)
+	if err != nil {
+		t.Fatalf("Failed to create sandbox: %v", err)
+	}
+
+	cleanup := func() {
+		if err := deleteSandbox(apiURL, sandboxID); err != nil {
+			t.Errorf("Failed to delete sandbox: %v", err)
+		}
+	}
+
+	tunnelConn, err := establishTunnel(apiURL, sandboxID)
+	if err != nil {
+		cleanup()
+		t.Fatalf("Failed to establish tunnel: %v", err)
+	}
+
+	sshClient, err := connectSSHWithKey(tunnelConn, privateKey)
+	if err != nil {
+		tunnelConn.Close()
+		cleanup()
+		t.Fatalf("Failed to connect via SSH: %v", err)
+	}
+
+	return sandboxID, sshClient, func() {
+		sshClient.Close()
+		tunnelConn.Close()
+		cleanup()
+	}
+}
+
 func TestSandboxLifecycle(t *testing.T) {
 	apiURL := getEnv("API_URL", defaultAPIURL)
 	sandboxImage := getEnv("SANDBOX_IMAGE", defaultSandboxImage)
 	authToken = os.Getenv("API_TOKEN")
 
-	t.Logf("Configuration:")
-	t.Logf("  API URL: %s", apiURL)
-	t.Logf("  Sandbox Image: %s", sandboxImage)
-
-	if authToken == "" {
-		t.Log("⚠️  WARNING: API_TOKEN environment variable not set")
-		t.Log("   Attempting to proceed without authentication token")
-	} else {
-		t.Log("✅ API authentication token loaded from environment")
-	}
-
-	// Step 1: Generate SSH key pair
-	t.Log("Step 1: Generating SSH key pair...")
-	publicKey, privateKey, err := generateSSHKeyPair()
+	publicKey, _, err := generateSSHKeyPair()
 	if err != nil {
 		t.Fatalf("Failed to generate SSH key pair: %v", err)
 	}
-	t.Logf("✅ SSH key pair generated")
 
-	// Step 2: Create sandbox with public key
-	t.Log("Step 2: Creating sandbox with SSH public key...")
 	sandboxID, err := createSandboxWithSSHKey(apiURL, publicKey, sandboxImage)
 	if err != nil {
 		t.Fatalf("Failed to create sandbox: %v", err)
 	}
-	t.Logf("✅ Sandbox created: %s", sandboxID)
 
-	// Ensure cleanup
-	defer func() {
-		t.Log("Cleaning up sandbox...")
-		if err := deleteSandbox(apiURL, sandboxID); err != nil {
-			t.Errorf("Failed to delete sandbox: %v", err)
-		} else {
-			t.Log("✅ Sandbox deleted")
-		}
-	}()
-
-	// Step 3: Establish HTTP CONNECT tunnel
-	t.Log("Step 3: Establishing HTTP CONNECT tunnel...")
-	tunnelConn, err := establishTunnel(apiURL, sandboxID)
-	if err != nil {
-		t.Fatalf("Failed to establish tunnel: %v", err)
+	if err := deleteSandbox(apiURL, sandboxID); err != nil {
+		t.Errorf("Failed to delete sandbox: %v", err)
 	}
-	defer tunnelConn.Close()
-	t.Log("✅ HTTP CONNECT tunnel established")
+}
 
-	// Step 4: Connect via SSH using private key
-	t.Log("Step 4: Connecting via SSH with private key authentication...")
-	sshClient, err := connectSSHWithKey(tunnelConn, privateKey)
-	if err != nil {
-		t.Fatalf("Failed to connect via SSH: %v", err)
-	}
-	defer sshClient.Close()
-	t.Log("✅ SSH connection established with key-based auth")
-
-	// Step 5: Execute basic test commands
-	t.Log("Step 5: Executing basic test commands...")
+func TestExecuteCommands(t *testing.T) {
+	_, sshClient, cleanup := setupSandbox(t)
+	defer cleanup()
 
 	commands := []string{
 		"whoami",
@@ -121,18 +123,18 @@ func TestSandboxLifecycle(t *testing.T) {
 		"uname -a",
 	}
 
-	for i, cmd := range commands {
-		t.Logf("   [%d/%d] Executing: %s", i+1, len(commands), cmd)
-		output, err := executeCommand(sshClient, cmd)
+	for _, cmd := range commands {
+		_, err := executeCommand(sshClient, cmd)
 		if err != nil {
-			t.Errorf("      ⚠️  Command failed: %v", err)
-			continue
+			t.Errorf("Command failed: %v", err)
 		}
-		t.Logf("      Output: %s", strings.TrimSpace(output))
 	}
+}
 
-	// Step 6: Upload Python script via SFTP
-	t.Log("Step 6: Uploading Python script via SFTP...")
+func TestFileUploadAndDownload(t *testing.T) {
+	_, sshClient, cleanup := setupSandbox(t)
+	defer cleanup()
+
 	pythonScript := `#!/usr/bin/env python3
 # Fibonacci generator script
 import sys
@@ -173,31 +175,22 @@ if __name__ == "__main__":
     main()
 `
 
-	err = uploadFile(sshClient, pythonScript, "/workspace/fibonacci.py")
+	err := uploadFile(sshClient, pythonScript, "/workspace/fibonacci.py")
 	if err != nil {
 		t.Fatalf("Failed to upload Python script: %v", err)
 	}
-	t.Log("✅ Python script uploaded to /workspace/fibonacci.py")
 
-	// Step 7: Execute Python script
-	t.Log("Step 7: Executing Python script in sandbox...")
-	output, err := executeCommand(sshClient, "python3 /workspace/fibonacci.py")
+	_, err = executeCommand(sshClient, "python3 /workspace/fibonacci.py")
 	if err != nil {
 		t.Fatalf("Failed to execute Python script: %v", err)
 	}
-	t.Logf("   Script output:\n%s", indentOutput(output))
 
-	// Step 8: Download generated file
-	t.Log("Step 8: Downloading generated output file...")
 	localOutputPath := filepath.Join(os.TempDir(), "sandbox_output.json")
 	err = downloadFile(sshClient, "/workspace/output.json", localOutputPath)
 	if err != nil {
 		t.Fatalf("Failed to download output file: %v", err)
 	}
-	t.Logf("✅ Output file downloaded to %s", localOutputPath)
 
-	// Step 9: Verify downloaded file
-	t.Log("Step 9: Verifying downloaded file...")
 	fileContent, err := os.ReadFile(localOutputPath)
 	if err != nil {
 		t.Fatalf("Failed to read downloaded file: %v", err)
@@ -208,9 +201,7 @@ if __name__ == "__main__":
 		t.Fatalf("Failed to parse JSON output: %v", err)
 	}
 
-	// Verify the data
 	if numbers, ok := outputData["numbers"].([]interface{}); ok {
-		t.Logf("✅ Verified: Generated %d Fibonacci numbers", len(numbers))
 		if len(numbers) != 20 {
 			t.Errorf("Expected 20 numbers, got %d", len(numbers))
 		}
@@ -218,9 +209,7 @@ if __name__ == "__main__":
 		t.Error("Failed to verify numbers")
 	}
 
-	if sumVal, ok := outputData["sum"].(float64); ok {
-		t.Logf("✅ Verified: Sum = %.0f", sumVal)
-	} else {
+	if _, ok := outputData["sum"].(float64); !ok {
 		t.Error("Failed to verify sum")
 	}
 }

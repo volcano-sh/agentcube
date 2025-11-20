@@ -2,45 +2,53 @@
 Docker service for building and managing container images.
 
 This service provides functionality to build Docker images, push to registries,
-and manage container operations.
+and manage container operations using Docker SDK.
 """
 
 import logging
-import subprocess
 import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
+import docker
+from docker.errors import DockerException, BuildError, APIError
 
 logger = logging.getLogger(__name__)
 
 
 class DockerService:
-    """Service for Docker operations."""
+    """Service for Docker operations using Docker SDK."""
 
     def __init__(self, verbose: bool = False) -> None:
         self.verbose = verbose
         if verbose:
             logging.basicConfig(level=logging.DEBUG)
 
+        try:
+            self.client = docker.from_env()
+            # Test connection
+            self.client.ping()
+            if self.verbose:
+                logger.info("Successfully connected to Docker daemon")
+        except DockerException as e:
+            logger.error(f"Failed to connect to Docker: {e}")
+            self.client = None
+
     def check_docker_available(self) -> bool:
         """Check if Docker is available and running."""
         try:
-            result = subprocess.run(
-                ["docker", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            if result.returncode == 0:
-                if self.verbose:
-                    logger.info(f"Docker version: {result.stdout.strip()}")
-                return True
-            else:
-                logger.error(f"Docker not available: {result.stderr}")
+            if not self.client:
                 return False
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            logger.error(f"Docker check failed: {e}")
+
+            # Test Docker connection
+            self.client.ping()
+
+            if self.verbose:
+                version_info = self.client.version()
+                logger.info(f"Docker version: {version_info.get('Version', 'Unknown')}")
+            return True
+        except DockerException as e:
+            logger.error(f"Docker not available: {e}")
             return False
 
     def build_image(
@@ -52,7 +60,7 @@ class DockerService:
         build_args: Optional[Dict[str, str]] = None
     ) -> Dict[str, str]:
         """
-        Build a Docker image.
+        Build a Docker image using Docker SDK.
 
         Args:
             dockerfile_path: Path to Dockerfile
@@ -72,77 +80,92 @@ class DockerService:
 
         full_image_name = f"{image_name}:{tag}"
 
-        cmd = [
-            "docker", "build",
-            "-f", str(dockerfile_path),
-            "-t", full_image_name,
-            str(context_path)
-        ]
-
-        # Add build args if provided
-        if build_args:
-            for key, value in build_args.items():
-                cmd.extend(["--build-arg", f"{key}={value}"])
-
         if self.verbose:
             logger.info(f"Building Docker image: {full_image_name}")
-            logger.info(f"Command: {' '.join(cmd)}")
+            logger.info(f"Dockerfile: {dockerfile_path}")
+            logger.info(f"Context: {context_path}")
+
+        # Prepare build arguments
+        build_kwargs = {
+            "path": str(context_path),
+            "dockerfile": str(dockerfile_path),
+            "tag": full_image_name,
+            "rm": True,  # Remove intermediate containers
+        }
+
+        if build_args:
+            build_kwargs["buildargs"] = build_args
+            if self.verbose:
+                logger.info(f"Build args: {build_args}")
 
         try:
             start_time = time.time()
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=600  # 10 minutes timeout
-            )
+
+            # Build the image
+            image = self.client.images.build(**build_kwargs)[0]
             build_time = time.time() - start_time
 
-            if result.returncode == 0:
-                if self.verbose:
-                    logger.info(f"Docker image built successfully in {build_time:.1f}s")
+            if self.verbose:
+                logger.info(f"Docker image built successfully in {build_time:.1f}s")
 
-                # Get image size
-                image_info = self.get_image_info(full_image_name)
-                image_size = image_info.get("size", "Unknown")
+            # Get image details
+            image_info = self._get_image_info(full_image_name)
 
-                return {
-                    "image_name": full_image_name,
-                    "image_id": image_info.get("id", "Unknown"),
-                    "image_size": image_size,
-                    "build_time": f"{build_time:.1f}s"
-                }
-            else:
-                error_msg = f"Docker build failed: {result.stderr}"
-                logger.error(error_msg)
-                raise RuntimeError(error_msg)
+            result = {
+                "image_name": full_image_name,
+                "image_id": image_info.get("id", image.id),
+                "image_size": image_info.get("size", "Unknown"),
+                "build_time": f"{build_time:.1f}s"
+            }
 
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("Docker build timed out after 10 minutes")
+            if self.verbose:
+                logger.debug(f"Build result: {result}")
+
+            return result
+
+        except BuildError as e:
+            error_msg = f"Docker build failed: {e}"
+            logger.error(error_msg)
+            # Log build logs if available
+            if hasattr(e, 'build_log'):
+                logger.error(f"Build logs: {e.build_log}")
+            raise RuntimeError(error_msg)
+        except APIError as e:
+            error_msg = f"Docker API error during build: {e}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
         except Exception as e:
-            raise RuntimeError(f"Docker build error: {str(e)}")
+            error_msg = f"Docker build error: {str(e)}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
 
     def get_image_info(self, image_name: str) -> Dict[str, str]:
-        """Get information about a Docker image."""
-        try:
-            result = subprocess.run(
-                ["docker", "images", image_name, "--format", "{{.ID}}\t{{.Size}}"],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+        """Get information about a Docker image using SDK."""
+        return self._get_image_info(image_name)
 
-            if result.returncode == 0 and result.stdout.strip():
-                parts = result.stdout.strip().split('\t')
-                if len(parts) >= 2:
-                    return {
-                        "id": parts[0],
-                        "size": parts[1]
-                    }
-            return {}
+    def _get_image_info(self, image_name: str) -> Dict[str, str]:
+        """Get information about a Docker image using SDK."""
+        try:
+            image = self.client.images.get(image_name)
+
+            return {
+                "id": image.id.split(":")[1][:12] if ":" in image.id else image.id[:12],
+                "size": self._format_size(image.attrs.get('Size', 0))
+            }
         except Exception as e:
-            logger.warning(f"Failed to get image info: {e}")
+            logger.warning(f"Failed to get image info for {image_name}: {e}")
             return {}
+
+    def _format_size(self, size_bytes: int) -> str:
+        """Format size in bytes to human readable format."""
+        if size_bytes == 0:
+            return "Unknown"
+
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.1f}{unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.1f}TB"
 
     def push_image(
         self,
@@ -152,7 +175,7 @@ class DockerService:
         password: Optional[str] = None
     ) -> Dict[str, str]:
         """
-        Push a Docker image to a registry.
+        Push a Docker image to a registry using Docker SDK.
 
         Args:
             image_name: Name of the image to push
@@ -171,7 +194,7 @@ class DockerService:
 
         # Login if credentials are provided
         if username and password:
-            self._docker_login(registry_url, username, password)
+            self._docker_login_sdk(registry_url, username, password)
 
         # Determine the full image name to push
         full_image_name = image_name
@@ -183,92 +206,92 @@ class DockerService:
 
         # Tag the image if needed
         if full_image_name != image_name:
-            self._tag_image(image_name, full_image_name)
+            self._tag_image_sdk(image_name, full_image_name)
 
         if self.verbose:
             logger.info(f"Pushing Docker image: {full_image_name}")
 
         try:
             start_time = time.time()
-            result = subprocess.run(
-                ["docker", "push", full_image_name],
-                capture_output=True,
-                text=True,
-                timeout=1200  # 20 minutes timeout
-            )
+
+            # Push the image
+            push_logs = self.client.images.push(full_image_name, stream=True, decode=True)
+
+            # Process push logs
+            for log_entry in push_logs:
+                if self.verbose:
+                    logger.debug(f"Push log: {log_entry}")
+
+                if "error" in log_entry:
+                    error_msg = f"Docker push failed: {log_entry['error']}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+
+                if "status" in log_entry and log_entry["status"] == "pushed":
+                    if self.verbose:
+                        logger.info(f"Successfully pushed: {log_entry}")
+
             push_time = time.time() - start_time
 
-            if result.returncode == 0:
-                if self.verbose:
-                    logger.info(f"Docker image pushed successfully in {push_time:.1f}s")
+            if self.verbose:
+                logger.info(f"Docker image pushed successfully in {push_time:.1f}s")
 
-                return {
-                    "pushed_image": full_image_name,
-                    "push_time": f"{push_time:.1f}s"
-                }
-            else:
-                error_msg = f"Docker push failed: {result.stderr}"
-                logger.error(error_msg)
-                raise RuntimeError(error_msg)
+            return {
+                "pushed_image": full_image_name,
+                "push_time": f"{push_time:.1f}s"
+            }
 
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("Docker push timed out after 20 minutes")
+        except APIError as e:
+            error_msg = f"Docker API error during push: {e}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
         except Exception as e:
-            raise RuntimeError(f"Docker push error: {str(e)}")
+            error_msg = f"Docker push error: {str(e)}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
 
-    def _docker_login(self, registry: Optional[str], username: str, password: str) -> None:
-        """Login to Docker registry."""
-        cmd = ["docker", "login"]
-        if registry:
-            cmd.append(registry)
-
+    def _docker_login_sdk(self, registry: Optional[str], username: str, password: str) -> None:
+        """Login to Docker registry using SDK."""
         try:
             if self.verbose:
                 logger.info(f"Logging in to Docker registry: {registry or 'default'}")
 
-            # Use subprocess to provide credentials securely
-            process = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
+            self.client.login(
+                username=username,
+                password=password,
+                registry=registry,
+                reauth=True
             )
 
-            stdout, stderr = process.communicate(input=f"{username}\n{password}\n")
+            if self.verbose:
+                logger.info("Successfully logged into Docker registry")
 
-            if process.returncode != 0:
-                raise RuntimeError(f"Docker login failed: {stderr}")
-
+        except APIError as e:
+            raise RuntimeError(f"Docker login failed: {e}")
         except Exception as e:
             raise RuntimeError(f"Docker login error: {str(e)}")
 
-    def _tag_image(self, source_image: str, target_image: str) -> None:
-        """Tag a Docker image."""
+    def _tag_image_sdk(self, source_image: str, target_image: str) -> None:
+        """Tag a Docker image using SDK."""
         try:
-            result = subprocess.run(
-                ["docker", "tag", source_image, target_image],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            image = self.client.images.get(source_image)
+            image.tag(target_image)
 
-            if result.returncode != 0:
-                raise RuntimeError(f"Docker tag failed: {result.stderr}")
+            if self.verbose:
+                logger.info(f"Successfully tagged {source_image} as {target_image}")
 
         except Exception as e:
             raise RuntimeError(f"Docker tag error: {str(e)}")
 
     def remove_image(self, image_name: str) -> bool:
-        """Remove a Docker image."""
+        """Remove a Docker image using SDK."""
         try:
-            result = subprocess.run(
-                ["docker", "rmi", "-f", image_name],
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-            return result.returncode == 0
+            self.client.images.remove(image_name, force=True)
+
+            if self.verbose:
+                logger.info(f"Successfully removed image: {image_name}")
+
+            return True
         except Exception as e:
             logger.warning(f"Failed to remove image {image_name}: {e}")
             return False

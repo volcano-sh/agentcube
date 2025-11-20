@@ -73,7 +73,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		// Convert the raw sandbox CRD to internal Sandbox structure
 		sandbox, err := convertTypedSandboxToSandbox(result.Sandbox)
 		if err != nil {
-			respondError(w, http.StatusInternalServerError, "CONVERSION_FAILED",
+			respondError(c, http.StatusInternalServerError, "CONVERSION_FAILED",
 				fmt.Sprintf("Failed to convert sandbox: %v", err))
 			return
 		}

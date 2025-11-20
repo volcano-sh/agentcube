@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-
-	"github.com/volcano-sh/agentcube/pkg/controller"
 )
 
 // Server is the main structure for apiserver

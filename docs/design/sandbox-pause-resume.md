@@ -158,7 +158,7 @@ Resuming is symmetrical to pausing.
   - **Annotation path**: Users (or apiserver) set `sandbox.lifecycle.volcano.sh/resume-requested-at`; reconciler resumes and clears annotation.
   - **Message queue path**: Integrate with a concrete MQ to emit durable resume requests into the controller queue.
 4. Add feature flags and configuration knobs: idle timeout, pause enablement, containerd socket path, per-namespace opt-out, fallback behavior (delete vs keep running).
-5. Update apiserver and SDKs to surface paused state and expose a `/sandboxes/{id}:resume` API.
+5. Update apiserver and SDKs to surface paused state and expose a `/v1/sandboxes/{sandboxId}/pause` API.
 6. Ship metrics/events/logging and document operational playbooks.
 7. Add end-to-end tests that validate containerd pause/resume against a real or fake runtime.
 
@@ -170,7 +170,7 @@ Resuming is symmetrical to pausing.
   - `sandbox.lifecycle.volcano.sh/last-paused-at`, `sandbox.lifecycle.volcano.sh/last-resumed-at` (optional audit).
 - Sandbox status additions:
   - `status.conditions` entries for `Paused` and `ResumePending`.
-- Optional: extend apiserver REST/SDK to POST `/sandboxes/{id}:resume`.
+- Optional: extend apiserver REST/SDK to POST `/v1/sandboxes/{sandboxId}/resume`.
 
 #### Resume signaling via annotations and message queue
 
@@ -190,7 +190,7 @@ The annotation path is the simplest and is always enabled.
     - Updates `last-resumed-at` and `last-activity-time`.
   - If resume fails, the controller sets `state=Error` and records the reason.
 
-This path is ideal for synchronous APIs (e.g. HTTP `POST /sandboxes/{id}:resume`) and for operators using `kubectl annotate`.
+This path is ideal for synchronous APIs (e.g. HTTP `POST /v1/sandboxes/{sandboxId}/resume`).
 
 ##### Message-queue-based resume
 

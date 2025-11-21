@@ -13,35 +13,66 @@ class SandboxStatus(Enum):
     PAUSED = "paused"
 
 class Sandbox:
+    """Base class for sandbox lifecycle management (control plane operations)"""
+    
     def __init__(
             self,
             ttl: int = constants.DEFAULT_TTL,
             image: str = constants.DEFAULT_IMAGE,
             api_url: Optional[str] = None,
-            auth_token: Optional[str] = None
+            auth_token: Optional[str] = None,
+            ssh_public_key: Optional[str] = None,
         ):
+        """Initialize a sandbox instance
+        
+        Args:
+            ttl: Time-to-live in seconds for the sandbox
+            image: Container image to use for the sandbox
+            api_url: API server URL (defaults to environment variable API_URL or DEFAULT_API_URL)
+            ssh_public_key: Optional SSH public key for secure connection
+        """
         self.ttl = ttl
         self.image = image
         self.api_url = api_url or get_env(constants.API_URL_ENV, constants.DEFAULT_API_URL)
         self.auth_token = auth_token or get_env(constants.API_TOKEN_ENV, read_token_from_file(constants.API_TOKEN_PATH))
         self._client = SandboxClient(api_url=self.api_url, auth_token=self.auth_token)
-        public_key, private_key = SandboxSSHClient.generate_ssh_key_pair()
         self.id = self._client.create_sandbox(
             ttl=self.ttl, 
-            image=self.image, 
-            ssh_public_key=public_key
-        )
-
-        sock = self._client.establish_tunnel(self.id)
-        self._executor = SandboxSSHClient(
-            private_key=private_key, 
-            tunnel_sock=sock
+            image=self.image,
+            ssh_public_key=ssh_public_key
         )
     
-    def __exit__(self):   
+    def __enter__(self):
+        """Context manager entry
+        
+        Returns:
+            self: The sandbox instance
+        """
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensures cleanup is called
+        
+        Args:
+            exc_type: Exception type if an exception occurred, None otherwise
+            exc_val: Exception value if an exception occurred, None otherwise
+            exc_tb: Exception traceback if an exception occurred, None otherwise
+            
+        Returns:
+            None to propagate any exception that occurred
+        """
         self.cleanup()
+        return None
 
     def is_running(self) -> bool:
+        """Check if the sandbox is in running state
+        
+        Returns:
+            True if sandbox is running, False otherwise
+            
+        Raises:
+            SandboxNotFoundError: If sandbox does not exist
+        """
         sandbox_info = self._client.get_sandbox(self.id)
         if sandbox_info:
             return sandbox_info["status"].lower() == SandboxStatus.RUNNING.value
@@ -53,6 +84,9 @@ class Sandbox:
         
         Returns:
             Dictionary containing sandbox information
+            
+        Raises:
+            SandboxNotFoundError: If sandbox does not exist
         """
         sandbox_info = self._client.get_sandbox(self.id)
         if sandbox_info:
@@ -69,103 +103,17 @@ class Sandbox:
         return self._client.list_sandboxes()
     
     def stop(self) -> bool:
+        """Stop and delete the sandbox
+        
+        Returns:
+            True if sandbox was successfully deleted, False otherwise
+        """
         self.cleanup()
         return self._client.delete_sandbox(self.id)
     
-    def execute_command(self, command: str) -> str:
-        """Execute a command over SSH
-        
-        Args:
-            command: Command to execute
-            
-        Returns:
-            Command output
-        """
-        if not self.is_running():
-            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
-        return self._executor.execute_command(command)
-    
-    def execute_commands(self, commands: List[str]) -> Dict[str, str]:
-        """Execute multiple commands over SSH
-        
-        Args:
-            commands: List of commands to execute
-            
-        Returns:
-            Dictionary mapping commands to their outputs
-        """
-        if not self.is_running():
-            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
-        return self._executor.execute_commands(commands)
-
-
-    def run_code(
-        self,
-        language: str,
-        code: str,
-        timeout: float = 30
-    ) -> str:
-        """Run code snippet in the specified language over SSH
-        
-        Args:
-            language: Programming language of the code snippet (e.g., "python", "bash")
-            code: Code snippet to execute
-        Returns:
-            Tuple of (stdout, stderr) from code execution. 
-            If execution fails, stdout is None and stderr contains error info.
-        """
-        if not self.is_running():
-            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
-        return self._executor.run_code(language, code)
-
-    def write_file(
-        self,
-        content: str,
-        remote_path: str
-    ) -> None:
-        """Upload file content to remote server via SFTP
-        
-        Args:
-            content: Content to write to remote file
-            remote_path: Path on remote server to upload to
-        """
-        if not self.is_running():
-            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
-        self._executor.write_file(content, remote_path)
-
-    def upload_file(
-        self,
-        local_path: str,
-        remote_path: str
-    ) -> None:
-        """Upload file from local path to remote server via SFTP
-        
-        Args:
-            local_path: Path on local machine to upload from
-            remote_path: Path on remote server to upload to
-        """
-        if not self.is_running():
-            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
-        self._executor.upload_file(local_path, remote_path)
-
-    def download_file(
-        self,
-        remote_path: str,
-        local_path: str
-    ) -> str:
-        """Download file content from remote server via SFTP
-        
-        Args:
-            remote_path: Path on remote server to download from
-        Returns:
-            Content of the downloaded file
-        """
-        if not self.is_running():
-            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
-        return self._executor.download_file(remote_path, local_path)
-
     def cleanup(self):
-        """Clean up resources associated with the sandbox"""
-        self._executor.cleanup()
+        """Clean up resources associated with the sandbox
         
-    
+        Subclasses should override this method to perform additional cleanup
+        """
+        pass

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,6 +111,34 @@ func TestSandboxLifecycle(t *testing.T) {
 		t.Fatalf("Failed to create sandbox: %v", err)
 	}
 
+	// Use getSandbox to check the sandbox exists
+	sandbox, err := env.getSandbox(sandboxID)
+	if err != nil {
+		t.Fatalf("Failed to get sandbox: %v", err)
+	}
+	if sandbox == nil {
+		t.Fatalf("Sandbox %s not found after creation", sandboxID)
+	}
+	if sandbox.SandboxID != sandboxID {
+		t.Errorf("Expected sandbox ID %s, got %s", sandboxID, sandbox.SandboxID)
+	}
+
+	// Use listSandboxes to verify the sandbox is in the list
+	listResp, err := env.listSandboxes()
+	if err != nil {
+		t.Fatalf("Failed to list sandboxes: %v", err)
+	}
+	found := false
+	for _, sb := range listResp.Sandboxes {
+		if sb.SandboxID == sandboxID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Sandbox %s not found in sandbox list", sandboxID)
+	}
+
 	if err := env.deleteSandbox(sandboxID); err != nil {
 		t.Errorf("Failed to delete sandbox: %v", err)
 	}
@@ -120,18 +149,20 @@ func TestExecuteCommands(t *testing.T) {
 	_, sshClient, cleanup := env.setupSandbox()
 	defer cleanup()
 
-	commands := []string{
-		"whoami",
-		"pwd",
-		"echo 'Hello from SSH with key auth!'",
-		"python3 --version",
-		"uname -a",
+	commands := map[string]string{
+		"echo 'Hello from e2e test!'": "Hello from e2e test!",
 	}
 
-	for _, cmd := range commands {
-		_, err := executeCommand(sshClient, cmd)
+	for cmd, expectedOutput := range commands {
+		output, err := executeCommand(sshClient, cmd)
 		if err != nil {
 			t.Errorf("Command failed: %v", err)
+			continue
+		}
+		// Remove trailing newline for comparison
+		output = strings.TrimSpace(output)
+		if output != expectedOutput {
+			t.Errorf("Command '%s' output mismatch:\n  Expected: %q\n  Got:      %q", cmd, expectedOutput, output)
 		}
 	}
 }
@@ -284,6 +315,85 @@ func (e *testEnv) createSandboxWithSSHKey(publicKey string) (string, error) {
 	}
 
 	return sandbox.SandboxID, nil
+}
+
+func (e *testEnv) getSandbox(sandboxID string) (*Sandbox, error) {
+	httpReq, err := http.NewRequest(
+		"GET",
+		fmt.Sprintf("%s/v1/sandboxes/%s", e.apiURL, sandboxID),
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if e.authToken != "" {
+		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.authToken))
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil // Sandbox not found
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var sandbox Sandbox
+	if err := json.NewDecoder(resp.Body).Decode(&sandbox); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &sandbox, nil
+}
+
+type ListSandboxesResponse struct {
+	Sandboxes []Sandbox `json:"sandboxes"`
+	Total     int       `json:"total"`
+	Limit     int       `json:"limit"`
+	Offset    int       `json:"offset"`
+}
+
+func (e *testEnv) listSandboxes() (*ListSandboxesResponse, error) {
+	httpReq, err := http.NewRequest(
+		"GET",
+		fmt.Sprintf("%s/v1/sandboxes", e.apiURL),
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if e.authToken != "" {
+		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.authToken))
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var listResp ListSandboxesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &listResp, nil
 }
 
 func (e *testEnv) deleteSandbox(sandboxID string) error {

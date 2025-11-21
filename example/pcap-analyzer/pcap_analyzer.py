@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import os
+import sys
 import re
 import json
 import time
@@ -17,7 +18,8 @@ from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import HumanMessage, AIMessage
 
-from agentcube.sandbox import Sandbox
+
+from agentcube.code_interpreter import CodeInterpreterClient  # type: ignore
 
 # =========================
 # Logging configuration
@@ -171,7 +173,7 @@ class SandboxRunner:
                  cpu: str = "200m", memory: str = "256Mi", warmup_sec: int = 6):
         _sep("SANDBOX CREATE", char="=")
         log.info("Creating sandbox (namespace=%s, cpu=%s, memory=%s)", namespace, cpu, memory)
-        self.sdk = Sandbox(image="swr.cn-north-4.myhuaweicloud.com/hcie-lab-wp/sandbox-with-ssh-arm:v2")
+        self.sdk = CodeInterpreterClient(image="swr.cn-north-4.myhuaweicloud.com/hcie-lab-wp/sandbox-with-ssh-arm:v2")
         self.sandbox_id = self.sdk.id
         log.info("Sandbox created: id=%s", self.sandbox_id)
         if warmup_sec > 0:

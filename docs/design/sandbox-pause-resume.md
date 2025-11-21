@@ -298,9 +298,11 @@ flowchart TD
 #### Observability
 
 - Metrics (Prometheus):
-  - `agentcube_sandbox_pause_total{result}`
-  - `agentcube_sandbox_resume_total{trigger}`
-  - `agentcube_sandbox_paused_gauge`
+  - `agentcube_sandbox_pause_operations_total{status="success|failure", reason="..."}`
+  - `agentcube_sandbox_resume_operations_total{trigger="annotation|mq", status="success|failure", reason="..."}`
+  - `agentcube_sandbox_pause_duration_seconds` (histogram)
+  - `agentcube_sandbox_resume_duration_seconds` (histogram)
+  - `agentcube_sandbox_paused` (gauge: number of sandboxes currently paused)
 - Events on Sandbox and Pod resources for pause/resume.
 - Structured logs with sandbox ID, namespace, and reason.
 - Optional tracing span around containerd operations.

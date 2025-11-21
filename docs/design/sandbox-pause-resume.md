@@ -198,17 +198,17 @@ For asynchronous and cross-cluster resume triggers (e.g. from SaaS control plane
 
 ###### Message queue choice
 
-We propose using **NATS JetStream** as the concrete message queue for the first implementation.
+We propose using **plain NATS** (core NATS server with durable subscriptions) as the concrete message queue for the first implementation.
 
 Rationale:
 
-- **Simplicity and footprint**: NATS has a small binary, simple deployment (single StatefulSet), and is easy to operate compared to full-blown Kafka.
-- **Cloud-native and Kubernetes-friendly**: There are existing Helm charts and operators; it integrates well with Kubernetes RBAC and multi-tenant setups.
-- **At-least-once delivery with persistence**: JetStream provides durable streams, acknowledgements, and replay, ensuring resume signals are not lost during controller restarts.
-- **Low latency and high fanout**: Suits interactive developer workflows where resumes should feel instantaneous.
+- **Simplicity and footprint**: NATS is a single small binary and easy to run as a Kubernetes StatefulSet. It has fewer moving parts than Kafka or RabbitMQ.
+- **Cloud-native and Kubernetes-friendly**: There are mature Helm charts and operators; it integrates well with Kubernetes RBAC and multi-tenant setups.
+- **At-least-once delivery via durable subscriptions**: While we are not using JetStream, NATS durable subscriptions and manual acknowledgements give us at-least-once behavior for consumers that stay connected. Combined with idempotent handling on the controller side, this is sufficient for resume signals.
+- **Low latency and high fanout**: Fits interactive developer workflows where resume should feel instantaneous.
 - **Mature Go client**: AgentCube is predominantly Go; NATS has a first-class Go client, reducing integration friction.
 
-We keep the MQ layer pluggable so that other backends (e.g. Kafka, RabbitMQ, cloud-native queues) can be added later.
+The MQ layer is kept pluggable so that other backends (e.g. Kafka, RabbitMQ, or a different NATS deployment model) can be added later.
 
 ###### Message schema
 
@@ -238,8 +238,8 @@ Example JSON:
 
 ###### MQ consumer and controller integration
 
-1. A dedicated `ResumeConsumer` process (can be part of the agentd binary) connects to NATS JetStream.
-2. It subscribes to the `agentcube.sandbox.resume` subject with a durable consumer.
+1. A dedicated `ResumeConsumer` process (can be part of the agentd binary) connects to the NATS server.
+2. It subscribes to the `agentcube.sandbox.resume` subject using a **durable subscription** (queue group or durable name) so that resumes are processed even if there are multiple replicas.
 3. For each message:
    - Validate and parse the payload.
    - Use the Kubernetes client to fetch the referenced `Sandbox`.
@@ -248,17 +248,20 @@ Example JSON:
      - `sandbox.lifecycle.volcano.sh/resume-requested-at=<requestedAt or now>`.
      - Optionally, `sandbox.lifecycle.volcano.sh/resume-requested-by=<requestedBy>`.
    - Persist the annotation update; on success, ACK the NATS message.
-   - On transient errors (e.g. API server throttling), NACK with backoff to retry.
+   - On transient errors (e.g. API server throttling), do not ACK so that NATS redelivers, and/or explicitly resubscribe with backoff.
 4. The normal Kubernetes reconciliation loop picks up the changed annotation and executes the containerd resume workflow described earlier.
 
 This design deliberately keeps the MQ consumer stateless and idempotent; the source of truth for desired state remains the `Sandbox` object in etcd.
 
 ###### Ordering, duplicates, and failure modes
 
-- **Duplicates**: At-least-once delivery means the same resume intent may be delivered multiple times. We handle this by making annotations idempotent: setting `resume-requested-at` to the latest timestamp is safe even if resume is already in progress or completed.
-- **Ordering**: If multiple resume requests arrive, we only care about the most recent one. NATS JetStream preserves ordering per subject, but the controller logic does not rely on strict ordering.
-- **Lost messages**: With JetStream persistence, messages are not dropped unless explicitly acknowledged. If the consumer is down, messages accumulate and are processed once it returns.
-- **Back-pressure**: If the Kubernetes API becomes slow, the consumer can reduce its pull batch size and rely on NATS’ flow control.
+- **Duplicates**: At-least-once delivery (via durable subscription and reconnect behavior) means the same resume intent may be delivered multiple times. We handle this by making annotations idempotent: setting `resume-requested-at` to the latest timestamp is safe even if resume is already in progress or completed.
+- **Ordering**: If multiple resume requests arrive, we only care about the most recent one. NATS preserves ordering per subject, but the controller logic does not rely on strict ordering.
+- **Lost messages**: For long consumer outages, plain NATS does not guarantee persistence. To mitigate this, we:
+  - Treat the MQ as a **hint** and store the true desired state in the `Sandbox` object.
+  - Allow callers to fall back to the annotation-based resume path if a message might have been lost.
+  - Document that environments requiring strong durability can swap in a persistent MQ (e.g. Kafka) behind the same interface.
+- **Back-pressure**: If the Kubernetes API becomes slow, the consumer can slow its processing rate and rely on NATS’ internal buffering and flow control.
 - **Security**: NATS can be configured with TLS and token-based or NKey authentication. The consumer uses a dedicated NATS account/creds with access only to the required subjects.
 
 ###### Alternatives considered for MQ
@@ -267,7 +270,7 @@ This design deliberately keeps the MQ consumer stateless and idempotent; the sou
 - **RabbitMQ**: Feature-rich AMQP broker, but operationally more complex and less cloud-native than NATS; clustering and observability are more involved.
 - **Cloud provider queues (SQS, Pub/Sub, etc.)**: Great for managed environments but would tie AgentCube to specific cloud vendors and complicate on-premise deployments.
 
-Given AgentCube’s focus on Kubernetes-first, multi-environment deployment, NATS JetStream offers the best balance of simplicity, reliability, and performance.
+Given AgentCube’s focus on Kubernetes-first, multi-environment deployment, plain NATS offers a good balance of simplicity, performance, and operational cost for this relatively low-volume control-plane signal.
 
 #### Control Flow
 

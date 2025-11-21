@@ -676,8 +676,10 @@ spec:
         - type: pathVar
           path: /{sessionID}/invoke
           name: sessionID
-        - type: query
+        - type: queryParam
           name: sessionID
+        - type: httpHeader
+          name: X-USER-ID
     reserveTimeout: 30s
 
   # 请求处理配置
@@ -2302,66 +2304,639 @@ func (p *PodTaskProvider) countIdlePods(ctx context.Context, specID string) int3
    - 实现相同的 `InstanceSpecProvider` 和 `InstanceProvider` 接口
    - 架构一致，易于维护
 
-### SandboxTaskProvider 实现（未来扩展）
+### SandboxTaskProvider 实现
 
-SandboxTaskProvider 用于支持 MicroVM 级别的安全隔离部署（如 Kata Containers、Firecracker、gVisor），适用于不可信代码执行场景。
+SandboxTaskProvider 集成 [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) 项目，为 AI Agent 工作负载提供 MicroVM 级别的安全隔离部署。agent-sandbox 是 Kubernetes SIG 孵化项目，专门设计用于 AI Agent 运行时的沙箱化执行。
+
+#### agent-sandbox 项目概述
+
+agent-sandbox 提供以下核心 CRD：
+
+1. **Sandbox**：单例工作负载资源（Replicas: 0 或 1）
+   - 提供稳定的 hostname 和网络身份
+   - 支持持久化存储（VolumeClaimTemplates）
+   - 支持 MicroVM 运行时（Kata Containers、Firecracker、gVisor）
+   - 支持优雅关闭（ShutdownTime）
+
+2. **SandboxWarmPool**：预热池资源
+   - 维护预启动的 Sandbox 实例池
+   - 支持快速分配，减少冷启动延迟
+   - 自动补充池中的可用实例
+
+3. **SandboxClaim**：声明式获取 Sandbox
+   - 类似 PVC/PV 的绑定模型
+   - 可从 WarmPool 获取预热实例
+   - 可动态创建新实例
 
 #### 设计目标
 
 1. **强隔离**：每个 Agent 实例运行在独立的 MicroVM 中，提供内核级安全隔离
-2. **快速启动**：利用 Firecracker/Kata 的快速启动能力，冷启动时间控制在 1-3 秒
-3. **资源限制**：细粒度控制 CPU、内存、磁盘、网络资源
+2. **快速启动**：利用 SandboxWarmPool 预热机制，实现亚秒级实例分配
+3. **单例管理**：每个 Sandbox 是独立的单例资源，与 PodTaskProvider 的 Job 批量管理模式不同
 4. **接口一致**：实现相同的 `InstanceSpecProvider` 和 `InstanceProvider` 接口
 
 #### 架构概要
 
-**控制平面（InstanceSpecProvider）**：
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                          AgentCube                                  │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │              SandboxTaskProvider                              │  │
+│  │  ┌─────────────────────┐  ┌────────────────────────────────┐ │  │
+│  │  │ InstanceSpecProvider │  │      InstanceProvider          │ │  │
+│  │  │                     │  │                                │ │  │
+│  │  │ InitializeSpec()    │  │ ReserveInstance()              │ │  │
+│  │  │  └─Create WarmPool  │  │  └─Claim from WarmPool         │ │  │
+│  │  │ UpdateSpec()        │  │  └─Or create new Sandbox       │ │  │
+│  │  │  └─Update WarmPool  │  │ GetInstanceStatistics()        │ │  │
+│  │  │ ReleaseSpec()       │  │  └─Query Sandbox states        │ │  │
+│  │  │  └─Delete WarmPool  │  │                                │ │  │
+│  │  └─────────────────────┘  └────────────────────────────────┘ │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                       agent-sandbox                                 │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐ │
+│  │ SandboxWarmPool │  │  SandboxClaim   │  │      Sandbox        │ │
+│  │                 │  │                 │  │                     │ │
+│  │ poolSize: 5     │──│ poolRef: ...    │──│ podTemplate: ...    │ │
+│  │ template: ...   │  │ sandboxRef: ... │  │ replicas: 0|1       │ │
+│  │ status:         │  │ status:         │  │ status:             │ │
+│  │   available: 3  │  │   bound: true   │  │   phase: Running    │ │
+│  │   creating: 2   │  │   sandboxName:  │  │   podIP: 10.0.1.5   │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### 控制平面实现（InstanceSpecProvider）
 
 ```go
-// InitializeSpec 实现
+type SandboxTaskProvider struct {
+	client        kubernetes.Interface
+	sandboxClient sandboxclient.Interface  // agent-sandbox client
+}
+
+// InitializeSpec 创建 SandboxWarmPool 作为子资源
 func (p *SandboxTaskProvider) InitializeSpec(ctx context.Context, task *Task) (string, error) {
 	specID := fmt.Sprintf("%s-%d", task.Name, task.Generation)
+	sandboxTemplate := task.Spec.Deployment.SandboxTemplate
 
-	// 1. 创建 RuntimeClass（指定 Kata/Firecracker handler）
-	runtimeClass := &nodev1.RuntimeClass{
+	// 1. 构建 Sandbox PodTemplate
+	podTemplate := corev1.PodTemplateSpec{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: specID,
+			Labels: map[string]string{
+				"agentcube.io/task":    task.Name,
+				"agentcube.io/spec-id": specID,
+			},
+			Annotations: map[string]string{
+				"agentcube.io/reserve-key": "",   // 初始未预留
+				"agentcube.io/last-active":  "",
+			},
 		},
-		Handler: "kata-fc",  // 或 "kata-qemu", "runsc" (gVisor)
-	}
-
-	// 2. 创建 Job，指定 runtimeClassName
-	job := &batchv1.Job{
-		Spec: batchv1.JobSpec{
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RuntimeClassName: &specID,
-					// ... 从 task.Spec.Deployment.SandboxTemplate 填充配置
+		Spec: corev1.PodSpec{
+			// 设置运行时类（Kata/Firecracker/gVisor）
+			RuntimeClassName: ptr.To(sandboxTemplate.Runtime),
+			Containers: []corev1.Container{
+				{
+					Name:  "agent",
+					Image: sandboxTemplate.Image,
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse(sandboxTemplate.Resources.CPU),
+							corev1.ResourceMemory: resource.MustParse(sandboxTemplate.Resources.Memory),
+						},
+						Limits: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse(sandboxTemplate.Resources.CPU),
+							corev1.ResourceMemory: resource.MustParse(sandboxTemplate.Resources.Memory),
+						},
+					},
+					Ports: []corev1.ContainerPort{
+						{ContainerPort: task.Spec.RequestHandling.Backend.Port},
+					},
 				},
 			},
 		},
 	}
 
-	// 3. 创建配置资源
-	return specID, nil
+	// 2. 创建 SandboxWarmPool（用于预热实例）
+	warmPool := &sandboxv1alpha1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      specID,
+			Namespace: task.Namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(task, schema.GroupVersionKind{
+					Group:   "agentcube.io",
+					Version: "v1alpha1",
+					Kind:    "Task",
+				}),
+			},
+			Labels: map[string]string{
+				"agentcube.io/task":    task.Name,
+				"agentcube.io/spec-id": specID,
+			},
+		},
+		Spec: sandboxv1alpha1.SandboxWarmPoolSpec{
+			// 池大小：MinInstances 用于预热
+			PoolSize: *task.Spec.Scaling.MinInstances,
+
+			// Sandbox 模板
+			Template: sandboxv1alpha1.SandboxTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: podTemplate.Labels,
+					Annotations: podTemplate.Annotations,
+				},
+				Spec: sandboxv1alpha1.SandboxSpec{
+					PodTemplate: podTemplate,
+					// 优雅关闭超时
+					ShutdownTime: &metav1.Duration{Duration: 30 * time.Second},
+				},
+			},
+		},
+	}
+
+	_, err := p.sandboxClient.AgentV1alpha1().SandboxWarmPools(task.Namespace).Create(ctx, warmPool, metav1.CreateOptions{})
+	return specID, err
+}
+
+// UpdateSpec 更新 SandboxWarmPool 配置
+func (p *SandboxTaskProvider) UpdateSpec(ctx context.Context, specID string, task *Task) error {
+	warmPool, err := p.getWarmPool(ctx, specID)
+	if err != nil {
+		return err
+	}
+
+	// 更新池大小
+	warmPool.Spec.PoolSize = *task.Spec.Scaling.MinInstances
+
+	_, err = p.sandboxClient.AgentV1alpha1().SandboxWarmPools(warmPool.Namespace).Update(ctx, warmPool, metav1.UpdateOptions{})
+	return err
+}
+
+// ReleaseSpec 删除 SandboxWarmPool（级联删除所有 Sandbox 和 SandboxClaim）
+func (p *SandboxTaskProvider) ReleaseSpec(ctx context.Context, specID string) error {
+	// 1. 删除 WarmPool（会级联删除池中的 Sandbox）
+	if err := p.sandboxClient.AgentV1alpha1().SandboxWarmPools("").Delete(ctx, specID, metav1.DeleteOptions{
+		PropagationPolicy: ptr.To(metav1.DeletePropagationForeground),
+	}); err != nil && !errors.IsNotFound(err) {
+		return err
+	}
+
+	// 2. 删除所有关联的 SandboxClaim
+	claims, err := p.listSandboxClaims(ctx, specID)
+	if err != nil {
+		return err
+	}
+	for _, claim := range claims {
+		p.sandboxClient.AgentV1alpha1().SandboxClaims(claim.Namespace).Delete(ctx, claim.Name, metav1.DeleteOptions{})
+	}
+
+	return nil
+}
+
+// GetSpecStatus 获取 WarmPool 状态
+func (p *SandboxTaskProvider) GetSpecStatus(ctx context.Context, specID string) (*SpecStatus, error) {
+	warmPool, err := p.getWarmPool(ctx, specID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 统计已分配的 Sandbox
+	sandboxes, err := p.listSandboxes(ctx, specID)
+	if err != nil {
+		return nil, err
+	}
+
+	var available, reserved int32
+	for _, sb := range sandboxes {
+		if sb.Status.Phase == sandboxv1alpha1.SandboxRunning {
+			available++
+			if sb.Annotations["agentcube.io/reserve-key"] != "" {
+				reserved++
+			}
+		}
+	}
+
+	return &SpecStatus{
+		SpecID:         specID,
+		DesiredCount:   warmPool.Spec.PoolSize,
+		AvailableCount: available + warmPool.Status.Available,
+		ReservedCount:  reserved,
+	}, nil
 }
 ```
 
-**数据平面（InstanceProvider）**：
+#### 数据平面实现（InstanceProvider）
 
-- **ReserveInstance**：与 PodTaskProvider 逻辑一致，通过 Pod annotation 预留
-- **扩容机制**：调整 Job Parallelism，K8s 创建新 Pod，CRI 调用 Kata/Firecracker 启动 MicroVM
-- **生命周期管理**：相同的 TTL/IdleTimeout 机制
+```go
+// ReserveInstance 预留或创建 Sandbox 实例
+func (p *SandboxTaskProvider) ReserveInstance(ctx context.Context, specID, reserveKey string) (*TaskInstance, string, error) {
+	// 1. 查找已绑定该 reserveKey 的 Sandbox（会话复用快速路径）
+	if reserveKey != "" {
+		if instance := p.findReservedSandbox(ctx, specID, reserveKey); instance != nil {
+			reservedToken := generateReservedToken()
+			return instance, reservedToken, nil
+		}
+	}
 
-#### 关键差异点
+	// 2. 查找空闲 Sandbox 并尝试预留
+	idleSandboxes, err := p.findIdleSandboxes(ctx, specID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if len(idleSandboxes) > 0 {
+		// 尝试预留第一个空闲 Sandbox（利用 K8s 乐观锁）
+		sb := idleSandboxes[0]
+		instance, err := p.tryReserveSandbox(ctx, sb, reserveKey)
+		if err != nil {
+			if errors.IsConflict(err) {
+				// 冲突：其他 TaskRouter 抢先预留了，重试
+				return p.ReserveInstance(ctx, specID, reserveKey)
+			}
+			return nil, "", err
+		}
+		reservedToken := generateReservedToken()
+		return instance, reservedToken, nil
+	}
+
+	// 3. 无空闲 Sandbox，尝试从 WarmPool 获取
+	instance, err := p.claimFromWarmPool(ctx, specID, reserveKey)
+	if err == nil {
+		reservedToken := generateReservedToken()
+		return instance, reservedToken, nil
+	}
+
+	// 4. WarmPool 也没有可用实例，检查是否可以 scale up 创建新 Sandbox
+	if err := p.checkScaleLimit(ctx, specID); err != nil {
+		return nil, "", err
+	}
+
+	// 5. 创建新的 Sandbox 并等待就绪
+	instance, err = p.createAndWaitSandbox(ctx, specID, reserveKey, 30*time.Second)
+	if err != nil {
+		return nil, "", err
+	}
+
+	reservedToken := generateReservedToken()
+	return instance, reservedToken, nil
+}
+
+// findReservedSandbox 查找已绑定 reserveKey 的 Sandbox
+func (p *SandboxTaskProvider) findReservedSandbox(ctx context.Context, specID, reserveKey string) *TaskInstance {
+	sandboxes, err := p.listSandboxes(ctx, specID)
+	if err != nil {
+		return nil
+	}
+
+	for _, sb := range sandboxes {
+		if sb.Annotations["agentcube.io/reserve-key"] == reserveKey &&
+		   sb.Status.Phase == sandboxv1alpha1.SandboxRunning {
+			return sandboxToTaskInstance(&sb, specID)
+		}
+	}
+
+	return nil
+}
+
+// findIdleSandboxes 查找空闲（未预留）的 Running Sandbox
+func (p *SandboxTaskProvider) findIdleSandboxes(ctx context.Context, specID string) ([]sandboxv1alpha1.Sandbox, error) {
+	sandboxes, err := p.listSandboxes(ctx, specID)
+	if err != nil {
+		return nil, err
+	}
+
+	var idle []sandboxv1alpha1.Sandbox
+	for _, sb := range sandboxes {
+		if sb.Status.Phase == sandboxv1alpha1.SandboxRunning &&
+		   sb.Annotations["agentcube.io/reserve-key"] == "" {
+			idle = append(idle, sb)
+		}
+	}
+
+	return idle, nil
+}
+
+// tryReserveSandbox 尝试预留 Sandbox（利用 K8s 乐观锁）
+func (p *SandboxTaskProvider) tryReserveSandbox(ctx context.Context, sb sandboxv1alpha1.Sandbox, reserveKey string) (*TaskInstance, error) {
+	// 更新 annotation（K8s 乐观锁保证并发安全）
+	if sb.Annotations == nil {
+		sb.Annotations = make(map[string]string)
+	}
+	sb.Annotations["agentcube.io/reserve-key"] = reserveKey
+	sb.Annotations["agentcube.io/last-active"] = time.Now().Format(time.RFC3339)
+
+	updated, err := p.sandboxClient.AgentV1alpha1().Sandboxes(sb.Namespace).Update(ctx, &sb, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, err // errors.IsConflict(err) 表示冲突
+	}
+
+	return sandboxToTaskInstance(updated, sb.Labels["agentcube.io/spec-id"]), nil
+}
+
+// claimFromWarmPool 从 WarmPool 获取预热的 Sandbox
+func (p *SandboxTaskProvider) claimFromWarmPool(ctx context.Context, specID, reserveKey string) (*TaskInstance, error) {
+	warmPool, err := p.getWarmPool(ctx, specID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 检查 WarmPool 是否有可用实例
+	if warmPool.Status.Available <= 0 {
+		return nil, fmt.Errorf("no available sandbox in warm pool")
+	}
+
+	// 创建 SandboxClaim 从 WarmPool 获取 Sandbox
+	claim := &sandboxv1alpha1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: fmt.Sprintf("%s-claim-", specID),
+			Namespace:    warmPool.Namespace,
+			Labels: map[string]string{
+				"agentcube.io/spec-id": specID,
+			},
+			Annotations: map[string]string{
+				"agentcube.io/reserve-key": reserveKey,
+				"agentcube.io/last-active":  time.Now().Format(time.RFC3339),
+			},
+		},
+		Spec: sandboxv1alpha1.SandboxClaimSpec{
+			// 引用 WarmPool
+			PoolRef: &sandboxv1alpha1.SandboxWarmPoolReference{
+				Name: specID,
+			},
+		},
+	}
+
+	created, err := p.sandboxClient.AgentV1alpha1().SandboxClaims(warmPool.Namespace).Create(ctx, claim, metav1.CreateOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	// 等待 Claim 绑定完成
+	return p.waitClaimBound(ctx, created, 10*time.Second)
+}
+
+// waitClaimBound 等待 SandboxClaim 绑定并返回 Sandbox 信息
+func (p *SandboxTaskProvider) waitClaimBound(ctx context.Context, claim *sandboxv1alpha1.SandboxClaim, timeout time.Duration) (*TaskInstance, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	watcher, err := p.sandboxClient.AgentV1alpha1().SandboxClaims(claim.Namespace).Watch(ctx, metav1.ListOptions{
+		FieldSelector: fmt.Sprintf("metadata.name=%s", claim.Name),
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer watcher.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait sandbox claim bound timeout: %w", ctx.Err())
+		case event := <-watcher.ResultChan():
+			updatedClaim := event.Object.(*sandboxv1alpha1.SandboxClaim)
+			if updatedClaim.Status.Phase == sandboxv1alpha1.ClaimBound &&
+			   updatedClaim.Status.SandboxRef != nil {
+				// Claim 已绑定，获取 Sandbox
+				sb, err := p.sandboxClient.AgentV1alpha1().Sandboxes(claim.Namespace).Get(ctx,
+					updatedClaim.Status.SandboxRef.Name, metav1.GetOptions{})
+				if err != nil {
+					return nil, err
+				}
+				return sandboxToTaskInstance(sb, claim.Labels["agentcube.io/spec-id"]), nil
+			}
+		}
+	}
+}
+
+// createAndWaitSandbox 直接创建新 Sandbox 并等待就绪
+func (p *SandboxTaskProvider) createAndWaitSandbox(ctx context.Context, specID, reserveKey string, timeout time.Duration) (*TaskInstance, error) {
+	warmPool, err := p.getWarmPool(ctx, specID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 基于 WarmPool 模板创建新 Sandbox
+	sandbox := &sandboxv1alpha1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: fmt.Sprintf("%s-", specID),
+			Namespace:    warmPool.Namespace,
+			Labels:       warmPool.Spec.Template.Labels,
+			Annotations: map[string]string{
+				"agentcube.io/reserve-key": reserveKey,
+				"agentcube.io/last-active":  time.Now().Format(time.RFC3339),
+			},
+		},
+		Spec: warmPool.Spec.Template.Spec,
+	}
+	// 设置 Replicas=1 启动 Sandbox
+	sandbox.Spec.Replicas = ptr.To(int32(1))
+
+	created, err := p.sandboxClient.AgentV1alpha1().Sandboxes(warmPool.Namespace).Create(ctx, sandbox, metav1.CreateOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	// 等待 Sandbox Running
+	return p.waitSandboxRunning(ctx, created, timeout)
+}
+
+// waitSandboxRunning 等待 Sandbox 进入 Running 状态
+func (p *SandboxTaskProvider) waitSandboxRunning(ctx context.Context, sb *sandboxv1alpha1.Sandbox, timeout time.Duration) (*TaskInstance, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	watcher, err := p.sandboxClient.AgentV1alpha1().Sandboxes(sb.Namespace).Watch(ctx, metav1.ListOptions{
+		FieldSelector: fmt.Sprintf("metadata.name=%s", sb.Name),
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer watcher.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait sandbox running timeout: %w", ctx.Err())
+		case event := <-watcher.ResultChan():
+			updatedSb := event.Object.(*sandboxv1alpha1.Sandbox)
+			if updatedSb.Status.Phase == sandboxv1alpha1.SandboxRunning {
+				return sandboxToTaskInstance(updatedSb, sb.Labels["agentcube.io/spec-id"]), nil
+			}
+		}
+	}
+}
+
+// GetInstanceStatistics 获取实例统计信息
+func (p *SandboxTaskProvider) GetInstanceStatistics(ctx context.Context, specID string) (*InstanceStatistics, error) {
+	sandboxes, err := p.listSandboxes(ctx, specID)
+	if err != nil {
+		return nil, err
+	}
+
+	warmPool, _ := p.getWarmPool(ctx, specID)
+
+	stats := &InstanceStatistics{
+		SpecID: specID,
+	}
+
+	for _, sb := range sandboxes {
+		stats.Total++
+
+		switch sb.Status.Phase {
+		case sandboxv1alpha1.SandboxRunning:
+			reserveKey := sb.Annotations["agentcube.io/reserve-key"]
+			if reserveKey != "" {
+				stats.Active++
+			} else {
+				stats.Ready++
+				// 检查是否为 Idle 状态
+				lastActiveStr := sb.Annotations["agentcube.io/last-active"]
+				if lastActiveStr != "" {
+					lastActive, _ := time.Parse(time.RFC3339, lastActiveStr)
+					if time.Since(lastActive) > 150*time.Second {
+						stats.Idle++
+					}
+				}
+			}
+		case sandboxv1alpha1.SandboxPending:
+			stats.Creating++
+		}
+	}
+
+	// 加上 WarmPool 中未分配的数量
+	if warmPool != nil {
+		stats.Ready += warmPool.Status.Available
+		stats.Creating += warmPool.Status.Creating
+	}
+
+	return stats, nil
+}
+
+// 辅助方法
+func (p *SandboxTaskProvider) listSandboxes(ctx context.Context, specID string) ([]sandboxv1alpha1.Sandbox, error) {
+	list, err := p.sandboxClient.AgentV1alpha1().Sandboxes("").List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("agentcube.io/spec-id=%s", specID),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
+func (p *SandboxTaskProvider) getWarmPool(ctx context.Context, specID string) (*sandboxv1alpha1.SandboxWarmPool, error) {
+	return p.sandboxClient.AgentV1alpha1().SandboxWarmPools("").Get(ctx, specID, metav1.GetOptions{})
+}
+
+func sandboxToTaskInstance(sb *sandboxv1alpha1.Sandbox, specID string) *TaskInstance {
+	lastActive, _ := time.Parse(time.RFC3339, sb.Annotations["agentcube.io/last-active"])
+
+	return &TaskInstance{
+		ID:         string(sb.UID),
+		SpecID:     specID,
+		Status:     sandboxStatusToInstanceStatus(sb),
+		Endpoint:   Endpoint{Host: sb.Status.PodIP, Port: 8080},
+		ReserveKey: sb.Annotations["agentcube.io/reserve-key"],
+		CreatedAt:  sb.CreationTimestamp.Time,
+		LastActive: lastActive,
+	}
+}
+
+func sandboxStatusToInstanceStatus(sb *sandboxv1alpha1.Sandbox) InstanceStatus {
+	switch sb.Status.Phase {
+	case sandboxv1alpha1.SandboxRunning:
+		if sb.Annotations["agentcube.io/reserve-key"] != "" {
+			return InstanceActive
+		}
+		return InstanceReady
+	case sandboxv1alpha1.SandboxPending:
+		return InstanceCreating
+	default:
+		return InstanceCreating
+	}
+}
+```
+
+#### 生命周期自动管理
+
+```go
+// RunLifecycleManager 启动生命周期管理器（后台运行）
+func (p *SandboxTaskProvider) RunLifecycleManager(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.reclaimExpiredSandboxes(ctx)
+		}
+	}
+}
+
+// reclaimExpiredSandboxes 回收超时的 Sandbox 实例
+func (p *SandboxTaskProvider) reclaimExpiredSandboxes(ctx context.Context) {
+	sandboxes, _ := p.sandboxClient.AgentV1alpha1().Sandboxes("").List(ctx, metav1.ListOptions{
+		LabelSelector: "agentcube.io/spec-id",
+	})
+
+	for _, sb := range sandboxes.Items {
+		specID := sb.Labels["agentcube.io/spec-id"]
+		task, err := p.getTaskBySpecID(ctx, specID)
+		if err != nil {
+			continue
+		}
+
+		lifecycle := task.Spec.Scaling.InstanceLifecycle
+
+		// 检查 TTL（从创建时算起）
+		if lifecycle.TTL != nil {
+			age := time.Since(sb.CreationTimestamp.Time)
+			if age > lifecycle.TTL.Duration {
+				// 触发优雅关闭
+				p.shutdownSandbox(ctx, &sb)
+				continue
+			}
+		}
+
+		// 检查 IdleTimeout（从最后活跃时间算起）
+		if lifecycle.IdleTimeout != nil && sb.Annotations["agentcube.io/reserve-key"] == "" {
+			lastActiveStr := sb.Annotations["agentcube.io/last-active"]
+			if lastActiveStr != "" {
+				lastActive, _ := time.Parse(time.RFC3339, lastActiveStr)
+				idle := time.Since(lastActive)
+				if idle > lifecycle.IdleTimeout.Duration {
+					p.shutdownSandbox(ctx, &sb)
+				}
+			}
+		}
+	}
+}
+
+// shutdownSandbox 优雅关闭 Sandbox
+func (p *SandboxTaskProvider) shutdownSandbox(ctx context.Context, sb *sandboxv1alpha1.Sandbox) {
+	// 设置 Replicas=0 触发优雅关闭（会等待 ShutdownTime）
+	sb.Spec.Replicas = ptr.To(int32(0))
+	p.sandboxClient.AgentV1alpha1().Sandboxes(sb.Namespace).Update(ctx, sb, metav1.UpdateOptions{})
+}
+```
+
+#### PodTaskProvider vs SandboxTaskProvider 对比
 
 | 特性 | PodTaskProvider | SandboxTaskProvider |
 |------|----------------|---------------------|
-| 隔离级别 | 容器隔离（共享内核） | MicroVM 隔离（独立内核） |
-| 启动时间 | 1-5 秒 | 1-3 秒（Firecracker）/3-5 秒（Kata） |
-| 资源开销 | ~100MB 内存 | ~125MB 内存（含 MicroVM） |
-| 安全性 | 中等 | 高（内核级隔离） |
-| 适用场景 | 可信代码执行 | 不可信代码执行、多租户隔离 |
+| **底层资源** | Kubernetes Job + Pod | agent-sandbox Sandbox CRD |
+| **扩缩容模型** | 调整 Job.Spec.Parallelism | 创建/删除独立 Sandbox 实例 |
+| **预热机制** | 无（依赖 Job 自动创建） | SandboxWarmPool 预热池 |
+| **实例模型** | 批量管理（Job 管理多个 Pod） | 单例管理（每个 Sandbox 独立） |
+| **隔离级别** | 容器隔离（共享内核） | MicroVM 隔离（独立内核） |
+| **启动时间** | 1-5 秒 | WarmPool: <1 秒 / 冷启动: 1-3 秒 |
+| **资源开销** | ~100MB 内存 | ~125MB 内存（含 MicroVM） |
+| **安全性** | 中等 | 高（内核级隔离） |
+| **适用场景** | 可信代码执行 | 不可信代码执行、多租户隔离 |
+| **优雅关闭** | Pod termination | Sandbox ShutdownTime |
 
 #### 配置示例
 
@@ -2374,17 +2949,17 @@ spec:
   deployment:
     type: sandbox
     sandboxTemplate:
-      runtime: firecracker  # 或 kata-qemu, gvisor
+      runtime: kata-containers  # 或 firecracker, gvisor
+      image: "your-registry/agent:v1.0"
       resources:
         cpu: "2000m"
         memory: "4Gi"
-        diskSize: "10Gi"
-      kernel:
-        image: "ghcr.io/agentcube/firecracker-kernel:5.10"
-      rootfs:
-        image: "your-registry/agent:v1.0"
+      poolConfig:
+        enabled: true
+        minSize: 3  # 预热池最小实例数
 
   routing:
+    gatewayRefs: [agent-gateway]
     routePolicy: BySession
     sessionIdentifier:
       extractors:
@@ -2393,9 +2968,10 @@ spec:
 
   scaling:
     scalingMode: OnDemand
-    minInstances: 0
+    minInstances: 3   # 预热实例数
     maxInstances: 50
     instanceLifecycle:
+      reusePolicy: Always
       ttl: 3600s
       idleTimeout: 300s
 ```
@@ -2403,21 +2979,20 @@ spec:
 #### 实施计划
 
 - **v0.4 (2025 Q3)**：实现 SandboxTaskProvider 基础功能
-  - 支持 Kata Containers（基于 RuntimeClass）
-  - 实现控制平面和数据平面接口
+  - 集成 agent-sandbox Sandbox CRD
+  - 实现 InstanceSpecProvider（WarmPool 管理）
+  - 实现 InstanceProvider（Sandbox 预留和创建）
   - 添加 E2E 测试
 
 - **v0.5 (2025 Q4)**：完善 Sandbox 支持
-  - 支持 Firecracker 直接集成（通过 Firecracker SDK）
-  - 支持 gVisor（runsc）
-  - 性能优化：快照预热、模板 MicroVM
+  - 优化 SandboxClaim 绑定流程
+  - 支持多运行时（Kata、Firecracker、gVisor）
+  - WarmPool 动态调整策略
 
 - **v0.6 (2025 Q4)**：生产优化
-  - 镜像预加载和缓存
-  - MicroVM 池化管理
   - 监控和诊断工具
-
-**注**：此章节为未来扩展设计，当前版本（v0.1-v0.3）专注于 PodTaskProvider 实现。
+  - 性能基准测试
+  - 文档和最佳实践
 
 ### 组件变更
 
@@ -2806,4 +3381,4 @@ TBD.
 
 **提案版本**：v1.0
 **状态**：草案（Draft）
-**最后更新**：2025-11-20
+**最后更新**：2025-11-19

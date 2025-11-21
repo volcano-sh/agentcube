@@ -251,3 +251,16 @@ help:
 	@echo "  make docker-buildx-push IMAGE_REGISTRY=docker.io/myuser"
 	@echo "  make sandbox-buildx-push IMAGE_REGISTRY=ghcr.io/myorg SANDBOX_IMAGE=sandbox:v2"
 
+
+# E2E Test targets
+E2E_CLUSTER_NAME ?= agentcube-e2e
+AGENT_SANDBOX_REPO ?= https://github.com/kubernetes-sigs/agent-sandbox.git
+AGENT_SANDBOX_VERSION ?= main
+
+e2e:
+	./test/e2e/run_e2e.sh
+
+e2e-clean:
+	@echo "Cleaning up E2E environment..."
+	kind delete cluster --name $(E2E_CLUSTER_NAME)
+	rm -rf /tmp/agent-sandbox

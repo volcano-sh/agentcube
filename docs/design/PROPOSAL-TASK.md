@@ -141,12 +141,20 @@ kind: Task
 spec:
   deployment:
     type: sandbox
-    sandboxTemplate:
-      resources:
-        cpu: "2000m"
-        memory: "4Gi"
+    sandbox:
+      podTemplate:
+        spec:
+          runtimeClassName: kata-containers
+          containers:
+            - name: agent
+              image: my-agent:v1.0
+              resources:
+                requests:
+                  cpu: "2000m"
+                  memory: "4Gi"
   scaling:
     scalingMode: OnDemand
+    minInstances: 3  # WarmPool size for fast allocation
 ```
 
 系统提供：
@@ -378,263 +386,64 @@ Function Proxy 内部：
 
 定义单个 Agent 的部署、路由和生命周期配置。
 
-```go
-// Task 是用于声明 AI Agent 任务配置的 Kubernetes 自定义资源
-type Task struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
+**核心字段结构**：
 
-	Spec   TaskSpec   `json:"spec,omitempty"`
-	Status TaskStatus `json:"status,omitempty"`
-}
+| 字段层级 | 字段名 | 类型 | 必填 | 默认值 | 说明 |
+|---------|--------|------|------|--------|------|
+| **spec** | - | TaskSpec | ✓ | - | Task 期望状态 |
+| spec.**deployment** | - | DeploymentSpec | ✓ | - | 部署配置 |
+| spec.deployment.**type** | - | string | ✓ | - | `pod` / `sandbox` / `code-bundle` |
+| spec.deployment.**podTemplate** | - | PodTemplateSpec | - | - | Pod 部署模板 (⚠️ Experimental) |
+| spec.deployment.**sandbox** | - | SandboxSpec | - | - | Sandbox 部署配置 (✅ Production) |
+| spec.deployment.**codeBundle** | - | CodeBundleSpec | - | - | Code Bundle 配置 |
+| **spec.scaling** | - | ScalingSpec | - | - | 伸缩策略 |
+| spec.scaling.**scalingMode** | - | string | - | `None` | `OnDemand` / `None` |
+| spec.scaling.**minInstances** | - | int32 | - | `0` | 最小实例数 (≥0) |
+| spec.scaling.**maxInstances** | - | int32 | - | `10` | 最大实例数 (≥1) |
+| spec.scaling.**instanceLifecycle** | - | InstanceLifecycleSpec | - | - | 实例生命周期策略 |
+| spec.scaling.instanceLifecycle.**reusePolicy** | - | string | - | `Never` | `Never` / `Always` |
+| spec.scaling.instanceLifecycle.**idleTimeout** | - | Duration | - | `300s` | 空闲超时时间 |
+| spec.scaling.instanceLifecycle.**ttl** | - | Duration | - | `3600s` | 实例最大存活时间 |
+| **spec.routing** | - | RoutingSpec | ✓ | - | 路由策略 |
+| spec.routing.**gatewayRefs** | - | []string | ✓ | - | 引用的 TaskGateway 名称 |
+| spec.routing.**routePolicy** | - | string | ✓ | - | `Oneshot` / `BySession` |
+| spec.routing.**sessionIdentifier** | - | SessionIdentifierSpec | - | - | 会话 ID 提取配置 (BySession 必需) |
+| spec.routing.**reserveTimeout** | - | Duration | - | `30s` | Reserve 操作超时时间 |
+| **spec.requestHandling** | - | RequestHandlingSpec | - | - | 请求处理配置 |
+| spec.requestHandling.**backend** | - | BackendSpec | ✓ | - | 后端配置 |
+| spec.requestHandling.backend.**port** | - | int32 | ✓ | `8080` | 后端端口 (1-65535) |
 
-// TaskSpec 定义 Task 的期望状态
-type TaskSpec struct {
-	// Deployment 配置 Agent 的部署方式
-	// +required
-	Deployment DeploymentSpec `json:"deployment"`
+**部署类型详细字段**：
 
-	// Scaling 配置 Agent 的伸缩策略
-	// +optional
-	Scaling ScalingSpec `json:"scaling,omitempty"`
+**SandboxSpec** (推荐用于生产环境)：
 
-	// Routing 配置 Agent 的路由策略
-	// +required
-	Routing RoutingSpec `json:"routing"`
+| 字段名 | 类型 | 必填 | 默认值 | 说明 |
+|--------|------|------|--------|------|
+| **podTemplate** | PodTemplateSpec | - | - | Sandbox 的 Pod 模板，包含 runtimeClassName |
+| **volumeClaimTemplates** | []PersistentVolumeClaim | - | - | 持久化存储声明 |
+| **shutdownTime** | Duration | - | `30s` | 优雅关闭超时时间 |
 
-	// RequestHandling 配置请求处理参数
-	// +optional
-	RequestHandling RequestHandlingSpec `json:"requestHandling,omitempty"`
-}
+**SessionIdentifierSpec** (BySession 路由策略)：
 
-// DeploymentSpec 定义部署配置
-type DeploymentSpec struct {
-	// Type 指定部署类型
-	// +kubebuilder:validation:Enum=pod;sandbox;code-bundle
-	// +required
-	Type DeploymentType `json:"type"`
+| 字段名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| **extractors** | []SessionExtractor | ✓ | 会话 ID 提取器列表 |
+| extractors.**type** | string | ✓ | `httpHeader` / `pathVar` / `query` |
+| extractors.**name** | string | ✓ | 提取字段名称 |
+| extractors.**path** | string | - | 路径模板 (仅 pathVar 类型) |
 
-	// PodTemplate 用于 pod 部署类型
-	// +optional
-	PodTemplate *corev1.PodTemplateSpec `json:"podTemplate,omitempty"`
+**TaskStatus** 字段：
 
-	// SandboxTemplate 用于 sandbox 部署类型
-	// +optional
-	SandboxTemplate *SandboxTemplateSpec `json:"sandboxTemplate,omitempty"`
+| 字段名 | 类型 | 说明 |
+|--------|------|------|
+| **specID** | string | 配置标识符 (格式: `taskName-generation`) |
+| **phase** | string | 当前阶段: `Pending` / `Deploying` / `Serving` / `Failed` |
+| **conditions** | []Condition | 标准 K8s Condition (Ready, SpecReady, RouteReady, ExtProcReady) |
+| **instances** | InstanceStatistics | 实例统计信息 (仅用于监控展示) |
+| **routeStatus** | RouteStatusSummary | HTTPRoute 状态摘要 |
+| **observedGeneration** | int64 | 观测到的 Generation |
 
-	// CodeBundle 用于 code-bundle 部署类型
-	// +optional
-	CodeBundle *CodeBundleSpec `json:"codeBundle,omitempty"`
-}
-
-type DeploymentType string
-
-const (
-	DeploymentTypePod        DeploymentType = "pod"
-	DeploymentTypeSandbox    DeploymentType = "sandbox"
-	DeploymentTypeCodeBundle DeploymentType = "code-bundle"
-)
-
-// ScalingSpec 定义伸缩配置
-type ScalingSpec struct {
-	// ScalingMode 指定伸缩模式
-	// +kubebuilder:validation:Enum=OnDemand;None
-	// +kubebuilder:default=None
-	ScalingMode ScalingMode `json:"scalingMode,omitempty"`
-
-	// MinInstances 最小实例数
-	// +kubebuilder:validation:Minimum=0
-	// +optional
-	MinInstances *int32 `json:"minInstances,omitempty"`
-
-	// MaxInstances 最大实例数
-	// +kubebuilder:validation:Minimum=1
-	// +optional
-	MaxInstances *int32 `json:"maxInstances,omitempty"`
-
-	// InstanceLifecycle 配置实例生命周期策略
-	// +optional
-	InstanceLifecycle *InstanceLifecycleSpec `json:"instanceLifecycle,omitempty"`
-}
-
-type ScalingMode string
-
-const (
-	ScalingModeOnDemand ScalingMode = "OnDemand"
-	ScalingModeNone     ScalingMode = "None"
-)
-
-// InstanceLifecycleSpec 定义实例生命周期配置
-type InstanceLifecycleSpec struct {
-	// ReusePolicy 实例复用策略
-	// +kubebuilder:validation:Enum=Never;Always
-	// +kubebuilder:default=Never
-	ReusePolicy ReusePolicy `json:"reusePolicy,omitempty"`
-
-	// IdleTimeout 空闲超时时间，超时后实例将被回收
-	// +optional
-	IdleTimeout *metav1.Duration `json:"idleTimeout,omitempty"`
-
-	// TTL 实例最大存活时间
-	// +optional
-	TTL *metav1.Duration `json:"ttl,omitempty"`
-}
-
-type ReusePolicy string
-
-const (
-	ReusePolicyNever  ReusePolicy = "Never"
-	ReusePolicyAlways ReusePolicy = "Always"
-)
-
-// RoutingSpec 定义路由配置
-type RoutingSpec struct {
-	// GatewayRefs 引用的 TaskGateway
-	// +required
-	GatewayRefs []string `json:"gatewayRefs"`
-
-	// RoutePolicy 路由策略
-	// +kubebuilder:validation:Enum=Oneshot;BySession
-	// +required
-	RoutePolicy RoutePolicy `json:"routePolicy"`
-
-	// SessionIdentifier 会话标识提取配置（仅 BySession 模式需要）
-	// +optional
-	SessionIdentifier *SessionIdentifierSpec `json:"sessionIdentifier,omitempty"`
-
-	// ReserveTimeout Reserve 操作超时时间
-	// +kubebuilder:default="30s"
-	// +optional
-	ReserveTimeout *metav1.Duration `json:"reserveTimeout,omitempty"`
-}
-
-type RoutePolicy string
-
-const (
-	RoutePolicyOneshot   RoutePolicy = "Oneshot"
-	RoutePolicyBySession RoutePolicy = "BySession"
-)
-
-// SessionIdentifierSpec 定义会话标识提取配置
-type SessionIdentifierSpec struct {
-	// Extractors 会话标识提取器列表
-	// +required
-	Extractors []SessionExtractor `json:"extractors"`
-}
-
-// SessionExtractor 定义单个会话标识提取器
-type SessionExtractor struct {
-	// Type 提取器类型
-	// +kubebuilder:validation:Enum=httpHeader;pathVar;query
-	// +required
-	Type ExtractorType `json:"type"`
-
-	// Name 字段名称
-	// +required
-	Name string `json:"name"`
-
-	// Path 用于 pathVar 类型的路径模板（如 /{sessionID}/invoke）
-	// +optional
-	Path string `json:"path,omitempty"`
-}
-
-type ExtractorType string
-
-const (
-	ExtractorTypeHTTPHeader ExtractorType = "httpHeader"
-	ExtractorTypePathVar    ExtractorType = "pathVar"
-	ExtractorTypeQuery      ExtractorType = "query"
-)
-
-// RequestHandlingSpec 定义请求处理配置
-type RequestHandlingSpec struct {
-	// Backend 后端配置
-	// +required
-	Backend BackendSpec `json:"backend"`
-
-	// Timeout 超时配置
-	// +optional
-	Timeout *TimeoutSpec `json:"timeout,omitempty"`
-
-	// CircuitBreaker 熔断器配置
-	// +optional
-	CircuitBreaker *CircuitBreakerSpec `json:"circuitBreaker,omitempty"`
-}
-
-// BackendSpec 定义后端配置
-type BackendSpec struct {
-	// Port 后端端口
-	// +required
-	Port int32 `json:"port"`
-
-	// TLSPolicy TLS 策略
-	// +optional
-	TLSPolicy *TLSPolicySpec `json:"tlsPolicy,omitempty"`
-}
-
-// TaskStatus 定义 Task 的观测状态
-type TaskStatus struct {
-	// Conditions 标准 K8s Condition
-	// 支持的 Type: Ready, SpecReady, RouteReady, ExtProcReady
-	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-
-	// SpecID 当前配置标识符 (格式: taskName-generation)
-	// 由 InstanceSpecProvider.InitializeSpec() 返回
-	// +optional
-	SpecID string `json:"specID,omitempty"`
-
-	// Instances 实例统计信息（仅用于监控和展示，不影响 Ready 状态）
-	// 可通过独立的 metrics controller 或外部调用 GetInstanceStatistics() 填充
-	// TaskController 不在 Reconcile 循环中查询此字段
-	// +optional
-	Instances InstanceStatistics `json:"instances,omitempty"`
-
-	// RouteStatus HTTPRoute 状态摘要
-	// 从 HTTPRoute.Status 聚合
-	// +optional
-	RouteStatus *RouteStatusSummary `json:"routeStatus,omitempty"`
-
-	// Phase 当前阶段（高层抽象）
-	// +optional
-	Phase TaskPhase `json:"phase,omitempty"`
-
-	// ObservedGeneration 观测到的 Generation
-	// +optional
-	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-}
-
-// InstanceStatistics 实例统计信息
-type InstanceStatistics struct {
-	// Total 总实例数
-	Total int32 `json:"total"`
-
-	// Ready 就绪实例数 (Phase=Running && Ready=True)
-	Ready int32 `json:"ready"`
-
-	// Reserved 已预留实例数 (reserve-key != "")
-	Reserved int32 `json:"reserved"`
-
-	// Idle 空闲实例数 (reserve-key == "" && Ready=True)
-	Idle int32 `json:"idle"`
-}
-
-// RouteStatusSummary HTTPRoute 状态摘要
-type RouteStatusSummary struct {
-	// ParentStatuses HTTPRoute 父资源状态
-	// 从 HTTPRoute.Status.Parents 复制
-	ParentStatuses []gwapiv1.RouteParentStatus `json:"parentStatuses,omitempty"`
-}
-
-type TaskPhase string
-
-const (
-	TaskPhasePending   TaskPhase = "Pending"   // Task 已创建，等待资源初始化
-	TaskPhaseDeploying TaskPhase = "Deploying" // 资源正在创建中
-	TaskPhaseServing   TaskPhase = "Serving"   // 所有资源就绪，可接受流量
-	TaskPhaseFailed    TaskPhase = "Failed"    // 部署失败
-)
-```
+**完整的 Go 类型定义请参见 `api/v1alpha1/task_types.go`。**
 
 **示例 YAML**：
 
@@ -710,133 +519,58 @@ status:
 
 定义统一的流量入口和安全策略。
 
-```go
-// TaskGateway 是用于声明 Agent 网关配置的 Kubernetes 自定义资源
-type TaskGateway struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
+**核心字段结构**：
 
-	Spec   TaskGatewaySpec   `json:"spec,omitempty"`
-	Status TaskGatewayStatus `json:"status,omitempty"`
-}
+| 字段层级 | 字段名 | 类型 | 必填 | 默认值 | 说明 |
+|---------|--------|------|------|--------|------|
+| **spec** | - | TaskGatewaySpec | ✓ | - | 网关期望状态 |
+| spec.**listeners** | - | []ListenerSpec | ✓ | - | 监听器配置列表 |
+| spec.**authentication** | - | AuthenticationSpec | - | - | 认证配置 |
+| spec.**cors** | - | CORSSpec | - | - | 跨域配置 |
 
-// TaskGatewaySpec 定义网关的期望状态
-type TaskGatewaySpec struct {
-	// Listeners 监听器配置
-	// +required
-	Listeners []ListenerSpec `json:"listeners"`
+**ListenerSpec 详细字段**：
 
-	// Authentication 认证配置
-	// +optional
-	Authentication *AuthenticationSpec `json:"authentication,omitempty"`
+| 字段名 | 类型 | 必填 | 枚举值/范围 | 说明 |
+|--------|------|------|------------|------|
+| **name** | string | ✓ | - | 监听器名称 |
+| **protocol** | string | ✓ | `HTTP` / `HTTPS` / `WebSocket` | 协议类型 |
+| **port** | int32 | ✓ | 1-65535 | 监听端口 |
+| **tls** | TLSSpec | - | - | TLS 配置 (protocol=HTTPS 时必填) |
 
-	// CORS 跨域配置
-	// +optional
-	CORS *CORSSpec `json:"cors,omitempty"`
-}
+**AuthenticationSpec 详细字段**：
 
-// ListenerSpec 定义监听器配置
-type ListenerSpec struct {
-	// Name 监听器名称
-	// +required
-	Name string `json:"name"`
+| 字段名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| **jwt** | JWTSpec | - | JWT 认证配置 |
+| **extAuth** | ExtAuthSpec | - | 外部认证配置 (gRPC/HTTP) |
 
-	// Protocol 协议类型
-	// +kubebuilder:validation:Enum=HTTP;HTTPS;WebSocket
-	// +required
-	Protocol Protocol `json:"protocol"`
+**JWTSpec.Providers[] 详细字段**：
 
-	// Port 监听端口
-	// +required
-	Port int32 `json:"port"`
+| 字段名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| **name** | string | ✓ | 提供者名称 |
+| **issuer** | string | ✓ | JWT 签发者 (iss claim) |
+| **audiences** | []string | ✓ | 受众列表 (aud claim) |
+| **remoteJWKS** | RemoteJWKSSpec | ✓ | 远程 JWKS 配置 |
+| **claimToHeaders** | []ClaimMapping | - | 将 JWT Claims 提取到 HTTP Headers |
 
-	// TLS TLS 配置
-	// +optional
-	TLS *TLSSpec `json:"tls,omitempty"`
-}
+**ClaimMapping 字段**：
 
-type Protocol string
+| 字段名 | 类型 | 必填 | 说明 | 示例 |
+|--------|------|------|------|------|
+| **claim** | string | ✓ | JWT Claim 名称 | `sub`, `email` |
+| **header** | string | ✓ | HTTP Header 名称 | `X-User-ID`, `X-User-Email` |
 
-const (
-	ProtocolHTTP      Protocol = "HTTP"
-	ProtocolHTTPS     Protocol = "HTTPS"
-	ProtocolWebSocket Protocol = "WebSocket"
-)
+**Status 字段**：
 
-// AuthenticationSpec 定义认证配置
-type AuthenticationSpec struct {
-	// JWT JWT 认证配置
-	// +optional
-	JWT *JWTSpec `json:"jwt,omitempty"`
+| 字段名 | 类型 | 说明 |
+|--------|------|------|
+| **conditions** | []Condition | 标准 K8s Condition (Ready, GatewayReady, SecurityPolicyReady) |
+| **addresses** | []GatewayAddress | Gateway 分配的地址列表 (从 Gateway.Status 聚合) |
+| **listeners** | []ListenerStatus | 监听器状态列表 (从 Gateway.Status 聚合) |
+| **observedGeneration** | int64 | 观测到的 Generation |
 
-	// ExtAuth 外部认证配置
-	// +optional
-	ExtAuth *ExtAuthSpec `json:"extAuth,omitempty"`
-}
-
-// JWTSpec 定义 JWT 认证配置
-type JWTSpec struct {
-	// Providers JWT 提供者列表
-	// +required
-	Providers []JWTProvider `json:"providers"`
-}
-
-// JWTProvider 定义单个 JWT 提供者
-type JWTProvider struct {
-	// Name 提供者名称
-	// +required
-	Name string `json:"name"`
-
-	// Issuer JWT 签发者
-	// +required
-	Issuer string `json:"issuer"`
-
-	// Audiences 受众列表
-	// +required
-	Audiences []string `json:"audiences"`
-
-	// RemoteJWKS 远程 JWKS 配置
-	// +required
-	RemoteJWKS RemoteJWKSSpec `json:"remoteJWKS"`
-
-	// ClaimToHeaders Claims 到 Headers 的映射
-	// +optional
-	ClaimToHeaders []ClaimMapping `json:"claimToHeaders,omitempty"`
-}
-
-// ClaimMapping 定义 Claim 到 Header 的映射
-type ClaimMapping struct {
-	// Claim JWT Claim 名称
-	// +required
-	Claim string `json:"claim"`
-
-	// Header HTTP Header 名称
-	// +required
-	Header string `json:"header"`
-}
-
-// TaskGatewayStatus 定义 TaskGateway 的运行时状态
-type TaskGatewayStatus struct {
-	// Conditions 标准 K8s Condition
-	// 支持的 Type: Ready, GatewayReady, SecurityPolicyReady
-	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-
-	// Addresses Gateway 分配的地址列表
-	// 从 Gateway.Status.Addresses 聚合
-	// +optional
-	Addresses []gwapiv1.GatewayAddress `json:"addresses,omitempty"`
-
-	// Listeners 监听器状态列表
-	// 从 Gateway.Status.Listeners 聚合
-	// +optional
-	Listeners []gwapiv1.ListenerStatus `json:"listeners,omitempty"`
-
-	// ObservedGeneration 观测到的 Generation
-	// +optional
-	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-}
-```
+**完整的 Go 类型定义请参见 `api/v1alpha1/taskgateway_types.go`。**
 
 **示例 YAML**：
 
@@ -898,14 +632,14 @@ spec:
 控制平面（Task 创建时）：
   TaskController → InstanceSpecProvider.InitializeSpec()
       ↓
-  创建 Job/Deployment + ConfigMap
+  创建 Spec 资源 (PodProvider: Job, SandboxProvider: WarmPool)
       ↓
   返回 specID
 
 数据平面（每次请求时）：
   TaskRouter → InstanceProvider.ReserveInstance(specID, reserveKey)
       ↓
-  查询/预留 Pod（通过 annotation 更新）
+  查询/预留实例（通过 annotation 更新）
       ↓
   返回 TaskInstance{Endpoint, Status}
 ```
@@ -918,9 +652,9 @@ sequenceDiagram
     participant EnvoyGateway
     participant TaskRouter
     participant InstanceProvider
-    participant Pod
+    participant Instance
 
-    Note over Client,Pod: 延迟: ~3-5ms (Reserve) + Agent 处理时间<br/>无需更新 Pod annotation
+    Note over Client,Instance: 延迟: ~3-5ms (Reserve) + Agent 处理时间<br/>无需更新实例状态
 
     Client->>+EnvoyGateway: POST /invoke<br/>(X-Session-ID: abc)
     EnvoyGateway->>+TaskRouter: Reserve(taskName=agent, session=abc)
@@ -929,11 +663,11 @@ sequenceDiagram
 
     TaskRouter->>+InstanceProvider: ReserveInstance(specID="agent-1",<br/>reserveKey="abc")
 
-    InstanceProvider->>InstanceProvider: List Pods with label<br/>task.agentcube.io/spec-id=agent-1
+    InstanceProvider->>InstanceProvider: 查找属于 specID 的实例
 
-    Note over InstanceProvider,Pod: 找到 Pod 且<br/>annotation reserve-key="abc" (已绑定)
+    Note over InstanceProvider,Instance: 找到实例且<br/>已绑定当前 reserveKey
 
-    Note over InstanceProvider: 会话复用，无需更新 annotation
+    Note over InstanceProvider: 会话复用，无需更新状态
 
     Note over InstanceProvider: 生成 reservedToken<br/>(如 "tok-1737123456-xyz")
 
@@ -943,11 +677,11 @@ sequenceDiagram
 
     Note over EnvoyGateway: 添加自定义 Header：<br/>X-Reserved-Token: tok-1737123456-xyz
 
-    EnvoyGateway->>+Pod: POST http://10.0.1.5:8080/invoke<br/>(X-Reserved-Token: tok-1737123456-xyz)
+    EnvoyGateway->>+Instance: POST http://10.0.1.5:8080/invoke<br/>(X-Reserved-Token: tok-1737123456-xyz)
 
-    Note over Pod: 后端实例可验证 reservedToken<br/>或使用它进行状态查找
+    Note over Instance: 后端实例可验证 reservedToken<br/>或使用它进行状态查找
 
-    Pod-->>-EnvoyGateway: Response
+    Instance-->>-EnvoyGateway: Response
     EnvoyGateway-->>-Client: Response
 ```
 
@@ -959,9 +693,9 @@ sequenceDiagram
     participant EnvoyGateway
     participant TaskRouter
     participant InstanceProvider
-    participant Pod
+    participant Instance
 
-    Note over Client,Pod: 延迟: ~5-10ms (Reserve) + Agent 处理时间<br/>需要更新 Pod annotation
+    Note over Client,Instance: 延迟: ~5-10ms (Reserve) + Agent 处理时间<br/>需要原子更新实例状态
 
     Client->>+EnvoyGateway: POST /invoke<br/>(X-Session-ID: xyz)
     EnvoyGateway->>+TaskRouter: Reserve(taskName=agent, session=xyz)
@@ -970,11 +704,11 @@ sequenceDiagram
 
     TaskRouter->>+InstanceProvider: ReserveInstance(specID="agent-1",<br/>reserveKey="xyz")
 
-    InstanceProvider->>InstanceProvider: List Pods with label<br/>task.agentcube.io/spec-id=agent-1
+    InstanceProvider->>InstanceProvider: 查找属于 specID 的实例
 
-    Note over InstanceProvider,Pod: 找到 Pod 且<br/>annotation reserve-key="" (空闲)
+    Note over InstanceProvider,Instance: 找到空闲实例
 
-    InstanceProvider->>Pod: Update Pod annotation<br/>reserve-key="xyz" (CAS 操作)
+    InstanceProvider->>Instance: 标记为已预留<br/>(reserveKey="xyz", 原子操作)
 
     Note over InstanceProvider: 生成 reservedToken<br/>(如 "tok-1737123456-xyz")
 
@@ -984,11 +718,11 @@ sequenceDiagram
 
     Note over EnvoyGateway: 添加自定义 Header：<br/>X-Reserved-Token: tok-1737123456-xyz
 
-    EnvoyGateway->>+Pod: POST http://10.0.1.5:8080/invoke<br/>(X-Reserved-Token: tok-1737123456-xyz)
+    EnvoyGateway->>+Instance: POST http://10.0.1.5:8080/invoke<br/>(X-Reserved-Token: tok-1737123456-xyz)
 
-    Note over Pod: 后端实例可验证 reservedToken<br/>或使用它进行状态查找
+    Note over Instance: 后端实例可验证 reservedToken<br/>或使用它进行状态查找
 
-    Pod-->>-EnvoyGateway: Response
+    Instance-->>-EnvoyGateway: Response
     EnvoyGateway-->>-Client: Response
 ```
 
@@ -1000,30 +734,25 @@ sequenceDiagram
     participant EnvoyGateway
     participant TaskRouter
     participant InstanceProvider
-    participant Job
-    participant K8s
-    participant Pod
+    participant Instance
 
-    Note over Client,Pod: 延迟: ~5-30s (创建 + 启动) + Agent 处理时间
+    Note over Client,Instance: 延迟: ~5-30s (创建 + 启动) + Agent 处理时间
 
     Client->>+EnvoyGateway: POST /invoke<br/>(X-Session-ID: xyz)
     EnvoyGateway->>+TaskRouter: Reserve(taskName=agent, session=xyz)
     TaskRouter->>+InstanceProvider: ReserveInstance(specID="agent-1",<br/>reserveKey="xyz")
 
-    InstanceProvider->>InstanceProvider: List Pods，发现无空闲实例
+    InstanceProvider->>InstanceProvider: 查找实例，发现无空闲
 
-    Note over InstanceProvider,Job: 触发扩容
-    InstanceProvider->>Job: Update Job.Spec.Parallelism++
-    InstanceProvider->>K8s: Watch 新 Pod 创建
+    Note over InstanceProvider: 触发扩容创建新实例
 
-    Job->>K8s: 创建新 Pod
-    K8s->>Pod: 启动 Pod (5-30s)
+    InstanceProvider->>InstanceProvider: 等待新实例就绪<br/>(5-30s)
 
-    Note over Pod: Pod 启动并就绪
+    Note over Instance: 新实例启动并就绪
 
-    K8s-->>InstanceProvider: Pod Ready 事件
+    Note over InstanceProvider,Instance: 检测到新实例 Ready
 
-    InstanceProvider->>Pod: Update Pod annotation<br/>reserve-key="xyz"
+    InstanceProvider->>Instance: 标记为已预留<br/>(reserveKey="xyz", 原子操作)
 
     Note over InstanceProvider: 生成 reservedToken<br/>(如 "tok-1737123500-abc")
 
@@ -1033,26 +762,27 @@ sequenceDiagram
 
     Note over EnvoyGateway: 添加自定义 Header：<br/>X-Reserved-Token: tok-1737123500-abc
 
-    EnvoyGateway->>+Pod: POST http://10.0.1.6:8080/invoke<br/>(X-Reserved-Token: tok-1737123500-abc)
+    EnvoyGateway->>+Instance: POST http://10.0.1.6:8080/invoke<br/>(X-Reserved-Token: tok-1737123500-abc)
 
-    Note over Pod: 后端实例可验证 reservedToken<br/>或使用它进行状态查找
+    Note over Instance: 后端实例可验证 reservedToken<br/>或使用它进行状态查找
 
-    Pod-->>-EnvoyGateway: Response
+    Instance-->>-EnvoyGateway: Response
     EnvoyGateway-->>-Client: Response
 ```
 
 **路径对比**：
 
-| 路径类型 | 触发条件 | 延迟 | 是否更新 annotation | 典型场景 |
-|---------|---------|------|-------------------|---------|
-| 最快路径 | Pod 已绑定当前 reserveKey | ~3-5ms | ❌ 否 | BySession 模式的会话复用 |
-| 快速路径 | Pod 空闲（reserve-key=""） | ~5-10ms | ✅ 是（CAS 操作） | BySession 首次分配 / Oneshot 模式 |
-| 慢速路径 | 无空闲 Pod | ~5-30s | ✅ 是 | OnDemand 冷启动 |
+| 路径类型 | 触发条件 | 延迟 | 是否更新实例状态 | 典型场景 |
+|---------|---------|------|-----------------|---------|
+| 最快路径 | 实例已绑定当前 reserveKey | ~3-5ms | ❌ 否 | BySession 模式的会话复用 |
+| 快速路径 | 存在空闲实例 | ~5-10ms | ✅ 是（原子操作） | BySession 首次分配 / Oneshot 模式 |
+| 慢速路径 | 无空闲实例 | ~5-30s | ✅ 是 | OnDemand 冷启动 |
 
-**并发安全**：
-- Pod annotation 更新使用 K8s 乐观锁（ResourceVersion 检查）
-- Update 冲突时 InstanceProvider 自动重试，选择其他 Pod
+**并发安全保证**：
+- 实例状态更新必须通过原子操作完成
+- 原子操作失败时 InstanceProvider 自动重试，选择其他实例
 - 无需外部分布式锁，简化架构
+- 具体原子操作机制由各 InstanceProvider 实现（见各 Provider 章节）
 
 ### TaskRouter 实现细节
 
@@ -1644,6 +1374,23 @@ status:
 3. **扩展性强**：新部署模式只需实现两个接口
 4. **架构简化**：Registry 能力内嵌到 Provider，避免双重状态管理
 
+#### 术语映射表
+
+AgentCube 设计中使用抽象的 **Instance** 概念，不同的 Provider 实现使用不同的底层资源：
+
+| 抽象概念 | PodTaskProvider 实现 | SandboxTaskProvider 实现 | 说明 |
+|---------|-------------------|----------------------|-----|
+| **Instance** | Pod | Sandbox | 单个 Agent 运行实例 |
+| **Spec Resource** | Job | SandboxWarmPool | 管理 Instance 集合的资源 |
+| **Scale Up** | Increase Job.Spec.Parallelism | Create new Sandbox | 扩容操作 |
+| **Scale Down** | Decrease Job.Spec.Parallelism | Set Sandbox.Spec.Replicas=0 | 缩容操作 |
+| **Reserve** | Update Pod Annotation | Update Sandbox Annotation | 预留实例给特定会话 |
+| **Lifecycle Management** | Delete expired Pod | Graceful Sandbox shutdown | 生命周期回收 |
+
+**部署类型定位**：
+- **Pod 类型** (`deployment.type: pod`)：⚠️ Experimental - 用于早期 MVP 原型和实现论证，不推荐生产使用
+- **Sandbox 类型** (`deployment.type: sandbox`)：✅ Production Recommended - AgentCube 的主要负载类型，提供 MicroVM 级隔离
+
 #### 核心数据结构
 
 ```go
@@ -1816,6 +1563,38 @@ PodTaskProvider 是基于 Kubernetes **Job** 的 InstanceProvider 实现，适�
 - Pod 处理完请求后主动退出（`RestartPolicy=Never`），Job 自动创建新 Pod 补充
 - 利用 Pod annotation 实现实例预留和 Registry 功能
 
+#### 实现映射表
+
+PodTaskProvider 将抽象的 InstanceProvider 接口映射到 Kubernetes 原生资源和机制：
+
+| 抽象操作 | Kubernetes 实现方式 | 并发安全机制 | 说明 |
+|---------|-------------------|-------------|------|
+| **查找属于 specID 的实例** | List Pods with label `agentcube.io/spec-id=<specID>` | - | 使用 Label Selector 索引 |
+| **查找已绑定实例** | 过滤 `Pod.Annotations["agentcube.io/reserve-key"] == reserveKey` | - | 会话复用路径 |
+| **查找空闲实例** | 过滤 `reserve-key=="" && PodReady` | - | 首次分配路径 |
+| **标记为已预留（原子操作）** | Update `Pod.Annotations["agentcube.io/reserve-key"]` | K8s 乐观锁（ResourceVersion） | CAS 语义，冲突时自动重试 |
+| **触发扩容创建新实例** | 增加 `Job.Spec.Parallelism` | Update 冲突检测 | 轻量级，无需创建/删除 Job |
+| **等待新实例就绪** | Watch Pod events，过滤 `PodReady` | - | 事件驱动，避免轮询 |
+| **获取实例端点** | 读取 `Pod.Status.PodIP` + 固定端口 8080 | - | Pod IP 作为 Endpoint.Host |
+| **回收超时实例** | Delete Pod（触发 TTL/IdleTimeout） | - | Job 自动补充新 Pod |
+| **缩容** | 减少 `Job.Spec.Parallelism` | - | 配合 Pod 删除生效 |
+
+**关键设计选择**：
+
+1. **使用 Pod annotation 而非独立 Registry**
+   - ✅ 优势：减少外部依赖，利用 K8s 原生机制，数据与资源绑定
+   - ⚠️ 限制：annotation 更新会触发 Pod watch events，可能增加 API Server 负载
+
+2. **利用 K8s 乐观锁保证并发安全**
+   - ResourceVersion 冲突检测提供 CAS 语义
+   - 无需外部分布式锁（如 etcd lease、Redis SETNX）
+   - 多个 TaskRouter 并发预留同一 Pod 时，只有一个成功
+
+3. **Job Parallelism 控制扩缩容**
+   - 轻量级：只更新 Job 字段，无需创建/删除 Job
+   - Job Controller 自动管理 Pod 数量
+   - 适配 `reusePolicy=Never` 的短生命周期场景
+
 #### 控制平面实现（InstanceSpecProvider）
 
 ```go
@@ -1929,359 +1708,64 @@ func (p *PodTaskProvider) GetSpecStatus(ctx context.Context, specID string) (*Sp
 
 #### 数据平面实现（InstanceProvider）
 
-```go
-// generateReservedToken 生成预留令牌
-// 格式: tok-{timestamp}-{random}
-// 示例: "tok-1737123456-a1b2c3d4"
-func generateReservedToken() string {
-	timestamp := time.Now().Unix()
-	randomBytes := make([]byte, 4)
-	rand.Read(randomBytes)
-	randomStr := hex.EncodeToString(randomBytes)
-	return fmt.Sprintf("tok-%d-%s", timestamp, randomStr)
-}
+**ReserveInstance 决策流程**：
 
-// ReserveInstance 预留或创建实例
-func (p *PodTaskProvider) ReserveInstance(ctx context.Context, specID, reserveKey string) (*TaskInstance, string, error) {
-	// 1. 查找已绑定该 reserveKey 的 Pod（快速路径）
-	if reserveKey != "" {
-		if instance := p.findReservedPod(ctx, specID, reserveKey); instance != nil {
-			// 已预留实例，生成新的 reservedToken（每次 Reserve 都生成新令牌）
-			reservedToken := generateReservedToken()
-			return instance, reservedToken, nil
-		}
-	}
+```mermaid
+flowchart TD
+    Start([ReserveInstance 调用]) --> CheckReserved{reserveKey != ""<br/>且已有绑定?}
+    CheckReserved -->|是| PathReuse[路径 1: 会话复用]
+    PathReuse --> GenToken1[生成 reservedToken]
+    GenToken1 --> Return1([返回: 已绑定实例])
 
-	// 2. 查找空闲 Pod 并尝试预留
-	idlePods, err := p.findIdlePods(ctx, specID)
-	if err != nil {
-		return nil, "", err
-	}
+    CheckReserved -->|否| FindIdle[查找空闲 Pod<br/>reserve-key == ""]
+    FindIdle --> HasIdle{有空闲 Pod?}
 
-	if len(idlePods) > 0 {
-		// 尝试预留第一个空闲 Pod（利用 K8s 乐观锁）
-		pod := idlePods[0]
-		instance, err := p.tryReservePod(ctx, pod, reserveKey)
-		if err != nil {
-			if errors.IsConflict(err) {
-				// 冲突：其他 TaskRouter 抢先预留了这个 Pod，重试
-				return p.ReserveInstance(ctx, specID, reserveKey)
-			}
-			return nil, "", err
-		}
-		// 预留成功，生成 reservedToken
-		reservedToken := generateReservedToken()
-		return instance, reservedToken, nil
-	}
+    HasIdle -->|是| PathReserve[路径 2: 预留空闲]
+    PathReserve --> TryReserve[更新 Pod annotation<br/>CAS 操作]
+    TryReserve --> Conflict{Update 冲突?}
+    Conflict -->|是| FindIdle
+    Conflict -->|否| GenToken2[生成 reservedToken]
+    GenToken2 --> Return2([返回: 已预留实例])
 
-	// 3. 无空闲 Pod，检查是否可以 scale up
-	if err := p.scaleUp(ctx, specID); err != nil {
-		return nil, "", err
-	}
-
-	// 4. 等待新 Pod Ready 并预留
-	instance, err := p.waitAndReservePod(ctx, specID, reserveKey, 30*time.Second)
-	if err != nil {
-		return nil, "", err
-	}
-
-	// 扩容后预留成功，生成 reservedToken
-	reservedToken := generateReservedToken()
-	return instance, reservedToken, nil
-}
-
-// findReservedPod 查找已绑定 reserveKey 的 Pod
-func (p *PodTaskProvider) findReservedPod(ctx context.Context, specID, reserveKey string) *TaskInstance {
-	pods, err := p.listPods(ctx, specID)
-	if err != nil {
-		return nil
-	}
-
-	for _, pod := range pods {
-		if pod.Annotations["agentcube.io/reserve-key"] == reserveKey && isPodReady(&pod) {
-			return podToTaskInstance(&pod, specID)
-		}
-	}
-
-	return nil
-}
-
-// findIdlePods 查找空闲（未预留）的 Ready Pod
-func (p *PodTaskProvider) findIdlePods(ctx context.Context, specID string) ([]corev1.Pod, error) {
-	pods, err := p.listPods(ctx, specID)
-	if err != nil {
-		return nil, err
-	}
-
-	var idle []corev1.Pod
-	for _, pod := range pods {
-		if isPodReady(&pod) && pod.Annotations["agentcube.io/reserve-key"] == "" {
-			idle = append(idle, pod)
-		}
-	}
-
-	return idle, nil
-}
-
-// tryReservePod 尝试预留 Pod（利用 K8s 乐观锁）
-func (p *PodTaskProvider) tryReservePod(ctx context.Context, pod corev1.Pod, reserveKey string) (*TaskInstance, error) {
-	// 更新 annotation（K8s 乐观锁保证并发安全）
-	pod.Annotations["agentcube.io/reserve-key"] = reserveKey
-	pod.Annotations["agentcube.io/last-active"] = time.Now().Format(time.RFC3339)
-
-	updated, err := p.client.CoreV1().Pods(pod.Namespace).Update(ctx, &pod, metav1.UpdateOptions{})
-	if err != nil {
-		return nil, err // errors.IsConflict(err) 表示冲突
-	}
-
-	return podToTaskInstance(updated, pod.Labels["agentcube.io/spec-id"]), nil
-}
-
-// scaleUp 增加 Job 并发数
-func (p *PodTaskProvider) scaleUp(ctx context.Context, specID string) error {
-	job, err := p.getJob(ctx, specID)
-	if err != nil {
-		return err
-	}
-
-	// 获取 Task 配置检查 maxInstances
-	task, err := p.getTaskBySpecID(ctx, specID)
-	if err != nil {
-		return err
-	}
-
-	currentParallelism := *job.Spec.Parallelism
-	if currentParallelism >= task.Spec.Scaling.MaxInstances {
-		return fmt.Errorf("max capacity reached: %d", task.Spec.Scaling.MaxInstances)
-	}
-
-	// 增加并发数
-	*job.Spec.Parallelism = currentParallelism + 1
-
-	_, err = p.client.BatchV1().Jobs(job.Namespace).Update(ctx, job, metav1.UpdateOptions{})
-	if errors.IsConflict(err) {
-		// 冲突说明其他 TaskRouter 已经 scale up，无需重试
-		return nil
-	}
-
-	return err
-}
-
-// waitAndReservePod 等待新 Pod Ready 并预留
-func (p *PodTaskProvider) waitAndReservePod(ctx context.Context, specID, reserveKey string, timeout time.Duration) (*TaskInstance, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	// 使用 Watch 机制等待新 Pod Ready
-	watcher, err := p.client.CoreV1().Pods("").Watch(ctx, metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("agentcube.io/spec-id=%s", specID),
-	})
-	if err != nil {
-		return nil, err
-	}
-	defer watcher.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("wait pod ready timeout: %w", ctx.Err())
-		case event := <-watcher.ResultChan():
-			pod := event.Object.(*corev1.Pod)
-			if isPodReady(pod) && pod.Annotations["agentcube.io/reserve-key"] == "" {
-				// 发现新 Ready Pod，尝试预留
-				instance, err := p.tryReservePod(ctx, *pod, reserveKey)
-				if err == nil {
-					return instance, nil
-				}
-				// 冲突则继续等待下一个 Pod
-			}
-		}
-	}
-}
-
-// GetInstanceStatistics 获取实例统计信息
-func (p *PodTaskProvider) GetInstanceStatistics(ctx context.Context, specID string) (*InstanceStatistics, error) {
-	pods, err := p.listPods(ctx, specID)
-	if err != nil {
-		return nil, err
-	}
-
-	stats := &InstanceStatistics{
-		SpecID: specID,
-	}
-
-	for _, pod := range pods {
-		stats.Total++
-
-		if isPodReady(&pod) {
-			reserveKey := pod.Annotations["agentcube.io/reserve-key"]
-			if reserveKey != "" {
-				stats.Active++
-			} else {
-				stats.Ready++
-
-				// 检查是否为 Idle 状态
-				lastActiveStr := pod.Annotations["agentcube.io/last-active"]
-				if lastActiveStr != "" {
-					lastActive, _ := time.Parse(time.RFC3339, lastActiveStr)
-					// 假设从 Task 中获取 idleTimeout，这里简化为固定值
-					if time.Since(lastActive) > 150*time.Second {  // idleTimeout/2
-						stats.Idle++
-					}
-				}
-			}
-		} else if pod.Status.Phase == corev1.PodPending || pod.Status.Phase == corev1.PodRunning {
-			stats.Creating++
-		}
-	}
-
-	return stats, nil
-}
-
-// 辅助方法
-func (p *PodTaskProvider) listPods(ctx context.Context, specID string) ([]corev1.Pod, error) {
-	podList, err := p.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("agentcube.io/spec-id=%s", specID),
-	})
-	if err != nil {
-		return nil, err
-	}
-	return podList.Items, nil
-}
-
-func (p *PodTaskProvider) getJob(ctx context.Context, specID string) (*batchv1.Job, error) {
-	return p.client.BatchV1().Jobs("").Get(ctx, specID, metav1.GetOptions{})
-}
-
-func podToTaskInstance(pod *corev1.Pod, specID string) *TaskInstance {
-	lastActive, _ := time.Parse(time.RFC3339, pod.Annotations["agentcube.io/last-active"])
-
-	return &TaskInstance{
-		ID:         string(pod.UID),
-		SpecID:     specID,
-		Status:     podStatusToInstanceStatus(pod),
-		Endpoint:   Endpoint{Host: pod.Status.PodIP, Port: 8080},
-		ReserveKey: pod.Annotations["agentcube.io/reserve-key"],
-		CreatedAt:  pod.CreationTimestamp.Time,
-		LastActive: lastActive,
-	}
-}
-
-func isPodReady(pod *corev1.Pod) bool {
-	for _, cond := range pod.Status.Conditions {
-		if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
-			return true
-		}
-	}
-	return false
-}
-
-func podStatusToInstanceStatus(pod *corev1.Pod) InstanceStatus {
-	if isPodReady(pod) {
-		if pod.Annotations["agentcube.io/reserve-key"] != "" {
-			return InstanceActive
-		}
-		return InstanceReady
-	}
-	return InstanceCreating
-}
+    HasIdle -->|否| CheckMax{达到 maxInstances?}
+    CheckMax -->|是| ReturnError([返回: 容量不足错误])
+    CheckMax -->|否| PathScaleUp[路径 3: 触发扩容]
+    PathScaleUp --> UpdateJob[Job.Parallelism++]
+    UpdateJob --> WatchPod[Watch 新 Pod 创建]
+    WatchPod --> WaitReady{Pod Ready?<br/>30s 超时}
+    WaitReady -->|超时| ReturnTimeout([返回: 超时错误])
+    WaitReady -->|Ready| ReservNew[更新 Pod annotation]
+    ReservNew --> GenToken3[生成 reservedToken]
+    GenToken3 --> Return3([返回: 新创建实例])
 ```
+
+**关键实现细节**：
+
+1. **generateReservedToken()**：生成格式为 `tok-{timestamp}-{random}` 的预留令牌
+2. **findReservedPod()**：查找已绑定 reserveKey 的 Pod（最快路径）
+3. **findIdlePods()**：查找 `reserve-key=""` 且 Ready 的 Pod（快速路径）
+4. **tryReservePod()**：利用 K8s 乐观锁更新 Pod annotation，处理并发冲突
+5. **scaleUp()**：增加 `Job.Spec.Parallelism`，触发新 Pod 创建（慢速路径）
+6. **waitAndReservePod()**：Watch Pod 事件，等待新实例就绪并预留
+7. **GetInstanceStatistics()**：聚合实例统计信息（Total/Active/Ready/Idle/Creating）
+
+完整的函数实现代码见 [附录 B: PodTaskProvider 完整实现代码](#附录-b-podtaskprovider-完整实现代码)。
 
 #### 生命周期自动管理
 
-PodTaskProvider 启动后台 Goroutine 自动管理实例生命周期：
+PodTaskProvider 启动后台 Goroutine，每 30 秒执行以下自动管理任务：
 
-```go
-// RunLifecycleManager 启动生命周期管理器（后台运行）
-func (p *PodTaskProvider) RunLifecycleManager(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+1. **reclaimExpiredInstances()**：回收超时实例
+   - 检查 **TTL**（从创建时算起）：超期则删除 Pod
+   - 检查 **IdleTimeout**（从 `last-active` 算起）：空闲超时则删除 Pod
+   - 通过 annotation `agentcube.io/last-active` 跟踪最后活跃时间
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			p.reclaimExpiredInstances(ctx)
-			p.autoScaleDown(ctx)
-		}
-	}
-}
+2. **autoScaleDown()**：自动缩容
+   - 统计空闲 Pod 数量（`reserve-key=""` 且 Ready）
+   - 策略：空闲 Pod 超过 3 个 且 当前并发数 > `minInstances`，则 `Job.Parallelism--`
+   - 避免资源浪费
 
-// reclaimExpiredInstances 回收超时实例
-func (p *PodTaskProvider) reclaimExpiredInstances(ctx context.Context) {
-	pods, _ := p.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{
-		LabelSelector: "agentcube.io/spec-id",
-	})
-
-	for _, pod := range pods.Items {
-		specID := pod.Labels["agentcube.io/spec-id"]
-		task, err := p.getTaskBySpecID(ctx, specID)
-		if err != nil {
-			continue
-		}
-
-		lifecycle := task.Spec.Scaling.InstanceLifecycle
-
-		// 检查 TTL（从创建时算起）
-		if lifecycle.TTL != nil {
-			age := time.Since(pod.CreationTimestamp.Time)
-			if age > lifecycle.TTL.Duration {
-				p.client.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
-				continue
-			}
-		}
-
-		// 检查 IdleTimeout（从最后活跃时间算起）
-		if lifecycle.IdleTimeout != nil {
-			lastActiveStr := pod.Annotations["agentcube.io/last-active"]
-			if lastActiveStr != "" {
-				lastActive, _ := time.Parse(time.RFC3339, lastActiveStr)
-				idle := time.Since(lastActive)
-				if idle > lifecycle.IdleTimeout.Duration {
-					p.client.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
-				}
-			}
-		}
-	}
-}
-
-// autoScaleDown 自动缩容（空闲 Pod 过多时）
-func (p *PodTaskProvider) autoScaleDown(ctx context.Context) {
-	jobs, _ := p.client.BatchV1().Jobs("").List(ctx, metav1.ListOptions{
-		LabelSelector: "agentcube.io/spec-id",
-	})
-
-	for _, job := range jobs.Items {
-		specID := job.Labels["agentcube.io/spec-id"]
-		task, err := p.getTaskBySpecID(ctx, specID)
-		if err != nil {
-			continue
-		}
-
-		// 统计空闲 Pod 数
-		idleCount := p.countIdlePods(ctx, specID)
-		currentParallelism := *job.Spec.Parallelism
-
-		// 策略：空闲 Pod 超过 3 个，且当前并发数 > minInstances，则 scale down
-		if idleCount > 3 && currentParallelism > task.Spec.Scaling.MinInstances {
-			*job.Spec.Parallelism = currentParallelism - 1
-			p.client.BatchV1().Jobs(job.Namespace).Update(ctx, &job, metav1.UpdateOptions{})
-		}
-	}
-}
-
-func (p *PodTaskProvider) countIdlePods(ctx context.Context, specID string) int32 {
-	pods, _ := p.listPods(ctx, specID)
-	var count int32
-	for _, pod := range pods {
-		if isPodReady(&pod) && pod.Annotations["agentcube.io/reserve-key"] == "" {
-			count++
-		}
-	}
-	return count
-}
-```
+详细实现代码见 [附录 B: PodTaskProvider 完整实现代码](#附录-b-podtaskprovider-完整实现代码)。
 
 **关键特性总结**：
 
@@ -2334,6 +1818,45 @@ agent-sandbox 提供以下核心 CRD：
 2. **快速启动**：利用 SandboxWarmPool 预热机制，实现亚秒级实例分配
 3. **单例管理**：每个 Sandbox 是独立的单例资源，与 PodTaskProvider 的 Job 批量管理模式不同
 4. **接口一致**：实现相同的 `InstanceSpecProvider` 和 `InstanceProvider` 接口
+
+#### 实现映射表
+
+SandboxTaskProvider 将抽象的 InstanceProvider 接口映射到 agent-sandbox 项目的 CRD 资源：
+
+| 抽象操作 | agent-sandbox 实现方式 | 并发安全机制 | 说明 |
+|---------|----------------------|-------------|------|
+| **查找属于 specID 的实例** | List Sandboxes with label `agentcube.io/spec-id=<specID>` | - | 使用 Label Selector 索引 |
+| **查找已绑定实例** | 过滤 `Sandbox.Annotations["agentcube.io/reserve-key"] == reserveKey` | - | 会话复用路径 |
+| **查找空闲实例** | 过滤 `reserve-key=="" && Sandbox.Status.Phase==Running` | - | 首次分配路径 |
+| **标记为已预留（原子操作）** | Update `Sandbox.Annotations["agentcube.io/reserve-key"]` | K8s 乐观锁（ResourceVersion） | CAS 语义，冲突时自动重试 |
+| **触发扩容创建新实例（快速）** | Create SandboxClaim 从 WarmPool 获取 | SandboxClaim 绑定机制 | 亚秒级分配（~100-500ms） |
+| **触发扩容创建新实例（慢速）** | Create Sandbox 直接创建 | - | 冷启动（~1-3s，取决于 runtime） |
+| **等待新实例就绪** | Watch Sandbox events，过滤 `Phase==Running` | - | 事件驱动，避免轮询 |
+| **获取实例端点** | 读取 `Sandbox.Status.Network.IP` + 固定端口 8080 | - | Sandbox IP 作为 Endpoint.Host |
+| **回收超时实例** | 调用 Sandbox shutdown，触发优雅关闭 | - | 遵守 ShutdownTime 配置 |
+| **缩容** | Delete Sandbox（不触发 WarmPool 补充） | - | 单例删除，精确控制 |
+
+**关键设计选择**：
+
+1. **使用 SandboxWarmPool 加速冷启动**
+   - ✅ 优势：预热实例池，实现亚秒级分配（~100-500ms）
+   - ✅ 优势：WarmPool 自动补充，保持池大小稳定
+   - ⚠️ 成本：预热实例持续占用资源（CPU/内存）
+
+2. **单例 Sandbox vs 批量 Job 管理**
+   - 每个 Sandbox 是独立的 CR，有自己的生命周期
+   - 适配 `reusePolicy=Always` 的长生命周期场景
+   - 扩容时创建新 Sandbox，而非更新 Parallelism
+
+3. **双路径扩容策略**
+   - **路径 1（快速）**：通过 SandboxClaim 从 WarmPool 获取 → ~100-500ms
+   - **路径 2（慢速）**：直接创建 Sandbox（WarmPool 耗尽时） → ~1-3s
+   - TaskRouter 优先尝试快速路径，失败后降级到慢速路径
+
+4. **优雅关闭机制**
+   - Sandbox 支持 ShutdownTime 配置（如 30s）
+   - 允许 Agent 保存状态、完成当前请求
+   - 相比 Pod 的 TerminationGracePeriod 更适合有状态 Agent
 
 #### 架构概要
 
@@ -2529,337 +2052,113 @@ func (p *SandboxTaskProvider) GetSpecStatus(ctx context.Context, specID string) 
 
 #### 数据平面实现（InstanceProvider）
 
+**ReserveInstance 请求路径分析**：
+
+```mermaid
+graph TB
+    Start([Client Request]) --> CheckSession{reserveKey != ""}
+
+    CheckSession -->|Yes| FindReserved[Find Reserved Instance<br/>by reserveKey]
+    FindReserved --> HasReserved{Found?}
+    HasReserved -->|Yes| Path1[Path 1: Session Reuse<br/>~3-5ms]
+    Path1 --> ReturnReserved[Return Existing Instance]
+
+    CheckSession -->|No| FindIdle
+    HasReserved -->|No| FindIdle[Find Idle Instance]
+    FindIdle --> HasIdle{Found?}
+    HasIdle -->|Yes| TryReserve[Try Reserve with K8s Lock]
+    TryReserve --> LockSuccess{Success?}
+    LockSuccess -->|Yes| Path2[Path 2: Idle Reservation<br/>~5-10ms]
+    LockSuccess -->|No| Retry[Retry ReserveInstance]
+    Path2 --> ReturnIdle[Return Reserved Instance]
+
+    HasIdle -->|No| CheckPool[Check WarmPool]
+    CheckPool --> PoolAvail{Available > 0?}
+    PoolAvail -->|Yes| ClaimPool[Create SandboxClaim]
+    ClaimPool --> WaitBind[Wait Claim Bound]
+    WaitBind --> Path3[Path 3: WarmPool Claim<br/>~100-500ms]
+    Path3 --> ReturnClaimed[Return Claimed Instance]
+
+    PoolAvail -->|No| CheckLimit{Current < Max?}
+    CheckLimit -->|Yes| CreateNew[Create New Sandbox<br/>Replicas=1]
+    CreateNew --> WaitRunning[Wait Sandbox Running]
+    WaitRunning --> Path4[Path 4: Cold Start<br/>~1-3s]
+    Path4 --> ReturnNew[Return New Instance]
+
+    CheckLimit -->|No| Error[Error: Max Capacity]
+
+    ReturnReserved --> GenToken[Generate reservedToken]
+    ReturnIdle --> GenToken
+    ReturnClaimed --> GenToken
+    ReturnNew --> GenToken
+    GenToken --> End([Return to Client])
+
+    style Path1 fill:#d4edda
+    style Path2 fill:#d1ecf1
+    style Path3 fill:#fff3cd
+    style Path4 fill:#f8d7da
+    style Error fill:#f5c6cb
+```
+
+**请求路径性能对比**：
+
+| 路径 | 触发条件 | 延迟 | 说明 |
+|-----|---------|-----|-----|
+| **Path 1: Session Reuse** | reserveKey 已绑定实例 | ~3-5ms | 最快路径，查找 annotation |
+| **Path 2: Idle Reservation** | 存在空闲 Running Sandbox | ~5-10ms | K8s 乐观锁 + annotation 更新 |
+| **Path 3: WarmPool Claim** | WarmPool 有可用实例 | ~100-500ms | 创建 SandboxClaim + 等待绑定 |
+| **Path 4: Cold Start** | 需要创建新 Sandbox | ~1-3s | 创建 + 等待 MicroVM 启动 |
+
+**关键实现步骤**：
+
 ```go
 // ReserveInstance 预留或创建 Sandbox 实例
 func (p *SandboxTaskProvider) ReserveInstance(ctx context.Context, specID, reserveKey string) (*TaskInstance, string, error) {
-	// 1. 查找已绑定该 reserveKey 的 Sandbox（会话复用快速路径）
+	// Path 1: 查找已绑定该 reserveKey 的 Sandbox（会话复用）
 	if reserveKey != "" {
 		if instance := p.findReservedSandbox(ctx, specID, reserveKey); instance != nil {
-			reservedToken := generateReservedToken()
-			return instance, reservedToken, nil
+			return instance, generateReservedToken(), nil
 		}
 	}
 
-	// 2. 查找空闲 Sandbox 并尝试预留
-	idleSandboxes, err := p.findIdleSandboxes(ctx, specID)
-	if err != nil {
-		return nil, "", err
-	}
-
-	if len(idleSandboxes) > 0 {
-		// 尝试预留第一个空闲 Sandbox（利用 K8s 乐观锁）
-		sb := idleSandboxes[0]
-		instance, err := p.tryReserveSandbox(ctx, sb, reserveKey)
-		if err != nil {
-			if errors.IsConflict(err) {
-				// 冲突：其他 TaskRouter 抢先预留了，重试
-				return p.ReserveInstance(ctx, specID, reserveKey)
-			}
-			return nil, "", err
+	// Path 2: 查找空闲 Sandbox 并尝试预留（利用 K8s 乐观锁）
+	if idleSandboxes, _ := p.findIdleSandboxes(ctx, specID); len(idleSandboxes) > 0 {
+		if instance, err := p.tryReserveSandbox(ctx, idleSandboxes[0], reserveKey); err == nil {
+			return instance, generateReservedToken(), nil
+		} else if errors.IsConflict(err) {
+			return p.ReserveInstance(ctx, specID, reserveKey) // Retry
 		}
-		reservedToken := generateReservedToken()
-		return instance, reservedToken, nil
 	}
 
-	// 3. 无空闲 Sandbox，尝试从 WarmPool 获取
-	instance, err := p.claimFromWarmPool(ctx, specID, reserveKey)
-	if err == nil {
-		reservedToken := generateReservedToken()
-		return instance, reservedToken, nil
+	// Path 3: 从 WarmPool 获取预热实例
+	if instance, err := p.claimFromWarmPool(ctx, specID, reserveKey); err == nil {
+		return instance, generateReservedToken(), nil
 	}
 
-	// 4. WarmPool 也没有可用实例，检查是否可以 scale up 创建新 Sandbox
+	// Path 4: 创建新 Sandbox 并等待就绪
 	if err := p.checkScaleLimit(ctx, specID); err != nil {
 		return nil, "", err
 	}
-
-	// 5. 创建新的 Sandbox 并等待就绪
-	instance, err = p.createAndWaitSandbox(ctx, specID, reserveKey, 30*time.Second)
+	instance, err := p.createAndWaitSandbox(ctx, specID, reserveKey, 30*time.Second)
 	if err != nil {
 		return nil, "", err
 	}
-
-	reservedToken := generateReservedToken()
-	return instance, reservedToken, nil
-}
-
-// findReservedSandbox 查找已绑定 reserveKey 的 Sandbox
-func (p *SandboxTaskProvider) findReservedSandbox(ctx context.Context, specID, reserveKey string) *TaskInstance {
-	sandboxes, err := p.listSandboxes(ctx, specID)
-	if err != nil {
-		return nil
-	}
-
-	for _, sb := range sandboxes {
-		if sb.Annotations["agentcube.io/reserve-key"] == reserveKey &&
-		   sb.Status.Phase == sandboxv1alpha1.SandboxRunning {
-			return sandboxToTaskInstance(&sb, specID)
-		}
-	}
-
-	return nil
-}
-
-// findIdleSandboxes 查找空闲（未预留）的 Running Sandbox
-func (p *SandboxTaskProvider) findIdleSandboxes(ctx context.Context, specID string) ([]sandboxv1alpha1.Sandbox, error) {
-	sandboxes, err := p.listSandboxes(ctx, specID)
-	if err != nil {
-		return nil, err
-	}
-
-	var idle []sandboxv1alpha1.Sandbox
-	for _, sb := range sandboxes {
-		if sb.Status.Phase == sandboxv1alpha1.SandboxRunning &&
-		   sb.Annotations["agentcube.io/reserve-key"] == "" {
-			idle = append(idle, sb)
-		}
-	}
-
-	return idle, nil
-}
-
-// tryReserveSandbox 尝试预留 Sandbox（利用 K8s 乐观锁）
-func (p *SandboxTaskProvider) tryReserveSandbox(ctx context.Context, sb sandboxv1alpha1.Sandbox, reserveKey string) (*TaskInstance, error) {
-	// 更新 annotation（K8s 乐观锁保证并发安全）
-	if sb.Annotations == nil {
-		sb.Annotations = make(map[string]string)
-	}
-	sb.Annotations["agentcube.io/reserve-key"] = reserveKey
-	sb.Annotations["agentcube.io/last-active"] = time.Now().Format(time.RFC3339)
-
-	updated, err := p.sandboxClient.AgentV1alpha1().Sandboxes(sb.Namespace).Update(ctx, &sb, metav1.UpdateOptions{})
-	if err != nil {
-		return nil, err // errors.IsConflict(err) 表示冲突
-	}
-
-	return sandboxToTaskInstance(updated, sb.Labels["agentcube.io/spec-id"]), nil
-}
-
-// claimFromWarmPool 从 WarmPool 获取预热的 Sandbox
-func (p *SandboxTaskProvider) claimFromWarmPool(ctx context.Context, specID, reserveKey string) (*TaskInstance, error) {
-	warmPool, err := p.getWarmPool(ctx, specID)
-	if err != nil {
-		return nil, err
-	}
-
-	// 检查 WarmPool 是否有可用实例
-	if warmPool.Status.Available <= 0 {
-		return nil, fmt.Errorf("no available sandbox in warm pool")
-	}
-
-	// 创建 SandboxClaim 从 WarmPool 获取 Sandbox
-	claim := &sandboxv1alpha1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: fmt.Sprintf("%s-claim-", specID),
-			Namespace:    warmPool.Namespace,
-			Labels: map[string]string{
-				"agentcube.io/spec-id": specID,
-			},
-			Annotations: map[string]string{
-				"agentcube.io/reserve-key": reserveKey,
-				"agentcube.io/last-active":  time.Now().Format(time.RFC3339),
-			},
-		},
-		Spec: sandboxv1alpha1.SandboxClaimSpec{
-			// 引用 WarmPool
-			PoolRef: &sandboxv1alpha1.SandboxWarmPoolReference{
-				Name: specID,
-			},
-		},
-	}
-
-	created, err := p.sandboxClient.AgentV1alpha1().SandboxClaims(warmPool.Namespace).Create(ctx, claim, metav1.CreateOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	// 等待 Claim 绑定完成
-	return p.waitClaimBound(ctx, created, 10*time.Second)
-}
-
-// waitClaimBound 等待 SandboxClaim 绑定并返回 Sandbox 信息
-func (p *SandboxTaskProvider) waitClaimBound(ctx context.Context, claim *sandboxv1alpha1.SandboxClaim, timeout time.Duration) (*TaskInstance, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	watcher, err := p.sandboxClient.AgentV1alpha1().SandboxClaims(claim.Namespace).Watch(ctx, metav1.ListOptions{
-		FieldSelector: fmt.Sprintf("metadata.name=%s", claim.Name),
-	})
-	if err != nil {
-		return nil, err
-	}
-	defer watcher.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("wait sandbox claim bound timeout: %w", ctx.Err())
-		case event := <-watcher.ResultChan():
-			updatedClaim := event.Object.(*sandboxv1alpha1.SandboxClaim)
-			if updatedClaim.Status.Phase == sandboxv1alpha1.ClaimBound &&
-			   updatedClaim.Status.SandboxRef != nil {
-				// Claim 已绑定，获取 Sandbox
-				sb, err := p.sandboxClient.AgentV1alpha1().Sandboxes(claim.Namespace).Get(ctx,
-					updatedClaim.Status.SandboxRef.Name, metav1.GetOptions{})
-				if err != nil {
-					return nil, err
-				}
-				return sandboxToTaskInstance(sb, claim.Labels["agentcube.io/spec-id"]), nil
-			}
-		}
-	}
-}
-
-// createAndWaitSandbox 直接创建新 Sandbox 并等待就绪
-func (p *SandboxTaskProvider) createAndWaitSandbox(ctx context.Context, specID, reserveKey string, timeout time.Duration) (*TaskInstance, error) {
-	warmPool, err := p.getWarmPool(ctx, specID)
-	if err != nil {
-		return nil, err
-	}
-
-	// 基于 WarmPool 模板创建新 Sandbox
-	sandbox := &sandboxv1alpha1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: fmt.Sprintf("%s-", specID),
-			Namespace:    warmPool.Namespace,
-			Labels:       warmPool.Spec.Template.Labels,
-			Annotations: map[string]string{
-				"agentcube.io/reserve-key": reserveKey,
-				"agentcube.io/last-active":  time.Now().Format(time.RFC3339),
-			},
-		},
-		Spec: warmPool.Spec.Template.Spec,
-	}
-	// 设置 Replicas=1 启动 Sandbox
-	sandbox.Spec.Replicas = ptr.To(int32(1))
-
-	created, err := p.sandboxClient.AgentV1alpha1().Sandboxes(warmPool.Namespace).Create(ctx, sandbox, metav1.CreateOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	// 等待 Sandbox Running
-	return p.waitSandboxRunning(ctx, created, timeout)
-}
-
-// waitSandboxRunning 等待 Sandbox 进入 Running 状态
-func (p *SandboxTaskProvider) waitSandboxRunning(ctx context.Context, sb *sandboxv1alpha1.Sandbox, timeout time.Duration) (*TaskInstance, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	watcher, err := p.sandboxClient.AgentV1alpha1().Sandboxes(sb.Namespace).Watch(ctx, metav1.ListOptions{
-		FieldSelector: fmt.Sprintf("metadata.name=%s", sb.Name),
-	})
-	if err != nil {
-		return nil, err
-	}
-	defer watcher.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("wait sandbox running timeout: %w", ctx.Err())
-		case event := <-watcher.ResultChan():
-			updatedSb := event.Object.(*sandboxv1alpha1.Sandbox)
-			if updatedSb.Status.Phase == sandboxv1alpha1.SandboxRunning {
-				return sandboxToTaskInstance(updatedSb, sb.Labels["agentcube.io/spec-id"]), nil
-			}
-		}
-	}
-}
-
-// GetInstanceStatistics 获取实例统计信息
-func (p *SandboxTaskProvider) GetInstanceStatistics(ctx context.Context, specID string) (*InstanceStatistics, error) {
-	sandboxes, err := p.listSandboxes(ctx, specID)
-	if err != nil {
-		return nil, err
-	}
-
-	warmPool, _ := p.getWarmPool(ctx, specID)
-
-	stats := &InstanceStatistics{
-		SpecID: specID,
-	}
-
-	for _, sb := range sandboxes {
-		stats.Total++
-
-		switch sb.Status.Phase {
-		case sandboxv1alpha1.SandboxRunning:
-			reserveKey := sb.Annotations["agentcube.io/reserve-key"]
-			if reserveKey != "" {
-				stats.Active++
-			} else {
-				stats.Ready++
-				// 检查是否为 Idle 状态
-				lastActiveStr := sb.Annotations["agentcube.io/last-active"]
-				if lastActiveStr != "" {
-					lastActive, _ := time.Parse(time.RFC3339, lastActiveStr)
-					if time.Since(lastActive) > 150*time.Second {
-						stats.Idle++
-					}
-				}
-			}
-		case sandboxv1alpha1.SandboxPending:
-			stats.Creating++
-		}
-	}
-
-	// 加上 WarmPool 中未分配的数量
-	if warmPool != nil {
-		stats.Ready += warmPool.Status.Available
-		stats.Creating += warmPool.Status.Creating
-	}
-
-	return stats, nil
-}
-
-// 辅助方法
-func (p *SandboxTaskProvider) listSandboxes(ctx context.Context, specID string) ([]sandboxv1alpha1.Sandbox, error) {
-	list, err := p.sandboxClient.AgentV1alpha1().Sandboxes("").List(ctx, metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("agentcube.io/spec-id=%s", specID),
-	})
-	if err != nil {
-		return nil, err
-	}
-	return list.Items, nil
-}
-
-func (p *SandboxTaskProvider) getWarmPool(ctx context.Context, specID string) (*sandboxv1alpha1.SandboxWarmPool, error) {
-	return p.sandboxClient.AgentV1alpha1().SandboxWarmPools("").Get(ctx, specID, metav1.GetOptions{})
-}
-
-func sandboxToTaskInstance(sb *sandboxv1alpha1.Sandbox, specID string) *TaskInstance {
-	lastActive, _ := time.Parse(time.RFC3339, sb.Annotations["agentcube.io/last-active"])
-
-	return &TaskInstance{
-		ID:         string(sb.UID),
-		SpecID:     specID,
-		Status:     sandboxStatusToInstanceStatus(sb),
-		Endpoint:   Endpoint{Host: sb.Status.PodIP, Port: 8080},
-		ReserveKey: sb.Annotations["agentcube.io/reserve-key"],
-		CreatedAt:  sb.CreationTimestamp.Time,
-		LastActive: lastActive,
-	}
-}
-
-func sandboxStatusToInstanceStatus(sb *sandboxv1alpha1.Sandbox) InstanceStatus {
-	switch sb.Status.Phase {
-	case sandboxv1alpha1.SandboxRunning:
-		if sb.Annotations["agentcube.io/reserve-key"] != "" {
-			return InstanceActive
-		}
-		return InstanceReady
-	case sandboxv1alpha1.SandboxPending:
-		return InstanceCreating
-	default:
-		return InstanceCreating
-	}
+	return instance, generateReservedToken(), nil
 }
 ```
 
+**完整的辅助方法实现请参见 [附录 A](#附录-a-sandboxtaskprovider-完整实现代码)。**
+
 #### 生命周期自动管理
 
+SandboxTaskProvider 内部启动后台 Goroutine 自动管理实例生命周期：
+
+**管理策略**：
+- **TTL 回收**：检查实例从创建起的总存活时间，超过 TTL 触发优雅关闭
+- **IdleTimeout 回收**：检查空闲实例（`reserve-key == ""`）的最后活跃时间，超时触发优雅关闭
+- **优雅关闭**：设置 `Sandbox.Spec.Replicas=0`，等待 `shutdownTime` 后终止
+
+**实施方式**：
 ```go
 // RunLifecycleManager 启动生命周期管理器（后台运行）
 func (p *SandboxTaskProvider) RunLifecycleManager(ctx context.Context) {
@@ -2871,55 +2170,9 @@ func (p *SandboxTaskProvider) RunLifecycleManager(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			p.reclaimExpiredSandboxes(ctx)
+			p.reclaimExpiredSandboxes(ctx)  // 详细实现见附录
 		}
 	}
-}
-
-// reclaimExpiredSandboxes 回收超时的 Sandbox 实例
-func (p *SandboxTaskProvider) reclaimExpiredSandboxes(ctx context.Context) {
-	sandboxes, _ := p.sandboxClient.AgentV1alpha1().Sandboxes("").List(ctx, metav1.ListOptions{
-		LabelSelector: "agentcube.io/spec-id",
-	})
-
-	for _, sb := range sandboxes.Items {
-		specID := sb.Labels["agentcube.io/spec-id"]
-		task, err := p.getTaskBySpecID(ctx, specID)
-		if err != nil {
-			continue
-		}
-
-		lifecycle := task.Spec.Scaling.InstanceLifecycle
-
-		// 检查 TTL（从创建时算起）
-		if lifecycle.TTL != nil {
-			age := time.Since(sb.CreationTimestamp.Time)
-			if age > lifecycle.TTL.Duration {
-				// 触发优雅关闭
-				p.shutdownSandbox(ctx, &sb)
-				continue
-			}
-		}
-
-		// 检查 IdleTimeout（从最后活跃时间算起）
-		if lifecycle.IdleTimeout != nil && sb.Annotations["agentcube.io/reserve-key"] == "" {
-			lastActiveStr := sb.Annotations["agentcube.io/last-active"]
-			if lastActiveStr != "" {
-				lastActive, _ := time.Parse(time.RFC3339, lastActiveStr)
-				idle := time.Since(lastActive)
-				if idle > lifecycle.IdleTimeout.Duration {
-					p.shutdownSandbox(ctx, &sb)
-				}
-			}
-		}
-	}
-}
-
-// shutdownSandbox 优雅关闭 Sandbox
-func (p *SandboxTaskProvider) shutdownSandbox(ctx context.Context, sb *sandboxv1alpha1.Sandbox) {
-	// 设置 Replicas=0 触发优雅关闭（会等待 ShutdownTime）
-	sb.Spec.Replicas = ptr.To(int32(0))
-	p.sandboxClient.AgentV1alpha1().Sandboxes(sb.Namespace).Update(ctx, sb, metav1.UpdateOptions{})
 }
 ```
 
@@ -2940,6 +2193,8 @@ func (p *SandboxTaskProvider) shutdownSandbox(ctx context.Context, sb *sandboxv1
 
 #### 配置示例
 
+完整配置示例请参考 `config/samples/task_sandbox.yaml`：
+
 ```yaml
 apiVersion: agentcube.io/v1alpha1
 kind: Task
@@ -2948,15 +2203,36 @@ metadata:
 spec:
   deployment:
     type: sandbox
-    sandboxTemplate:
-      runtime: kata-containers  # 或 firecracker, gvisor
-      image: "your-registry/agent:v1.0"
-      resources:
-        cpu: "2000m"
-        memory: "4Gi"
-      poolConfig:
-        enabled: true
-        minSize: 3  # 预热池最小实例数
+    sandbox:
+      # Pod template with runtime configuration
+      podTemplate:
+        spec:
+          runtimeClassName: kata-containers  # or firecracker, gvisor
+          containers:
+            - name: agent
+              image: "registry.io/agents/code-interpreter:v1.0"
+              ports:
+                - containerPort: 8080
+              resources:
+                requests:
+                  cpu: "1000m"
+                  memory: "2Gi"
+                limits:
+                  cpu: "2000m"
+                  memory: "4Gi"
+
+      # Persistent storage for agent state
+      volumeClaimTemplates:
+        - metadata:
+            name: agent-data
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 10Gi
+
+      # Graceful shutdown timeout
+      shutdownTime: 30s
 
   routing:
     gatewayRefs: [agent-gateway]
@@ -2968,7 +2244,7 @@ spec:
 
   scaling:
     scalingMode: OnDemand
-    minInstances: 3   # 预热实例数
+    minInstances: 3   # WarmPool size (auto-configured)
     maxInstances: 50
     instanceLifecycle:
       reusePolicy: Always
@@ -3379,6 +2655,676 @@ TBD.
 
 ---
 
+## 附录 (Appendices)
+
+### 附录 A: PodTaskProvider 完整实现代码
+
+本附录包含 PodTaskProvider 的完整实现代码，供开发者参考。主文档中已展示关键流程和设计思路。
+
+#### ReserveInstance 辅助方法实现
+
+```go
+// generateReservedToken 生成预留令牌
+// 格式: tok-{timestamp}-{random}
+// 示例: "tok-1737123456-a1b2c3d4"
+func generateReservedToken() string {
+	timestamp := time.Now().Unix()
+	randomBytes := make([]byte, 4)
+	rand.Read(randomBytes)
+	randomStr := hex.EncodeToString(randomBytes)
+	return fmt.Sprintf("tok-%d-%s", timestamp, randomStr)
+}
+
+// findReservedPod 查找已绑定 reserveKey 的 Pod
+func (p *PodTaskProvider) findReservedPod(ctx context.Context, specID, reserveKey string) *TaskInstance {
+	pods, err := p.listPods(ctx, specID)
+	if err != nil {
+		return nil
+	}
+
+	for _, pod := range pods {
+		if pod.Annotations["agentcube.io/reserve-key"] == reserveKey && isPodReady(&pod) {
+			return podToTaskInstance(&pod, specID)
+		}
+	}
+
+	return nil
+}
+
+// findIdlePods 查找空闲（未预留）的 Ready Pod
+func (p *PodTaskProvider) findIdlePods(ctx context.Context, specID string) ([]corev1.Pod, error) {
+	pods, err := p.listPods(ctx, specID)
+	if err != nil {
+		return nil, err
+	}
+
+	var idle []corev1.Pod
+	for _, pod := range pods {
+		if isPodReady(&pod) && pod.Annotations["agentcube.io/reserve-key"] == "" {
+			idle = append(idle, pod)
+		}
+	}
+
+	return idle, nil
+}
+
+// tryReservePod 尝试预留 Pod（利用 K8s 乐观锁）
+func (p *PodTaskProvider) tryReservePod(ctx context.Context, pod corev1.Pod, reserveKey string) (*TaskInstance, error) {
+	// 更新 annotation（K8s 乐观锁保证并发安全）
+	pod.Annotations["agentcube.io/reserve-key"] = reserveKey
+	pod.Annotations["agentcube.io/last-active"] = time.Now().Format(time.RFC3339)
+
+	updated, err := p.client.CoreV1().Pods(pod.Namespace).Update(ctx, &pod, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, err // errors.IsConflict(err) 表示冲突
+	}
+
+	return podToTaskInstance(updated, pod.Labels["agentcube.io/spec-id"]), nil
+}
+
+// scaleUp 增加 Job 并发数
+func (p *PodTaskProvider) scaleUp(ctx context.Context, specID string) error {
+	job, err := p.getJob(ctx, specID)
+	if err != nil {
+		return err
+	}
+
+	// 获取 Task 配置检查 maxInstances
+	task, err := p.getTaskBySpecID(ctx, specID)
+	if err != nil {
+		return err
+	}
+
+	currentParallelism := *job.Spec.Parallelism
+	if currentParallelism >= task.Spec.Scaling.MaxInstances {
+		return fmt.Errorf("max capacity reached: %d", task.Spec.Scaling.MaxInstances)
+	}
+
+	// 增加并发数
+	*job.Spec.Parallelism = currentParallelism + 1
+
+	_, err = p.client.BatchV1().Jobs(job.Namespace).Update(ctx, job, metav1.UpdateOptions{})
+	if errors.IsConflict(err) {
+		// 冲突说明其他 TaskRouter 已经 scale up，无需重试
+		return nil
+	}
+
+	return err
+}
+
+// waitAndReservePod 等待新 Pod Ready 并预留
+func (p *PodTaskProvider) waitAndReservePod(ctx context.Context, specID, reserveKey string, timeout time.Duration) (*TaskInstance, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// 使用 Watch 机制等待新 Pod Ready
+	watcher, err := p.client.CoreV1().Pods("").Watch(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("agentcube.io/spec-id=%s", specID),
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer watcher.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait pod ready timeout: %w", ctx.Err())
+		case event := <-watcher.ResultChan():
+			pod := event.Object.(*corev1.Pod)
+			if isPodReady(pod) && pod.Annotations["agentcube.io/reserve-key"] == "" {
+				// 发现新 Ready Pod，尝试预留
+				instance, err := p.tryReservePod(ctx, *pod, reserveKey)
+				if err == nil {
+					return instance, nil
+				}
+				// 冲突则继续等待下一个 Pod
+			}
+		}
+	}
+}
+
+// GetInstanceStatistics 获取实例统计信息
+func (p *PodTaskProvider) GetInstanceStatistics(ctx context.Context, specID string) (*InstanceStatistics, error) {
+	pods, err := p.listPods(ctx, specID)
+	if err != nil {
+		return nil, err
+	}
+
+	stats := &InstanceStatistics{
+		SpecID: specID,
+	}
+
+	for _, pod := range pods {
+		stats.Total++
+
+		if isPodReady(&pod) {
+			reserveKey := pod.Annotations["agentcube.io/reserve-key"]
+			if reserveKey != "" {
+				stats.Active++
+			} else {
+				stats.Ready++
+
+				// 检查是否为 Idle 状态
+				lastActiveStr := pod.Annotations["agentcube.io/last-active"]
+				if lastActiveStr != "" {
+					lastActive, _ := time.Parse(time.RFC3339, lastActiveStr)
+					// 假设从 Task 中获取 idleTimeout，这里简化为固定值
+					if time.Since(lastActive) > 150*time.Second {  // idleTimeout/2
+						stats.Idle++
+					}
+				}
+			}
+		} else if pod.Status.Phase == corev1.PodPending || pod.Status.Phase == corev1.PodRunning {
+			stats.Creating++
+		}
+	}
+
+	return stats, nil
+}
+
+// listPods 列出属于 specID 的所有 Pod
+func (p *PodTaskProvider) listPods(ctx context.Context, specID string) ([]corev1.Pod, error) {
+	podList, err := p.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("agentcube.io/spec-id=%s", specID),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return podList.Items, nil
+}
+
+// getJob 获取 Job 对象
+func (p *PodTaskProvider) getJob(ctx context.Context, specID string) (*batchv1.Job, error) {
+	return p.client.BatchV1().Jobs("").Get(ctx, specID, metav1.GetOptions{})
+}
+
+// podToTaskInstance 将 Pod 转换为 TaskInstance
+func podToTaskInstance(pod *corev1.Pod, specID string) *TaskInstance {
+	lastActive, _ := time.Parse(time.RFC3339, pod.Annotations["agentcube.io/last-active"])
+
+	return &TaskInstance{
+		ID:         string(pod.UID),
+		SpecID:     specID,
+		Status:     podStatusToInstanceStatus(pod),
+		Endpoint:   Endpoint{Host: pod.Status.PodIP, Port: 8080},
+		ReserveKey: pod.Annotations["agentcube.io/reserve-key"],
+		CreatedAt:  pod.CreationTimestamp.Time,
+		LastActive: lastActive,
+	}
+}
+
+// isPodReady 检查 Pod 是否 Ready
+func isPodReady(pod *corev1.Pod) bool {
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+// podStatusToInstanceStatus 将 Pod 状态转换为 InstanceStatus
+func podStatusToInstanceStatus(pod *corev1.Pod) InstanceStatus {
+	if isPodReady(pod) {
+		if pod.Annotations["agentcube.io/reserve-key"] != "" {
+			return InstanceActive
+		}
+		return InstanceReady
+	}
+	return InstanceCreating
+}
+```
+
+#### 生命周期管理实现
+
+```go
+// RunLifecycleManager 启动生命周期管理器（后台运行）
+func (p *PodTaskProvider) RunLifecycleManager(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.reclaimExpiredInstances(ctx)
+			p.autoScaleDown(ctx)
+		}
+	}
+}
+
+// reclaimExpiredInstances 回收超时实例
+func (p *PodTaskProvider) reclaimExpiredInstances(ctx context.Context) {
+	pods, _ := p.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{
+		LabelSelector: "agentcube.io/spec-id",
+	})
+
+	for _, pod := range pods.Items {
+		specID := pod.Labels["agentcube.io/spec-id"]
+		task, err := p.getTaskBySpecID(ctx, specID)
+		if err != nil {
+			continue
+		}
+
+		lifecycle := task.Spec.Scaling.InstanceLifecycle
+
+		// 检查 TTL（从创建时算起）
+		if lifecycle.TTL != nil {
+			age := time.Since(pod.CreationTimestamp.Time)
+			if age > lifecycle.TTL.Duration {
+				p.client.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+				continue
+			}
+		}
+
+		// 检查 IdleTimeout（从最后活跃时间算起）
+		if lifecycle.IdleTimeout != nil {
+			lastActiveStr := pod.Annotations["agentcube.io/last-active"]
+			if lastActiveStr != "" {
+				lastActive, _ := time.Parse(time.RFC3339, lastActiveStr)
+				idle := time.Since(lastActive)
+				if idle > lifecycle.IdleTimeout.Duration {
+					p.client.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+				}
+			}
+		}
+	}
+}
+
+// autoScaleDown 自动缩容（空闲 Pod 过多时）
+func (p *PodTaskProvider) autoScaleDown(ctx context.Context) {
+	jobs, _ := p.client.BatchV1().Jobs("").List(ctx, metav1.ListOptions{
+		LabelSelector: "agentcube.io/spec-id",
+	})
+
+	for _, job := range jobs.Items {
+		specID := job.Labels["agentcube.io/spec-id"]
+		task, err := p.getTaskBySpecID(ctx, specID)
+		if err != nil {
+			continue
+		}
+
+		// 统计空闲 Pod 数
+		idleCount := p.countIdlePods(ctx, specID)
+		currentParallelism := *job.Spec.Parallelism
+
+		// 策略：空闲 Pod 超过 3 个，且当前并发数 > minInstances，则 scale down
+		if idleCount > 3 && currentParallelism > task.Spec.Scaling.MinInstances {
+			*job.Spec.Parallelism = currentParallelism - 1
+			p.client.BatchV1().Jobs(job.Namespace).Update(ctx, &job, metav1.UpdateOptions{})
+		}
+	}
+}
+
+// countIdlePods 统计空闲 Pod 数量
+func (p *PodTaskProvider) countIdlePods(ctx context.Context, specID string) int32 {
+	pods, _ := p.listPods(ctx, specID)
+	var count int32
+	for _, pod := range pods {
+		if isPodReady(&pod) && pod.Annotations["agentcube.io/reserve-key"] == "" {
+			count++
+		}
+	}
+	return count
+}
+```
+
+### 附录 B: SandboxTaskProvider 完整实现代码
+
+本附录包含 SandboxTaskProvider 的完整实现代码，供开发者参考。主文档中已展示关键流程和设计思路。
+
+#### 辅助方法实现
+
+以下是 `ReserveInstance` 调用的辅助方法完整实现：
+
+```go
+// findReservedSandbox 查找已绑定 reserveKey 的 Sandbox
+func (p *SandboxTaskProvider) findReservedSandbox(ctx context.Context, specID, reserveKey string) *TaskInstance {
+	sandboxes, err := p.listSandboxes(ctx, specID)
+	if err != nil {
+		return nil
+	}
+
+	for _, sb := range sandboxes {
+		if sb.Annotations["agentcube.io/reserve-key"] == reserveKey &&
+		   sb.Status.Phase == sandboxv1alpha1.SandboxRunning {
+			return sandboxToTaskInstance(&sb, specID)
+		}
+	}
+
+	return nil
+}
+
+// findIdleSandboxes 查找空闲（未预留）的 Running Sandbox
+func (p *SandboxTaskProvider) findIdleSandboxes(ctx context.Context, specID string) ([]sandboxv1alpha1.Sandbox, error) {
+	sandboxes, err := p.listSandboxes(ctx, specID)
+	if err != nil {
+		return nil, err
+	}
+
+	var idle []sandboxv1alpha1.Sandbox
+	for _, sb := range sandboxes {
+		if sb.Status.Phase == sandboxv1alpha1.SandboxRunning &&
+		   sb.Annotations["agentcube.io/reserve-key"] == "" {
+			idle = append(idle, sb)
+		}
+	}
+
+	return idle, nil
+}
+
+// tryReserveSandbox 尝试预留 Sandbox（利用 K8s 乐观锁）
+func (p *SandboxTaskProvider) tryReserveSandbox(ctx context.Context, sb sandboxv1alpha1.Sandbox, reserveKey string) (*TaskInstance, error) {
+	// 更新 annotation（K8s 乐观锁保证并发安全）
+	if sb.Annotations == nil {
+		sb.Annotations = make(map[string]string)
+	}
+	sb.Annotations["agentcube.io/reserve-key"] = reserveKey
+	sb.Annotations["agentcube.io/last-active"] = time.Now().Format(time.RFC3339)
+
+	updated, err := p.sandboxClient.AgentV1alpha1().Sandboxes(sb.Namespace).Update(ctx, &sb, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, err // errors.IsConflict(err) 表示冲突
+	}
+
+	return sandboxToTaskInstance(updated, sb.Labels["agentcube.io/spec-id"]), nil
+}
+
+// claimFromWarmPool 从 WarmPool 获取预热的 Sandbox
+func (p *SandboxTaskProvider) claimFromWarmPool(ctx context.Context, specID, reserveKey string) (*TaskInstance, error) {
+	warmPool, err := p.getWarmPool(ctx, specID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 检查 WarmPool 是否有可用实例
+	if warmPool.Status.Available <= 0 {
+		return nil, fmt.Errorf("no available sandbox in warm pool")
+	}
+
+	// 创建 SandboxClaim 从 WarmPool 获取 Sandbox
+	claim := &sandboxv1alpha1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: fmt.Sprintf("%s-claim-", specID),
+			Namespace:    warmPool.Namespace,
+			Labels: map[string]string{
+				"agentcube.io/spec-id": specID,
+			},
+			Annotations: map[string]string{
+				"agentcube.io/reserve-key": reserveKey,
+				"agentcube.io/last-active":  time.Now().Format(time.RFC3339),
+			},
+		},
+		Spec: sandboxv1alpha1.SandboxClaimSpec{
+			// 引用 WarmPool
+			PoolRef: &sandboxv1alpha1.SandboxWarmPoolReference{
+				Name: specID,
+			},
+		},
+	}
+
+	created, err := p.sandboxClient.AgentV1alpha1().SandboxClaims(warmPool.Namespace).Create(ctx, claim, metav1.CreateOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	// 等待 Claim 绑定完成
+	return p.waitClaimBound(ctx, created, 10*time.Second)
+}
+
+// waitClaimBound 等待 SandboxClaim 绑定并返回 Sandbox 信息
+func (p *SandboxTaskProvider) waitClaimBound(ctx context.Context, claim *sandboxv1alpha1.SandboxClaim, timeout time.Duration) (*TaskInstance, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	watcher, err := p.sandboxClient.AgentV1alpha1().SandboxClaims(claim.Namespace).Watch(ctx, metav1.ListOptions{
+		FieldSelector: fmt.Sprintf("metadata.name=%s", claim.Name),
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer watcher.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait sandbox claim bound timeout: %w", ctx.Err())
+		case event := <-watcher.ResultChan():
+			updatedClaim := event.Object.(*sandboxv1alpha1.SandboxClaim)
+			if updatedClaim.Status.Phase == sandboxv1alpha1.ClaimBound &&
+			   updatedClaim.Status.SandboxRef != nil {
+				// Claim 已绑定，获取 Sandbox
+				sb, err := p.sandboxClient.AgentV1alpha1().Sandboxes(claim.Namespace).Get(ctx,
+					updatedClaim.Status.SandboxRef.Name, metav1.GetOptions{})
+				if err != nil {
+					return nil, err
+				}
+				return sandboxToTaskInstance(sb, claim.Labels["agentcube.io/spec-id"]), nil
+			}
+		}
+	}
+}
+
+// createAndWaitSandbox 直接创建新 Sandbox 并等待就绪
+func (p *SandboxTaskProvider) createAndWaitSandbox(ctx context.Context, specID, reserveKey string, timeout time.Duration) (*TaskInstance, error) {
+	warmPool, err := p.getWarmPool(ctx, specID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 基于 WarmPool 模板创建新 Sandbox
+	sandbox := &sandboxv1alpha1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: fmt.Sprintf("%s-", specID),
+			Namespace:    warmPool.Namespace,
+			Labels:       warmPool.Spec.Template.Labels,
+			Annotations: map[string]string{
+				"agentcube.io/reserve-key": reserveKey,
+				"agentcube.io/last-active":  time.Now().Format(time.RFC3339),
+			},
+		},
+		Spec: warmPool.Spec.Template.Spec,
+	}
+	// 设置 Replicas=1 启动 Sandbox
+	sandbox.Spec.Replicas = ptr.To(int32(1))
+
+	created, err := p.sandboxClient.AgentV1alpha1().Sandboxes(warmPool.Namespace).Create(ctx, sandbox, metav1.CreateOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	// 等待 Sandbox Running
+	return p.waitSandboxRunning(ctx, created, timeout)
+}
+
+// waitSandboxRunning 等待 Sandbox 进入 Running 状态
+func (p *SandboxTaskProvider) waitSandboxRunning(ctx context.Context, sb *sandboxv1alpha1.Sandbox, timeout time.Duration) (*TaskInstance, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	watcher, err := p.sandboxClient.AgentV1alpha1().Sandboxes(sb.Namespace).Watch(ctx, metav1.ListOptions{
+		FieldSelector: fmt.Sprintf("metadata.name=%s", sb.Name),
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer watcher.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait sandbox running timeout: %w", ctx.Err())
+		case event := <-watcher.ResultChan():
+			updatedSb := event.Object.(*sandboxv1alpha1.Sandbox)
+			if updatedSb.Status.Phase == sandboxv1alpha1.SandboxRunning {
+				return sandboxToTaskInstance(updatedSb, sb.Labels["agentcube.io/spec-id"]), nil
+			}
+		}
+	}
+}
+
+// GetInstanceStatistics 获取实例统计信息
+func (p *SandboxTaskProvider) GetInstanceStatistics(ctx context.Context, specID string) (*InstanceStatistics, error) {
+	sandboxes, err := p.listSandboxes(ctx, specID)
+	if err != nil {
+		return nil, err
+	}
+
+	warmPool, _ := p.getWarmPool(ctx, specID)
+
+	stats := &InstanceStatistics{
+		SpecID: specID,
+	}
+
+	for _, sb := range sandboxes {
+		stats.Total++
+
+		switch sb.Status.Phase {
+		case sandboxv1alpha1.SandboxRunning:
+			reserveKey := sb.Annotations["agentcube.io/reserve-key"]
+			if reserveKey != "" {
+				stats.Active++
+			} else {
+				stats.Ready++
+				// 检查是否为 Idle 状态
+				lastActiveStr := sb.Annotations["agentcube.io/last-active"]
+				if lastActiveStr != "" {
+					lastActive, _ := time.Parse(time.RFC3339, lastActiveStr)
+					if time.Since(lastActive) > 150*time.Second {
+						stats.Idle++
+					}
+				}
+			}
+		case sandboxv1alpha1.SandboxPending:
+			stats.Creating++
+		}
+	}
+
+	// 加上 WarmPool 中未分配的数量
+	if warmPool != nil {
+		stats.Ready += warmPool.Status.Available
+		stats.Creating += warmPool.Status.Creating
+	}
+
+	return stats, nil
+}
+
+// listSandboxes 列出所有属于指定 specID 的 Sandbox
+func (p *SandboxTaskProvider) listSandboxes(ctx context.Context, specID string) ([]sandboxv1alpha1.Sandbox, error) {
+	list, err := p.sandboxClient.AgentV1alpha1().Sandboxes("").List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("agentcube.io/spec-id=%s", specID),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
+// getWarmPool 获取指定 specID 的 WarmPool
+func (p *SandboxTaskProvider) getWarmPool(ctx context.Context, specID string) (*sandboxv1alpha1.SandboxWarmPool, error) {
+	return p.sandboxClient.AgentV1alpha1().SandboxWarmPools("").Get(ctx, specID, metav1.GetOptions{})
+}
+
+// sandboxToTaskInstance 将 Sandbox 转换为 TaskInstance
+func sandboxToTaskInstance(sb *sandboxv1alpha1.Sandbox, specID string) *TaskInstance {
+	lastActive, _ := time.Parse(time.RFC3339, sb.Annotations["agentcube.io/last-active"])
+
+	return &TaskInstance{
+		ID:         string(sb.UID),
+		SpecID:     specID,
+		Status:     sandboxStatusToInstanceStatus(sb),
+		Endpoint:   Endpoint{Host: sb.Status.PodIP, Port: 8080},
+		ReserveKey: sb.Annotations["agentcube.io/reserve-key"],
+		CreatedAt:  sb.CreationTimestamp.Time,
+		LastActive: lastActive,
+	}
+}
+
+// sandboxStatusToInstanceStatus 将 Sandbox 状态转换为 Instance 状态
+func sandboxStatusToInstanceStatus(sb *sandboxv1alpha1.Sandbox) InstanceStatus {
+	switch sb.Status.Phase {
+	case sandboxv1alpha1.SandboxRunning:
+		if sb.Annotations["agentcube.io/reserve-key"] != "" {
+			return InstanceActive
+		}
+		return InstanceReady
+	case sandboxv1alpha1.SandboxPending:
+		return InstanceCreating
+	default:
+		return InstanceCreating
+	}
+}
+```
+
+#### 生命周期管理实现
+
+```go
+// RunLifecycleManager 启动生命周期管理器（后台运行）
+func (p *SandboxTaskProvider) RunLifecycleManager(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.reclaimExpiredSandboxes(ctx)
+		}
+	}
+}
+
+// reclaimExpiredSandboxes 回收超时的 Sandbox 实例
+func (p *SandboxTaskProvider) reclaimExpiredSandboxes(ctx context.Context) {
+	sandboxes, _ := p.sandboxClient.AgentV1alpha1().Sandboxes("").List(ctx, metav1.ListOptions{
+		LabelSelector: "agentcube.io/spec-id",
+	})
+
+	for _, sb := range sandboxes.Items {
+		specID := sb.Labels["agentcube.io/spec-id"]
+		task, err := p.getTaskBySpecID(ctx, specID)
+		if err != nil {
+			continue
+		}
+
+		lifecycle := task.Spec.Scaling.InstanceLifecycle
+
+		// 检查 TTL（从创建时算起）
+		if lifecycle.TTL != nil {
+			age := time.Since(sb.CreationTimestamp.Time)
+			if age > lifecycle.TTL.Duration {
+				// 触发优雅关闭
+				p.shutdownSandbox(ctx, &sb)
+				continue
+			}
+		}
+
+		// 检查 IdleTimeout（从最后活跃时间算起）
+		if lifecycle.IdleTimeout != nil && sb.Annotations["agentcube.io/reserve-key"] == "" {
+			lastActiveStr := sb.Annotations["agentcube.io/last-active"]
+			if lastActiveStr != "" {
+				lastActive, _ := time.Parse(time.RFC3339, lastActiveStr)
+				idle := time.Since(lastActive)
+				if idle > lifecycle.IdleTimeout.Duration {
+					p.shutdownSandbox(ctx, &sb)
+				}
+			}
+		}
+	}
+}
+
+// shutdownSandbox 优雅关闭 Sandbox
+func (p *SandboxTaskProvider) shutdownSandbox(ctx context.Context, sb *sandboxv1alpha1.Sandbox) {
+	// 设置 Replicas=0 触发优雅关闭（会等待 ShutdownTime）
+	sb.Spec.Replicas = ptr.To(int32(0))
+	p.sandboxClient.AgentV1alpha1().Sandboxes(sb.Namespace).Update(ctx, sb, metav1.UpdateOptions{})
+}
+```
+
+---
+
 **提案版本**：v1.0
 **状态**：草案（Draft）
-**最后更新**：2025-11-19
+**最后更新**：2025-11-22

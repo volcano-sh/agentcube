@@ -1,13 +1,13 @@
 """
-PicoD REST API Client 高层测试示例
+PicoD REST API Client High-level Test Example
 
-这个示例通过 PicoDClient SDK 测试 PicoD 服务，
-模拟 examples.py 的测试流程，使用 PicoDClient 替代 SSHClient。
+This example tests PicoD service through PicoDClient SDK,
+simulating the test flow from examples.py, using PicoDClient instead of SSHClient.
 
-使用前提：
-1. PicoD 服务器正在运行
-2. 已安装依赖：pip install requests
-3. 设置环境变量或在代码中配置访问令牌
+Prerequisites:
+1. PicoD server is running
+2. Dependencies installed: pip install requests
+3. Environment variables configured or access token set in code
 """
 
 import logging
@@ -15,18 +15,18 @@ import json
 import os
 import sys
 
-# 添加父目录到 Python 路径
+# Add parent directory to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from agentcube.clients.picod_client import PicoDClient
 
 
 def main():
-    # 配置日志
+    # Configure logging
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     log = logging.getLogger(__name__)
     
-    # 配置连接参数
+    # Configure connection parameters
     HOST = os.getenv("PICOD_HOST", "localhost")
     PORT = int(os.getenv("PICOD_PORT", "9527"))
     ACCESS_TOKEN = os.getenv("PICOD_ACCESS_TOKEN", "")
@@ -36,7 +36,7 @@ def main():
         log.info("PicoD Client SDK Test (High-Level)")
         log.info("===========================================\n")
         
-        # 初始化 PicoD 客户端
+        # Initialize PicoD client
         log.info(f"Initializing PicoD client...")
         log.info(f"   Host: {HOST}")
         log.info(f"   Port: {PORT}")
@@ -47,12 +47,11 @@ def main():
         
         client = PicoDClient(
             host=HOST,
-            port=PORT,
-            access_token=ACCESS_TOKEN
+            port=PORT
         )
         log.info("✅ PicoD client initialized\n")
         
-        # Step 1: 执行测试命令
+        # Step 1: Execute test commands
         log.info("Step 1: Executing test commands...")
         commands = [
             "whoami",
@@ -67,21 +66,21 @@ def main():
             output = client.execute_command(cmd)
             log.info(f"      Output: {output.strip()}\n")
         
-        # Step 2: 上传文件到远程
+        # Step 2: Upload file to remote
         log.info("Step 2: Uploading File...")
         upload_content = "Hello Upload File\nThis file was uploaded via PicoD REST API"
         with open("/tmp/upload.txt", "w", encoding="utf-8") as f:
             f.write(upload_content)
         
-        client.upload_file("/tmp/upload.txt", "/workspace/upload.txt")
-        log.info("✅ Uploaded file to /workspace/upload.txt\n")
-        
-        # Step 3: 验证上传的文件
+        client.upload_file("/tmp/upload.txt", "./upload.txt")
+        log.info("✅ Uploaded file to ./upload.txt\n")
+
+        # Step 3: Verify uploaded file
         log.info("Step 3: Verifying uploaded file...")
-        output = client.execute_command("cat /workspace/upload.txt")
+        output = client.execute_command("cat ./upload.txt")
         log.info(f"   File content: {output.strip()}\n")
         
-        # Step 4: 写入 Python 脚本
+        # Step 4: Write Python script
         log.info("Step 4: Writing Python script...")
         script_content = """#!/usr/bin/env python3
 import json
@@ -95,7 +94,7 @@ def generate_fibonacci(n):
 
 n = 20
 fib = generate_fibonacci(n)
-with open('/workspace/output.json', 'w') as f:
+with open('./output.json', 'w') as f:
     json.dump({
         "timestamp": datetime.now().isoformat(),
         "count": n,
@@ -104,29 +103,29 @@ with open('/workspace/output.json', 'w') as f:
     }, f, indent=2)
 print(f"Generated {n} Fibonacci numbers")
 """
-        client.write_file(script_content, "/workspace/fib.py")
-        log.info("✅ Write Content to /workspace/fib.py\n")
-        
-        # Step 5: 执行脚本
+        client.write_file(script_content, "./fib.py")
+        log.info("✅ Write Content to ./fib.py\n")
+
+        # Step 5: Execute script
         log.info("Step 5: Executing Python script...")
-        output = client.execute_command("python3 /workspace/fib.py")
+        output = client.execute_command("python3 ./fib.py")
         log.info(f"   Output: {output.strip()}\n")
         
-        # Step 6: 下载结果文件
+        # Step 6: Download result file
         log.info("Step 6: Downloading output file...")
         local_path = "/tmp/pico_output.json"
-        client.download_file("/workspace/output.json", local_path)
-        client.download_file("/workspace/upload.txt", "/tmp/download.txt")
+        client.download_file("./output.json", local_path)
+        client.download_file("./upload.txt", "/tmp/download.txt")
         log.info(f"✅ File downloaded to {local_path}\n")
         
-        # Step 7: 验证结果
+        # Step 7: Verify results
         log.info("Step 7: Verifying output...")
         with open(local_path, 'r') as f:
             data = json.load(f)
         log.info(f"   Generated {data['count']} numbers, sum: {data['sum']}")
         log.info(f"   Timestamp: {data['timestamp']}\n")
         
-        # Step 8: 运行代码
+        # Step 8: Run code
         log.info("Step 8: Running code in sandbox...")
         stdout = client.run_code(
             language="py",
@@ -134,7 +133,7 @@ print(f"Generated {n} Fibonacci numbers")
         )
         log.info(f"   ✅ Python Output: {stdout.strip()}\n")
         
-        # Step 9: 运行 Bash 脚本
+        # Step 9: Run Bash script
         log.info("Step 9: Running bash script...")
         bash_script = """
 for i in 1 2 3 4 5; do
@@ -145,7 +144,7 @@ echo "Done!"
         stdout = client.run_code(language="bash", code=bash_script)
         log.info(f"   ✅ Bash Output:\n{stdout}\n")
         
-        # Step 10: 清理
+        # Step 10: Cleanup
         log.info("Step 10: Cleanup...")
         client.cleanup()
         log.info("✅ Client resources cleaned up\n")

@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ExecuteRequest 定义命令执行请求体
+// ExecuteRequest defines command execution request body
 type ExecuteRequest struct {
 	Command    string            `json:"command" binding:"required"`
 	Timeout    float64           `json:"timeout"`
@@ -19,7 +19,7 @@ type ExecuteRequest struct {
 	Env        map[string]string `json:"env"`
 }
 
-// ExecuteResponse 定义命令执行响应体
+// ExecuteResponse defines command execution response body
 type ExecuteResponse struct {
 	Stdout   string  `json:"stdout"`
 	Stderr   string  `json:"stderr"`
@@ -27,7 +27,7 @@ type ExecuteResponse struct {
 	Duration float64 `json:"duration"`
 }
 
-// ExecuteHandler 处理命令执行请求
+// ExecuteHandler handles command execution requests
 func ExecuteHandler(c *gin.Context) {
 	var req ExecuteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -38,15 +38,15 @@ func ExecuteHandler(c *gin.Context) {
 		return
 	}
 
-	// 使用 bash 执行命令
+	// Use bash to execute command
 	cmd := exec.Command("bash", "-c", req.Command)
 
-	// 设置工作目录
+	// Set working directory
 	if req.WorkingDir != "" {
 		cmd.Dir = req.WorkingDir
 	}
 
-	// 设置环境变量
+	// Set environment variables
 	if len(req.Env) > 0 {
 		currentEnv := os.Environ()
 		for k, v := range req.Env {
@@ -59,15 +59,15 @@ func ExecuteHandler(c *gin.Context) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	// 设置超时
-	timeout := 30 * time.Second // 默认超时
+	// Set timeout
+	timeout := 30 * time.Second // Default timeout
 	if req.Timeout > 0 {
 		timeout = time.Duration(req.Timeout) * time.Second
 	}
 
 	done := make(chan error, 1)
 	start := time.Now()
-	
+
 	go func() {
 		done <- cmd.Run()
 	}()
@@ -89,7 +89,7 @@ func ExecuteHandler(c *gin.Context) {
 		if cmd.Process != nil {
 			cmd.Process.Kill()
 		}
-		exitCode = 124 // 超时退出码
+		exitCode = 124 // Timeout exit code
 		stderr.WriteString(fmt.Sprintf("Command timed out after %.0f seconds", req.Timeout))
 	}
 

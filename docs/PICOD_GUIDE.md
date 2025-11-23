@@ -22,7 +22,7 @@
 ┌─────────────────┐      HTTP/REST       ┌─────────────────┐
 │  Python Client  │ ─────────────────────>│  PicoD Server   │
 │  (picod_client) │ <───────────────────  │   (Go/Gin)      │
-└─────────────────┘     JSON + Token      └─────────────────┘
+└─────────────────┘     JSON      └─────────────────┘
                                                     │
                                                     ▼
                                             ┌──────────────┐
@@ -33,9 +33,9 @@
 
 **特点**：
 - 🚀 **轻量级**: 替代 SSH，使用简单的 REST API
-- 🔒 **安全**: Bearer Token 认证
 - 📦 **兼容性**: 与 `SandboxSSHClient` 接口完全兼容
 - 🌐 **易用**: 使用标准 HTTP 协议，无需 SSH 密钥
+- 🎯 **简洁**: 无需认证配置，开箱即用
 
 **核心组件**：
 1. **PicoD Server** (Go): 运行在沙箱内的 HTTP 服务器
@@ -64,26 +64,12 @@ go build -o bin/picod ./cmd/picod
 ### 2. 启动 PicoD 服务器
 
 ```bash
-# 方式 1: 带认证（推荐）
-./bin/picod --access-token=your-secret-token --port=9527
-
-# 方式 2: 从文件读取 token
-echo "your-secret-token" > /tmp/token.txt
-./bin/picod --access-token-file=/tmp/token.txt --port=9527
-
-# 方式 3: 从环境变量
-export PICOD_ACCESS_TOKEN=your-secret-token
-./bin/picod --port=9527
-
-# 方式 4: 无认证（仅测试）
+# 启动 PicoD 服务器
 ./bin/picod --port=9527
 ```
 
 **命令行参数**:
 - `--port`: 监听端口（默认 9527）
-- `--access-token`: 访问令牌
-- `--access-token-file`: 从文件读取令牌
-- 环境变量: `PICOD_ACCESS_TOKEN`
 
 ### 3. 安装 Python 依赖
 
@@ -98,7 +84,7 @@ pip install requests
 ```bash
 export PICOD_HOST=localhost
 export PICOD_PORT=9527
-export PICOD_ACCESS_TOKEN=your-secret-token
+# 无需设置认证令牌
 
 python3 sdk-python/examples/picod_example.py
 ```
@@ -110,7 +96,6 @@ make build-picod-client
 
 # 运行测试
 export PICOD_URL=http://localhost:9527
-export PICOD_ACCESS_TOKEN=your-secret-token
 ./bin/picod-client
 ```
 
@@ -130,7 +115,6 @@ from agentcube.clients.picod_client import PicoDClient
 client = PicoDClient(
     host="localhost",
     port=9527,
-    access_token="your-secret-token",
     timeout=30  # 默认超时（秒）
 )
 ```
@@ -195,7 +179,7 @@ client.download_file(
 client.cleanup()
 
 # 或使用上下文管理器（推荐）
-with PicoDClient(host="localhost", port=9527, access_token="token") as client:
+with PicoDClient(host="localhost", port=9527) as client:
     output = client.execute_command("echo 'Hello'")
 # 自动调用 cleanup()
 ```
@@ -217,7 +201,7 @@ make build-picod-client
 
 # 运行
 export PICOD_URL=http://localhost:9527
-export PICOD_ACCESS_TOKEN=test-token
+# 无需设置认证令牌
 ./bin/picod-client
 ```
 
@@ -240,7 +224,7 @@ export PICOD_ACCESS_TOKEN=test-token
 ```bash
 export PICOD_HOST=localhost
 export PICOD_PORT=9527
-export PICOD_ACCESS_TOKEN=test-token
+# 无需设置认证令牌
 
 python3 sdk-python/examples/picod_example.py
 ```
@@ -306,7 +290,7 @@ curl http://localhost:9527/health
 ### 命令执行
 
 **端点**: `POST /api/execute`  
-**认证**: Bearer Token
+**认证**: 无需认证
 
 **请求**:
 ```json
@@ -333,8 +317,7 @@ curl http://localhost:9527/health
 **示例**:
 ```bash
 curl -X POST http://localhost:9527/api/execute \
-  -H "Authorization: Bearer your-token" \
-  -H "Content-Type: application/json" \
+    -H "Content-Type: application/json" \
   -d '{"command": "echo Hello", "timeout": 10}'
 ```
 
@@ -343,14 +326,13 @@ curl -X POST http://localhost:9527/api/execute \
 ### 文件上传
 
 **端点**: `POST /api/files`  
-**认证**: Bearer Token
+**认证**: 无需认证
 
 #### 方式 1: Multipart Form-Data（推荐）
 
 ```bash
 curl -X POST http://localhost:9527/api/files \
-  -H "Authorization: Bearer your-token" \
-  -F "path=/workspace/data.csv" \
+    -F "path=/workspace/data.csv" \
   -F "file=@./local_data.csv" \
   -F "mode=0644"
 ```
@@ -359,8 +341,7 @@ curl -X POST http://localhost:9527/api/files \
 
 ```bash
 curl -X POST http://localhost:9527/api/files \
-  -H "Authorization: Bearer your-token" \
-  -H "Content-Type: application/json" \
+    -H "Content-Type: application/json" \
   -d '{
     "path": "/workspace/test.txt",
     "content": "SGVsbG8gV29ybGQ=",
@@ -383,17 +364,15 @@ curl -X POST http://localhost:9527/api/files \
 ### 文件下载
 
 **端点**: `GET /api/files/{path}`  
-**认证**: Bearer Token
+**认证**: 无需认证
 
 ```bash
 # 下载文件
-curl -H "Authorization: Bearer your-token" \
-  http://localhost:9527/api/files/workspace/result.txt \
+curl   http://localhost:9527/api/files/workspace/result.txt \
   -o result.txt
 
 # 查看文本文件
-curl -H "Authorization: Bearer your-token" \
-  http://localhost:9527/api/files/tmp/log.txt
+curl   http://localhost:9527/api/files/tmp/log.txt
 ```
 
 **响应头**:
@@ -428,22 +407,6 @@ ps aux | grep picod
 
 ---
 
-### 2. 认证失败
-
-**错误**: `401 Unauthorized: Invalid token`
-
-**解决**:
-1. 检查服务器启动时的 `--access-token` 参数
-2. 确保客户端使用相同的 token
-3. 检查环境变量
-
-```bash
-# 服务器端
-./bin/picod --access-token=my-secret-token
-
-# 客户端
-export PICOD_ACCESS_TOKEN=my-secret-token
-```
 
 ---
 
@@ -496,7 +459,7 @@ pip install requests
 |------|-----------|-------------|
 | **协议** | SSH/SFTP | HTTP/REST |
 | **端口** | 22 | 9527 (可配置) |
-| **认证** | RSA 密钥对 | Bearer Token |
+| **认证** | RSA 密钥对 | 无需认证 |
 | **依赖** | paramiko | requests |
 | **性能** | 中等 | 较快 |
 | **防火墙** | 需要开放 22 | HTTP 友好 |
@@ -514,7 +477,7 @@ client = SandboxSSHClient(private_key=key, tunnel_sock=sock)
 
 # 新代码（PicoD）
 from agentcube.clients.picod_client import PicoDClient
-client = PicoDClient(host="localhost", port=9527, access_token="token")
+client = PicoDClient(host="localhost", port=9527)
 
 # 🎉 后续所有 API 调用完全相同！
 output = client.execute_command("ls -la")
@@ -572,12 +535,6 @@ spec:
     image: picod:latest
     ports:
     - containerPort: 9527
-    env:
-    - name: PICOD_ACCESS_TOKEN
-      valueFrom:
-        secretKeyRef:
-          name: picod-secret
-          key: token
     command: ["/usr/local/bin/picod"]
     args: ["--port=9527"]
 ```

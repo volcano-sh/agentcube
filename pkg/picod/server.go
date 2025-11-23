@@ -9,62 +9,70 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var startTime = time.Now() // 服务器启动时间
+var startTime = time.Now() // Server start time
 
-// Config 定义服务器配置
+// Config defines server configuration
 type Config struct {
-	Port        int    `json:"port"`
-	AccessToken string `json:"access_token"`
+	Port int `json:"port"`
 }
 
-// Server 定义 PicoD HTTP 服务器
+// Server defines the PicoD HTTP server
 type Server struct {
-	engine *gin.Engine
-	config Config
+	engine      *gin.Engine
+	config      Config
+	authManager *AuthManager
 }
 
-// NewServer 创建一个新的 PicoD 服务器实例
+// NewServer creates a new PicoD server instance
 func NewServer(config Config) *Server {
-	// 生产模式下禁用 Gin 的调试输出
+	// Disable Gin debug output in production mode
 	gin.SetMode(gin.ReleaseMode)
-	
+
 	engine := gin.New()
 
-	// 全局中间件
-	engine.Use(gin.Logger())   // 请求日志
-	engine.Use(gin.Recovery()) // 崩溃恢复
+	// Global middleware
+	engine.Use(gin.Logger())   // Request logging
+	engine.Use(gin.Recovery()) // Crash recovery
 
-	// 认证中间件（仅对 API 路由）
+	// Create auth manager
+	authManager := NewAuthManager()
+
+	// Load existing public key if available
+	if err := authManager.LoadPublicKey(); err != nil {
+		// Log that server is not initialized, but don't fail startup
+		fmt.Printf("Server not initialized: %v\n", err)
+	}
+
+	// Apply authentication middleware
+	engine.Use(authManager.AuthMiddleware())
+
+	// API route group
 	api := engine.Group("/api")
-	api.Use(AuthMiddleware(config.AccessToken))
 	{
+		api.POST("/init", authManager.InitHandler)
 		api.POST("/execute", ExecuteHandler)
 		api.POST("/files", UploadFileHandler)
 		api.GET("/files/*path", DownloadFileHandler)
 	}
 
-	// 健康检查（无需认证）
+	// Health check (no authentication required)
 	engine.GET("/health", HealthCheckHandler)
 
 	return &Server{
-		engine: engine,
-		config: config,
+		engine:      engine,
+		config:      config,
+		authManager: authManager,
 	}
 }
 
-// Run 启动服务器
+// Run starts the server
 func (s *Server) Run() error {
 	addr := fmt.Sprintf(":%d", s.config.Port)
 	log.Printf("PicoD server starting on %s", addr)
-	if s.config.AccessToken != "" {
-		log.Printf("Authentication: enabled")
-	} else {
-		log.Printf("Authentication: disabled (WARNING: not recommended for production)")
-	}
 	return http.ListenAndServe(addr, s.engine)
 }
 
-// HealthCheckHandler 处理健康检查请求
+// HealthCheckHandler handles health check requests
 func HealthCheckHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "ok",

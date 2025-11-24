@@ -428,7 +428,7 @@ Function Proxy 内部：
 | 字段名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
 | **extractors** | []SessionExtractor | ✓ | 会话 ID 提取器列表 |
-| extractors.**type** | string | ✓ | `httpHeader` / `pathVar` / `query` |
+| extractors.**type** | string | ✓ | `httpHeader` / `pathVar` / `queryParam` |
 | extractors.**name** | string | ✓ | 提取字段名称 |
 | extractors.**path** | string | - | 路径模板 (仅 pathVar 类型) |
 
@@ -504,12 +504,12 @@ spec:
 status:
   phase: Serving
   conditions:
-    - type: Deployed
+    - type: SpecReady
       status: "True"
-      reason: DeploymentReady
+      reason: SpecInitialized
     - type: Ready
       status: "True"
-      reason: InstancesReady
+      reason: AllComponentsReady
     - type: RouteReady
       status: "True"
       reason: GatewayConfigured
@@ -787,7 +787,7 @@ sequenceDiagram
 ### TaskRouter 实现细节
 
 TaskRouter 作为 Envoy External Processor 运行，核心职责是：
-1. **提取会话标识**：从 HTTP Header/Query 提取 sessionID，转换为 reserveKey
+1. **提取会话标识**：从 HTTP Header/QueryParam 提取 sessionID，转换为 reserveKey
 2. **调用 InstanceProvider**：通过 `ReserveInstance()` 获取或等待实例
 3. **返回端点信息**：将实例 Endpoint 返回给 EnvoyGateway
 
@@ -1413,10 +1413,12 @@ type Endpoint struct {
 type InstanceStatus string
 
 const (
-	InstanceCreating    InstanceStatus = "Creating"
-	InstanceReady       InstanceStatus = "Ready"
-	InstanceTerminating InstanceStatus = "Terminating"
-	InstanceTerminated  InstanceStatus = "Terminated"
+	InstancePending     InstanceStatus = "Pending"      // 等待创建
+	InstanceCreating    InstanceStatus = "Creating"     // 正在启动
+	InstanceReady       InstanceStatus = "Ready"        // 就绪但未预留（空闲）
+	InstanceActive      InstanceStatus = "Active"       // 已预留且正在处理请求
+	InstanceTerminating InstanceStatus = "Terminating"  // 正在终止
+	InstanceTerminated  InstanceStatus = "Terminated"   // 已终止
 )
 ```
 
@@ -2897,9 +2899,14 @@ func (p *PodTaskProvider) RunLifecycleManager(ctx context.Context) {
 
 // reclaimExpiredInstances 回收超时实例
 func (p *PodTaskProvider) reclaimExpiredInstances(ctx context.Context) {
-	pods, _ := p.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{
+	pods, err := p.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{
 		LabelSelector: "agentcube.io/spec-id",
 	})
+	if err != nil {
+		// 记录错误但继续执行（避免单次失败影响整个生命周期管理）
+		log.Errorf("Failed to list pods for reclaim: %v", err)
+		return
+	}
 
 	for _, pod := range pods.Items {
 		specID := pod.Labels["agentcube.io/spec-id"]
@@ -2935,9 +2942,13 @@ func (p *PodTaskProvider) reclaimExpiredInstances(ctx context.Context) {
 
 // autoScaleDown 自动缩容（空闲 Pod 过多时）
 func (p *PodTaskProvider) autoScaleDown(ctx context.Context) {
-	jobs, _ := p.client.BatchV1().Jobs("").List(ctx, metav1.ListOptions{
+	jobs, err := p.client.BatchV1().Jobs("").List(ctx, metav1.ListOptions{
 		LabelSelector: "agentcube.io/spec-id",
 	})
+	if err != nil {
+		log.Errorf("Failed to list jobs for auto scale down: %v", err)
+		return
+	}
 
 	for _, job := range jobs.Items {
 		specID := job.Labels["agentcube.io/spec-id"]
@@ -2960,7 +2971,12 @@ func (p *PodTaskProvider) autoScaleDown(ctx context.Context) {
 
 // countIdlePods 统计空闲 Pod 数量
 func (p *PodTaskProvider) countIdlePods(ctx context.Context, specID string) int32 {
-	pods, _ := p.listPods(ctx, specID)
+	pods, err := p.listPods(ctx, specID)
+	if err != nil {
+		log.Errorf("Failed to list pods for counting idle: %v", err)
+		return 0
+	}
+
 	var count int32
 	for _, pod := range pods {
 		if isPodReady(&pod) && pod.Annotations["agentcube.io/reserve-key"] == "" {

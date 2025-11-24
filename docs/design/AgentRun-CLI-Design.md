@@ -134,7 +134,7 @@ As part of the publish process, the CLI updates and merges deployment-related fi
 
 **Fields updated include:**
 - **Agent version** – Used for version tracking and rollback
-- **Image repository URL** – Required for deployment and invocation
+- **Image registry URL** – Required for deployment and invocation
 - **Build mode and deployment region** – Confirmed or updated based on the current publish context
 - **Additional metadata** – Such as tags, and description, as required by AgentCube 
 
@@ -246,19 +246,20 @@ flowchart TD
 
   %% External systems
   Services --> AgentCube["AgentCube<br/>Agent Registry & Runtime"]
-  Services --> Container["Local Container Runtime<br/>Docker / Podman"]
+  Services --> Container["Local Builder<br/>Docker / Podman"]
   Services --> Metadata["Metadata Handler<br/>Read / Update / Merge"]
-  Services --> CloudInterface["Cloud Provider Interface<br/>Unified Abstraction Layer"]
+  Services --> CloudInterface["Cloud Provider Interface<br/>Cloud Providers"]
   class AgentCube,Container,Metadata,CloudInterface external
 
   %% Cloud provider grouping
   subgraph Cloud Providers
     direction TB
+    CloudInterface --> Kubernetes["OSS Kubernetes"]
     CloudInterface --> Huawei["Huawei Cloud CodeArts"]
     CloudInterface --> AWS["AWS CodeBuild"]
     CloudInterface --> Azure["Azure Container Registry"]
     CloudInterface --> GCP["Google Cloud Build"]
-    class Huawei,AWS,Azure,GCP external
+    class Kubernetes,Huawei,AWS,Azure,GCP external
   end
 
   %% Lifecycle flow
@@ -274,28 +275,33 @@ flowchart TD
 
 The AgentRun CLI is organized into four modular layers, each responsible for a distinct aspect of functionality and extensibility:
 #### **1. Command Line Layer**
+
 - Built using the `typer` library, a modern CLI framework for Python.
 - Defines the CLI interface and command syntax (`agentrun pack`, `agentrun build`, etc.).
 - Parses user input and routes commands to the corresponding runtime logic.
 - Provides help messages, argument validation, and interactive UX.
+
 #### **2. Runtimes Layer**
+
 - Implements the business logic for each CLI subcommand.
 - Each runtime class corresponds to a specific command (e.g., `PackRuntime`, `BuildRuntime`, `PublishRuntime`).
 - Exposed as a **Python SDK**, enabling developers to integrate AgentRun workflows into CI/CD pipelines or custom automation scripts.
 - Acts as the bridge between CLI input and deeper operational logic.
 
 #### **3. Operations Layer**
+
 - Encapsulates detailed business logic that powers runtime methods.
 - Handles validation, transformation, and orchestration of agent metadata, build artifacts, and deployment configurations.
 - Delegates external interactions to the Services layer while maintaining domain-specific logic.
 - Promotes reusability and testability across runtimes.
 
 #### **4. Services Layer**
+
 - Interfaces with external systems such as:
-    - **AgentCube APIs** for agent registration, status, and invocation
-    - **Cloud providers** (e.g., Huawei Cloud CodeArts) for remote builds and image hosting
-    - **Local container runtimes** (Docker, Podman) for image creation and tagging
-    - **Metadata handler** for retrieving, updating, and merging data into the agent’s metadata configuration file
+  - **AgentCube APIs** for agent registration, status, and invocation
+  - **Cloud providers** (e.g., Huawei Cloud CodeArts) for remote builds and image hosting
+  - **Local container runtimes** (Docker, Podman) for image creation and tagging
+  - **Metadata handler** for retrieving, updating, and merging data into the agent’s metadata configuration file
 - Provides low-level utilities for HTTP requests, authentication, file I/O, and cloud SDK integration.
 - Designed for extensibility to support future platforms and runtime environments.
 
@@ -304,7 +310,8 @@ The AgentRun CLI is organized into four modular layers, each responsible for a d
 AgentRun relies on a standardized metadata configuration file named `agent_metadata.yaml`, located in the agent workspace. This file defines the agent’s identity, runtime behavior, build strategy, and deployment settings. It is referenced by all core CLI commands (`pack`, `build`, `publish`, `status`, `invoke`) to ensure consistency and traceability across the agent lifecycle.
 
 #### Sample Structure
-```
+
+```YAML
 # agent_metadata.yaml
 
 agent_name: weather-agent
@@ -329,6 +336,7 @@ auth:
 
 requirements_file: requirements.txt
 ```
+
 #### Key Fields
 
 |Field|Description|
@@ -350,21 +358,23 @@ requirements_file: requirements.txt
 This configuration file is automatically validated and updated by the CLI during packaging, building, and publishing. It serves as the single source of truth for agent metadata throughout the development and deployment lifecycle.
 
 ### AgentRun CLI Subcommand API Design
+
 #### `agentrun pack`
 
 **Purpose**
 Packages the agent application into a standardized workspace, including source code and runtime metadata, preparing it for build and deployment.
 
 **Behavior Overview**
-- If only `-f` is provided, the CLI expects a valid metadata config file `agent_metadata.yaml` in the workspace.
-- Options passed via CLI override values in the metadata file.
-- The CLI validates and updates the metadata file to ensure consistency.
-- The packaged workspace is prepared for either local or cloud build.
+  - If only `-f` is provided, the CLI expects a valid metadata config file `agent_metadata.yaml` in the workspace.
+  - Options passed via CLI override values in the metadata file.
+  - The CLI validates and updates the metadata file to ensure consistency.
+  - The packaged workspace is prepared for either local or cloud build.
 
 **Command Syntax**
-```
+```shell
 agentrun pack -f <workspace_path> [OPTIONS]
 ```
+
 **Required Argument**
 
 | Option              | Type  | Description                                                                      |
@@ -411,6 +421,7 @@ agentrun pack -f <workspace_path> [OPTIONS]
 - Configures credentials and permissions for remote build
 - Generates Dockerfile from language-specific template
 - Injects metadata values (entrypoint, port, etc.)
+
 #### `agentrun build`
 
 **Purpose** Builds the agent image based on the packaged workspace and metadata configuration, preparing it for deployment in either local or cloud environments.
@@ -422,9 +433,11 @@ agentrun pack -f <workspace_path> [OPTIONS]
 - The image is tagged using the agent name defined in the metadata file.
 
 **Command Syntax**
-```
+
+```shell
 agentrun build -f <workspace_path> [OPTIONS]
 ```
+
 **Required Argument**
 
 | Option              | Type  | Description                                                                      |
@@ -468,6 +481,7 @@ agentrun build -f <workspace_path> [OPTIONS]
 
 **Cloud Build**
 - TBD
+
 #### `agentrun publish`
 
 **Purpose** Publishes the agent image to AgentCube, registering it for invocation, collaboration, and public or team access.
@@ -520,9 +534,9 @@ agentrun publish -f <workspace_path> [OPTIONS]
 | Option             | Type   | Description                                                    |
 | ------------------ | ------ | -------------------------------------------------------------- |
 | `--version`        | `str`  | Semantic version string (e.g., `v1.0.0`)                       |
-| `--image-url`      | `str`  | Image repository URL (required in local build mode)            |
-| `--image-username` | `str`  | Username for image repository (required in local build mode)   |
-| `--image-password` | `str`  | Password for image repository (required in local build mode)   |
+| `--image-url`      | `str`  | Image registry URL (required in local build mode)            |
+| `--image-registry-username` | `str`  | Username for image registry (required in local build mode)   |
+| `--image-registry-password` | `str`  | Password for image registry (required in local build mode)   |
 | `--description`    | `str`  | Agent description                                              |
 | `--region`         | `str`  | Deployment region                                              |
 | `--cloud-provider` | `str`  | Cloud provider name (e.g., `huawei`) if using cloud build mode |
@@ -620,7 +634,7 @@ agentrun status -f <workspace_path> [OPTIONS]
 
 **Command Syntax**
 
-```
+```shell
 agentrun invoke [OPTIONS]
 ```
 
@@ -655,4 +669,3 @@ agentrun invoke [OPTIONS]
 
 **Step 5: Return Result to Developer**
 - CLI displays the response in the terminal
-

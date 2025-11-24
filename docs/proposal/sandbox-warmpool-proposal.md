@@ -30,7 +30,11 @@ documentation such as release notes or a development roadmap.
 A good summary is probably at least a paragraph in length.
 -->
 
-Provide administrators with a programmatic interface to create and manage sandbox warm pool resources on-demand. This capability significantly reduces sandbox instance preparation latency, enabling rapid fulfillment of user requests and improving overall system responsiveness during scale events.
+The agent has extremely high requirements for sandbox startup latency. The warm pool is one method to reduce sandbox startup time.
+
+This proposal introduces a sandbox warm pool mechanism to significantly reduce sandbox instance preparation latency. By pre-creating and managing a pool of ready-to-use sandbox instances, the system can rapidly fulfill user requests without waiting for lengthy sandbox initialization processes.
+
+The solution provides administrators with a programmatic interface to create, manage, and configure `SandboxWarmpool` resources on-demand. When a user requests a sandbox, the system first attempts to allocate from the warm pool via `SandboxClaim`, falling back to original sandbox creation only when necessary. This approach improves overall system responsiveness during scale events and provides a more consistent user experience.
 
 ### Motivation
 
@@ -52,12 +56,19 @@ know that this has succeeded?
 
 Interface provided for admin to create, delete, upgrade, and read `SandboxWarmpool` resource.
 
+- How admin to use the WarmPool Interface to Create a `SandboxWarmPool` and `SandboxTemplate`.
+- How to use the warm pool with the create Sandbox handler in the API server.
+- Definition of warmpool interface.
+
 #### Non-Goals
 
 <!--
 What is out of scope for this KEP? Listing non-goals helps to focus discussion
 and make progress.
 -->
+
+- Implement complex scheduling algorithms for warm pool instance distribution
+- Handle cross-cluster or federated warm pool management
 
 ### Proposal
 
@@ -70,76 +81,44 @@ The "Design Details" section below is for the real
 nitty-gritty.
 -->
 
-#### sandboxWarmpool Inferface
+#### sandboxWarmpool Interface
 
 The SandboxWarmPool interface will expose standard CRUD operations through Kubernetes-style APIs:
 
-- **Create**: Initialize a new warm pool with specified target capacity and configuration parameters
-- **Read**: Retrieve current status, capacity utilization, and health metrics.
-- **Update**: Modify pool parameters including replicas, image, and resource allocations
-- **Delete**: Gracefully terminate warm pool instances and clean up associated resources
+Since using `SandboxWarmpool` requires `SandboxTemplate` and `SandboxClaim` to work together, we will create both `SandboxWarmpool` and `SandboxTemplate` within a create handler.
 
 Add four new handlers to the API server.
 
 ```go
 v1.HandleFunc("/admin/warmpool", s.handleCreateSandboxWarmpool).Methods("POST")
-v1.HandleFunc("/admin/warmpool/{namespace}/{name}", s.handleGetSandboxWarmpool).Methods("GET")
-v1.HandleFunc("/admin/warmpool/{namespace}/{name}", s.handleUpdateSandboxWarmpool).Methods("PUT")
-v1.HandleFunc("/admin/warmpool/{namespace}/{name}", s.handleDeleteSandboxWarmpool).Methods("DELETE")
-
-v1.HandleFunc("/admin/warmpool", s.handleListSandboxWarmpool).Methods("GET")
-v1.HandleFunc("/admin/warmpool?namespace={ns}", s.handleListNamespaceSandboxWarmpool).Methods("GET")
+v1.HandleFunc("/admin/warmpool", s.handleGetSandboxWarmpool).Methods("GET")
+v1.HandleFunc("/admin/warmpool", s.handleUpdateSandboxWarmpool).Methods("PUT")
+v1.HandleFunc("/admin/warmpool", s.handleDeleteSandboxWarmpool).Methods("DELETE")
 ```
 
-In the create handler, parse the HTTP request body to obtain the YAML configuration for the `SandboxWarmpool`. Then create the `SandboxWarmpool` resource based on the YAML.
+In the create handler process, parse the HTTP request body to retrieve the `metadata` configuration for `SandboxWarmpool`. Then create the `SandboxWarmpool` and `SandboxTemplate` resources based on the configuration.
 
-In the read handler, parse the HTTP request parameters to obtain the namespace and name of the `SandboxWarmpool`. Then retrieve the `SandboxWarmpool` resource and return its status.
+In the read handler, parse the HTTP parameters to obtain the namespace and name of the `SandboxWarmpool` and `SandboxTemplate` resource. Then retrieve the resources and return there status.
 
-In the update handler, parse the HTTP request parameters to obtain the namespace and name of the `SandboxWarmpool`. Subsequently, retrieve the `SandboxWarmpool` resource and update its configuration based on the YAML file in the request body.
+In the update handler, parse the HTTP body to retrieve metadata. Then update the corresponding `SandboxTemplate` and `SandboxWarmpool` based on the metadata.
 
-In the delete handler, parse the HTTP request parameters to obtain the namespace and name of the `SandboxWarmpool`. Then delete the `SandboxWarmpool` resource.
+In the delete handler, parse the HTTP request parameters to obtain the namespace and name. Then delete the `SandboxWarmpool` and `SandboxTemplate` resource.
 
-In the list handler, retrieve all `SandboxWarmpool` resources and return their status. Or list all `SandboxWarmpool` resources in a namespace.
-
-#### sandboxTemplate Inferface
-
-When using `sandboxWarmpool`, `sandboxClaim` must be utilized. And `sandboxClaim` depends on `sandboxTemplate`. So we need to provide an interface for the administrator to create and manage sandboxTemplate resources.
-
-```go
-v1.HandleFunc("/admin/template", s.handleCreateSandboxtemplate).Methods("POST")
-v1.HandleFunc("/admin/template/{namespace}/{name}", s.handleGetSandboxtemplate).Methods("GET")
-v1.HandleFunc("/admin/template/{namespace}/{name}", s.handleUpdateSandboxtemplate).Methods("PUT")
-v1.HandleFunc("/admin/template/{namespace}/{name}", s.handleDeleteSandboxtemplate).Methods("DELETE")
-
-v1.HandleFunc("/admin/template", s.handleListSandboxtemplate).Methods("GET")
-v1.HandleFunc("/admin/template?namespace={ns}", s.handleListNamespaceSandboxtemplate).Methods("GET")
-```
-
-In the create handler, parse the HTTP request body to obtain the YAML configuration for the `SandboxTemplate`. Then create the `SandboxTemplate` resource based on the YAML. And add two labels to it: `agentcube/sandbox-image` and `agentcube/sandbox-runtime`. For easy to find the template.
-
-In the read handler, parse the HTTP request parameters to obtain the namespace and name of the `SandboxTemplate`. Then retrieve the `SandboxTemplate` resource and return its status(At this stage, the agent-sandbox project does not provide).
-
-In the update handler, parse the HTTP request parameters to obtain the namespace and name of the `SandboxTemplate`. Subsequently, retrieve the `SandboxTemplate` resource and update its configuration based on the YAML file in the request body.
-
-In the delete handler, parse the HTTP request parameters to obtain the namespace and name of the `SandboxTemplate`. Then delete the `SandboxTemplate` resource.
-
-In the list handler, retrieve all `SandboxTemplate` resources and return their status. Or list all `SandboxTemplate` resources in a namespace.
+![sandboxWarmpool Interface](./images/warmpool.svg#center)
 
 #### How to use SandboxWarmpool
 
-Agent sandbox use `sandboxClaim` to link the sandbox resource and the sandboxwarmpool.
+Agent sandbox use `SandboxClaim` to link the `Sandbox` resource and the `Sandboxwarmpool`.
 
-- First get the `SandboxTemplate` based on the `SandboxClaim`
-- Check whether there is a `sandbox` under this `sandboxClaim`.
-- If not, creating the `sandbox`.
-- Based on the label specified in `agents.x-k8s.io/sandbox-template-ref-hash`, value is `sandboxClaim.Spec.TemplateRef.Name`, locate the pod within the warm pool. Then, from the pods using the warm pool as their controllerRef, select the pod with the longest creation time.
-- If not found in the warm pool, create a sandbox based on the matching sandboxTemplate.
+- First Parse metadata, image, and runtimeClassName from the HTTP request. Then look up the `SandboxTemplate` based on the labels of image and runtimeClassName.
+- If a corresponding `SandboxTemplate` is found, it indicates that a corresponding `SandboxWarmpool` already exists. Then create a `SandboxClaim` to retrieve the pod from the warmpool.
+- If no matching `SandboxTemplate` is found, proceed with the original create `Sandbox` process.
 
-Therefore, we need to match the existing sandboxTemplate resource based on `image/runntimeClassName`, then create a sandboxClaim to establish the sandbox.
+![warmpool Flowchart](./images/warmpool-flowchart.svg#center)
 
-Because sandboxClaim depends on sandboxTemplate, it cannot completely replace the original sandbox interface.
+Therefore, we need to match the existing sandboxTemplate resource based on `image/runtimeClassName`, then create a sandboxClaim to establish the sandbox.
 
-Therefore, add logic to the `handleCreateSandbox` function to create a `sandboxClaim` based on the `sandboxTemplate` retrieved using the `image` and `runtimeClassName`.
+Because `SandboxClaim` depends on `SandboxTemplate`, it cannot completely replace the original sandbox interface.
 
 When creating the sandboxTemplate, we added two labels to it: `agentcube/sandbox-image` and `agentcube/sandbox-runtime`. When you need to look it up, use a `labelSelector` to locate the `sandboxTemplate`. Then create a sandboxClaim based on the sandboxTemplate.Name if it found. If sandboxTemplate cannot be found, proceed with the previous create sandbox operation.
 
@@ -195,8 +174,6 @@ change are understandable. This may include API specs (though not always
 required) or even code snippets. If there's any ambiguity about HOW your
 proposal will be implemented, this is the place to discuss them.
 -->
-
-
 
 #### Test Plan
 

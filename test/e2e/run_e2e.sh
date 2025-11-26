@@ -27,7 +27,7 @@ kind create cluster --name "${E2E_CLUSTER_NAME}" || true
 
 echo "2. Installing agent-sandbox..."
 
-export AGENT_SANDBOX_VERSION="v0.1.0"
+AGENT_SANDBOX_VERSION="v0.1.0"
 
 # To install only the core components:
 kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml

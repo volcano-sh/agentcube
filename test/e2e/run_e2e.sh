@@ -26,24 +26,14 @@ echo "1. Creating Kind cluster..."
 kind create cluster --name "${E2E_CLUSTER_NAME}" || true
 
 echo "2. Installing agent-sandbox..."
-rm -rf /tmp/agent-sandbox
-git clone --depth 1 --branch "${AGENT_SANDBOX_VERSION}" "${AGENT_SANDBOX_REPO}" /tmp/agent-sandbox
 
-# Build agent-sandbox-controller image
-echo "Building agent-sandbox-controller image..."
-docker build -t agent-sandbox-controller:latest -f /tmp/agent-sandbox/images/agent-sandbox-controller/Dockerfile /tmp/agent-sandbox
-kind load docker-image agent-sandbox-controller:latest --name "${E2E_CLUSTER_NAME}"
+export AGENT_SANDBOX_VERSION="v0.1.0"
 
-kubectl apply -f /tmp/agent-sandbox/k8s/crds
-kubectl apply -f /tmp/agent-sandbox/k8s/rbac.generated.yaml
+# To install only the core components:
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml
 
-# Patch controller deployment to use local image
-echo "Patching agent-sandbox-controller deployment..."
-sed -i 's|ko://sigs.k8s.io/agent-sandbox/cmd/agent-sandbox-controller|agent-sandbox-controller:latest|g' /tmp/agent-sandbox/k8s/controller.yaml
-# Append imagePullPolicy: IfNotPresent after the image line
-sed -i '/image: agent-sandbox-controller:latest/a \        imagePullPolicy: IfNotPresent' /tmp/agent-sandbox/k8s/controller.yaml
-
-kubectl apply -f /tmp/agent-sandbox/k8s/controller.yaml
+# To install the extensions components:
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml
 
 echo "3. Building images..."
 # We assume we are in the project root

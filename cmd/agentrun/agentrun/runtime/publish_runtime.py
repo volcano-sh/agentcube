@@ -11,7 +11,6 @@ import time # New import
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from agentrun.services.agentcube_service import AgentCubeService
 from agentrun.services.docker_service import DockerService
 from agentrun.services.metadata_service import MetadataService
 from agentrun.services.k8s_provider import KubernetesProvider
@@ -27,10 +26,7 @@ class PublishRuntime:
         self.metadata_service = MetadataService(verbose=verbose)
         self.docker_service = DockerService(verbose=verbose)
         
-        # AgentCubeService is used if provider is not K8s based
-        self.agentcube_service = AgentCubeService(verbose=verbose, api_url=agentcube_uri)
-        
-        # New: Providers for K8s deployments
+        # Providers for K8s deployments
         self.agentcube_provider = None         # For agentcube provider (CRD)
         self.standard_k8s_provider = None    # For standard-k8s provider (Deployment/Service)
 
@@ -69,19 +65,14 @@ class PublishRuntime:
         if self.verbose:
             logger.info(f"Starting publish process for workspace: {workspace_path}")
             
-        # Update AgentCubeService with custom URI if provided
-        agentcube_uri = options.get('agentcube_uri')
-        if agentcube_uri:
-            self.agentcube_service = AgentCubeService(verbose=self.verbose, api_url=agentcube_uri)
-
         provider = options.get('provider', self.provider)
 
         if provider == "agentcube":
             return self._publish_crd_to_k8s(workspace_path, **options)
         elif provider == "standard-k8s":
             return self._publish_standard_k8s(workspace_path, **options)
-        else: # Fallback for other providers like "agentcube-api" or future ones
-            return self._publish_to_agentcube(workspace_path, **options)
+        else:
+            raise ValueError(f"Unsupported provider: {provider}. Supported providers are 'agentcube' and 'standard-k8s'.")
 
     def _publish_to_agentcube(
         self,
@@ -470,39 +461,6 @@ class PublishRuntime:
             raise ValueError("No cloud image URL found in metadata")
 
         return cloud_image_url
-
-    async def _register_agent_with_agentcube(
-        self,
-        metadata,
-        image_url: str,
-        options: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Register the agent with AgentCube."""
-        if self.verbose:
-            logger.info("Registering agent with AgentCube")
-
-        # Prepare agent metadata for API
-        agent_metadata = {
-            "agent_name": metadata.agent_name,
-            "description": options.get('description', metadata.description),
-            "version": options.get('version', 'latest'),
-            "language": metadata.language,
-            "entrypoint": metadata.entrypoint,
-            "port": metadata.port,
-            "build_mode": metadata.build_mode,
-            "region": options.get('region', metadata.region)
-        }
-
-        try:
-            result = await self.agentcube_service.create_or_update_agent(
-                agent_metadata=agent_metadata,
-                image_url=image_url
-            )
-
-            return result
-
-        except Exception as e:
-            raise RuntimeError(f"Failed to register agent with AgentCube: {str(e)}")
 
     def _update_publish_metadata(self, workspace_path: Path, agent_info: Dict[str, Any]) -> None:
         """Update metadata with publish information."""

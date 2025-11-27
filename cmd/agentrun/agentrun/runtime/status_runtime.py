@@ -167,6 +167,14 @@ class StatusRuntime:
                 "status": "error",
                 "error": str(e)
             }
+
+
+        except Exception as e:
+            logger.error(f"Failed to get K8s status: {e}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }
     
     def _get_crd_k8s_status(self, metadata) -> Dict[str, Any]:
         """Get status from K8s cluster (AgentRuntime CR)."""
@@ -179,38 +187,45 @@ class StatusRuntime:
             )
 
         try:
-            # Assume agent_id is the CR name
             crd_name = metadata.agent_id
+            cr_namespace = self.agentcube_provider.namespace # Use the provider's namespace
             
-            # Use AgentCube provider to get the custom object
-            # This requires a method in AgentCubeProvider to fetch the CR
-            # For now, we'll simulate. In a real scenario, AgentCubeProvider would have a get_agent_runtime method.
-            # As the prompt does not require implementing get_agent_runtime in AgentCubeProvider, I will mock the return for now.
+            cr_object = self.agentcube_provider.get_agent_runtime(crd_name, cr_namespace)
             
-            # --- START MOCKING ---
-            # In a real scenario, this would involve:
-            # cr_object = self.agentcube_provider.get_agent_runtime(crd_name, self.agentcube_provider.namespace)
-            # status_from_crd = cr_object.get('status', {})
-            # --- END MOCKING ---
-
-            # For now, let's assume the AgentCube provider can give us some status
-            # If the CRD has been created, we can say it's 'deployed'
-            # More advanced would be to check its actual status subresource if available
-            crd_status = {
-                "status": "deployed", # Placeholder
-                "namespace": self.agentcube_provider.namespace if self.agentcube_provider else "N/A"
+            agent_status = "unknown"
+            agent_endpoint = None
+            k8s_deployment_details = {
+                "type": "AgentRuntime",
+                "namespace": cr_namespace,
+                "deployment_name": crd_name
             }
+
+            if cr_object:
+                if "status" in cr_object:
+                    agent_status = cr_object["status"].get("status", "pending")
+                    agent_endpoint = cr_object["status"].get("agentEndpoint")
+                    
+                    # Merge full status into k8s_deployment_details for display
+                    k8s_deployment_details.update(cr_object["status"])
+                else:
+                    agent_status = "created_no_status"
+                
+                # Use metadata.agent_endpoint if available from CR status, else fallback to metadata
+                if not agent_endpoint and metadata.agent_endpoint:
+                    agent_endpoint = metadata.agent_endpoint
+            else:
+                agent_status = "not_found_in_k8s"
+                logger.warning(f"AgentRuntime CR '{crd_name}' not found in K8s, relying on metadata.")
             
-            # Merge with metadata information
             result = {
                 "agent_id": metadata.agent_id,
                 "agent_name": metadata.agent_name,
-                "agent_endpoint": metadata.agent_endpoint,
-                "status": crd_status.get("status"),
+                "agent_endpoint": agent_endpoint,
+                "status": agent_status,
                 "version": metadata.version or "N/A",
                 "language": metadata.language,
                 "build_mode": metadata.build_mode,
-                "k8s_deployment": crd_status # Use k8s_deployment key for consistency in display
+                "k8s_deployment": k8s_deployment_details
             }
 
             if self.verbose:
@@ -224,6 +239,3 @@ class StatusRuntime:
                 "status": "error",
                 "error": str(e)
             }
-
-
-logger = logging.getLogger(__name__)

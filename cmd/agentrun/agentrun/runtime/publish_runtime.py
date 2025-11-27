@@ -7,6 +7,7 @@ the publishing of agent images to AgentCube.
 
 import asyncio
 import logging
+import time # New import
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -176,29 +177,59 @@ class PublishRuntime:
                 env_vars=options.get('env_vars', None)
             )
 
-            # Determine base endpoint URI
-            agentcube_uri = options.get('agentcube_uri')
-            agent_endpoint = None
-            if agentcube_uri:
-                 # Remove trailing slash if present
-                base_uri = agentcube_uri.rstrip('/')
-                # Construct endpoint: <base_uri>/v1/namespaces/<ns>/agents/<name>
-                # This follows the pattern mentioned in the proposal
-                agent_endpoint = f"{base_uri}/v1/namespaces/{k8s_info['namespace']}/agents/{metadata.agent_name}"
-
-            # Step 4: Update metadata with K8s deployment information
+            # Step 4: Update metadata with initial K8s deployment information (before endpoint is available)
             updates = {
                 "agent_id": k8s_info["deployment_name"],
                 "k8s_deployment": {
-                    "deployment_name": k8s_info["deployment_name"],
-                    "namespace": k8s_info["namespace"],
-                    "type": "AgentRuntime"
+                    **k8s_info,
+                    "type": "AgentRuntime",
+                    "status": "pending_endpoint" # Initial status
                 }
             }
+            self.metadata_service.update_metadata(workspace_path, updates)
             
-            if agent_endpoint:
-                updates["agent_endpoint"] = agent_endpoint
+            # --- POLLING FOR ENDPOINT ---
+            agent_endpoint = None
+            status = "pending_endpoint"
+            timeout_seconds = 300 # 5 minutes timeout
+            poll_interval = 5 # Poll every 5 seconds
+            start_time = time.time()
+            
+            if self.verbose:
+                logger.info(f"Polling AgentRuntime CR '{k8s_info['deployment_name']}' for endpoint. Timeout: {timeout_seconds}s")
 
+            while time.time() - start_time < timeout_seconds:
+                try:
+                    cr = self.agentcube_provider.get_agent_runtime(
+                        name=k8s_info["deployment_name"],
+                        namespace=k8s_info["namespace"]
+                    )
+                    if cr and "status" in cr and "agentEndpoint" in cr["status"]:
+                        agent_endpoint = cr["status"]["agentEndpoint"]
+                        status = cr["status"].get("status", "deployed") # Get actual status from CR if available
+                        if self.verbose:
+                            logger.info(f"AgentRuntime CR '{k8s_info['deployment_name']}' endpoint found: {agent_endpoint}")
+                        break
+                except Exception as e:
+                    logger.debug(f"Error while polling for AgentRuntime status: {e}")
+                
+                time.sleep(poll_interval)
+            
+            if not agent_endpoint:
+                status = "endpoint_timeout"
+                logger.warning(f"Timeout waiting for agentEndpoint from AgentRuntime CR '{k8s_info['deployment_name']}'. Please check CR status manually.")
+                
+            # Update metadata with final endpoint and status
+            updates = {
+                "agent_id": k8s_info["deployment_name"],
+                "agent_endpoint": agent_endpoint, # This will be None if timeout
+                "k8s_deployment": {
+                    **k8s_info,
+                    "type": "AgentRuntime",
+                    "status": status,
+                    "last_checked_at": time.time() # Optional: timestamp
+                }
+            }
             self.metadata_service.update_metadata(workspace_path, updates)
 
             result = {
@@ -206,12 +237,11 @@ class PublishRuntime:
                 "agent_id": k8s_info["deployment_name"],
                 "deployment_name": k8s_info["deployment_name"],
                 "namespace": k8s_info["namespace"],
-                "status": "deployed (AgentRuntime CR)"
+                "status": status
             }
-            
             if agent_endpoint:
                 result["agent_endpoint"] = agent_endpoint
-
+            
             if self.verbose:
                 logger.info(f"K8s publish (AgentRuntime CR) completed: {result}")
 

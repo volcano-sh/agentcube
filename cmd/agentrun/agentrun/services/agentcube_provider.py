@@ -261,3 +261,36 @@ class AgentCubeProvider:
             sanitized = "agent"
 
         return sanitized
+
+    def get_agent_runtime(self, name: str, namespace: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetches an AgentRuntime Custom Resource by name and namespace.
+
+        Args:
+            name: The name of the AgentRuntime CR.
+            namespace: The namespace of the AgentRuntime CR.
+
+        Returns:
+            A dictionary representing the AgentRuntime CR, or None if not found.
+        """
+        group = "runtime.agentcube.io"
+        version = "v1alpha1"
+        plural = "agentruntimes"
+
+        try:
+            cr = self.custom_api.get_namespaced_custom_object(
+                group=group,
+                version=version,
+                name=name,
+                namespace=namespace,
+                plural=plural
+            )
+            return cr
+        except ApiException as e:
+            if e.status == 404:
+                if self.verbose:
+                    logger.debug(f"AgentRuntime CR '{name}' not found in namespace '{namespace}'.")
+                return None
+            else:
+                logger.error(f"Error fetching AgentRuntime CR '{name}': {e}")
+                raise

@@ -326,7 +326,7 @@ spec:
   warmPoolSize: 2
 ```
 
-With the `CodeInterpreter` published, callers can access the runtime through the endpoint `https://<agent-frontend>:<frontend-port>/v1/namespaces/{agentNamespace}/code-interpreters/{agentName}/<code interpreter specific path>`.
+With the `CodeInterpreter` published, callers can access the runtime through the endpoint `https://<agent-frontend>:<frontend-port>/v1/namespaces/{namespace}/code-interpreters/{name}/<code interpreter specific path>`.
 
 ### Alternatives
 

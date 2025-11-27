@@ -277,6 +277,11 @@ def publish(
         "--use-k8s",
         help="Deploy to local Kubernetes cluster instead of AgentCube",
     ),
+    agentcube_uri: Optional[str] = typer.Option(
+        None,
+        "--agentcube-uri",
+        help="AgentCube API URI (e.g., http://localhost:8080)",
+    ),
     node_port: Optional[int] = typer.Option(
         None,
         "--node-port",
@@ -319,6 +324,7 @@ def publish(
                 "region": region,
                 "cloud_provider": cloud_provider,
                 "use_k8s": use_k8s,
+                "agentcube_uri": agentcube_uri,
                 "node_port": node_port,
                 "replicas": replicas,
             }
@@ -371,6 +377,11 @@ def invoke(
         "--use-k8s",
         help="Invoke agent deployed on local Kubernetes cluster",
     ),
+    agentcube_uri: Optional[str] = typer.Option(
+        None,
+        "--agentcube-uri",
+        help="AgentCube API URI (e.g., http://localhost:8080)",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -391,7 +402,7 @@ def invoke(
         ) as progress:
             task = progress.add_task("Invoking agent...", total=None)
 
-            runtime = InvokeRuntime(verbose=verbose, use_k8s=use_k8s)
+            runtime = InvokeRuntime(verbose=verbose, use_k8s=use_k8s, agentcube_uri=agentcube_uri)
             workspace_path = Path(workspace).resolve()
 
             # Parse payload
@@ -438,6 +449,11 @@ def status(
         "--use-k8s",
         help="Check status on local Kubernetes cluster",
     ),
+    agentcube_uri: Optional[str] = typer.Option(
+        None,
+        "--agentcube-uri",
+        help="AgentCube API URI (e.g., http://localhost:8080)",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -451,7 +467,7 @@ def status(
     of the agent associated with the workspace.
     """
     try:
-        runtime = StatusRuntime(verbose=verbose, use_k8s=use_k8s)
+        runtime = StatusRuntime(verbose=verbose, use_k8s=use_k8s, agentcube_uri=agentcube_uri)
         workspace_path = Path(workspace).resolve()
 
         status_info = runtime.get_status(workspace_path, use_k8s=use_k8s)

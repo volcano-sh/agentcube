@@ -21,14 +21,14 @@ logger = logging.getLogger(__name__)
 class AgentCubeService:
     """Service for interacting with AgentCube API."""
 
-    def __init__(self, api_url: str = "http://localhost:8080", verbose: bool = False) -> None:
-        self.api_url = api_url.rstrip('/')
+    def __init__(self, verbose: bool = False, api_url: Optional[str] = None) -> None:
         self.verbose = verbose
+        # Allow overriding the default API URL (e.g. for testing or custom deployments)
+        self.api_url = api_url or "http://localhost:8080"
+        
         if verbose:
             logging.basicConfig(level=logging.DEBUG)
-
-        if httpx is None:
-            raise ImportError("httpx is required for AgentCubeService. Install with: pip install httpx")
+            logger.debug(f"AgentCubeService initialized with API URL: {self.api_url}")
 
     async def create_or_update_agent(
         self,

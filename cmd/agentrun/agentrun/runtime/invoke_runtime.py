@@ -18,18 +18,21 @@ from agentrun.services.k8s_provider import KubernetesProvider
 class InvokeRuntime:
     """Runtime for the invoke command."""
 
-    def __init__(self, verbose: bool = False, use_k8s: bool = False) -> None:
+    def __init__(self, verbose: bool = False, use_k8s: bool = False, provider: str = "agentcube", agentcube_uri: Optional[str] = None) -> None:
         self.verbose = verbose
         self.use_k8s = use_k8s
+        self.provider = provider
+        self.agentcube_uri = agentcube_uri
         self.metadata_service = MetadataService(verbose=verbose)
-        self.agentcube_service = AgentCubeService(verbose=verbose)
-        self.k8s_provider = None
-
-        if use_k8s:
-            try:
+        self.agentcube_service = AgentCubeService(verbose=verbose, api_url=agentcube_uri)
+        
+        if use_k8s or provider == "k8s":
+            # K8s provider not really used for invoke in current logic as we use http endpoint
+            # But keeping initialization if needed for future logic
+             try:
                 self.k8s_provider = KubernetesProvider(verbose=verbose)
-            except Exception as e:
-                logger.warning(f"Failed to initialize K8s provider: {e}")
+             except Exception:
+                 pass # Ignore if k8s not available
 
         if verbose:
             logging.basicConfig(level=logging.DEBUG)
@@ -85,13 +88,37 @@ class InvokeRuntime:
                 "Agent is not published yet. Run 'agentrun publish' first."
             )
 
+        # Priority 1: Use CLI provided agentcube-uri to construct endpoint override if applicable
+        # But typically agentcube-uri is the base URI. 
+        # If user provides --agentcube-uri, we might want to use it to reconstruct the endpoint
+        # especially if the one in metadata is outdated or 'localhost'.
+        
         endpoint = metadata.agent_endpoint
+        
+        if self.agentcube_uri:
+             # If CLI arg provided, override base part of endpoint if it looks like a full URL
+             # Or construct a standard endpoint path if metadata endpoint is missing
+             base_uri = self.agentcube_uri.rstrip('/')
+             if self.provider == "k8s" or self.use_k8s:
+                 # Reconstruct K8s endpoint format: <base>/v1/namespaces/<ns>/agents/<name>
+                 # We need namespace. If not in metadata, assume default.
+                 namespace = "agentrun"
+                 if metadata.k8s_deployment and "namespace" in metadata.k8s_deployment:
+                     namespace = metadata.k8s_deployment["namespace"]
+                 
+                 endpoint = f"{base_uri}/v1/namespaces/{namespace}/agents/{metadata.agent_name}"
+             else:
+                 # Standard AgentCube endpoint format if needed
+                 endpoint = f"{base_uri}/v1/agents/{agent_id}/invoke"
+
         if not endpoint:
-            # Generate default endpoint if not available
-            endpoint = f"http://localhost:8080/v1/agents/{agent_id}/invoke"
+             raise ValueError(
+                "Agent endpoint is not available in metadata and could not be constructed. "
+                "Please publish with --agentcube-uri or provide it during invocation."
+            )
 
         if self.verbose:
-            logger.debug(f"Invocation prerequisites validated: agent_id={agent_id}")
+            logger.debug(f"Invocation prerequisites validated: agent_id={agent_id}, endpoint={endpoint}")
 
         return agent_id, endpoint
 

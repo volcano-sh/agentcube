@@ -148,9 +148,6 @@ class KubernetesProvider:
                 node_port=node_port
             )
 
-            # Wait for deployment to be ready
-            self._wait_for_deployment_ready(k8s_name, timeout=120)
-
             result = {
                 "deployment_name": k8s_name,
                 "service_name": k8s_name,
@@ -159,11 +156,10 @@ class KubernetesProvider:
                 "container_port": port,
                 "node_port": service_info["node_port"],
                 "service_url": f"http://localhost:{service_info['node_port']}",
-                "status": "deployed"
             }
 
             if self.verbose:
-                logger.info(f"Agent deployed successfully: {result}")
+                logger.info(f"K8s resources created for agent: {result}")
 
             return result
 

@@ -14,30 +14,35 @@ from agentrun.services.agentcube_service import AgentCubeService
 from agentrun.services.docker_service import DockerService
 from agentrun.services.metadata_service import MetadataService
 from agentrun.services.k8s_provider import KubernetesProvider
-from agentrun.services.agentcube_provider import AgentCubeProvider # New import
+from agentrun.services.agentcube_provider import AgentCubeProvider # Use AgentCubeProvider for CRD
 
 
 class PublishRuntime:
     """Runtime for the publish command."""
 
-    def __init__(self, verbose: bool = False, use_k8s: bool = False, provider: str = "agentcube") -> None:
+    def __init__(self, verbose: bool = False, provider: str = "agentcube", agentcube_uri: Optional[str] = None) -> None:
         self.verbose = verbose
-        self.use_k8s = use_k8s
         self.provider = provider
         self.metadata_service = MetadataService(verbose=verbose)
         self.docker_service = DockerService(verbose=verbose)
-        # Delay initialization of agentcube_service to when we have options (in publish method) or init with default
-        # For now, we will re-initialize it in publish method if agentcube_uri is provided
-        self.agentcube_service = AgentCubeService(verbose=verbose)
         
-        # New: agentcube_provider for CRD deployments
-        self.agentcube_provider = None 
+        # AgentCubeService is used if provider is not K8s based
+        self.agentcube_service = AgentCubeService(verbose=verbose, api_url=agentcube_uri)
+        
+        # New: Providers for K8s deployments
+        self.agentcube_provider = None         # For agentcube provider (CRD)
+        self.standard_k8s_provider = None    # For standard-k8s provider (Deployment/Service)
 
-        if use_k8s or provider == "k8s":
+        if provider == "agentcube":
             try:
                 self.agentcube_provider = AgentCubeProvider(verbose=verbose)
             except Exception as e:
-                logger.warning(f"Failed to initialize AgentCube provider: {e}")
+                logger.warning(f"Failed to initialize AgentCube provider for CRD: {e}")
+        elif provider == "standard-k8s":
+            try:
+                self.standard_k8s_provider = KubernetesProvider(verbose=verbose)
+            except Exception as e:
+                logger.warning(f"Failed to initialize standard K8s provider: {e}")
 
         if verbose:
             logging.basicConfig(level=logging.DEBUG)
@@ -68,13 +73,13 @@ class PublishRuntime:
         if agentcube_uri:
             self.agentcube_service = AgentCubeService(verbose=self.verbose, api_url=agentcube_uri)
 
-        # Check if K8s deployment is requested
-        use_k8s = options.get('use_k8s', self.use_k8s)
         provider = options.get('provider', self.provider)
 
-        if use_k8s or provider == "k8s":
-            return self._publish_to_k8s(workspace_path, **options)
-        else:
+        if provider == "agentcube":
+            return self._publish_crd_to_k8s(workspace_path, **options)
+        elif provider == "standard-k8s":
+            return self._publish_standard_k8s(workspace_path, **options)
+        else: # Fallback for other providers like "agentcube-api" or future ones
             return self._publish_to_agentcube(workspace_path, **options)
 
     def _publish_to_agentcube(
@@ -124,13 +129,13 @@ class PublishRuntime:
 
         return result
 
-    def _publish_to_k8s(
+    def _publish_crd_to_k8s( # Renamed from _publish_to_k8s
         self,
         workspace_path: Path,
         **options: Any
     ) -> Dict[str, Any]:
         """
-        Publish the agent to local Kubernetes cluster using AgentRuntime CR.
+        Publish the agent to Kubernetes cluster using AgentRuntime CR.
 
         Args:
             workspace_path: Path to the agent workspace directory
@@ -145,7 +150,7 @@ class PublishRuntime:
         if self.verbose:
             logger.info(f"Publishing to K8s cluster (AgentRuntime CR) for workspace: {workspace_path}")
 
-        if not self.agentcube_provider:
+        if not self.agentcube_provider: # Use the agentcube_provider
             raise RuntimeError(
                 "AgentCube provider is not initialized. Ensure Kubernetes is configured."
             )
@@ -163,7 +168,7 @@ class PublishRuntime:
 
         # Step 3: Deploy AgentRuntime CR
         try:
-            k8s_info = self.agentcube_provider.deploy_agent_runtime(
+            k8s_info = self.agentcube_provider.deploy_agent_runtime( # Call the new provider
                 agent_name=metadata.agent_name,
                 image_url=image_url,
                 port=metadata.port,
@@ -214,6 +219,122 @@ class PublishRuntime:
 
         except Exception as e:
             raise RuntimeError(f"Failed to deploy AgentRuntime CR to K8s: {str(e)}")
+
+    def _publish_standard_k8s(
+        self,
+        workspace_path: Path,
+        **options: Any
+    ) -> Dict[str, Any]:
+        """
+        Publish the agent to local Kubernetes cluster using standard Deployment/Service.
+
+        Args:
+            workspace_path: Path to the agent workspace directory
+            **options: Additional publish options
+
+        Returns:
+            Dict containing publish results
+
+        Raises:
+            ValueError: If publish fails
+        """
+        if self.verbose:
+            logger.info(f"Publishing to K8s cluster (standard Deployment/Service) for workspace: {workspace_path}")
+
+        if not self.standard_k8s_provider:
+            raise RuntimeError(
+                "Standard K8s provider is not initialized. Ensure Kubernetes is configured."
+            )
+
+        # Step 1: Load metadata
+        metadata = self._validate_publish_prerequisites(workspace_path)
+
+        # Step 2: Get image information
+        image_url = metadata.image.get("repository_url")
+        if not image_url:
+            raise ValueError("No image found in metadata. Build the agent first.")
+
+        # Step 3: Deploy to K8s
+        try:
+            k8s_info = self.standard_k8s_provider.deploy_agent(
+                agent_name=metadata.agent_name,
+                image_url=image_url,
+                port=metadata.port,
+                entrypoint=metadata.entrypoint,
+                replicas=options.get('replicas', 1),
+                node_port=options.get('node_port', None),
+                env_vars=options.get('env_vars', None)
+            )
+
+            # Step 4: Update metadata with K8s deployment information (after creation, before readiness check)
+            # This ensures agent_id and agent_endpoint are saved even if readiness fails
+            updates = {
+                "agent_id": k8s_info["deployment_name"],
+                "agent_endpoint": k8s_info["service_url"],
+                "k8s_deployment": {
+                    **k8s_info,
+                    "status": "creating" # Initial status
+                }
+            }
+            self.metadata_service.update_metadata(workspace_path, updates)
+            
+            # --- Start readiness check ---
+            if self.verbose:
+                logger.info(f"Waiting for deployment '{k8s_info['deployment_name']}' to become ready...")
+            
+            final_status = "failed" # Default to failed
+            try:
+                self.standard_k8s_provider._wait_for_deployment_ready(k8s_info['deployment_name'], timeout=120)
+                final_status = "deployed" # If successful
+            except Exception as e:
+                error_message = str(e)
+                logger.error(f"Deployment '{k8s_info['deployment_name']}' failed readiness check: {error_message}")
+                # Update metadata with failure status and error message
+                updates = {
+                    "k8s_deployment": {
+                        **k8s_info,
+                        "status": final_status,
+                        "error": error_message
+                    }
+                }
+                self.metadata_service.update_metadata(workspace_path, updates)
+                raise RuntimeError(f"Failed to deploy to standard K8s: {error_message}")
+            
+            # If readiness succeeds, update metadata with success status
+            updates = {
+                "k8s_deployment": {
+                    **k8s_info,
+                    "status": final_status
+                }
+            }
+            self.metadata_service.update_metadata(workspace_path, updates)
+
+            result = {
+                **k8s_info,
+                "status": final_status
+            }
+
+            if self.verbose:
+                logger.info(f"Standard K8s publish completed: {result}")
+
+            return result
+
+        except Exception as e:
+            # This catches errors during deploy_agent (creation of resources)
+            error_message = str(e)
+            logger.error(f"Failed to create standard K8s resources for {metadata.agent_name}: {error_message}")
+            if k8s_info: # If some k8s_info was returned, try to update metadata with failure
+                 updates = {
+                    "agent_id": k8s_info.get("deployment_name", metadata.agent_name),
+                    "agent_endpoint": k8s_info.get("service_url", ""),
+                    "k8s_deployment": {
+                        **k8s_info,
+                        "status": "failed",
+                        "error": error_message
+                    }
+                }
+                 self.metadata_service.update_metadata(workspace_path, updates)
+            raise RuntimeError(f"Failed to deploy to standard K8s: {error_message}")
 
     def _validate_publish_prerequisites(self, workspace_path: Path):
         """Validate that the workspace is ready for publishing."""

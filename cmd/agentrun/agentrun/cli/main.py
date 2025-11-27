@@ -272,10 +272,10 @@ def publish(
         "--cloud-provider",
         help="Cloud provider name (e.g., huawei)",
     ),
-    use_k8s: bool = typer.Option(
-        False,
-        "--use-k8s",
-        help="Deploy to local Kubernetes cluster instead of AgentCube",
+    provider: str = typer.Option(
+        "agentcube",
+        "--provider",
+        help="Target provider for deployment (agentcube, standard-k8s). 'agentcube' deploys AgentRuntime CR, 'standard-k8s' deploys standard K8s Deployment/Service.",
     ),
     agentcube_uri: Optional[str] = typer.Option(
         None,
@@ -312,7 +312,7 @@ def publish(
         ) as progress:
             task = progress.add_task("Publishing agent...", total=None)
 
-            runtime = PublishRuntime(verbose=verbose, use_k8s=use_k8s)
+            runtime = PublishRuntime(verbose=verbose, provider=provider)
             workspace_path = Path(workspace).resolve()
 
             options = {
@@ -323,8 +323,8 @@ def publish(
                 "description": description,
                 "region": region,
                 "cloud_provider": cloud_provider,
-                "use_k8s": use_k8s,
-                "agentcube_uri": agentcube_uri,
+                "provider": provider, # Pass provider down
+                "agentcube_uri": agentcube_uri, # Pass agentcube_uri down
                 "node_port": node_port,
                 "replicas": replicas,
             }
@@ -341,10 +341,19 @@ def publish(
         if "agent_endpoint" in result:
             console.print(f"🌐 Endpoint: [blue]{result['agent_endpoint']}[/blue]")
 
-        if use_k8s:
+        if provider == "agentcube" or provider == "k8s": # if it's a k8s based deployment
             console.print(f"📦 Namespace: [blue]{result.get('namespace', 'agentrun')}[/blue]")
             if "status" in result:
                  console.print(f"📊 Status: [blue]{result['status']}[/blue]")
+            if "node_port" in result: # For standard K8s provider if it returns node_port
+                console.print(f"🔌 NodePort: [blue]{result['node_port']}[/blue]")
+
+    except Exception as e:
+        console.print(f"❌ Error publishing agent: [red]{str(e)}[/red]")
+        if verbose:
+            import traceback
+            console.print(traceback.format_exc())
+        raise typer.Exit(1)
 
     except Exception as e:
         console.print(f"❌ Error publishing agent: [red]{str(e)}[/red]")
@@ -372,10 +381,10 @@ def invoke(
         "--header",
         help="Custom HTTP headers (e.g., 'Authorization: Bearer token')",
     ),
-    use_k8s: bool = typer.Option(
-        False,
-        "--use-k8s",
-        help="Invoke agent deployed on local Kubernetes cluster",
+    provider: str = typer.Option(
+        "agentcube",
+        "--provider",
+        help="Target provider for invocation (agentcube, standard-k8s). 'agentcube' refers to the AgentRuntime CR, 'standard-k8s' refers to a standard K8s Deployment/Service.",
     ),
     agentcube_uri: Optional[str] = typer.Option(
         None,
@@ -402,7 +411,7 @@ def invoke(
         ) as progress:
             task = progress.add_task("Invoking agent...", total=None)
 
-            runtime = InvokeRuntime(verbose=verbose, use_k8s=use_k8s, agentcube_uri=agentcube_uri)
+            runtime = InvokeRuntime(verbose=verbose, provider=provider, agentcube_uri=agentcube_uri)
             workspace_path = Path(workspace).resolve()
 
             # Parse payload
@@ -444,10 +453,10 @@ def status(
         help="Path to the agent workspace directory",
         show_default=True,
     ),
-    use_k8s: bool = typer.Option(
-        False,
-        "--use-k8s",
-        help="Check status on local Kubernetes cluster",
+    provider: str = typer.Option(
+        "agentcube",
+        "--provider",
+        help="Target provider for status check (agentcube, standard-k8s). 'agentcube' refers to the AgentRuntime CR, 'standard-k8s' refers to a standard K8s Deployment/Service.",
     ),
     agentcube_uri: Optional[str] = typer.Option(
         None,
@@ -467,10 +476,10 @@ def status(
     of the agent associated with the workspace.
     """
     try:
-        runtime = StatusRuntime(verbose=verbose, use_k8s=use_k8s, agentcube_uri=agentcube_uri)
+        runtime = StatusRuntime(verbose=verbose, provider=provider, agentcube_uri=agentcube_uri)
         workspace_path = Path(workspace).resolve()
 
-        status_info = runtime.get_status(workspace_path, use_k8s=use_k8s)
+        status_info = runtime.get_status(workspace_path, provider=provider)
 
         if status_info.get("status") == "not_published":
             console.print("❌ No agent found. Please publish an agent first.")

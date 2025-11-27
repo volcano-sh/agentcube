@@ -332,11 +332,13 @@ def publish(
 
         console.print(f"✅ Successfully published agent: [bold green]{result['agent_name']}[/bold green]")
         console.print(f"🆔 Agent ID: [blue]{result['agent_id']}[/blue]")
-        console.print(f"🌐 Endpoint: [blue]{result['agent_endpoint']}[/blue]")
+        if "agent_endpoint" in result:
+            console.print(f"🌐 Endpoint: [blue]{result['agent_endpoint']}[/blue]")
 
-        if use_k8s and "node_port" in result:
-            console.print(f"🔌 NodePort: [blue]{result['node_port']}[/blue]")
+        if use_k8s:
             console.print(f"📦 Namespace: [blue]{result.get('namespace', 'agentrun')}[/blue]")
+            if "status" in result:
+                 console.print(f"📊 Status: [blue]{result['status']}[/blue]")
 
     except Exception as e:
         console.print(f"❌ Error publishing agent: [red]{str(e)}[/red]")

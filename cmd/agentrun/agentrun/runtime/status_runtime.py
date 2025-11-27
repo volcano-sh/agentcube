@@ -18,14 +18,16 @@ from agentrun.services.k8s_provider import KubernetesProvider
 class StatusRuntime:
     """Runtime for the status command."""
 
-    def __init__(self, verbose: bool = False, use_k8s: bool = False) -> None:
+    def __init__(self, verbose: bool = False, use_k8s: bool = False, provider: str = "agentcube", agentcube_uri: Optional[str] = None) -> None:
         self.verbose = verbose
         self.use_k8s = use_k8s
+        self.provider = provider
+        self.agentcube_uri = agentcube_uri
         self.metadata_service = MetadataService(verbose=verbose)
-        self.agentcube_service = AgentCubeService(verbose=verbose)
+        self.agentcube_service = AgentCubeService(verbose=verbose, api_url=agentcube_uri)
         self.k8s_provider = None
 
-        if use_k8s:
+        if use_k8s or provider == "k8s":
             try:
                 self.k8s_provider = KubernetesProvider(verbose=verbose)
             except Exception as e:
@@ -34,13 +36,14 @@ class StatusRuntime:
         if verbose:
             logging.basicConfig(level=logging.DEBUG)
 
-    def get_status(self, workspace_path: Path, use_k8s: Optional[bool] = None) -> Dict[str, Any]:
+    def get_status(self, workspace_path: Path, use_k8s: Optional[bool] = None, provider: Optional[str] = None) -> Dict[str, Any]:
         """
         Get the status of a published agent.
 
         Args:
             workspace_path: Path to the agent workspace directory
             use_k8s: Override to check K8s status (defaults to self.use_k8s)
+            provider: Override provider
 
         Returns:
             Dict containing agent status information
@@ -61,8 +64,11 @@ class StatusRuntime:
                 }
 
             # Determine whether to check K8s or AgentCube
-            check_k8s = use_k8s if use_k8s is not None else (
-                self.use_k8s or metadata.k8s_deployment is not None
+            effective_use_k8s = use_k8s if use_k8s is not None else self.use_k8s
+            effective_provider = provider if provider is not None else self.provider
+            
+            check_k8s = effective_use_k8s or effective_provider == "k8s" or (
+                metadata.k8s_deployment is not None and effective_provider != "agentcube"
             )
 
             if check_k8s:

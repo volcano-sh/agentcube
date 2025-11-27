@@ -20,17 +20,20 @@ from agentrun.services.agentcube_provider import AgentCubeProvider # New import
 class PublishRuntime:
     """Runtime for the publish command."""
 
-    def __init__(self, verbose: bool = False, use_k8s: bool = False) -> None:
+    def __init__(self, verbose: bool = False, use_k8s: bool = False, provider: str = "agentcube") -> None:
         self.verbose = verbose
         self.use_k8s = use_k8s
+        self.provider = provider
         self.metadata_service = MetadataService(verbose=verbose)
         self.docker_service = DockerService(verbose=verbose)
+        # Delay initialization of agentcube_service to when we have options (in publish method) or init with default
+        # For now, we will re-initialize it in publish method if agentcube_uri is provided
         self.agentcube_service = AgentCubeService(verbose=verbose)
         
         # New: agentcube_provider for CRD deployments
         self.agentcube_provider = None 
 
-        if use_k8s:
+        if use_k8s or provider == "k8s":
             try:
                 self.agentcube_provider = AgentCubeProvider(verbose=verbose)
             except Exception as e:
@@ -59,11 +62,17 @@ class PublishRuntime:
         """
         if self.verbose:
             logger.info(f"Starting publish process for workspace: {workspace_path}")
+            
+        # Update AgentCubeService with custom URI if provided
+        agentcube_uri = options.get('agentcube_uri')
+        if agentcube_uri:
+            self.agentcube_service = AgentCubeService(verbose=self.verbose, api_url=agentcube_uri)
 
         # Check if K8s deployment is requested
         use_k8s = options.get('use_k8s', self.use_k8s)
+        provider = options.get('provider', self.provider)
 
-        if use_k8s:
+        if use_k8s or provider == "k8s":
             return self._publish_to_k8s(workspace_path, **options)
         else:
             return self._publish_to_agentcube(workspace_path, **options)
@@ -162,6 +171,16 @@ class PublishRuntime:
                 env_vars=options.get('env_vars', None)
             )
 
+            # Determine base endpoint URI
+            agentcube_uri = options.get('agentcube_uri')
+            agent_endpoint = None
+            if agentcube_uri:
+                 # Remove trailing slash if present
+                base_uri = agentcube_uri.rstrip('/')
+                # Construct endpoint: <base_uri>/v1/namespaces/<ns>/agents/<name>
+                # This follows the pattern mentioned in the proposal
+                agent_endpoint = f"{base_uri}/v1/namespaces/{k8s_info['namespace']}/agents/{metadata.agent_name}"
+
             # Step 4: Update metadata with K8s deployment information
             updates = {
                 "agent_id": k8s_info["deployment_name"],
@@ -171,6 +190,10 @@ class PublishRuntime:
                     "type": "AgentRuntime"
                 }
             }
+            
+            if agent_endpoint:
+                updates["agent_endpoint"] = agent_endpoint
+
             self.metadata_service.update_metadata(workspace_path, updates)
 
             result = {
@@ -180,6 +203,9 @@ class PublishRuntime:
                 "namespace": k8s_info["namespace"],
                 "status": "deployed (AgentRuntime CR)"
             }
+            
+            if agent_endpoint:
+                result["agent_endpoint"] = agent_endpoint
 
             if self.verbose:
                 logger.info(f"K8s publish (AgentRuntime CR) completed: {result}")

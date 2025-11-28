@@ -1,0 +1,12 @@
+apiVersion: runtime.agentcube.io/v1alpha1
+kind: CodeInterpreter
+metadata:
+  name: simple-codeinterpreter
+  namespace: default
+spec:
+  template:
+    image: busybox
+    command: ["/bin/sh", "-c", "sleep 36000"]
+  sessionTimeout: "15m"
+  maxSessionDuration: "8h"
+  warmPoolSize: 2

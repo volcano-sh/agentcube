@@ -162,3 +162,7 @@ type CodeInterpreterList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []CodeInterpreter `json:"items"`
 }
+
+func init() {
+	SchemeBuilder.Register(&CodeInterpreter{}, &CodeInterpreterList{})
+}

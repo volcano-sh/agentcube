@@ -322,6 +322,7 @@ func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alph
 	podSpec := corev1.PodSpec{
 		Containers: []corev1.Container{
 			{
+				Name:      "codeinterpreter",
 				Image:     template.Image,
 				Command:   template.Command,
 				Args:      template.Args,

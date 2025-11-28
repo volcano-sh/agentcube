@@ -7,7 +7,7 @@ the building of agent images from packaged workspaces.
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from agentrun.services.docker_service import DockerService
 from agentrun.services.metadata_service import MetadataService

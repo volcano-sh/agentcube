@@ -7,14 +7,8 @@ specifically designed for the AgentCube ecosystem.
 
 import logging
 from typing import Any, Dict, Optional
-
-try:
-    from kubernetes import client, config
-    from kubernetes.client.rest import ApiException
-except ImportError:
-    client = None
-    config = None
-    ApiException = None
+from kubernetes import client, config
+from kubernetes.client.rest import ApiException
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +35,6 @@ class AgentCubeProvider:
 
         if verbose:
             logging.basicConfig(level=logging.DEBUG)
-
-        if client is None or config is None:
-            raise ImportError(
-                "kubernetes package is required for K8s provider. "
-                "Install with: pip install kubernetes"
-            )
 
         # Load Kubernetes configuration
         try:

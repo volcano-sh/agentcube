@@ -5,11 +5,10 @@ This module implements the publish command functionality, handling
 the publishing of agent images to AgentCube.
 """
 
-import asyncio
 import logging
 import time # New import
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from agentrun.services.docker_service import DockerService
 from agentrun.services.metadata_service import MetadataService
@@ -20,7 +19,7 @@ from agentrun.services.agentcube_provider import AgentCubeProvider # Use AgentCu
 class PublishRuntime:
     """Runtime for the publish command."""
 
-    def __init__(self, verbose: bool = False, provider: str = "agentcube", agentcube_uri: Optional[str] = None) -> None:
+    def __init__(self, verbose: bool = False, provider: str = "agentcube") -> None:
         self.verbose = verbose
         self.provider = provider
         self.metadata_service = MetadataService(verbose=verbose)
@@ -73,53 +72,6 @@ class PublishRuntime:
             return self._publish_standard_k8s(workspace_path, **options)
         else:
             raise ValueError(f"Unsupported provider: {provider}. Supported providers are 'agentcube' and 'standard-k8s'.")
-
-    def _publish_to_agentcube(
-        self,
-        workspace_path: Path,
-        **options: Any
-    ) -> Dict[str, Any]:
-        """
-        Publish the agent to AgentCube.
-
-        Args:
-            workspace_path: Path to the agent workspace directory
-            **options: Additional publish options
-
-        Returns:
-            Dict containing publish results
-
-        Raises:
-            ValueError: If publish fails
-        """
-        if self.verbose:
-            logger.info(f"Publishing to AgentCube for workspace: {workspace_path}")
-
-        # Step 1: Validate workspace and metadata
-        metadata = self._validate_publish_prerequisites(workspace_path)
-
-        # Step 2: Prepare image for publishing
-        # image_url = self._prepare_image_for_publishing(workspace_path, metadata, options)
-        image_url = options.get('image_url')
-
-        # Step 3: Register agent with AgentCube
-        agent_info = asyncio.run(self._register_agent_with_agentcube(metadata, image_url, options))
-
-        # Step 4: Update metadata with publish information
-        self._update_publish_metadata(workspace_path, agent_info)
-
-        result = {
-            "agent_name": metadata.agent_name,
-            "agent_id": agent_info["agent_id"],
-            "agent_endpoint": agent_info["agent_endpoint"],
-            "image_url": image_url,
-            "version": options.get('version', 'latest')
-        }
-
-        if self.verbose:
-            logger.info(f"Publish completed: {result}")
-
-        return result
 
     def _publish_crd_to_k8s( # Renamed from _publish_to_k8s
         self,
@@ -473,6 +425,5 @@ class PublishRuntime:
 
         if self.verbose:
             logger.debug(f"Updated metadata with publish info: {updates}")
-
 
 logger = logging.getLogger(__name__)

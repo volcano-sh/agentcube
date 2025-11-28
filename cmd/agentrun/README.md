@@ -4,25 +4,57 @@ AgentRun CLI is a developer tool that streamlines the development, packaging, bu
 
 ## 🚀 Quick Start
 
+### Prerequisites
+
+- Python 3.8+
+- Git
+- Docker (optional, for container builds)
+
+### Installation
+
 ```bash
-# Install
-pip install agentrun
+# Clone the repository
+git clone https://github.com/volcano-sh/agentcube.git
+cd agentcube/cmd/agentrun
 
-# Initialize a new agent project
-kubectl agentrun init my-agent
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Package your agent
-kubectl agentrun pack -f ./my-agent
-
-# Build container image
-kubectl agentrun build -f ./my-agent
-
-# Publish to AgentCube
-kubectl agentrun publish -f ./my-agent
-
-# Invoke your agent
-kubectl agentrun invoke -f ./my-agent --payload '{"prompt": "Hello, Agent!"}'
+# Install in development mode
+pip install -e .
 ```
+
+### Your First Agent
+
+1. **Package an existing agent:**
+   ```bash
+   kubectl agentrun pack -f examples/hello-agent --agent-name "my-agent"
+   ```
+
+2. **Build the container image:**
+   ```bash
+   kubectl agentrun build -f examples/hello-agent --verbose
+   ```
+
+3. **Publish to AgentCube:**
+   ```bash
+   kubectl agentrun publish \
+      -f examples/hello-agent \
+      --image-url "docker.io/username/my-agent" \
+      --verbose \
+      --use-k8s
+   ```
+
+4. **Invoke your agent:**
+   ```bash
+   kubectl agentrun invoke -f examples/hello-agent --payload '{"prompt": "Hello World!"}'
+   ```
+
+5. **Check status:**
+   ```bash
+   kubectl agentrun status -f examples/hello-agent --use-k8s
+   ```
 
 ## 📋 Features
 
@@ -60,10 +92,7 @@ pre-commit install
 
 ## 📖 Documentation
 
-- [Getting Started Guide](docs/getting-started.md)
-- [Configuration Reference](docs/configuration.md)
-- [CLI Commands](docs/commands.md)
-- [Python SDK](docs/sdk.md)
+- [Design](AgentRun-CLI-Design.md)
 - [Examples](examples/)
 
 ## 🔧 Configuration
@@ -89,30 +118,135 @@ AgentRun CLI follows a modular four-layer architecture:
 3. **Operations Layer**: Core domain logic
 4. **Services Layer**: External integrations
 
-## 🤝 Contributing
+## 📋 Command Reference
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-### Development Workflow
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Run the test suite
-6. Submit a pull request
+### `kubectl agentrun pack`
+Package an agent into a standardized workspace.
 
 ```bash
-# Run tests
-pytest
+kubectl agentrun pack -f <workspace> [OPTIONS]
 
-# Run linting
-black .
-isort .
-flake8 .
+Options:
+  -f, --workspace TEXT    Path to agent workspace [default: .]
+  --agent-name TEXT       Override agent name
+  --language TEXT         Programming language (python, java)
+  --entrypoint TEXT       Override entrypoint command
+  --port INTEGER          Port for Dockerfile [default: 8080]
+  --build-mode TEXT       Build strategy: local or cloud
+  --description TEXT      Agent description
+  --output TEXT           Output path for packaged workspace
+  --verbose               Enable detailed logging
+```
 
-# Run type checking
-mypy .
+### `kubectl agentrun build`
+Build a container image from the packaged workspace.
+
+```bash
+kubectl agentrun build -f <workspace> [OPTIONS]
+
+Options:
+  -f, --workspace TEXT    Path to agent workspace [default: .]
+  -p, --proxy TEXT        Custom proxy URL for dependencies
+  --cloud-provider TEXT   Cloud provider for cloud builds
+  --output TEXT           Output path for build artifacts
+  --verbose               Enable detailed logging
+```
+
+### `kubectl agentrun publish`
+Publish the agent to AgentCube.
+
+```bash
+kubectl agentrun publish -f <workspace> [OPTIONS]
+
+Options:
+  -f, --workspace TEXT    Path to agent workspace [default: .]
+  --version TEXT          Semantic version (e.g., v1.0.0)
+  --image-url TEXT        Image repository URL (local build mode)
+  --image-username TEXT   Registry username
+  --image-password TEXT   Registry password
+  --description TEXT      Agent description
+  --region TEXT           Deployment region
+  --cloud-provider TEXT   Cloud provider name
+  --verbose               Enable detailed logging
+```
+
+### `kubectl agentrun invoke`
+Invoke a published agent.
+
+```bash
+kubectl agentrun invoke [OPTIONS]
+
+Options:
+  -f, --workspace TEXT    Path to agent workspace [default: .]
+  --payload TEXT          JSON payload for the agent
+  --header TEXT           Custom HTTP headers
+  --verbose               Enable detailed logging
+```
+
+### `kubectl agentrun status`
+Check the status of a published agent.
+
+```bash
+kubectl agentrun status -f <workspace> [OPTIONS]
+
+Options:
+  -f, --workspace TEXT    Path to agent workspace [default: .]
+  --verbose               Enable detailed logging
+```
+
+## 🏗️ Agent Structure
+
+An AgentRun workspace typically contains:
+
+```
+my-agent/
+├── agent_metadata.yaml    # Agent configuration (auto-generated)
+├── Dockerfile            # Container definition (auto-generated)
+├── requirements.txt      # Python dependencies
+├── main.py              # Agent entrypoint
+└── src/                 # Source code
+```
+
+### `agent_metadata.yaml`
+
+```yaml
+agent_name: my-agent
+description: "My AI agent"
+language: python
+entrypoint: python main.py
+port: 8080
+build_mode: local
+requirements_file: requirements.txt
+```
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+1. **"Docker is not available"**
+   - Install Docker and make sure it's running
+   - Use `--build-mode cloud` for cloud builds
+
+2. **"Metadata file not found"**
+   - Run `kubectl agentrun pack` first to generate metadata
+   - Ensure you're in the correct workspace directory
+
+3. **"Agent not published yet"**
+   - Run `kubectl agentrun publish` before trying to invoke
+   - Check that the build completed successfully
+
+### Getting Help
+
+```bash
+# General help
+kubectl agentrun --help
+
+# Command-specific help
+kubectl agentrun pack --help
+kubectl agentrun build --help
+kubectl agentrun publish --help
+kubectl agentrun invoke --help
+kubectl agentrun status --help
 ```
 
 ## 📄 License
@@ -123,5 +257,4 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 - [AgentCube Main Project](https://github.com/volcano-sh/agentcube)
 - [Volcano Scheduler](https://github.com/volcano-sh/volcano)
-- [Documentation](https://agentcube.readthedocs.io/)
 - [Issue Tracker](https://github.com/volcano-sh/agentcube/issues)

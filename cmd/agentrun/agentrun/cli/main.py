@@ -277,11 +277,6 @@ def publish(
         "--provider",
         help="Target provider for deployment (agentcube, standard-k8s). 'agentcube' deploys AgentRuntime CR, 'standard-k8s' deploys standard K8s Deployment/Service.",
     ),
-    agentcube_uri: Optional[str] = typer.Option(
-        None,
-        "--agentcube-uri",
-        help="AgentCube API URI (e.g., http://localhost:8080)",
-    ),
     node_port: Optional[int] = typer.Option(
         None,
         "--node-port",
@@ -324,7 +319,6 @@ def publish(
                 "region": region,
                 "cloud_provider": cloud_provider,
                 "provider": provider, # Pass provider down
-                "agentcube_uri": agentcube_uri, # Pass agentcube_uri down
                 "node_port": node_port,
                 "replicas": replicas,
             }
@@ -379,11 +373,6 @@ def invoke(
         "--provider",
         help="Target provider for invocation (agentcube, standard-k8s). 'agentcube' refers to the AgentRuntime CR, 'standard-k8s' refers to a standard K8s Deployment/Service.",
     ),
-    agentcube_uri: Optional[str] = typer.Option(
-        None,
-        "--agentcube-uri",
-        help="AgentCube API URI (e.g., http://localhost:8080)",
-    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -404,7 +393,7 @@ def invoke(
         ) as progress:
             task = progress.add_task("Invoking agent...", total=None)
 
-            runtime = InvokeRuntime(verbose=verbose, provider=provider, agentcube_uri=agentcube_uri)
+            runtime = InvokeRuntime(verbose=verbose, provider=provider)
             workspace_path = Path(workspace).resolve()
 
             # Parse payload
@@ -451,11 +440,6 @@ def status(
         "--provider",
         help="Target provider for status check (agentcube, standard-k8s). 'agentcube' refers to the AgentRuntime CR, 'standard-k8s' refers to a standard K8s Deployment/Service.",
     ),
-    agentcube_uri: Optional[str] = typer.Option(
-        None,
-        "--agentcube-uri",
-        help="AgentCube API URI (e.g., http://localhost:8080)",
-    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -469,7 +453,7 @@ def status(
     of the agent associated with the workspace.
     """
     try:
-        runtime = StatusRuntime(verbose=verbose, provider=provider, agentcube_uri=agentcube_uri)
+        runtime = StatusRuntime(verbose=verbose, provider=provider)
         workspace_path = Path(workspace).resolve()
 
         status_info = runtime.get_status(workspace_path, provider=provider)

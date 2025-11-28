@@ -10,7 +10,6 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from agentrun.services.agentcube_service import AgentCubeService
 from agentrun.services.metadata_service import MetadataService
 from agentrun.services.k8s_provider import KubernetesProvider
 from agentrun.services.agentcube_provider import AgentCubeProvider # New import
@@ -19,13 +18,10 @@ from agentrun.services.agentcube_provider import AgentCubeProvider # New import
 class InvokeRuntime:
     """Runtime for the invoke command."""
 
-    def __init__(self, verbose: bool = False, provider: str = "agentcube", agentcube_uri: Optional[str] = None) -> None:
+    def __init__(self, verbose: bool = False, provider: str = "agentcube") -> None:
         self.verbose = verbose
         self.provider = provider
-        self.agentcube_uri = agentcube_uri
         self.metadata_service = MetadataService(verbose=verbose)
-        
-        self.agentcube_service = AgentCubeService(verbose=verbose, api_url=agentcube_uri)
         
         # Providers for K8s deployments
         self.agentcube_provider = None         # For agentcube provider (CRD)
@@ -98,30 +94,6 @@ class InvokeRuntime:
 
         endpoint = metadata.agent_endpoint
         
-        if self.agentcube_uri:
-            base_uri = self.agentcube_uri.rstrip('/')
-
-            if self.provider == "agentcube":
-                namespace = "agentrun"
-                if metadata.k8s_deployment and "namespace" in metadata.k8s_deployment:
-                    namespace = metadata.k8s_deployment["namespace"]
-                
-                endpoint = f"{base_uri}/v1/namespaces/{namespace}/agents/{metadata.agent_name}"
-            elif self.provider == "standard-k8s":
-                if metadata.k8s_deployment and "service_url" in metadata.k8s_deployment:
-                    from urllib.parse import urlparse, urlunparse
-                    original_service_url = metadata.k8s_deployment["service_url"]
-                    parsed_original = urlparse(original_service_url)
-                    parsed_base = urlparse(base_uri)
-                    endpoint = urlunparse(parsed_original._replace(scheme=parsed_base.scheme, netloc=parsed_base.netloc))
-                else:
-                    raise ValueError(
-                        "Standard K8s deployment info not found in metadata. "
-                        "Cannot construct endpoint with --agentcube-uri."
-                    )
-            else:
-                endpoint = base_uri
-        
         if not endpoint:
             raise ValueError(
                 "Agent endpoint is not available in metadata and could not be constructed. "
@@ -148,13 +120,6 @@ class InvokeRuntime:
             # Try direct HTTP invocation first (for local testing)
             if endpoint.startswith("http"):
                 response = await self._direct_http_invocation(endpoint, payload, headers)
-            else:
-                # Fall back to AgentCube service
-                response = await self.agentcube_service.invoke_agent(
-                    agent_id=agent_id,
-                    payload=payload,
-                    headers=headers
-                )
 
             return response
 

@@ -13,7 +13,7 @@ require (
 	k8s.io/api v0.34.1
 	k8s.io/apimachinery v0.34.1
 	k8s.io/client-go v0.34.1
-	sigs.k8s.io/agent-sandbox v0.0.0-20251023221734-6b24ca949b29
+	sigs.k8s.io/agent-sandbox v0.1.0
 	sigs.k8s.io/controller-runtime v0.22.2
 )
 

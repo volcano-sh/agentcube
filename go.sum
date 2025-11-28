@@ -254,8 +254,8 @@ k8s.io/utils v0.0.0-20251002143259-bc988d571ff4 h1:SjGebBtkBqHFOli+05xYbK8YF1Dzk
 k8s.io/utils v0.0.0-20251002143259-bc988d571ff4/go.mod h1:OLgZIPagt7ERELqWJFomSt595RzquPNLL48iOWgYOg0=
 nullprogram.com/x/optparse v1.0.0/go.mod h1:KdyPE+Igbe0jQUrVfMqDMeJQIJZEuyV7pjYmp6pbG50=
 rsc.io/pdf v0.1.1/go.mod h1:n8OzWcQ6Sp37PL01nO98y4iUCRdTGarVfzxY20ICaU4=
-sigs.k8s.io/agent-sandbox v0.0.0-20251023221734-6b24ca949b29 h1:WebYo9HAQbwDTFpHxXMCIlWFHYMbjjwSxp1Dzn33XlQ=
-sigs.k8s.io/agent-sandbox v0.0.0-20251023221734-6b24ca949b29/go.mod h1:s/4W84shxg0qcL2piTeMs7WLA6648CSkUQwv8AjIkTQ=
+sigs.k8s.io/agent-sandbox v0.1.0 h1:eSZQB8v6G/CeX1oZE5cHJfTIJz16SSn3bDLL1fX6hoo=
+sigs.k8s.io/agent-sandbox v0.1.0/go.mod h1:mq1mFBFPLe3R4b7Qq8qbyO88gGSoFkke5ZwavglLSus=
 sigs.k8s.io/controller-runtime v0.22.2 h1:cK2l8BGWsSWkXz09tcS4rJh95iOLney5eawcK5A33r4=
 sigs.k8s.io/controller-runtime v0.22.2/go.mod h1:+QX1XUpTXN4mLoblf4tqr5CQcyHPAki2HLXqQMY6vh8=
 sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 h1:IpInykpT6ceI+QxKBbEflcR5EXP7sU1kvOlxwZh5txg=

@@ -1,19 +1,86 @@
+# Image URL to use all building/pushing image targets
+HUB ?= ghcr.io/volcano-sh
+TAG ?= latest
+PROJECT_DIR := $(shell dirname $(abspath $(lastword $(MAKEFILE_LIST))))
+
+# Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
+ifeq (,$(shell go env GOBIN))
+GOBIN=$(shell go env GOPATH)/bin
+else
+GOBIN=$(shell go env GOBIN)
+endif
+
+# CONTAINER_TOOL defines the container tool to be used for building images.
+# Be aware that the target commands are only tested with Docker which is
+# scaffolded by default. However, you might want to replace it to use other
+# tools. (i.e. podman)
+CONTAINER_TOOL ?= docker
+
+# Setting SHELL to bash allows bash commands to be executed by recipes.
+# Options are set to exit when a recipe line exits non-zero or a piped command fails.
+SHELL = /usr/bin/env bash -o pipefail
+.SHELLFLAGS = -ec
+
+.PHONY: all
+all: build
+
+##@ General
+
+# The help target prints out all targets with their descriptions organized
+# beneath their categories. The categories are represented by '##@' and the
+# target descriptions by '##'. The awk command is responsible for reading the
+# entire set of makefiles included in this invocation, looking for lines of the
+# file as xyz: ## something, and then pretty-format the target and help. Then,
+# if there's a line with ##@ something, that gets pretty-printed as a category.
+# More info on the usage of ANSI control characters for terminal formatting:
+# https://en.wikipedia.org/wiki/ANSI_escape_code#SGR_parameters
+# More info on the awk command:
+# http://linuxcommand.org/lc3_adv_awk.php
+
+.PHONY: help
+help: ## Display this help.
+	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
+
+##@ Development
+
+.PHONY: gen-crd
+gen-crd: controller-gen ## Generate CRD manifests
+	$(CONTROLLER_GEN) crd paths="./pkg/apis/runtime/..." output:crd:artifacts:config=crds
+
+.PHONY: generate
+generate: controller-gen gen-crd ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./pkg/apis/..."
+	go mod tidy
+
+.PHONY: gen-client
+gen-client: ## Generate client-go code for CRDs
+	@echo "Generating client-go code..."
+	@bash hack/update-codegen.sh
+	@go mod tidy
+
+.PHONY: gen-all
+gen-all: generate gen-client ## Generate all code (CRDs, DeepCopy methods, and client-go)
+
+.PHONY: gen-check
+gen-check: gen-all ## Check if generated code is up to date
+	git diff --exit-code
+
 .PHONY: build run clean test deps
 
 # Build targets
-build:
+build: generate ## Build agentcube-apiserver binary
 	@echo "Building agentcube-apiserver..."
 	go build -o bin/agentcube-apiserver ./cmd/apiserver
 
-build-agentd:
+build-agentd: generate ## Build agentd binary
 	@echo "Building agentd..."
 	go build -o bin/agentd ./cmd/agentd
 
-build-test-tunnel:
+build-test-tunnel: ## Build test-tunnel tool
 	@echo "Building test-tunnel..."
 	go build -o bin/test-tunnel ./cmd/test-tunnel
 
-build-all: build build-agentd build-test-tunnel
+build-all: build build-agentd build-test-tunnel ## Build all binaries
 
 # Run server (development mode)
 run:
@@ -56,9 +123,13 @@ test:
 	go test -v ./...
 
 # Format code
-fmt:
+fmt: ## Format code
 	@echo "Formatting code..."
 	go fmt ./...
+
+.PHONY: vet
+vet: ## Run go vet against code.
+	go vet ./...
 
 # Run linter
 lint:
@@ -192,65 +263,40 @@ API_URL ?= http://localhost:8080
 TOKEN ?= ""
 SESSION_ID ?= ""
 
-# Show help message
-help:
-	@echo "Available targets:"
-	@echo ""
-	@echo "Build targets:"
-	@echo "  build              - Build the binary"
-	@echo "  build-agentd       - Build agentd binary"
-	@echo "  build-all          - Build all binaries"
-	@echo "  build-test-tunnel  - Build test-tunnel tool"
-	@echo "  install            - Install to /usr/local/bin"
-	@echo ""
-	@echo "Development targets:"
-	@echo "  run                - Run in development mode"
-	@echo "  run-local          - Run with local kubeconfig"
-	@echo "  test               - Run tests"
-	@echo "  fmt                - Format code"
-	@echo "  lint               - Run linter"
-	@echo "  clean              - Clean build artifacts"
-	@echo "  deps               - Download dependencies"
-	@echo "  update-deps        - Update dependencies"
-	@echo ""
-	@echo "Docker targets (agentcube-apiserver):"
-	@echo "  docker-build       - Build Docker image (current platform)"
-	@echo "  docker-buildx      - Build multi-arch image (amd64, arm64)"
-	@echo "  docker-buildx-push - Build and push multi-arch image (requires IMAGE_REGISTRY)"
-	@echo "  docker-push        - Push Docker image (requires IMAGE_REGISTRY)"
-	@echo ""
-	@echo "Sandbox targets:"
-	@echo "  sandbox-build      - Build sandbox image (current platform)"
-	@echo "  sandbox-buildx     - Build multi-arch sandbox (amd64, arm64)"
-	@echo "  sandbox-buildx-push - Build and push multi-arch sandbox (requires IMAGE_REGISTRY)"
-	@echo "  sandbox-push       - Push sandbox image to registry (requires IMAGE_REGISTRY)"
-	@echo "  sandbox-test       - Test sandbox image locally"
-	@echo "  sandbox-test-stop  - Stop sandbox test container"
-	@echo "  sandbox-kind-load  - Load sandbox image to kind"
-	@echo ""
-	@echo "Kubernetes targets:"
-	@echo "  k8s-deploy         - Deploy to Kubernetes"
-	@echo "  k8s-delete         - Delete from Kubernetes"
-	@echo "  k8s-logs           - Show pod logs"
-	@echo "  kind-load          - Load agentcube-apiserver image to kind cluster"
-	@echo ""
-	@echo "Test targets:"
-	@echo "  test-tunnel        - Test tunnel connection (requires SESSION_ID)"
-	@echo "  test-tunnel-build  - Build and test tunnel connection"
-	@echo ""
-	@echo "Variables:"
-	@echo "  APISERVER_IMAGE    - agentcube-apiserver image name (default: agentcube-apiserver:latest)"
-	@echo "  SANDBOX_IMAGE      - Sandbox image name (default: sandbox:latest)"
-	@echo "  IMAGE_REGISTRY     - Container registry URL (required for push targets)"
-	@echo "  API_URL            - API URL for tests (default: http://localhost:8080)"
-	@echo "  SESSION_ID         - Session ID for tunnel tests"
-	@echo "  TOKEN              - Auth token for API requests"
-	@echo ""
-	@echo "Examples:"
-	@echo "  make docker-build APISERVER_IMAGE=my-api:v1.0"
-	@echo "  make docker-buildx-push IMAGE_REGISTRY=docker.io/myuser"
-	@echo "  make sandbox-buildx-push IMAGE_REGISTRY=ghcr.io/myorg SANDBOX_IMAGE=sandbox:v2"
 
+##@ Dependencies
+
+## Location to install dependencies to
+LOCALBIN ?= $(shell pwd)/bin
+$(LOCALBIN):
+	mkdir -p $(LOCALBIN)
+
+## Tool Binaries
+CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
+
+## Tool Versions
+CONTROLLER_TOOLS_VERSION ?= v0.17.2
+
+.PHONY: controller-gen
+controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
+$(CONTROLLER_GEN): $(LOCALBIN)
+	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_TOOLS_VERSION))
+
+# go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
+# $1 - target path with name of binary
+# $2 - package url which can be installed
+# $3 - specific version of package
+define go-install-tool
+@[ -f "$(1)-$(3)" ] || { \
+set -e; \
+package=$(2)@$(3) ;\
+echo "Downloading $${package}" ;\
+rm -f $(1) || true ;\
+GOBIN=$(LOCALBIN) go install $${package} ;\
+mv $(1) $(1)-$(3) ;\
+} ;\
+ln -sf $(1)-$(3) $(1)
+endef
 
 # E2E Test targets
 E2E_CLUSTER_NAME ?= agentcube-e2e

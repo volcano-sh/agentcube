@@ -16,7 +16,7 @@ creation-date: 2025-11-27
 
 ### Summary
 
-This proposal outlines a design for introducing a declarative API to manage runtime specifically for Agent and CodeInterpreter runtimes in AgentCube. The goal is to enable users to define desired states for their sandboxes, allowing the system to automatically handle creation on the arrival of first invocation. The whole workflow out of the scope of this proposal. So we will focus on the declarative API design and about the whole system architecture, there will be another proposal.
+This proposal outlines a design for introducing a declarative API to manage runtimes specifically for Agent and CodeInterpreter runtimes in AgentCube. The goal is to enable users to define desired states for their sandboxes, allowing the system to automatically handle creation on the arrival of first invocation. The whole workflow out of the scope of this proposal. So we will focus on the declarative API design and about the whole system architecture, there will be another proposal.
 
 ### Motivation
 
@@ -47,12 +47,13 @@ As an agentic AI developer, I want to deploy my agents on the serverless platfor
 
 ### Design Details
 
-#### Why not we use existing SandboxTemplate?
+#### Why do we need separate api rather than existing SandboxTemplate?
 
 There is a existing [`SandboxTemplate`](http://github.com/kubernetes-sigs/agent-sandbox/blob/main/extensions/api/v1alpha1/sandboxtemplate_types.go#L57) in the kubernetes-sigs/agent-sandbox project. However, it is designed to be a generic template for various sandbox types and may not cater specifically to the unique requirements of Agent and CodeInterpreter runtimes. 
 
 - SandboxTemplate simply reuses pod template, making it hard to express multi-version runtimes. As it is common to have multiple versions of Agent or CodeInterpreter runtimes, a more specialized template is needed to manage these variations effectively.
-- Different runtimes may have distinct configuration needs that are not adequately addressed by a generic pod template. Likely we need to support warmpool for code  interpreter runtime, but not for agent runtime. Because code interpreter needs very lower latency for cold start, while agent runtime can afford longer cold start time.
+- Different runtimes may have distinct configuration needs that are not adequately addressed by a generic pod template. Likely we need to support a warmpool for code  interpreter runtime, but not for agent runtime. Because code interpreter needs very low latency for cold start, while agent runtime can afford longer cold start time.
+- Different runtimes may serve different protocols or endpoints that require specific handling not covered by a generic template.
 
 By introducing a dedicated runtime template, we can tailor the API to better suit the specific needs of these runtimes, such as specialized configuration options, lifecycle management, and integration points.
 
@@ -189,7 +190,7 @@ spec:
   maxSessionDuration: 8h
 ```
 
-With the `AgentRuntime` published, callers can access the agent runtime through the endpoint `https://<agent-frontend>:<frontend-port>/v1/namespaces/{agentNamespace}/agent-runtimes/{agentName}/<agent specific path>`.
+With the `AgentRuntime` published, callers can access the agent runtime through the endpoint `https://<agent-frontend>:<frontend-port>/v1/namespaces/{agentNamespace}/agent-runtimes/{agentName}/invocations/<agent specific path>`.
 
 
 #### CodeInterpreter CRD
@@ -326,8 +327,8 @@ spec:
   warmPoolSize: 2
 ```
 
-With the `CodeInterpreter` published, callers can access the runtime through the endpoint `https://<agent-frontend>:<frontend-port>/v1/namespaces/{namespace}/code-interpreters/{name}/<code interpreter specific path>`.
+With the `CodeInterpreter` published, callers can access the runtime through the endpoint `https://<agent-frontend>:<frontend-port>/v1/namespaces/{namespace}/code-interpreters/{name}/invocations/<code interpreter specific path>`.
 
 ### Alternatives
 
-We can also design a restful api server to manage the lifecycle of agent runtimes, that will make the runtime management more flexible. However, it will introduce additional complexity in terms of deployment, scaling, and maintenance of the restful api server. So the first stage, we can make use of kubernetes CRD and operator to manage different kinds of runtime.
+We can also design a restful api server to manage the lifecycle of agent runtimes, that will make the runtime management more flexible. However, it will introduce additional complexity in terms of deployment, scaling, and maintenance of the restful api server. So in the first stage, we can make use of kubernetes CRD and operator to manage different kinds of runtime.

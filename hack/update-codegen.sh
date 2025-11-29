@@ -67,4 +67,9 @@ kube::codegen::gen_client \
   --one-input-api runtime/v1alpha1 \
   "${SCRIPT_ROOT}/pkg/apis"
 
+# Fix lister-gen bug: Resource() returns GroupVersionResource but listers.New needs GroupResource
+# This is a workaround for https://github.com/kubernetes/code-generator/issues/XXX
+echo "Fixing lister-gen GroupResource issue..."
+find "${SCRIPT_ROOT}/client-go/listers" -name "*.go" -type f -exec sed -i 's/runtimev1alpha1\.Resource("codeinterpreter")/runtimev1alpha1.Resource("codeinterpreter").GroupResource()/g' {} \;
+
 echo "Client-go code generation completed!"

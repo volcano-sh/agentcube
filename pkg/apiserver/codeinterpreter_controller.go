@@ -25,6 +25,16 @@ import (
 type CodeInterpreterReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	mgr    ctrl.Manager
+}
+
+// NewCodeInterpreterReconciler creates a new CodeInterpreterReconciler.
+// The cache will be initialized when SetupWithManager is called.
+func NewCodeInterpreterReconciler(client client.Client, scheme *runtime.Scheme) *CodeInterpreterReconciler {
+	return &CodeInterpreterReconciler{
+		Client: client,
+		Scheme: scheme,
+	}
 }
 
 //+kubebuilder:rbac:groups=runtime.agentcube.volcano.sh,resources=codeinterpreters,verbs=get;list;watch;create;update;patch;delete
@@ -308,8 +318,34 @@ func (r *CodeInterpreterReconciler) podTemplateEqual(a, b sandboxv1alpha1.PodTem
 	return reflect.DeepEqual(a.Spec, b.Spec)
 }
 
+// GetCodeInterpreter retrieves a CodeInterpreter from the cache by namespace and name.
+// The cache uses Kubernetes informer cache which is automatically maintained by controller-runtime
+// and stays synchronized with the Kubernetes API server through watch mechanism.
+//
+// Returns nil if the CodeInterpreter is not found in the cache.
+// The returned object is a deep copy to prevent external modifications.
+//
+// Example usage:
+//
+//	reconciler := NewCodeInterpreterReconciler(client, scheme)
+//	ci := reconciler.GetCodeInterpreter("default", "my-codeinterpreter")
+func (r *CodeInterpreterReconciler) GetCodeInterpreter(namespace, name string) *runtimev1alpha1.CodeInterpreter {
+	if r.mgr == nil {
+		return nil
+	}
+
+	ci := &runtimev1alpha1.CodeInterpreter{}
+	key := types.NamespacedName{Namespace: namespace, Name: name}
+	if err := r.mgr.GetCache().Get(context.Background(), key, ci); err != nil {
+		return nil
+	}
+	return ci.DeepCopy()
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *CodeInterpreterReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.mgr = mgr
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&runtimev1alpha1.CodeInterpreter{}).
 		Complete(r)

@@ -25,16 +25,16 @@ class InvokeRuntime:
         
         # Providers for K8s deployments
         self.agentcube_provider = None         # For agentcube provider (CRD)
-        self.standard_k8s_provider = None    # For standard-k8s provider (Deployment/Service)
+        self.k8s_provider = None    # For k8s provider (Deployment/Service)
 
         if provider == "agentcube":
             try:
                 self.agentcube_provider = AgentCubeProvider(verbose=verbose)
             except Exception as e:
                 logger.warning(f"Failed to initialize AgentCube provider for CRD: {e}")
-        elif provider == "standard-k8s":
+        elif provider == "k8s":
             try:
-                self.standard_k8s_provider = KubernetesProvider(verbose=verbose)
+                self.k8s_provider = KubernetesProvider(verbose=verbose)
             except Exception as e:
                 logger.warning(f"Failed to initialize standard K8s provider: {e}")
 

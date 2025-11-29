@@ -78,9 +78,6 @@ kubectl-agentrun = "agentrun.cli.main:app"
 [tool.setuptools]
 packages = ["agentrun", "agentrun.cli", "agentrun.runtime", "agentrun.operations", "agentrun.services"]
 
-[tool.setuptools.package-data]
-agentrun = ["templates/**/*"]
-
 [tool.black]
 line-length = 88
 target-version = ['py38', 'py39', 'py310', 'py311', 'py312']

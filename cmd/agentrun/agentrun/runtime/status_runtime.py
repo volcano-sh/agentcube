@@ -24,16 +24,16 @@ class StatusRuntime:
         
         # Providers for K8s deployments
         self.agentcube_provider = None         # For agentcube provider (CRD)
-        self.standard_k8s_provider = None    # For standard-k8s provider (Deployment/Service)
+        self.k8s_provider = None    # For k8s provider (Deployment/Service)
 
         if provider == "agentcube":
             try:
                 self.agentcube_provider = AgentCubeProvider(verbose=verbose)
             except Exception as e:
                 logger.warning(f"Failed to initialize AgentCube provider for CRD: {e}")
-        elif provider == "standard-k8s":
+        elif provider == "k8s":
             try:
-                self.standard_k8s_provider = KubernetesProvider(verbose=verbose)
+                self.k8s_provider = KubernetesProvider(verbose=verbose)
             except Exception as e:
                 logger.warning(f"Failed to initialize standard K8s provider: {e}")
 
@@ -73,7 +73,7 @@ class StatusRuntime:
                 return self._get_crd_k8s_status(metadata)
             else:
                 # Get status from K8s cluster (standard Deployment/Service)
-                return self._get_standard_k8s_status(metadata)
+                return self._get_k8s_status(metadata)
 
         except Exception as e:
             logger.error(f"Error getting agent status: {e}")
@@ -82,18 +82,18 @@ class StatusRuntime:
                 "error": str(e)
             }
 
-    def _get_standard_k8s_status(self, metadata) -> Dict[str, Any]: # Renamed
+    def _get_k8s_status(self, metadata) -> Dict[str, Any]: # Renamed
         """Get status from K8s cluster (standard Deployment/Service)."""
         if self.verbose:
             logger.info(f"Querying Kubernetes for agent status (standard Deployment/Service): {metadata.agent_name}")
 
-        if not self.standard_k8s_provider: # Use the standard K8s provider
+        if not self.k8s_provider: # Use the standard K8s provider
             raise RuntimeError(
                 "Standard K8s provider is not initialized. Ensure Kubernetes is configured."
             )
 
         try:
-            k8s_status = self.standard_k8s_provider.get_agent_status(metadata.agent_name)
+            k8s_status = self.k8s_provider.get_agent_status(metadata.agent_name)
 
             # Merge with metadata information
             result = {

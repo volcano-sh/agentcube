@@ -275,7 +275,7 @@ def publish(
     provider: str = typer.Option(
         "agentcube",
         "--provider",
-        help="Target provider for deployment (agentcube, standard-k8s). 'agentcube' deploys AgentRuntime CR, 'standard-k8s' deploys standard K8s Deployment/Service.",
+        help="Target provider for deployment (agentcube, k8s).",
     ),
     node_port: Optional[int] = typer.Option(
         None,
@@ -335,7 +335,7 @@ def publish(
         if "agent_endpoint" in result:
             console.print(f"🌐 Endpoint: [blue]{result['agent_endpoint']}[/blue]")
 
-        if provider == "agentcube" or provider == "standard-k8s":
+        if provider == "agentcube" or provider == "k8s":
             console.print(f"📦 Namespace: [blue]{result.get('namespace', 'agentrun')}[/blue]")
             if "status" in result:
                  console.print(f"📊 Status: [blue]{result['status']}[/blue]")
@@ -371,7 +371,7 @@ def invoke(
     provider: str = typer.Option(
         "agentcube",
         "--provider",
-        help="Target provider for invocation (agentcube, standard-k8s). 'agentcube' refers to the AgentRuntime CR, 'standard-k8s' refers to a standard K8s Deployment/Service.",
+        help="Target provider for invocation (agentcube, k8s).",
     ),
     verbose: bool = typer.Option(
         False,
@@ -438,7 +438,7 @@ def status(
     provider: str = typer.Option(
         "agentcube",
         "--provider",
-        help="Target provider for status check (agentcube, standard-k8s). 'agentcube' refers to the AgentRuntime CR, 'standard-k8s' refers to a standard K8s Deployment/Service.",
+        help="Target provider for status check (agentcube, k8s)",
     ),
     verbose: bool = typer.Option(
         False,

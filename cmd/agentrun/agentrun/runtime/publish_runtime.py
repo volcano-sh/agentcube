@@ -27,16 +27,16 @@ class PublishRuntime:
         
         # Providers for K8s deployments
         self.agentcube_provider = None         # For agentcube provider (CRD)
-        self.standard_k8s_provider = None    # For standard-k8s provider (Deployment/Service)
+        self.k8s_provider = None    # For k8s provider (Deployment/Service)
 
         if provider == "agentcube":
             try:
                 self.agentcube_provider = AgentCubeProvider(verbose=verbose)
             except Exception as e:
                 logger.warning(f"Failed to initialize AgentCube provider for CRD: {e}")
-        elif provider == "standard-k8s":
+        elif provider == "k8s":
             try:
-                self.standard_k8s_provider = KubernetesProvider(verbose=verbose)
+                self.k8s_provider = KubernetesProvider(verbose=verbose)
             except Exception as e:
                 logger.warning(f"Failed to initialize standard K8s provider: {e}")
 
@@ -68,10 +68,10 @@ class PublishRuntime:
 
         if provider == "agentcube":
             return self._publish_crd_to_k8s(workspace_path, **options)
-        elif provider == "standard-k8s":
-            return self._publish_standard_k8s(workspace_path, **options)
+        elif provider == "k8s":
+            return self._publish_k8s(workspace_path, **options)
         else:
-            raise ValueError(f"Unsupported provider: {provider}. Supported providers are 'agentcube' and 'standard-k8s'.")
+            raise ValueError(f"Unsupported provider: {provider}. Supported providers are 'agentcube' and 'k8s'.")
 
     def _publish_crd_to_k8s( # Renamed from _publish_to_k8s
         self,
@@ -193,7 +193,7 @@ class PublishRuntime:
         except Exception as e:
             raise RuntimeError(f"Failed to deploy AgentRuntime CR to K8s: {str(e)}")
 
-    def _publish_standard_k8s(
+    def _publish_k8s(
         self,
         workspace_path: Path,
         **options: Any
@@ -214,7 +214,7 @@ class PublishRuntime:
         if self.verbose:
             logger.info(f"Publishing to K8s cluster (standard Deployment/Service) for workspace: {workspace_path}")
 
-        if not self.standard_k8s_provider:
+        if not self.k8s_provider:
             raise RuntimeError(
                 "Standard K8s provider is not initialized. Ensure Kubernetes is configured."
             )
@@ -230,7 +230,7 @@ class PublishRuntime:
         # Step 3: Deploy to K8s
         k8s_info = None
         try:
-            k8s_info = self.standard_k8s_provider.deploy_agent(
+            k8s_info = self.k8s_provider.deploy_agent(
                 agent_name=metadata.agent_name,
                 image_url=image_url,
                 port=metadata.port,
@@ -258,7 +258,7 @@ class PublishRuntime:
             
             final_status = "failed"
             try:
-                self.standard_k8s_provider._wait_for_deployment_ready(k8s_info['deployment_name'], timeout=120)
+                self.k8s_provider._wait_for_deployment_ready(k8s_info['deployment_name'], timeout=120)
                 final_status = "deployed"
             except Exception as e:
                 error_message = str(e)

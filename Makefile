@@ -87,23 +87,20 @@ run:
 	@echo "Running agentcube-apiserver..."
 	go run ./cmd/workload-manager/main.go \
 		--port=8080 \
-		--ssh-username=sandbox \
-		--ssh-port=22
+		--debug
 
 # Run server (with kubeconfig)
 run-local:
 	@echo "Running agentcube-apiserver with local kubeconfig..."
 	go run ./cmd/workload-manager/main.go \
 		--port=8080 \
-		--kubeconfig=${HOME}/.kube/config \
-		--ssh-username=sandbox \
-		--ssh-port=22
+		--debug
 
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
 	rm -rf bin/
-	rm -f agentcube-apiserver agentd
+	rm -f agentcube-router agentd
 
 # Install dependencies
 deps:
@@ -138,8 +135,8 @@ lint: golangci-lint ## Run golangci-lint
 
 # Install to system
 install: build
-	@echo "Installing agentcube-apiserver..."
-	sudo cp bin/agentcube-apiserver /usr/local/bin/
+	@echo "Installing agentcube-router..."
+	sudo cp bin/agentcube-router /usr/local/bin/
 
 # Docker image variables
 APISERVER_IMAGE ?= agentcube-apiserver:latest
@@ -177,15 +174,15 @@ docker-push: docker-build
 
 k8s-deploy:
 	@echo "Deploying to Kubernetes..."
-	kubectl apply -f k8s/agentcube-apiserver.yaml
+	kubectl apply -f k8s/agentcube-router.yaml
 
 k8s-delete:
 	@echo "Deleting from Kubernetes..."
-	kubectl delete -f k8s/agentcube-apiserver.yaml
+	kubectl delete -f k8s/agentcube-router.yaml
 
 k8s-logs:
 	@echo "Showing logs..."
-	kubectl logs -n agentcube -l app=agentcube-apiserver -f
+	kubectl logs -n agentcube -l app=agentcube-router -f
 
 # Load image to kind cluster
 kind-load:

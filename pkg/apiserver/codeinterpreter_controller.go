@@ -309,12 +309,12 @@ func (r *CodeInterpreterReconciler) deleteSandboxWarmPool(ctx context.Context, c
 
 // getTemplateName returns the name for the SandboxTemplate
 func (r *CodeInterpreterReconciler) getTemplateName(ci *runtimev1alpha1.CodeInterpreter) string {
-	return fmt.Sprintf("codeinterpreter-%s", ci.Name)
+	return ci.Name
 }
 
 // getWarmPoolName returns the name for the SandboxWarmPool
 func (r *CodeInterpreterReconciler) getWarmPoolName(ci *runtimev1alpha1.CodeInterpreter) string {
-	return fmt.Sprintf("codeinterpreter-%s-warmpool", ci.Name)
+	return ci.Name
 }
 
 // convertToPodTemplate converts CodeInterpreterSandboxTemplate to sandboxv1alpha1.PodTemplate

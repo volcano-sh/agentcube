@@ -135,7 +135,7 @@ type SandboxTemplate struct {
 Below is an example of how to define an `AgentRuntime` CRD for an agent runtime environment:
 
 ```yaml
-apiVersion: runtime.agentcube.io/v1alpha1  # adjust to your actual group/version
+apiVersion: runtime.agentcube.volcano.sh/v1alpha1  # adjust to your actual group/version
 kind: AgentRuntime
 metadata:
   name: foo

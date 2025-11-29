@@ -1,6 +1,5 @@
 // Package v1alpha1 contains API Schema definitions for the runtime v1alpha1 API group
 // +k8s:deepcopy-gen=package
-// +k8s:defaulter-gen=TypeMeta
 // +groupName=runtime.agentcube.io
 // +kubebuilder:object:generate=true
 package v1alpha1

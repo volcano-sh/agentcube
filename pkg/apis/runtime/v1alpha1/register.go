@@ -15,7 +15,8 @@ var (
 // SchemeGroupVersion is group version used to register these objects
 var SchemeGroupVersion = GroupVersion
 
-// Resource takes an unqualified resource and returns a Group qualified GroupResource
+// Resource takes an unqualified resource and returns a GroupVersionResource.
+// Note: This returns GroupVersionResource, not GroupResource. Use .GroupResource() if you need GroupResource.
 func Resource(resource string) schema.GroupVersionResource {
 	return GroupVersion.WithResource(resource)
 }

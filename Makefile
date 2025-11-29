@@ -45,7 +45,7 @@ help: ## Display this help.
 
 .PHONY: gen-crd
 gen-crd: controller-gen ## Generate CRD manifests
-	$(CONTROLLER_GEN) crd paths="./pkg/apis/runtime/..." output:crd:artifacts:config=crds
+	$(CONTROLLER_GEN) crd paths="./pkg/apis/runtime/v1alpha1/..." output:crd:artifacts:config=crds
 
 .PHONY: generate
 generate: controller-gen gen-crd ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.

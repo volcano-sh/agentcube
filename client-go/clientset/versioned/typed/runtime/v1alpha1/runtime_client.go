@@ -1,5 +1,5 @@
 /*
-Copyright The AgentCube Authors.
+Copyright The Volcano Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,8 +21,8 @@ package v1alpha1
 import (
 	http "net/http"
 
-	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	scheme "github.com/volcano-sh/agentcube/client-go/clientset/versioned/scheme"
+	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	rest "k8s.io/client-go/rest"
 )
 

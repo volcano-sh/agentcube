@@ -1,5 +1,5 @@
 /*
-Copyright The AgentCube Authors.
+Copyright The Volcano Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,8 +19,8 @@ limitations under the License.
 package fake
 
 import (
-	v1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/client-go/clientset/versioned/typed/runtime/v1alpha1"
+	v1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	gentype "k8s.io/client-go/gentype"
 )
 

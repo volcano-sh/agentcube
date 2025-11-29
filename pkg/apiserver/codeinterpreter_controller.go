@@ -27,9 +27,9 @@ type CodeInterpreterReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-//+kubebuilder:rbac:groups=runtime.agentcube.io,resources=codeinterpreters,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=runtime.agentcube.io,resources=codeinterpreters/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=runtime.agentcube.io,resources=codeinterpreters/finalizers,verbs=update
+//+kubebuilder:rbac:groups=runtime.agentcube.volcano.sh,resources=codeinterpreters,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=runtime.agentcube.volcano.sh,resources=codeinterpreters/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=runtime.agentcube.volcano.sh,resources=codeinterpreters/finalizers,verbs=update
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=extensions.agents.x-k8s.io,resources=sandboxtemplates,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=extensions.agents.x-k8s.io,resources=sandboxwarmpools,verbs=get;list;watch;create;update;patch;delete
@@ -48,14 +48,14 @@ func (r *CodeInterpreterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	// Ensure SandboxTemplate exists
-	if err := r.ensureSandboxTemplate(ctx, codeInterpreter); err != nil {
-		logger.Error(err, "failed to ensure SandboxTemplate")
-		return ctrl.Result{}, err
-	}
-
-	// Manage SandboxWarmPool if configured
+	// Manage SandboxTemplate and SandboxWarmPool if configured
 	if codeInterpreter.Spec.WarmPoolSize != nil && *codeInterpreter.Spec.WarmPoolSize > 0 {
+		// Ensure SandboxTemplate exists (required for SandboxWarmPool)
+		if err := r.ensureSandboxTemplate(ctx, codeInterpreter); err != nil {
+			logger.Error(err, "failed to ensure SandboxTemplate")
+			return ctrl.Result{}, err
+		}
+		// Ensure SandboxWarmPool exists
 		if err := r.ensureSandboxWarmPool(ctx, codeInterpreter); err != nil {
 			logger.Error(err, "failed to ensure SandboxWarmPool")
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
@@ -66,6 +66,11 @@ func (r *CodeInterpreterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			logger.Error(err, "failed to delete SandboxWarmPool")
 			return ctrl.Result{}, err
 		}
+		// Delete SandboxTemplate if WarmPoolSize is 0 or nil
+		if err := r.deleteSandboxTemplate(ctx, codeInterpreter); err != nil {
+			logger.Error(err, "failed to delete SandboxTemplate")
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Update status with ready condition
@@ -74,27 +79,12 @@ func (r *CodeInterpreterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	// Requeue periodically to check status
-	return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+	return ctrl.Result{}, nil
 }
 
 // updateStatus updates the CodeInterpreter status
 func (r *CodeInterpreterReconciler) updateStatus(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) error {
-	// Count active sandboxes for this code interpreter
-	activeSessions, err := r.countActiveSandboxes(ctx, ci)
-	if err != nil {
-		return fmt.Errorf("failed to count active sandboxes: %w", err)
-	}
-
-	// Get warm pool ready count from SandboxWarmPool status
-	warmPoolReady, err := r.getWarmPoolReadyCount(ctx, ci)
-	if err != nil {
-		return fmt.Errorf("failed to get warm pool ready count: %w", err)
-	}
-
 	// Update status
-	ci.Status.ActiveSessions = activeSessions
-	ci.Status.WarmPoolReady = warmPoolReady
 	ci.Status.Ready = true
 
 	// Update conditions
@@ -102,7 +92,7 @@ func (r *CodeInterpreterReconciler) updateStatus(ctx context.Context, ci *runtim
 		Type:               "Ready",
 		Status:             metav1.ConditionTrue,
 		Reason:             "Reconciled",
-		Message:            fmt.Sprintf("CodeInterpreter is ready with %d active sessions", activeSessions),
+		Message:            "CodeInterpreter is ready",
 		LastTransitionTime: metav1.Now(),
 		ObservedGeneration: ci.Generation,
 	}
@@ -123,53 +113,6 @@ func (r *CodeInterpreterReconciler) updateStatus(ctx context.Context, ci *runtim
 	}
 
 	return r.Status().Update(ctx, ci)
-}
-
-// countActiveSandboxes counts sandboxes that are using this code interpreter runtime
-func (r *CodeInterpreterReconciler) countActiveSandboxes(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) (int32, error) {
-	sandboxList := &sandboxv1alpha1.SandboxList{}
-	if err := r.List(ctx, sandboxList, client.InNamespace(ci.Namespace)); err != nil {
-		return 0, err
-	}
-
-	count := int32(0)
-	for _, sandbox := range sandboxList.Items {
-		// Check if sandbox is using this code interpreter runtime
-		// This is determined by labels or annotations
-		if sandbox.Labels != nil {
-			if runtimeName, ok := sandbox.Labels["codeinterpreter.runtime.agentcube.io/name"]; ok {
-				if runtimeName == ci.Name {
-					// Check if sandbox is running by checking Ready condition
-					for _, condition := range sandbox.Status.Conditions {
-						if condition.Type == string(sandboxv1alpha1.SandboxConditionReady) && condition.Status == metav1.ConditionTrue {
-							count++
-							break
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return count, nil
-}
-
-// getWarmPoolReadyCount gets the ready count from SandboxWarmPool status
-func (r *CodeInterpreterReconciler) getWarmPoolReadyCount(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) (int32, error) {
-	if ci.Spec.WarmPoolSize == nil || *ci.Spec.WarmPoolSize == 0 {
-		return 0, nil
-	}
-
-	warmPoolName := r.getWarmPoolName(ci)
-	warmPool := &extensionsv1alpha1.SandboxWarmPool{}
-	if err := r.Get(ctx, types.NamespacedName{Name: warmPoolName, Namespace: ci.Namespace}, warmPool); err != nil {
-		if errors.IsNotFound(err) {
-			return 0, nil
-		}
-		return 0, err
-	}
-
-	return warmPool.Status.Replicas, nil
 }
 
 // ensureSandboxTemplate ensures that a SandboxTemplate exists for this CodeInterpreter
@@ -301,6 +244,26 @@ func (r *CodeInterpreterReconciler) deleteSandboxWarmPool(ctx context.Context, c
 	if err := r.Delete(ctx, warmPool); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete SandboxWarmPool: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// deleteSandboxTemplate deletes the SandboxTemplate if it exists
+func (r *CodeInterpreterReconciler) deleteSandboxTemplate(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) error {
+	templateName := r.getTemplateName(ci)
+	sandboxTemplate := &extensionsv1alpha1.SandboxTemplate{}
+	err := r.Get(ctx, types.NamespacedName{Name: templateName, Namespace: ci.Namespace}, sandboxTemplate)
+	if errors.IsNotFound(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to get SandboxTemplate: %w", err)
+	}
+
+	if err := r.Delete(ctx, sandboxTemplate); err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete SandboxTemplate: %w", err)
 		}
 	}
 

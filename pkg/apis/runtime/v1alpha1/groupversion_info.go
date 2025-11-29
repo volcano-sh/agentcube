@@ -1,6 +1,6 @@
 // Package v1alpha1 contains API Schema definitions for the runtime v1alpha1 API group
 // +k8s:deepcopy-gen=package
-// +groupName=runtime.agentcube.io
+// +groupName=runtime.agentcube.volcano.sh
 // +kubebuilder:object:generate=true
 package v1alpha1
 
@@ -11,7 +11,7 @@ import (
 
 var (
 	// GroupVersion is group version used to register these objects
-	GroupVersion = schema.GroupVersion{Group: "runtime.agentcube.io", Version: "v1alpha1"}
+	GroupVersion = schema.GroupVersion{Group: "runtime.agentcube.volcano.sh", Version: "v1alpha1"}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme
 	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}

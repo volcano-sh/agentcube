@@ -74,14 +74,6 @@ type CodeInterpreterStatus struct {
 	// Ready indicates whether the CodeInterpreter is ready to serve requests
 	// +optional
 	Ready bool `json:"ready,omitempty"`
-
-	// ActiveSessions is the number of active sandbox sessions using this runtime
-	// +optional
-	ActiveSessions int32 `json:"activeSessions,omitempty"`
-
-	// WarmPoolReady is the number of sandboxes ready in the warm pool
-	// +optional
-	WarmPoolReady int32 `json:"warmPoolReady,omitempty"`
 }
 
 // CodeInterpreterSandboxTemplate mirrors SandboxTemplate but is kept separate in case

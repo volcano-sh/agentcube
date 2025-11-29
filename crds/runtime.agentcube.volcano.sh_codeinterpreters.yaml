@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.17.2
-  name: codeinterpreters.runtime.agentcube.io
+  name: codeinterpreters.runtime.agentcube.volcano.sh
 spec:
-  group: runtime.agentcube.io
+  group: runtime.agentcube.volcano.sh
   names:
     kind: CodeInterpreter
     listKind: CodeInterpreterList
@@ -379,11 +379,6 @@ spec:
           status:
             description: Status represents the current state of the CodeInterpreter.
             properties:
-              activeSessions:
-                description: ActiveSessions is the number of active sandbox sessions
-                  using this runtime
-                format: int32
-                type: integer
               conditions:
                 description: Conditions represent the latest available observations
                   of the CodeInterpreter's state
@@ -446,11 +441,6 @@ spec:
                 description: Ready indicates whether the CodeInterpreter is ready
                   to serve requests
                 type: boolean
-              warmPoolReady:
-                description: WarmPoolReady is the number of sandboxes ready in the
-                  warm pool
-                format: int32
-                type: integer
             type: object
         required:
         - spec

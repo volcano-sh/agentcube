@@ -1,4 +1,4 @@
-apiVersion: runtime.agentcube.io/v1alpha1
+apiVersion: runtime.agentcube.volcano.sh/v1alpha1
 kind: CodeInterpreter
 metadata:
   name: simple-codeinterpreter

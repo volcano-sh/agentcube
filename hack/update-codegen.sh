@@ -49,7 +49,7 @@ fi
 source "${CODEGEN_PKG}/kube_codegen.sh"
 
 # Generate the code
-echo "Generating client-go code for runtime.agentcube.io/v1alpha1..."
+echo "Generating client-go code for runtime.agentcube.volcano.sh/v1alpha1..."
 
 # Generate helpers (deepcopy, defaulter, etc.)
 # Note: input-dir must be a local path, not a Go package path

@@ -3,6 +3,7 @@ package apiserver
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -340,20 +341,8 @@ func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alph
 
 // podTemplateEqual checks if two PodTemplates are equal
 func (r *CodeInterpreterReconciler) podTemplateEqual(a, b sandboxv1alpha1.PodTemplate) bool {
-	// Simple comparison - in production, you might want a more sophisticated comparison
-	if len(a.Spec.Containers) == 0 || len(b.Spec.Containers) == 0 {
-		return len(a.Spec.Containers) == len(b.Spec.Containers)
-	}
-	if a.Spec.Containers[0].Image != b.Spec.Containers[0].Image {
-		return false
-	}
-	if (a.Spec.RuntimeClassName == nil) != (b.Spec.RuntimeClassName == nil) {
-		return false
-	}
-	if a.Spec.RuntimeClassName != nil && b.Spec.RuntimeClassName != nil {
-		return *a.Spec.RuntimeClassName == *b.Spec.RuntimeClassName
-	}
-	return true
+	// Use reflect.DeepEqual for a comprehensive comparison.
+	return reflect.DeepEqual(a.Spec, b.Spec)
 }
 
 // SetupWithManager sets up the controller with the Manager.

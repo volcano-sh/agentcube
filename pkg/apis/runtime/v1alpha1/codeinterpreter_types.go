@@ -43,14 +43,12 @@ type CodeInterpreterSpec struct {
 	// SessionTimeout describes the duration after which an inactive code-interpreter
 	// session will be terminated. Any sandbox that has not received requests within
 	// this duration is eligible for cleanup.
-	// +kubebuilder:validation:Required
 	// +kubebuilder:default="15m"
 	SessionTimeout *metav1.Duration `json:"sessionTimeout,omitempty"`
 
 	// MaxSessionDuration describes the maximum duration for a code-interpreter session.
 	// After this duration, the session will be terminated regardless of activity, to
 	// prevent long-lived sandboxes from accumulating unbounded state.
-	// +kubebuilder:validation:Required
 	// +kubebuilder:default="8h"
 	MaxSessionDuration *metav1.Duration `json:"maxSessionDuration,omitempty"`
 

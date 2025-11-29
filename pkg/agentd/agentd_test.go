@@ -38,7 +38,7 @@ func TestReconciler_Reconcile_WithLastActivity(t *testing.T) {
 					Name:      "test-sandbox",
 					Namespace: "default",
 					Annotations: map[string]string{
-						"last-activity-time": now.Add(-5 * time.Minute).Format(time.RFC3339),
+						"agentcube.volcano.sh/last-activity": now.Add(-5 * time.Minute).Format(time.RFC3339),
 					},
 				},
 				Status: sandboxv1alpha1.SandboxStatus{
@@ -61,7 +61,7 @@ func TestReconciler_Reconcile_WithLastActivity(t *testing.T) {
 					Name:      "test-sandbox",
 					Namespace: "default",
 					Annotations: map[string]string{
-						"last-activity-time": now.Add(-20 * time.Minute).Format(time.RFC3339),
+						"agentcube.volcano.sh/last-activity": now.Add(-20 * time.Minute).Format(time.RFC3339),
 					},
 				},
 				Status: sandboxv1alpha1.SandboxStatus{
@@ -83,7 +83,7 @@ func TestReconciler_Reconcile_WithLastActivity(t *testing.T) {
 					Name:      "test-sandbox",
 					Namespace: "default",
 					Annotations: map[string]string{
-						"last-activity-time": now.Add(-20 * time.Minute).Format(time.RFC3339),
+						"agentcube.volcano.sh/last-activity": now.Add(-20 * time.Minute).Format(time.RFC3339),
 					},
 				},
 				Status: sandboxv1alpha1.SandboxStatus{

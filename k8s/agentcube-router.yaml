@@ -1,5 +1,5 @@
-# All-in-one deployment file for agentcube-apiserver
-# Apply with: kubectl apply -f k8s/agentcube-apiserver.yaml
+# All-in-one deployment file for agentcube-router
+# Apply with: kubectl apply -f k8s/agentcube-router.yaml
 
 ---
 apiVersion: v1
@@ -11,14 +11,14 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: agentcube-apiserver
+  name: agentcube-router
   namespace: agentcube
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: agentcube-apiserver
+  name: agentcube-router
 rules:
   - apiGroups: ["agents.x-k8s.io"]
     resources: ["sandboxes"]
@@ -58,38 +58,38 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: agentcube-apiserver
+  name: agentcube-router
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: agentcube-apiserver
+  name: agentcube-router
 subjects:
   - kind: ServiceAccount
-    name: agentcube-apiserver
+    name: agentcube-router
     namespace: agentcube
 
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: agentcube-apiserver
+  name: agentcube-router
   namespace: agentcube
   labels:
-    app: agentcube-apiserver
+    app: agentcube-router
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: agentcube-apiserver
+      app: agentcube-router
   template:
     metadata:
       labels:
-        app: agentcube-apiserver
+        app: agentcube-router
     spec:
-      serviceAccountName: agentcube-apiserver
+      serviceAccountName: agentcube-router
       containers:
-        - name: agentcube-apiserver
-          image: agentcube-apiserver:latest
+        - name: agentcube-router
+          image: agentcube-router:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -103,6 +103,7 @@ spec:
           args:
             - --port=8080
             - --runtime-class-name=
+            - --debug
           resources:
             requests:
               cpu: 100m
@@ -127,10 +128,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: agentcube-apiserver
+  name: agentcube-router
   namespace: agentcube
   labels:
-    app: agentcube-apiserver
+    app: agentcube-router
 spec:
   type: ClusterIP
   ports:
@@ -139,4 +140,4 @@ spec:
       protocol: TCP
       name: http
   selector:
-    app: agentcube-apiserver
+    app: agentcube-router

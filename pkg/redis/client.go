@@ -24,15 +24,16 @@ type Client interface {
 	// SetSessionLockIfAbsent tries to acquire a session-level lock if it does not exist.
 	SetSessionLockIfAbsent(ctx context.Context, sessionID string, ttl time.Duration) (bool, error)
 	// BindSessionWithSandbox stores a bidirectional mapping between session and sandbox.
-	BindSessionWithSandbox(ctx context.Context, sessionID string, sb *types.SandboxRedis, ttl time.Duration) error
+	BindSessionWithSandbox(ctx context.Context, sessionID string, sandboxRedis *types.SandboxRedis, ttl time.Duration) error
 	// DeleteSessionBySandboxIDTx removes the bidirectional mapping by sandbox ID.
 	DeleteSessionBySandboxIDTx(ctx context.Context, sandboxID string) error
 
 	// ListExpiredSandboxes returns up to limit sandboxes with ExpiresAt before the given time.
 	ListExpiredSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxRedis, error)
-	// ListInactiveSandboxes returns up to limit sandboxes with LastActivityAt before the given time.
+	// ListInactiveSandboxes returns up to limit sandboxes with last-activity time before the given time.
+	// Last activity is tracked only in the sorted-set index.
 	ListInactiveSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxRedis, error)
-	// UpdateSandboxLastActivity updates LastActivityAt for the given sandbox and refreshes the index.
+	// UpdateSandboxLastActivity updates the last-activity index for the given sandbox.
 	UpdateSandboxLastActivity(ctx context.Context, sandboxID string, at time.Time) error
 }
 
@@ -45,32 +46,17 @@ type client struct {
 	lockPrefix    string
 
 	// Sorted-set indexes:
-	//   expiryIndexKey:        score = ExpiresAt.Unix(),       member = sandboxID
-	//   lastActivityIndexKey:  score = LastActivityAt.Unix(),  member = sandboxID
+	//   expiryIndexKey:        score = ExpiresAt.Unix(),     member = sandboxID
+	//   lastActivityIndexKey:  score = last-activity.Unix(), member = sandboxID
 	expiryIndexKey       string
 	lastActivityIndexKey string
 }
 
-// Option configures client behavior (e.g. key prefixes).
-type Option func(*client)
-
-// WithKeyPrefixes sets custom key prefixes for session / sandbox / lock.
-func WithKeyPrefixes(session, sandbox, lock string) Option {
-	return func(c *client) {
-		c.sessionPrefix = session
-		c.sandboxPrefix = sandbox
-		c.lockPrefix = lock
-
-		c.expiryIndexKey = sandbox + "expiry"
-		c.lastActivityIndexKey = sandbox + "last_activity"
-	}
-}
-
 // NewClient creates a new Client and initializes the underlying go-redis client.
-func NewClient(redisOpts *redisv9.Options, opts ...Option) Client {
+func NewClient(redisOpts *redisv9.Options) Client {
 	rdb := redisv9.NewClient(redisOpts)
 
-	c := &client{
+	return &client{
 		rdb:           rdb,
 		sessionPrefix: "session:",
 		sandboxPrefix: "sandbox:",
@@ -79,10 +65,6 @@ func NewClient(redisOpts *redisv9.Options, opts ...Option) Client {
 		expiryIndexKey:       "sandbox:expiry",
 		lastActivityIndexKey: "sandbox:last_activity",
 	}
-	for _, opt := range opts {
-		opt(c)
-	}
-	return c
 }
 
 func (c *client) sessionKey(sessionID string) string {
@@ -110,11 +92,11 @@ func (c *client) GetSandboxBySessionID(ctx context.Context, sessionID string) (*
 		return nil, fmt.Errorf("GetSandboxBySessionID: redis GET %s: %w", key, err)
 	}
 
-	var sb types.SandboxRedis
-	if err := json.Unmarshal(b, &sb); err != nil {
+	var sandboxRedis types.SandboxRedis
+	if err := json.Unmarshal(b, &sandboxRedis); err != nil {
 		return nil, fmt.Errorf("GetSandboxBySessionID: unmarshal sandbox: %w", err)
 	}
-	return &sb, nil
+	return &sandboxRedis, nil
 }
 
 // SetSessionLockIfAbsent tries to acquire a lock for the given session ID.
@@ -129,26 +111,25 @@ func (c *client) SetSessionLockIfAbsent(ctx context.Context, sessionID string, t
 }
 
 // BindSessionWithSandbox writes a bidirectional mapping between session and sandbox,
-// and updates the expiry and last-activity indexes.
+// and updates the expiry index.
 //
-//	SETEX session: {sessionID} sandboxJSON
-//	SETEX sandbox: {sandboxID} sessionID
-//	ZADD  sandbox: expiry        (ExpiresAt,      sandboxID)
-//	ZADD  sandbox: last_activity (LastActivityAt, sandboxID)
-//	DEL   session_lock: {sessionID}
-func (c *client) BindSessionWithSandbox(ctx context.Context, sessionID string, sb *types.SandboxRedis, ttl time.Duration) error {
-	if sb == nil {
+//	SETEX session:{sessionID} sandboxJSON
+//	SETEX sandbox:{sandboxID} sessionID
+//	ZADD  sandbox:expiry (ExpiresAt, sandboxID)
+//	DEL   session_lock:{sessionID}
+func (c *client) BindSessionWithSandbox(ctx context.Context, sessionID string, sandboxRedis *types.SandboxRedis, ttl time.Duration) error {
+	if sandboxRedis == nil {
 		return errors.New("BindSessionWithSandbox: sandbox is nil")
 	}
-	if sb.SandboxID == "" {
+	if sandboxRedis.SandboxID == "" {
 		return errors.New("BindSessionWithSandbox: sandbox.SandboxID is empty")
 	}
 
 	sessionKey := c.sessionKey(sessionID)
-	sandboxKey := c.sandboxKey(sb.SandboxID)
+	sandboxKey := c.sandboxKey(sandboxRedis.SandboxID)
 	lockKey := c.lockKey(sessionID)
 
-	b, err := json.Marshal(sb)
+	b, err := json.Marshal(sandboxRedis)
 	if err != nil {
 		return fmt.Errorf("BindSessionWithSandbox: marshal sandbox: %w", err)
 	}
@@ -158,17 +139,10 @@ func (c *client) BindSessionWithSandbox(ctx context.Context, sessionID string, s
 	pipe.Set(ctx, sandboxKey, sessionID, ttl)
 	pipe.Del(ctx, lockKey)
 
-	if !sb.ExpiresAt.IsZero() {
+	if !sandboxRedis.ExpiresAt.IsZero() {
 		pipe.ZAdd(ctx, c.expiryIndexKey, redisv9.Z{
-			Score:  float64(sb.ExpiresAt.Unix()),
-			Member: sb.SandboxID,
-		})
-	}
-
-	if !sb.LastActivityAt.IsZero() {
-		pipe.ZAdd(ctx, c.lastActivityIndexKey, redisv9.Z{
-			Score:  float64(sb.LastActivityAt.Unix()),
-			Member: sb.SandboxID,
+			Score:  float64(sandboxRedis.ExpiresAt.Unix()),
+			Member: sandboxRedis.SandboxID,
 		})
 	}
 
@@ -179,48 +153,32 @@ func (c *client) BindSessionWithSandbox(ctx context.Context, sessionID string, s
 }
 
 // DeleteSessionBySandboxIDTx deletes the bidirectional mapping by sandboxID and
-// removes the related index entries, using WATCH + TxPipelined for atomicity.
+// removes the related index entries. Missing mappings are treated as success.
 func (c *client) DeleteSessionBySandboxIDTx(ctx context.Context, sandboxID string) error {
 	sandboxKey := c.sandboxKey(sandboxID)
 
-	for {
-		err := c.rdb.Watch(ctx, func(tx *redisv9.Tx) error {
-			sessionID, err := tx.Get(ctx, sandboxKey).Result()
-			if errors.Is(err, redisv9.Nil) {
-				return ErrNotFound
-			}
-			if err != nil {
-				return fmt.Errorf("redis GET %s: %w", sandboxKey, err)
-			}
-
-			sessionKey := c.sessionKey(sessionID)
-
-			_, err = tx.TxPipelined(ctx, func(pipe redisv9.Pipeliner) error {
-				pipe.Del(ctx, sandboxKey)
-				pipe.Del(ctx, sessionKey)
-				pipe.ZRem(ctx, c.expiryIndexKey, sandboxID)
-				pipe.ZRem(ctx, c.lastActivityIndexKey, sandboxID)
-				return nil
-			})
-			if err != nil {
-				return fmt.Errorf("redis TxPipelined: %w", err)
-			}
-			return nil
-		}, sandboxKey)
-
-		if errors.Is(err, redisv9.TxFailedErr) {
-			// Retry on concurrent modification.
-			continue
-		}
-		if errors.Is(err, ErrNotFound) {
-			// Treat not-found as success.
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("DeleteSessionBySandboxIDTx: %w", err)
-		}
+	// Best-effort lookup of the current session mapping.
+	sessionID, err := c.rdb.Get(ctx, sandboxKey).Result()
+	if errors.Is(err, redisv9.Nil) {
+		// Mapping already gone, treat as success.
 		return nil
 	}
+	if err != nil {
+		return fmt.Errorf("DeleteSessionBySandboxIDTx: redis GET %s: %w", sandboxKey, err)
+	}
+
+	sessionKey := c.sessionKey(sessionID)
+
+	pipe := c.rdb.Pipeline()
+	pipe.Del(ctx, sandboxKey)
+	pipe.Del(ctx, sessionKey)
+	pipe.ZRem(ctx, c.expiryIndexKey, sandboxID)
+	pipe.ZRem(ctx, c.lastActivityIndexKey, sandboxID)
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("DeleteSessionBySandboxIDTx: pipeline EXEC: %w", err)
+	}
+	return nil
 }
 
 // ListExpiredSandboxes returns up to limit sandboxes whose ExpiresAt is before before.
@@ -244,8 +202,8 @@ func (c *client) ListExpiredSandboxes(ctx context.Context, before time.Time, lim
 	return c.loadSandboxesByIDs(ctx, ids)
 }
 
-// ListInactiveSandboxes returns up to limit sandboxes whose LastActivityAt
-// is before before, using the last-activity sorted-set index.
+// ListInactiveSandboxes returns up to limit sandboxes whose last activity
+// time is before before, using the last-activity sorted-set index.
 func (c *client) ListInactiveSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxRedis, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -320,18 +278,18 @@ func (c *client) loadSandboxesByIDs(ctx context.Context, sandboxIDs []string) ([
 		if err != nil {
 			return nil, fmt.Errorf("loadSandboxesByIDs: get sandbox JSON for session %s: %w", pairs[i].sessionID, err)
 		}
-		var sb types.SandboxRedis
-		if err := json.Unmarshal(data, &sb); err != nil {
+		var sandboxRedis types.SandboxRedis
+		if err := json.Unmarshal(data, &sandboxRedis); err != nil {
 			return nil, fmt.Errorf("loadSandboxesByIDs: unmarshal sandbox for session %s: %w", pairs[i].sessionID, err)
 		}
-		result = append(result, &sb)
+		result = append(result, &sandboxRedis)
 	}
 
 	return result, nil
 }
 
-// UpdateSandboxLastActivity updates LastActivityAt for the given sandbox and
-// synchronizes the last-activity index. TTL on the session key is preserved.
+// UpdateSandboxLastActivity updates the last-activity index for the given sandbox.
+// Last activity is only stored in the sorted set, not in the session value.
 func (c *client) UpdateSandboxLastActivity(ctx context.Context, sandboxID string, at time.Time) error {
 	if sandboxID == "" {
 		return errors.New("UpdateSandboxLastActivity: sandboxID is empty")
@@ -340,57 +298,21 @@ func (c *client) UpdateSandboxLastActivity(ctx context.Context, sandboxID string
 		at = time.Now().UTC()
 	}
 
+	// Ensure the sandbox mapping exists; otherwise treat as not found.
 	sandboxKey := c.sandboxKey(sandboxID)
-	sessionID, err := c.rdb.Get(ctx, sandboxKey).Result()
+	_, err := c.rdb.Get(ctx, sandboxKey).Result()
 	if errors.Is(err, redisv9.Nil) {
 		return ErrNotFound
 	}
 	if err != nil {
-		return fmt.Errorf("UpdateSandboxLastActivity: get sessionID for sandbox %s: %w", sandboxID, err)
+		return fmt.Errorf("UpdateSandboxLastActivity: get mapping for sandbox %s: %w", sandboxID, err)
 	}
 
-	sessionKey := c.sessionKey(sessionID)
-
-	ttl, err := c.rdb.TTL(ctx, sessionKey).Result()
-	if err != nil {
-		return fmt.Errorf("UpdateSandboxLastActivity: TTL for session %s: %w", sessionKey, err)
-	}
-
-	data, err := c.rdb.Get(ctx, sessionKey).Bytes()
-	if errors.Is(err, redisv9.Nil) {
-		return ErrNotFound
-	}
-	if err != nil {
-		return fmt.Errorf("UpdateSandboxLastActivity: get sandbox JSON for session %s: %w", sessionKey, err)
-	}
-
-	var sb types.SandboxRedis
-	if err := json.Unmarshal(data, &sb); err != nil {
-		return fmt.Errorf("UpdateSandboxLastActivity: unmarshal sandbox for session %s: %w", sessionKey, err)
-	}
-
-	sb.LastActivityAt = at
-
-	newData, err := json.Marshal(&sb)
-	if err != nil {
-		return fmt.Errorf("UpdateSandboxLastActivity: marshal sandbox for session %s: %w", sessionKey, err)
-	}
-
-	pipe := c.rdb.TxPipeline()
-
-	exp := ttl
-	if exp <= 0 {
-		exp = 0
-	}
-	pipe.Set(ctx, sessionKey, newData, exp)
-
-	pipe.ZAdd(ctx, c.lastActivityIndexKey, redisv9.Z{
+	if _, err := c.rdb.ZAdd(ctx, c.lastActivityIndexKey, redisv9.Z{
 		Score:  float64(at.Unix()),
 		Member: sandboxID,
-	})
-
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("UpdateSandboxLastActivity: TxPipeline EXEC: %w", err)
+	}).Result(); err != nil {
+		return fmt.Errorf("UpdateSandboxLastActivity: ZAdd: %w", err)
 	}
 
 	return nil

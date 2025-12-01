@@ -6,14 +6,15 @@ import (
 )
 
 type SandboxRedis struct {
-	SandboxID      string          `json:"sandboxId"`
-	SandboxName    string          `json:"sandboxName"`
-	Accesses       []SandboxAccess `json:"accesses"`
-	SessionID      string          `json:"sessionId"`
-	CreatedAt      time.Time       `json:"createdAt"`
-	ExpiresAt      time.Time       `json:"expiresAt"`
-	LastActivityAt time.Time       `json:"lastActivityAt,omitempty"`
-	Status         string          `json:"status"`
+	SandboxID   string          `json:"sandboxId"`
+	SandboxName string          `json:"sandboxName"`
+	EntryPoints []SandboxAccess `json:"entrypoints"`
+	SessionID   string          `json:"sessionId"`
+	CreatedAt   time.Time       `json:"createdAt"`
+	ExpiresAt   time.Time       `json:"expiresAt"`
+	// LastActivityAt is intentionally omitted from this type.
+	// Last activity is tracked in Redis via a sorted set index.
+	Status string `json:"status"`
 }
 
 type SandboxAccess struct {

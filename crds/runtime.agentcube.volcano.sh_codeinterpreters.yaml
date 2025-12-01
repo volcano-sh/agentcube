@@ -48,14 +48,6 @@ spec:
           spec:
             description: Spec defines the desired state of the CodeInterpreter.
             properties:
-              languages:
-                description: |-
-                  Languages declares the set of languages/runtimes that this code interpreter
-                  environment supports (e.g. ["python", "bash"]). This is metadata to help
-                  routers / UIs select a compatible runtime.
-                items:
-                  type: string
-                type: array
               maxSessionDuration:
                 default: 8h
                 description: |-
@@ -372,8 +364,6 @@ spec:
                 format: int32
                 type: integer
             required:
-            - maxSessionDuration
-            - sessionTimeout
             - template
             type: object
           status:

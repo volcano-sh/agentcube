@@ -52,12 +52,6 @@ type CodeInterpreterSpec struct {
 	// +kubebuilder:default="8h"
 	MaxSessionDuration *metav1.Duration `json:"maxSessionDuration,omitempty"`
 
-	// Languages declares the set of languages/runtimes that this code interpreter
-	// environment supports (e.g. ["python", "bash"]). This is metadata to help
-	// routers / UIs select a compatible runtime.
-	// +optional
-	Languages []string `json:"languages,omitempty"`
-
 	// WarmPoolSize specifies the number of pre-warmed sandboxes to maintain
 	// for this code interpreter runtime. Pre-warmed sandboxes can reduce startup
 	// latency for new sessions at the cost of additional resource usage.

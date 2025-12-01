@@ -160,11 +160,6 @@ func (in *CodeInterpreterSpec) DeepCopyInto(out *CodeInterpreterSpec) {
 		*out = new(v1.Duration)
 		**out = **in
 	}
-	if in.Languages != nil {
-		in, out := &in.Languages, &out.Languages
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
 	if in.WarmPoolSize != nil {
 		in, out := &in.WarmPoolSize, &out.WarmPoolSize
 		*out = new(int32)

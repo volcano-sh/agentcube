@@ -1,17 +1,15 @@
-package apiserver
+package workloadmanager
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	agentcuberuntime "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/kubernetes"
@@ -19,11 +17,23 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
+)
+
+const (
+	DefaultSandboxTTL         = 8 * time.Hour
+	DefaultSandboxIdleTimeout = 15 * time.Minute
 )
 
 var (
+	// SessionIdLabelKey labels key for session id
+	SessionIdLabelKey = "runtime.agentcube.io/session-id"
+	// WorkloadNameLabelKey labels key for workload name
+	WorkloadNameLabelKey = "runtime.agentcube.io/workload-name"
 	// Annotation key for last activity time
 	LastActivityAnnotationKey = "last-activity-time"
+	// IdleTimeoutAnnotationKey key for idle timeout
+	IdleTimeoutAnnotationKey = "runtime.agentcube.io/idle-timeout"
 	// Annotation key for creator service account
 	CreatorServiceAccountAnnotationKey = "creator-service-account"
 )
@@ -38,11 +48,8 @@ type K8sClient struct {
 	dynamicInformer dynamicinformer.DynamicSharedInformerFactory
 }
 
-// Sandbox CRD GroupVersionResource
-var SandboxGVR = schema.GroupVersionResource{
-	Group:    "agents.x-k8s.io",
-	Version:  "v1alpha1",
-	Resource: "sandboxes",
+type sandboxExternalInfo struct {
+	Ports []agentcuberuntime.TargetPort
 }
 
 // NewK8sClient creates a new Kubernetes client
@@ -148,77 +155,6 @@ func (c *K8sClient) GetOrCreateUserK8sClient(userToken, namespace, serviceAccoun
 	return client, nil
 }
 
-// buildSandboxObject builds a Sandbox object from parameters
-func buildSandboxObject(namespace, sandboxID, sandboxName, image, sshPublicKey, runtimeClassName string, ttl int, metadata map[string]interface{}, createdAt time.Time, creatorServiceAccount string) *sandboxv1alpha1.Sandbox {
-	// Use default sandbox image if not specified
-	if image == "" {
-		image = "sandbox:latest"
-	}
-
-	// Prepare container environment variables
-	env := []corev1.EnvVar{}
-	if sshPublicKey != "" {
-		env = append(env, corev1.EnvVar{
-			Name:  "SSH_PUBLIC_KEY",
-			Value: sshPublicKey,
-		})
-	}
-
-	// Create PodSpec
-	podSpec := corev1.PodSpec{
-		Containers: []corev1.Container{
-			{
-				Name:            "sandbox",
-				Image:           image,
-				ImagePullPolicy: corev1.PullIfNotPresent,
-				Env:             env,
-			},
-		},
-	}
-
-	// Set RuntimeClassName only if it's not empty
-	if runtimeClassName != "" {
-		podSpec.RuntimeClassName = &runtimeClassName
-	}
-
-	// Create Sandbox object using agent-sandbox types
-	sandbox := &sandboxv1alpha1.Sandbox{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "agents.x-k8s.io/v1alpha1",
-			Kind:       "Sandbox",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      sandboxName,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"sandbox-id":   sandboxID,
-				"managed-by":   "agentcube-apiserver",
-				"sandbox-name": sandboxName,
-			},
-			Annotations: convertToStringMap(metadata),
-		},
-		Spec: sandboxv1alpha1.SandboxSpec{
-			PodTemplate: sandboxv1alpha1.PodTemplate{
-				Spec: podSpec,
-			},
-		},
-	}
-	// Use the provided creation time as the initial active time to ensure consistency
-	if !createdAt.IsZero() {
-		sandbox.Annotations[LastActivityAnnotationKey] = createdAt.Format(time.RFC3339)
-	}
-	// Store TTL in annotations so informer can calculate expiresAt
-	if ttl > 0 {
-		sandbox.Annotations["ttl"] = fmt.Sprintf("%d", ttl)
-	}
-	// Store creator service account in annotations for authorization
-	if creatorServiceAccount != "" {
-		sandbox.Annotations[CreatorServiceAccountAnnotationKey] = creatorServiceAccount
-	}
-
-	return sandbox
-}
-
 // createSandbox creates a Sandbox using the provided dynamic client
 func createSandbox(ctx context.Context, client dynamic.Interface, namespace string, sandbox *sandboxv1alpha1.Sandbox) (*SandboxInfo, error) {
 	// Convert to unstructured for dynamic client
@@ -245,6 +181,29 @@ func createSandbox(ctx context.Context, client dynamic.Interface, namespace stri
 	}, nil
 }
 
+// createSandboxClaim creates a SandboxClaim using the provided dynamic client
+func createSandboxClaim(ctx context.Context, client dynamic.Interface, namespace string, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
+	// Convert to unstructured for dynamic client
+	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(sandboxClaim)
+	if err != nil {
+		return fmt.Errorf("failed to convert sandbox claim to unstructured: %w", err)
+	}
+
+	unstructuredSandbox := &unstructured.Unstructured{Object: unstructuredObj}
+
+	// Create SandboxClaim
+	_, err = client.Resource(SandboxClaimGVR).Namespace(namespace).Create(
+		ctx,
+		unstructuredSandbox,
+		metav1.CreateOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create sandbox claim: %w", err)
+	}
+
+	return nil
+}
+
 // deleteSandbox deletes a Sandbox using the provided dynamic client
 func deleteSandbox(ctx context.Context, client dynamic.Interface, namespace, sandboxName string) error {
 	err := client.Resource(SandboxGVR).Namespace(namespace).Delete(
@@ -258,9 +217,26 @@ func deleteSandbox(ctx context.Context, client dynamic.Interface, namespace, san
 	return nil
 }
 
+// deleteSandboxClaim deletes a SandboxClaim using the provided dynamic client
+func deleteSandboxClaim(ctx context.Context, client dynamic.Interface, namespace, sandboxClaimName string) error {
+	err := client.Resource(SandboxClaimGVR).Namespace(namespace).Delete(
+		ctx,
+		sandboxClaimName,
+		metav1.DeleteOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete sandbox claim: %w", err)
+	}
+	return nil
+}
+
+// CreateSandboxClaim creates a new SandboxClaim using user's permissions
+func (u *UserK8sClient) CreateSandboxClaim(ctx context.Context, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
+	return createSandboxClaim(ctx, u.dynamicClient, u.namespace, sandboxClaim)
+}
+
 // CreateSandbox creates a new Sandbox using user's permissions
-func (u *UserK8sClient) CreateSandbox(ctx context.Context, sandboxID, sandboxName, image, sshPublicKey, runtimeClassName string, ttl int, metadata map[string]interface{}, createdAt time.Time, creatorServiceAccount string) (*SandboxInfo, error) {
-	sandbox := buildSandboxObject(u.namespace, sandboxID, sandboxName, image, sshPublicKey, runtimeClassName, ttl, metadata, createdAt, creatorServiceAccount)
+func (u *UserK8sClient) CreateSandbox(ctx context.Context, sandbox *sandboxv1alpha1.Sandbox) (*SandboxInfo, error) {
 	return createSandbox(ctx, u.dynamicClient, u.namespace, sandbox)
 }
 
@@ -269,18 +245,14 @@ func (u *UserK8sClient) DeleteSandbox(ctx context.Context, namespace, sandboxNam
 	return deleteSandbox(ctx, u.dynamicClient, namespace, sandboxName)
 }
 
+// DeleteSandboxClaim deletes a SandboxClaim resource using user's permissions
+func (u *UserK8sClient) DeleteSandboxClaim(ctx context.Context, namespace, sandboxClaimName string) error {
+	return deleteSandboxClaim(ctx, u.dynamicClient, namespace, sandboxClaimName)
+}
+
 // GetSandboxPodIP gets the IP address of the pod corresponding to the Sandbox
 func (c *K8sClient) GetSandboxPodIP(ctx context.Context, namespace, sandboxName string) (string, error) {
-	// Try multiple methods to find the pod
-
-	// Method 1: Try to find pod by exact name (agent-sandbox controller may create pod with same name)
-	pod, err := c.clientset.CoreV1().Pods(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-	if err == nil {
-		// Found pod by exact name
-		return validateAndGetPodIP(pod)
-	}
-
-	// Method 2: Find pod through label selector (sandbox-name label we set)
+	// Find pod through label selector (sandbox-name label we set)
 	labelSelector := fmt.Sprintf("sandbox-name=%s", sandboxName)
 	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
@@ -288,32 +260,6 @@ func (c *K8sClient) GetSandboxPodIP(ctx context.Context, namespace, sandboxName 
 	if err == nil && len(pods.Items) > 0 {
 		return validateAndGetPodIP(&pods.Items[0])
 	}
-
-	// Method 3: Find pod by agent-sandbox controller labels
-	// The agent-sandbox controller typically adds labels like "sandbox.agents.x-k8s.io/name"
-	labelSelector = fmt.Sprintf("sandbox.agents.x-k8s.io/name=%s", sandboxName)
-	pods, err = c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err == nil && len(pods.Items) > 0 {
-		return validateAndGetPodIP(&pods.Items[0])
-	}
-
-	// Method 4: Find pod by owner reference (more reliable)
-	allPods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return "", fmt.Errorf("failed to list pods: %w", err)
-	}
-
-	for _, pod := range allPods.Items {
-		// Check if pod has owner reference to our sandbox
-		for _, owner := range pod.OwnerReferences {
-			if owner.Kind == "Sandbox" && owner.Name == sandboxName {
-				return validateAndGetPodIP(&pod)
-			}
-		}
-	}
-
 	return "", fmt.Errorf("no pod found for sandbox %s", sandboxName)
 }
 
@@ -371,48 +317,6 @@ func (c *K8sClient) WaitForSandboxReady(ctx context.Context, namespace, sandboxN
 			}
 		}
 	}
-}
-
-func (c *K8sClient) UpdateSandboxLastActivityWithPatch(ctx context.Context, namespace, sandboxName string, timestamp time.Time) error {
-	// Prepare the patch data
-	patchData := map[string]interface{}{
-		"metadata": map[string]interface{}{
-			"annotations": map[string]string{
-				LastActivityAnnotationKey: timestamp.Format(time.RFC3339),
-			},
-		},
-	}
-
-	// Convert to JSON
-	patchBytes, err := json.Marshal(patchData)
-	if err != nil {
-		return fmt.Errorf("failed to marshal patch data: %w", err)
-	}
-
-	// Apply the patch using json merge patch
-	_, err = c.dynamicClient.Resource(SandboxGVR).Namespace(namespace).Patch(
-		ctx,
-		sandboxName,
-		types.MergePatchType,
-		patchBytes,
-		metav1.PatchOptions{},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to patch sandbox %s: %w", sandboxName, err)
-	}
-
-	return nil
-}
-
-// convertToStringMap converts map[string]interface{} to map[string]string for annotations
-func convertToStringMap(m map[string]interface{}) map[string]string {
-	result := make(map[string]string)
-	for k, v := range m {
-		if v != nil {
-			result[k] = fmt.Sprintf("%v", v)
-		}
-	}
-	return result
 }
 
 // GetSandboxInformer returns a shared informer for Sandbox CRD

@@ -1,4 +1,4 @@
-package runtime
+package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
@@ -35,29 +35,6 @@ type AgentRuntimeSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:default="8h"
 	MaxSessionDuration *metav1.Duration `json:"maxSessionDuration,omitempty" protobuf:"bytes,3,opt,name=maxSessionDuration"`
-}
-
-type ProtocolType string
-
-const (
-	ProtocolTypeHTTP  ProtocolType = "HTTP"
-	ProtocolTypeHTTPS ProtocolType = "HTTPS"
-)
-
-type TargetPort struct {
-	// PathPrefix is the path prefix to route to this port.
-	// For example, if PathPrefix is "/api", requests to "/api/..." will be routed to this port.
-	// +optional
-	PathPrefix string `json:"pathPrefix,omitempty" protobuf:"bytes,4,opt,name=pathPrefix"`
-	// Name is the name of the port.
-	// +optional
-	Name string `json:"name,omitempty" protobuf:"bytes,1,opt,name=name"`
-	// Port is the port number.
-	Port uint32 `json:"port" protobuf:"varint,2,opt,name=port"`
-	// Protocol is the protocol of the port.
-	// +kubebuilder:default=HTTP
-	// +kubebuilder:validation:Enum=HTTP;HTTPS;
-	Protocol ProtocolType `json:"protocol" protobuf:"bytes,3,opt,name=protocol"`
 }
 
 type AgentRuntimeStatus struct {

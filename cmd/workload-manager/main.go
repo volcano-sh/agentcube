@@ -20,7 +20,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
-	apiserver "github.com/volcano-sh/agentcube/pkg/apiserver"
+	apiserver "github.com/volcano-sh/agentcube/pkg/workloadmanager"
 )
 
 var (
@@ -37,8 +37,6 @@ func init() {
 func main() {
 	var (
 		port             = flag.String("port", "8080", "API server port")
-		sshUsername      = flag.String("ssh-username", "sandbox", "Default SSH username for sandbox pods")
-		sshPort          = flag.Int("ssh-port", 22, "SSH port on sandbox pods")
 		runtimeClassName = flag.String("runtime-class-name", "kuasar-vmm", "RuntimeClassName for sandbox pods")
 		enableTLS        = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
 		tlsCert          = flag.String("tls-cert", "", "Path to TLS certificate file")
@@ -81,8 +79,6 @@ func main() {
 	// Create API server configuration
 	config := &apiserver.Config{
 		Port:             *port,
-		SSHUsername:      *sshUsername,
-		SSHPort:          *sshPort,
 		RuntimeClassName: *runtimeClassName,
 		EnableTLS:        *enableTLS,
 		TLSCert:          *tlsCert,

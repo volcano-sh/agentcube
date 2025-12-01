@@ -10,7 +10,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	apiserver "github.com/volcano-sh/agentcube/pkg/apiserver"
+	apiserver "github.com/volcano-sh/agentcube/pkg/workloadmanager"
 )
 
 var (

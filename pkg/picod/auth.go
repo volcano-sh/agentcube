@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"sync"
 	"time"
 
@@ -109,9 +110,12 @@ func (am *AuthManager) SavePublicKey(publicKeyStr string) error {
 	}
 
 	// Save to file
-	if err := os.WriteFile(am.keyFile, []byte(publicKeyStr), 0644); err != nil {
+	if err := os.WriteFile(am.keyFile, []byte(publicKeyStr), 0400); err != nil {
 		return fmt.Errorf("failed to save public key file: %v", err)
 	}
+
+	// Try to make the file immutable (Linux only)
+	exec.Command("chattr", "+i", am.keyFile).Run()
 
 	am.publicKey = rsaPub
 	am.initialized = true

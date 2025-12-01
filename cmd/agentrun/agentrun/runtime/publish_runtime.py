@@ -276,6 +276,7 @@ class PublishRuntime:
             raise ValueError("No image found in metadata. Build the agent first.")
 
         # Step 3: Deploy to K8s
+        k8s_info = None
         try:
             k8s_info = self.standard_k8s_provider.deploy_agent(
                 agent_name=metadata.agent_name,
@@ -294,7 +295,7 @@ class PublishRuntime:
                 "agent_endpoint": k8s_info["service_url"],
                 "k8s_deployment": {
                     **k8s_info,
-                    "status": "creating" # Initial status
+                    "status": "creating"
                 }
             }
             self.metadata_service.update_metadata(workspace_path, updates)
@@ -303,14 +304,13 @@ class PublishRuntime:
             if self.verbose:
                 logger.info(f"Waiting for deployment '{k8s_info['deployment_name']}' to become ready...")
             
-            final_status = "failed" # Default to failed
+            final_status = "failed"
             try:
                 self.standard_k8s_provider._wait_for_deployment_ready(k8s_info['deployment_name'], timeout=120)
-                final_status = "deployed" # If successful
+                final_status = "deployed"
             except Exception as e:
                 error_message = str(e)
                 logger.error(f"Deployment '{k8s_info['deployment_name']}' failed readiness check: {error_message}")
-                # Update metadata with failure status and error message
                 updates = {
                     "k8s_deployment": {
                         **k8s_info,
@@ -341,11 +341,10 @@ class PublishRuntime:
             return result
 
         except Exception as e:
-            # This catches errors during deploy_agent (creation of resources)
             error_message = str(e)
             logger.error(f"Failed to create standard K8s resources for {metadata.agent_name}: {error_message}")
-            if k8s_info: # If some k8s_info was returned, try to update metadata with failure
-                 updates = {
+            if k8s_info:
+                updates = {
                     "agent_id": k8s_info.get("deployment_name", metadata.agent_name),
                     "agent_endpoint": k8s_info.get("service_url", ""),
                     "k8s_deployment": {
@@ -354,7 +353,7 @@ class PublishRuntime:
                         "error": error_message
                     }
                 }
-                 self.metadata_service.update_metadata(workspace_path, updates)
+                self.metadata_service.update_metadata(workspace_path, updates)
             raise RuntimeError(f"Failed to deploy to standard K8s: {error_message}")
 
     def _validate_publish_prerequisites(self, workspace_path: Path):

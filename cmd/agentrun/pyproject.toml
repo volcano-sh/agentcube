@@ -73,7 +73,7 @@ Repository = "https://github.com/volcano-sh/agentcube/tree/main/cmd/agentrun"
 Issues = "https://github.com/volcano-sh/agentcube/issues"
 
 [project.scripts]
-agentrun = "agentrun.cli.main:app"
+kubectl-agentrun = "agentrun.cli.main:app"
 
 [tool.setuptools]
 packages = ["agentrun", "agentrun.cli", "agentrun.runtime", "agentrun.operations", "agentrun.services"]

@@ -25,7 +25,6 @@ class InvokeRuntime:
         self.agentcube_uri = agentcube_uri
         self.metadata_service = MetadataService(verbose=verbose)
         
-        # AgentCubeService is used for non-K8s based providers or as a fallback
         self.agentcube_service = AgentCubeService(verbose=verbose, api_url=agentcube_uri)
         
         # Providers for K8s deployments
@@ -97,44 +96,34 @@ class InvokeRuntime:
                 "Agent is not published yet. Run 'agentrun publish' first."
             )
 
-        # Priority 1: Use CLI provided agentcube-uri to construct endpoint override if applicable
-        # But typically agentcube-uri is the base URI. 
-        # If user provides --agentcube-uri, we might want to use it to reconstruct the endpoint
-        # especially if the one in metadata is outdated or 'localhost'.
-        
         endpoint = metadata.agent_endpoint
         
         if self.agentcube_uri:
-             # If CLI arg provided, override base part of endpoint if it looks like a full URL
-             base_uri = self.agentcube_uri.rstrip('/')
+            base_uri = self.agentcube_uri.rstrip('/')
 
-             if self.provider == "agentcube":
-                 # Reconstruct K8s endpoint format for AgentRuntime CR: <base>/v1/namespaces/<ns>/agents/<name>
-                 namespace = "agentrun"
-                 if metadata.k8s_deployment and "namespace" in metadata.k8s_deployment:
-                     namespace = metadata.k8s_deployment["namespace"]
-                 
-                 endpoint = f"{base_uri}/v1/namespaces/{namespace}/agents/{metadata.agent_name}"
-             elif self.provider == "standard-k8s":
-                 # For standard-k8s, retrieve service_url from metadata, then replace its base with agentcube_uri
-                 if metadata.k8s_deployment and "service_url" in metadata.k8s_deployment:
-                     from urllib.parse import urlparse, urlunparse
-                     original_service_url = metadata.k8s_deployment["service_url"]
-                     parsed_original = urlparse(original_service_url)
-                     
-                     # Construct endpoint with new base_uri and original path/query/fragment
-                     endpoint = urlunparse(parsed_original._replace(scheme=urlparse(base_uri).scheme, netloc=urlparse(base_uri).netloc))
-                 else:
-                     raise ValueError(
-                         "Standard K8s deployment info not found in metadata. "
-                         "Cannot construct endpoint with --agentcube-uri."
-                     )
-             else:
-                 # For other providers, if agentcube_uri is provided, it might be the direct endpoint or base
-                 endpoint = base_uri # Assume agentcube_uri is the full endpoint if not k8s-related
+            if self.provider == "agentcube":
+                namespace = "agentrun"
+                if metadata.k8s_deployment and "namespace" in metadata.k8s_deployment:
+                    namespace = metadata.k8s_deployment["namespace"]
+                
+                endpoint = f"{base_uri}/v1/namespaces/{namespace}/agents/{metadata.agent_name}"
+            elif self.provider == "standard-k8s":
+                if metadata.k8s_deployment and "service_url" in metadata.k8s_deployment:
+                    from urllib.parse import urlparse, urlunparse
+                    original_service_url = metadata.k8s_deployment["service_url"]
+                    parsed_original = urlparse(original_service_url)
+                    parsed_base = urlparse(base_uri)
+                    endpoint = urlunparse(parsed_original._replace(scheme=parsed_base.scheme, netloc=parsed_base.netloc))
+                else:
+                    raise ValueError(
+                        "Standard K8s deployment info not found in metadata. "
+                        "Cannot construct endpoint with --agentcube-uri."
+                    )
+            else:
+                endpoint = base_uri
         
         if not endpoint:
-             raise ValueError(
+            raise ValueError(
                 "Agent endpoint is not available in metadata and could not be constructed. "
                 "Please publish with --agentcube-uri or provide it during invocation."
             )

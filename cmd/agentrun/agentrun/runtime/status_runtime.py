@@ -167,14 +167,6 @@ class StatusRuntime:
                 "status": "error",
                 "error": str(e)
             }
-
-
-        except Exception as e:
-            logger.error(f"Failed to get K8s status: {e}")
-            return {
-                "status": "error",
-                "error": str(e)
-            }
     
     def _get_crd_k8s_status(self, metadata) -> Dict[str, Any]:
         """Get status from K8s cluster (AgentRuntime CR)."""

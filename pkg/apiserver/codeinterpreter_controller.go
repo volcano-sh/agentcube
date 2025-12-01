@@ -328,8 +328,8 @@ func (r *CodeInterpreterReconciler) podTemplateEqual(a, b sandboxv1alpha1.PodTem
 // Example usage:
 //
 //	reconciler := NewCodeInterpreterReconciler(client, scheme)
-//	ci := reconciler.GetCodeInterpreter("default", "my-codeinterpreter")
-func (r *CodeInterpreterReconciler) GetCodeInterpreter(namespace, name string) *runtimev1alpha1.CodeInterpreter {
+//	ci := reconciler.GetCodeInterpreter("my-codeinterpreter", "default")
+func (r *CodeInterpreterReconciler) GetCodeInterpreter(name, namespace string) *runtimev1alpha1.CodeInterpreter {
 	if r.mgr == nil {
 		return nil
 	}

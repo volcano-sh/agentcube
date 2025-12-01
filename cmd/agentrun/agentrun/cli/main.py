@@ -287,6 +287,16 @@ def publish(
         "--replicas",
         help="Number of replicas for K8s deployment (default: 1)",
     ),
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="The endpoint for the agent",
+    ),
+    namespace: Optional[str] = typer.Option(
+        None,
+        "--namespace",
+        help="The namespace for the deployment",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -321,6 +331,8 @@ def publish(
                 "provider": provider, # Pass provider down
                 "node_port": node_port,
                 "replicas": replicas,
+                "endpoint": endpoint,
+                "namespace": namespace,
             }
 
             # Filter out None values

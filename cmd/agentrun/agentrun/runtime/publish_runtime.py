@@ -29,17 +29,6 @@ class PublishRuntime:
         self.agentcube_provider = None         # For agentcube provider (CRD)
         self.k8s_provider = None    # For k8s provider (Deployment/Service)
 
-        if provider == "agentcube":
-            try:
-                self.agentcube_provider = AgentCubeProvider(verbose=verbose)
-            except Exception as e:
-                logger.warning(f"Failed to initialize AgentCube provider for CRD: {e}")
-        elif provider == "k8s":
-            try:
-                self.k8s_provider = KubernetesProvider(verbose=verbose)
-            except Exception as e:
-                logger.warning(f"Failed to initialize standard K8s provider: {e}")
-
         if verbose:
             logging.basicConfig(level=logging.DEBUG)
 
@@ -65,6 +54,18 @@ class PublishRuntime:
             logger.info(f"Starting publish process for workspace: {workspace_path}")
             
         provider = options.get('provider', self.provider)
+        namespace = str(options.get('namespace', 'agentrun'))
+
+        if provider == "agentcube":
+            try:
+                self.agentcube_provider = AgentCubeProvider(verbose=self.verbose, namespace=namespace)
+            except Exception as e:
+                logger.warning(f"Failed to initialize AgentCube provider for CRD: {e}")
+        elif provider == "k8s":
+            try:
+                self.k8s_provider = KubernetesProvider(verbose=self.verbose, namespace=namespace)
+            except Exception as e:
+                logger.warning(f"Failed to initialize standard K8s provider: {e}")
 
         if provider == "agentcube":
             return self._publish_crd_to_k8s(workspace_path, **options)
@@ -119,79 +120,39 @@ class PublishRuntime:
                 entrypoint=metadata.entrypoint,
                 env_vars=options.get('env_vars', None)
             )
-
-            # Step 4: Update metadata with initial K8s deployment information (before endpoint is available)
-            updates = {
-                "agent_id": k8s_info["deployment_name"],
-                "k8s_deployment": {
-                    **k8s_info,
-                    "type": "AgentRuntime",
-                    "status": "pending_endpoint" # Initial status
-                }
-            }
-            self.metadata_service.update_metadata(workspace_path, updates)
-            
-            # --- POLLING FOR ENDPOINT ---
-            agent_endpoint = None
-            status = "pending_endpoint"
-            timeout_seconds = 300 # 5 minutes timeout
-            poll_interval = 5 # Poll every 5 seconds
-            start_time = time.time()
-            
-            if self.verbose:
-                logger.info(f"Polling AgentRuntime CR '{k8s_info['deployment_name']}' for endpoint. Timeout: {timeout_seconds}s")
-
-            while time.time() - start_time < timeout_seconds:
-                try:
-                    cr = self.agentcube_provider.get_agent_runtime(
-                        name=k8s_info["deployment_name"],
-                        namespace=k8s_info["namespace"]
-                    )
-                    if cr and "status" in cr and "agentEndpoint" in cr["status"]:
-                        agent_endpoint = cr["status"]["agentEndpoint"]
-                        status = cr["status"].get("status", "deployed") # Get actual status from CR if available
-                        if self.verbose:
-                            logger.info(f"AgentRuntime CR '{k8s_info['deployment_name']}' endpoint found: {agent_endpoint}")
-                        break
-                except Exception as e:
-                    logger.debug(f"Error while polling for AgentRuntime status: {e}")
-                
-                time.sleep(poll_interval)
-            
-            if not agent_endpoint:
-                status = "endpoint_timeout"
-                logger.warning(f"Timeout waiting for agentEndpoint from AgentRuntime CR '{k8s_info['deployment_name']}'. Please check CR status manually.")
-                
-            # Update metadata with final endpoint and status
-            updates = {
-                "agent_id": k8s_info["deployment_name"],
-                "agent_endpoint": agent_endpoint, # This will be None if timeout
-                "k8s_deployment": {
-                    **k8s_info,
-                    "type": "AgentRuntime",
-                    "status": status,
-                    "last_checked_at": time.time() # Optional: timestamp
-                }
-            }
-            self.metadata_service.update_metadata(workspace_path, updates)
-
-            result = {
-                "agent_name": metadata.agent_name,
-                "agent_id": k8s_info["deployment_name"],
-                "deployment_name": k8s_info["deployment_name"],
-                "namespace": k8s_info["namespace"],
-                "status": status
-            }
-            if agent_endpoint:
-                result["agent_endpoint"] = agent_endpoint
-            
-            if self.verbose:
-                logger.info(f"K8s publish (AgentRuntime CR) completed: {result}")
-
-            return result
-
         except Exception as e:
             raise RuntimeError(f"Failed to deploy AgentRuntime CR to K8s: {str(e)}")
+
+        # Step 4: Update metadata with K8s deployment information
+        updates = {
+            "agent_id": k8s_info["deployment_name"],
+            "k8s_deployment": {
+                **k8s_info,
+                "type": "AgentRuntime",
+                "status": "deployed"
+            }
+        }
+        
+        endpoint = options.get('endpoint')
+        if not endpoint:
+            raise ValueError("Endpoint must be provided for 'agentcube' provider.")
+            
+        updates["agent_endpoint"] = endpoint
+        self.metadata_service.update_metadata(workspace_path, updates)
+
+        result = {
+            "agent_name": metadata.agent_name,
+            "agent_id": k8s_info["deployment_name"],
+            "deployment_name": k8s_info["deployment_name"],
+            "namespace": k8s_info["namespace"],
+            "status": "deployed",
+            "agent_endpoint": endpoint,
+        }
+        
+        if self.verbose:
+            logger.info(f"K8s publish (AgentRuntime CR) completed: {result}")
+
+        return result
 
     def _publish_k8s(
         self,

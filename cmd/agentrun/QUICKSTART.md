@@ -29,17 +29,17 @@ pip install -e .
 
 1. **Package an existing agent:**
    ```bash
-   agentrun pack -f examples/hello-agent --agent-name "my-agent"
+   kubectl agentrun pack -f examples/hello-agent --agent-name "my-agent"
    ```
 
 2. **Build the container image:**
    ```bash
-   agentrun build -f examples/hello-agent --verbose
+   kubectl agentrun build -f examples/hello-agent --verbose
    ```
 
 3. **Publish to AgentCube:**
    ```bash
-   agentrun publish \
+   kubectl agentrun publish \
       -f examples/hello-agent \
       --image-url "taoruiw/my-agent:v1.0.0" \
       --verbose \
@@ -48,21 +48,21 @@ pip install -e .
 
 4. **Invoke your agent:**
    ```bash
-   agentrun invoke -f examples/hello-agent --payload '{"prompt": "Hello World!"}'
+   kubectl agentrun invoke -f examples/hello-agent --payload '{"prompt": "Hello World!"}'
    ```
 
 5. **Check status:**
    ```bash
-   agentrun status -f examples/hello-agent
+   kubectl agentrun status -f examples/hello-agent --use-k8s
    ```
 
 ## 📋 Command Reference
 
-### `agentrun pack`
+### `kubectl agentrun pack`
 Package an agent into a standardized workspace.
 
 ```bash
-agentrun pack -f <workspace> [OPTIONS]
+kubectl agentrun pack -f <workspace> [OPTIONS]
 
 Options:
   -f, --workspace TEXT    Path to agent workspace [default: .]
@@ -76,11 +76,11 @@ Options:
   --verbose               Enable detailed logging
 ```
 
-### `agentrun build`
+### `kubectl agentrun build`
 Build a container image from the packaged workspace.
 
 ```bash
-agentrun build -f <workspace> [OPTIONS]
+kubectl agentrun build -f <workspace> [OPTIONS]
 
 Options:
   -f, --workspace TEXT    Path to agent workspace [default: .]
@@ -90,11 +90,11 @@ Options:
   --verbose               Enable detailed logging
 ```
 
-### `agentrun publish`
+### `kubectl agentrun publish`
 Publish the agent to AgentCube.
 
 ```bash
-agentrun publish -f <workspace> [OPTIONS]
+kubectl agentrun publish -f <workspace> [OPTIONS]
 
 Options:
   -f, --workspace TEXT    Path to agent workspace [default: .]
@@ -108,11 +108,11 @@ Options:
   --verbose               Enable detailed logging
 ```
 
-### `agentrun invoke`
+### `kubectl agentrun invoke`
 Invoke a published agent.
 
 ```bash
-agentrun invoke [OPTIONS]
+kubectl agentrun invoke [OPTIONS]
 
 Options:
   -f, --workspace TEXT    Path to agent workspace [default: .]
@@ -121,11 +121,11 @@ Options:
   --verbose               Enable detailed logging
 ```
 
-### `agentrun status`
+### `kubectl agentrun status`
 Check the status of a published agent.
 
 ```bash
-agentrun status -f <workspace> [OPTIONS]
+kubectl agentrun status -f <workspace> [OPTIONS]
 
 Options:
   -f, --workspace TEXT    Path to agent workspace [default: .]
@@ -164,19 +164,19 @@ requirements_file: requirements.txt
 cd my-agent-project
 
 # 2. Package the agent
-agentrun pack --agent-name "chatbot" --description "Customer service chatbot"
+kubectl agentrun pack --agent-name "chatbot" --description "Customer service chatbot"
 
 # 3. Build the container image
-agentrun build
+kubectl agentrun build
 
 # 4. Publish to AgentCube
-agentrun publish --version "v1.0.0" --image-url "docker.io/myorg/chatbot"
+kubectl agentrun publish --version "v1.0.0" --image-url "docker.io/myorg/chatbot"
 
 # 5. Test the agent
-agentrun invoke --payload '{"message": "Hello!"}'
+kubectl agentrun invoke --payload '{"message": "Hello!"}'
 
 # 6. Check status
-agentrun status
+kubectl agentrun status
 ```
 
 ## 🎯 Features
@@ -231,25 +231,25 @@ Check out the `examples/` directory for sample agents:
    - Use `--build-mode cloud` for cloud builds
 
 2. **"Metadata file not found"**
-   - Run `agentrun pack` first to generate metadata
+   - Run `kubectl agentrun pack` first to generate metadata
    - Ensure you're in the correct workspace directory
 
 3. **"Agent not published yet"**
-   - Run `agentrun publish` before trying to invoke
+   - Run `kubectl agentrun publish` before trying to invoke
    - Check that the build completed successfully
 
 ### Getting Help
 
 ```bash
 # General help
-agentrun --help
+kubectl agentrun --help
 
 # Command-specific help
-agentrun pack --help
-agentrun build --help
-agentrun publish --help
-agentrun invoke --help
-agentrun status --help
+kubectl agentrun pack --help
+kubectl agentrun build --help
+kubectl agentrun publish --help
+kubectl agentrun invoke --help
+kubectl agentrun status --help
 ```
 
 ## 🤝 Contributing

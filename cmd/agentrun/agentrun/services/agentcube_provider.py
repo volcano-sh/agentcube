@@ -6,8 +6,6 @@ specifically designed for the AgentCube ecosystem.
 """
 
 import logging
-import time
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 try:
@@ -60,7 +58,7 @@ class AgentCubeProvider:
                     config.load_incluster_config()
                     if self.verbose:
                         logger.info("Loaded in-cluster Kubernetes config")
-                except:
+                except Exception:
                     config.load_kube_config()
                     if self.verbose:
                         logger.info("Loaded local Kubernetes config")

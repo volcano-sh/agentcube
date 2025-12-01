@@ -36,7 +36,7 @@ def version_callback(value: bool) -> None:
     """Show version information and exit."""
     if value:
         from agentrun import __version__
-        console.print(f"AgentRun CLI version: [bold green]{__version__}[/bold green]")
+        console.print(f"AgentRun CLI (kubectl agentrun) version: [bold green]{__version__}[/bold green]")
         raise typer.Exit()
 
 @app.callback()
@@ -341,19 +341,12 @@ def publish(
         if "agent_endpoint" in result:
             console.print(f"🌐 Endpoint: [blue]{result['agent_endpoint']}[/blue]")
 
-        if provider == "agentcube" or provider == "k8s": # if it's a k8s based deployment
+        if provider == "agentcube" or provider == "standard-k8s":
             console.print(f"📦 Namespace: [blue]{result.get('namespace', 'agentrun')}[/blue]")
             if "status" in result:
                  console.print(f"📊 Status: [blue]{result['status']}[/blue]")
             if "node_port" in result: # For standard K8s provider if it returns node_port
                 console.print(f"🔌 NodePort: [blue]{result['node_port']}[/blue]")
-
-    except Exception as e:
-        console.print(f"❌ Error publishing agent: [red]{str(e)}[/red]")
-        if verbose:
-            import traceback
-            console.print(traceback.format_exc())
-        raise typer.Exit(1)
 
     except Exception as e:
         console.print(f"❌ Error publishing agent: [red]{str(e)}[/red]")

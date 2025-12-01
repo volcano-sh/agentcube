@@ -9,19 +9,19 @@ AgentRun CLI is a developer tool that streamlines the development, packaging, bu
 pip install agentrun
 
 # Initialize a new agent project
-agentrun init my-agent
+kubectl agentrun init my-agent
 
 # Package your agent
-agentrun pack -f ./my-agent
+kubectl agentrun pack -f ./my-agent
 
 # Build container image
-agentrun build -f ./my-agent
+kubectl agentrun build -f ./my-agent
 
 # Publish to AgentCube
-agentrun publish -f ./my-agent
+kubectl agentrun publish -f ./my-agent
 
 # Invoke your agent
-agentrun invoke -f ./my-agent --payload '{"prompt": "Hello, Agent!"}'
+kubectl agentrun invoke -f ./my-agent --payload '{"prompt": "Hello, Agent!"}'
 ```
 
 ## 📋 Features

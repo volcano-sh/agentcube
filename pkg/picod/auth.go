@@ -156,7 +156,7 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{
 			"error":  "Server already initialized",
 			"code":   http.StatusForbidden,
-			"detail": "This Picod instance is already owned by another client",
+			"detail": "This PicoD instance is already owned by another client",
 		})
 		return
 	}
@@ -223,8 +223,9 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 		ts, err := time.Parse(time.RFC3339, timestamp)
 		if err != nil {
 			// Try Unix timestamp format
-			if unixTs, unixErr := time.Parse(time.RFC3339, time.Unix(0, 0).Add(time.Duration(parseInt(timestamp, 0))*time.Second).Format(time.RFC3339)); unixErr == nil {
-				ts = unixTs
+			unixTs := parseInt(timestamp, 0)
+			if unixTs > 0 {
+				ts = time.Unix(unixTs, 0)
 			} else {
 				c.JSON(http.StatusUnauthorized, gin.H{
 					"error":  "Invalid timestamp format",

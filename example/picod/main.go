@@ -124,7 +124,7 @@ func main() {
 	// If auth mode, initialize server first
 	if *useAuth {
 		stepNum++
-		log.Printf("Step %d: Initializing Picod server with public key...", stepNum)
+		log.Printf("Step %d: Initializing PicoD server with public key...", stepNum)
 		publicKeyPEM, err := exportPublicKey(keyPair.PublicKey)
 		if err != nil {
 			log.Fatalf("Failed to export public key: %v", err)
@@ -601,7 +601,7 @@ func exportPublicKey(publicKey *rsa.PublicKey) (string, error) {
 	return string(publicKeyPEM), nil
 }
 
-// initializeServer initializes the Picod server with public key
+// initializeServer initializes the PicoD server with public key
 func initializeServer(baseURL, publicKey string) error {
 	req := InitRequest{
 		PublicKey: publicKey,

@@ -90,7 +90,7 @@ func ExecuteHandler(c *gin.Context) {
 			cmd.Process.Kill()
 		}
 		exitCode = 124 // Timeout exit code
-		stderr.WriteString(fmt.Sprintf("Command timed out after %.0f seconds", req.Timeout))
+		stderr.WriteString(fmt.Sprintf("Command timed out after %.0f seconds", timeout.Seconds()))
 	}
 
 	duration := time.Since(start).Seconds()

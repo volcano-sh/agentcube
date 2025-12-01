@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -68,7 +67,7 @@ func (r *CodeInterpreterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		// Ensure SandboxWarmPool exists
 		if err := r.ensureSandboxWarmPool(ctx, codeInterpreter); err != nil {
 			logger.Error(err, "failed to ensure SandboxWarmPool")
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+			return ctrl.Result{}, err
 		}
 	} else {
 		// Delete SandboxWarmPool if WarmPoolSize is 0 or nil
@@ -132,7 +131,7 @@ func (r *CodeInterpreterReconciler) ensureSandboxTemplate(ctx context.Context, c
 		return fmt.Errorf("template is required")
 	}
 
-	templateName := r.getTemplateName(ci)
+	templateName := ci.Name
 	sandboxTemplate := &extensionsv1alpha1.SandboxTemplate{}
 	err := r.Get(ctx, types.NamespacedName{Name: templateName, Namespace: ci.Namespace}, sandboxTemplate)
 
@@ -145,9 +144,6 @@ func (r *CodeInterpreterReconciler) ensureSandboxTemplate(ctx context.Context, c
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      templateName,
 				Namespace: ci.Namespace,
-				Labels: map[string]string{
-					"codeinterpreter.runtime.agentcube.io/name": ci.Name,
-				},
 			},
 			Spec: extensionsv1alpha1.SandboxTemplateSpec{
 				PodTemplate: podTemplate,
@@ -160,7 +156,9 @@ func (r *CodeInterpreterReconciler) ensureSandboxTemplate(ctx context.Context, c
 		}
 
 		if err := r.Create(ctx, sandboxTemplate); err != nil {
-			return fmt.Errorf("failed to create SandboxTemplate: %w", err)
+			if !errors.IsAlreadyExists(err) {
+				return fmt.Errorf("failed to create SandboxTemplate: %w", err)
+			}
 		}
 		return nil
 	} else if err != nil {
@@ -184,8 +182,8 @@ func (r *CodeInterpreterReconciler) ensureSandboxWarmPool(ctx context.Context, c
 		return nil
 	}
 
-	templateName := r.getTemplateName(ci)
-	warmPoolName := r.getWarmPoolName(ci)
+	templateName := ci.Name
+	warmPoolName := ci.Name
 	warmPool := &extensionsv1alpha1.SandboxWarmPool{}
 	err := r.Get(ctx, types.NamespacedName{Name: warmPoolName, Namespace: ci.Namespace}, warmPool)
 
@@ -195,9 +193,6 @@ func (r *CodeInterpreterReconciler) ensureSandboxWarmPool(ctx context.Context, c
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      warmPoolName,
 				Namespace: ci.Namespace,
-				Labels: map[string]string{
-					"codeinterpreter.runtime.agentcube.io/name": ci.Name,
-				},
 			},
 			Spec: extensionsv1alpha1.SandboxWarmPoolSpec{
 				Replicas: *ci.Spec.WarmPoolSize,
@@ -213,7 +208,9 @@ func (r *CodeInterpreterReconciler) ensureSandboxWarmPool(ctx context.Context, c
 		}
 
 		if err := r.Create(ctx, warmPool); err != nil {
-			return fmt.Errorf("failed to create SandboxWarmPool: %w", err)
+			if !errors.IsAlreadyExists(err) {
+				return fmt.Errorf("failed to create SandboxWarmPool: %w", err)
+			}
 		}
 		return nil
 	} else if err != nil {
@@ -242,7 +239,7 @@ func (r *CodeInterpreterReconciler) ensureSandboxWarmPool(ctx context.Context, c
 
 // deleteSandboxWarmPool deletes the SandboxWarmPool if it exists
 func (r *CodeInterpreterReconciler) deleteSandboxWarmPool(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) error {
-	warmPoolName := r.getWarmPoolName(ci)
+	warmPoolName := ci.Name
 	warmPool := &extensionsv1alpha1.SandboxWarmPool{}
 	err := r.Get(ctx, types.NamespacedName{Name: warmPoolName, Namespace: ci.Namespace}, warmPool)
 	if errors.IsNotFound(err) {
@@ -262,7 +259,7 @@ func (r *CodeInterpreterReconciler) deleteSandboxWarmPool(ctx context.Context, c
 
 // deleteSandboxTemplate deletes the SandboxTemplate if it exists
 func (r *CodeInterpreterReconciler) deleteSandboxTemplate(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) error {
-	templateName := r.getTemplateName(ci)
+	templateName := ci.Name
 	sandboxTemplate := &extensionsv1alpha1.SandboxTemplate{}
 	err := r.Get(ctx, types.NamespacedName{Name: templateName, Namespace: ci.Namespace}, sandboxTemplate)
 	if errors.IsNotFound(err) {
@@ -278,16 +275,6 @@ func (r *CodeInterpreterReconciler) deleteSandboxTemplate(ctx context.Context, c
 	}
 
 	return nil
-}
-
-// getTemplateName returns the name for the SandboxTemplate
-func (r *CodeInterpreterReconciler) getTemplateName(ci *runtimev1alpha1.CodeInterpreter) string {
-	return ci.Name
-}
-
-// getWarmPoolName returns the name for the SandboxWarmPool
-func (r *CodeInterpreterReconciler) getWarmPoolName(ci *runtimev1alpha1.CodeInterpreter) string {
-	return ci.Name
 }
 
 // convertToPodTemplate converts CodeInterpreterSandboxTemplate to sandboxv1alpha1.PodTemplate

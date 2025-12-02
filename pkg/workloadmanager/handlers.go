@@ -126,12 +126,6 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		return
 	}
 
-	err = s.redisClient.StoreSandbox(c.Request.Context(), redisCacheInfo, DefaultRedisTTL)
-	if err != nil {
-		respondError(c, http.StatusInternalServerError, "SANDBOX_STORE_REDIS_FAILED", err.Error())
-		return
-	}
-
 	response := &types.CreateSandboxResponse{
 		SessionID: sandbox.Labels[SessionIdLabelKey],
 		EntryPoints: []types.SandboxEntryPoints{
@@ -143,6 +137,11 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	}
 
 	if createAgentRequest.Kind != types.CodeInterpreterKind {
+		err = s.redisClient.StoreSandbox(c.Request.Context(), redisCacheInfo, DefaultRedisTTL)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "SANDBOX_STORE_REDIS_FAILED", err.Error())
+			return
+		}
 		needRollbackSandbox = false
 		respondJSON(c, http.StatusOK, response)
 		return

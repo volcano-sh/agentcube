@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	redisv9 "github.com/redis/go-redis/v9"
 	"github.com/volcano-sh/agentcube/pkg/redis"
 )
 
@@ -35,6 +36,10 @@ type Config struct {
 	TLSCert string
 	// TLSKey is the path to the TLS private key file
 	TLSKey string
+	// RedisAddr redis address
+	RedisAddr string
+	// RedisPassword redis password
+	RedisPassword string
 }
 
 // NewServer creates a new API server instance
@@ -47,6 +52,11 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 	k8sClient, err := NewK8sClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+
+	redisOptions := &redisv9.Options{
+		Addr:     config.RedisAddr,
+		Password: config.RedisPassword,
 	}
 
 	// Create sandbox store
@@ -62,7 +72,7 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 		sandboxController: sandboxController,
 		tokenCache:        tokenCache,
 		informers:         NewInformers(k8sClient),
-		redisClient:       redis.NewClient(nil),
+		redisClient:       redis.NewClient(redisOptions),
 	}
 
 	// Setup routes
@@ -110,6 +120,10 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to wait for caches to sync: %w", err)
 	}
 
+	if err := s.redisClient.Ping(ctx); err != nil {
+		return fmt.Errorf("failed to ping redis: %w", err)
+	}
+
 	addr := ":" + s.config.Port
 
 	s.httpServer = &http.Server{
@@ -135,7 +149,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	log.Printf("Server listening on %s", addr)
 
-	gc := newGarbageCollector(s.k8sClient, 15*time.Second)
+	gc := newGarbageCollector(s.k8sClient, s.redisClient, 15*time.Second)
 	go gc.run(ctx.Done())
 
 	// Start HTTP or HTTPS server

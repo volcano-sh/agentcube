@@ -14,13 +14,15 @@ import (
 )
 
 type buildSandboxParams struct {
-	namespace    string
-	workloadName string
-	sandboxName  string
-	sessionID    string
-	ttl          time.Duration
-	idleTimeout  time.Duration
-	podSpec      corev1.PodSpec
+	namespace      string
+	workloadName   string
+	sandboxName    string
+	sessionID      string
+	ttl            time.Duration
+	idleTimeout    time.Duration
+	podSpec        corev1.PodSpec
+	podLabels      map[string]string
+	podAnnotations map[string]string
 }
 
 type buildSandboxClaimParams struct {
@@ -61,16 +63,19 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 			PodTemplate: sandboxv1alpha1.PodTemplate{
 				Spec: params.podSpec,
 				ObjectMeta: sandboxv1alpha1.PodMetadata{
-					Labels: map[string]string{
-						SessionIdLabelKey: params.sessionID,
-						"sandbox-name":    params.sandboxName,
-					},
+					Labels:      params.podLabels,
+					Annotations: params.podAnnotations,
 				},
 			},
 			ShutdownTime: &shutdownTime,
 			Replicas:     pointer.Int32(1),
 		},
 	}
+	if len(sandbox.Spec.PodTemplate.ObjectMeta.Labels) == 0 {
+		sandbox.Spec.PodTemplate.ObjectMeta.Labels = make(map[string]string, 2)
+	}
+	sandbox.Spec.PodTemplate.ObjectMeta.Labels[SessionIdLabelKey] = params.sessionID
+	sandbox.Spec.PodTemplate.ObjectMeta.Labels["sandbox-name"] = params.sandboxName
 	return sandbox
 }
 
@@ -176,13 +181,26 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		return nil, nil, nil, fmt.Errorf("code interpreter %s has no template", codeInterpreterKey)
 	}
 
-	podSpec := corev1.PodSpec{}
+	podSpec := corev1.PodSpec{
+		Containers: []corev1.Container{
+			{
+				Name:      "code-interpreter",
+				Image:     codeInterpreterObj.Spec.Template.Image,
+				Env:       codeInterpreterObj.Spec.Template.Environment,
+				Command:   codeInterpreterObj.Spec.Template.Command,
+				Args:      codeInterpreterObj.Spec.Template.Args,
+				Resources: codeInterpreterObj.Spec.Template.Resources,
+			},
+		},
+	}
 	sessionId := uuid.New().String()
 	buildParams := &buildSandboxParams{
-		sandboxName: sandboxName,
-		namespace:   namespace,
-		sessionID:   sessionId,
-		podSpec:     podSpec,
+		sandboxName:    sandboxName,
+		namespace:      namespace,
+		sessionID:      sessionId,
+		podSpec:        podSpec,
+		podLabels:      codeInterpreterObj.Spec.Template.Labels,
+		podAnnotations: codeInterpreterObj.Spec.Template.Annotations,
 	}
 	if codeInterpreterObj.Spec.MaxSessionDuration != nil {
 		buildParams.ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration

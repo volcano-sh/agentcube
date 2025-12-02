@@ -290,12 +290,13 @@ func convertSandboxToRedisCache(sandboxCRD *sandboxv1alpha1.Sandbox, podIP strin
 		},
 	}
 	sandboxRedis := &types.SandboxRedis{
-		SandboxID:   string(sandboxCRD.GetUID()),
-		SandboxName: sandboxCRD.GetName(),
-		EntryPoints: accesses,
-		CreatedAt:   createdAt,
-		ExpiresAt:   expiresAt,
-		Status:      getSandboxStatus(sandboxCRD),
+		SandboxID:        string(sandboxCRD.GetUID()),
+		SandboxName:      sandboxCRD.GetName(),
+		SandboxNamespace: sandboxCRD.GetNamespace(),
+		EntryPoints:      accesses,
+		CreatedAt:        createdAt,
+		ExpiresAt:        expiresAt,
+		Status:           getSandboxStatus(sandboxCRD),
 	}
 	return sandboxRedis, nil
 }

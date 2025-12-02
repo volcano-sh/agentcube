@@ -5,6 +5,9 @@ from agentcube.sandbox import Sandbox
 import agentcube.clients.constants as constants
 import agentcube.utils.exceptions as exceptions
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric import rsa # This import is needed if PicoDClient.key_pair.public_key is an rsa.PublicKey
 
 class CodeInterpreterClient(Sandbox):
     """Code interpreter client that provides dataplane operations for code execution and file management"""
@@ -26,14 +29,19 @@ class CodeInterpreterClient(Sandbox):
             use_ssh: Whether to use SSH for connection (default: False, uses PicoD)
             namespace: Kubernetes namespace (default: "default")
         """
-        self._executor = None
+        # Call super().__init__ with skip_creation=True to defer sandbox creation
+        super().__init__(ttl=ttl, image=image, api_url=api_url, skip_creation=True)
         
+        self._executor = None
+        client_public_key_pem = None
+
         if use_ssh:
             # Generate SSH key pair for secure connection
             public_key, private_key = SandboxSSHClient.generate_ssh_key_pair()
+            client_public_key_pem = public_key
             
-            # Initialize base class with SSH public key
-            super().__init__(ttl=ttl, image=image, api_url=api_url, ssh_public_key=public_key)
+            # Now create the sandbox with the SSH public key
+            self._create_initial_sandbox(ssh_public_key=client_public_key_pem)
             
             # Establish tunnel and SSH connection for dataplane operations
             sock = self._client.establish_tunnel(self.id)
@@ -42,16 +50,32 @@ class CodeInterpreterClient(Sandbox):
                 tunnel_sock=sock
             )
         else:
-            # Initialize base class without SSH key
-            super().__init__(ttl=ttl, image=image, api_url=api_url, ssh_public_key=None)
-            
-            # Initialize PicoD client
-            self._executor = PicoDClient(
-                api_url=self.api_url,
+            # Initialize PicoD client and generate key pair
+            picod_client = PicoDClient(
+                api_url=self.api_url, # self.api_url is now properly initialized by super().__init__
                 namespace=namespace,
-                name=self.id
+                name="temp-id" # Placeholder, will be updated after sandbox creation
             )
-            self._executor.start_session()
+            picod_client.start_session() # This generates the RSA key pair and stores it internally
+            
+            # Extract the public key from the generated key pair in PEM format
+            if picod_client.key_pair and picod_client.key_pair.public_key:
+                pub_key_bytes = picod_client.key_pair.public_key.public_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo
+                )
+                client_public_key_pem = pub_key_bytes.decode('utf-8')
+            else:
+                raise exceptions.SandboxError("Failed to generate PicoD client key pair.")
+            
+            # Now create the sandbox with PicoD client's public key
+            self._create_initial_sandbox(ssh_public_key=client_public_key_pem)
+            
+            # Update picod_client's name with the actual sandbox ID
+            picod_client.name = self.id 
+            
+            # Assign PicoD client to executor
+            self._executor = picod_client
     
     def execute_command(self, command: str) -> str:
         """Execute a command over SSH

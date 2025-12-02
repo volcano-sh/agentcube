@@ -22,6 +22,7 @@ class Sandbox:
             api_url: Optional[str] = None,
             auth_token: Optional[str] = None,
             ssh_public_key: Optional[str] = None,
+            skip_creation: bool = False, # New flag
         ):
         """Initialize a sandbox instance
         
@@ -30,17 +31,32 @@ class Sandbox:
             image: Container image to use for the sandbox
             api_url: API server URL (defaults to environment variable API_URL or DEFAULT_API_URL)
             ssh_public_key: Optional SSH public key for secure connection
+            skip_creation: If True, do not create sandbox immediately.
         """
         self.ttl = ttl
         self.image = image
         self.api_url = api_url or get_env(constants.API_URL_ENV, constants.DEFAULT_API_URL)
         self.auth_token = auth_token or get_env(constants.API_TOKEN_ENV, read_token_from_file(constants.API_TOKEN_PATH))
         self._client = SandboxClient(api_url=self.api_url, auth_token=self.auth_token)
+        
+        self.id = None # Initialize id as None
+        if not skip_creation: # Create only if not skipped
+            self.id = self._client.create_sandbox(
+                ttl=self.ttl, 
+                image=self.image,
+                ssh_public_key=ssh_public_key
+            )
+    
+    def _create_initial_sandbox(self, ssh_public_key: Optional[str] = None):
+        """Internal method to create the sandbox after initialization"""
+        if self.id:
+            raise exceptions.SandboxError("Sandbox already created.")
         self.id = self._client.create_sandbox(
             ttl=self.ttl, 
             image=self.image,
             ssh_public_key=ssh_public_key
         )
+
     
     def __enter__(self):
         """Context manager entry

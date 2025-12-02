@@ -179,6 +179,50 @@ class PicoDClient:
 
         return unsigned_token.decode("utf-8") + "." + encoded_signature.decode("utf-8")
     
+    def start_session(self):
+        """Start a new session by generating a key pair"""
+        self.generate_rsa_key_pair()
+        
+    def _make_authenticated_request(
+        self,
+        method: str,
+        path: str,
+        body_bytes: Optional[bytes] = None,
+        files=None,
+        data=None,
+        stream: bool = False,
+        timeout: Optional[float] = None,
+    ) -> requests.Response:
+        """Make an authenticated request to the PicoD API"""
+        
+        # Construct URL relative to the gateway/manager
+        url = f"{self.gateway_url}/{path}"
+        
+        headers = {}
+        claims = {}
+        
+        if body_bytes:
+            # Calculate body SHA256
+            sha256_hash = hashes.Hash(hashes.SHA256())
+            sha256_hash.update(body_bytes)
+            digest = sha256_hash.finalize()
+            claims["body_sha256"] = digest.hex()
+            headers["Content-Type"] = "application/json"
+            
+        # Generate token
+        token = self._create_signed_jwt(claims)
+        headers["Authorization"] = f"Bearer {token}"
+        
+        return self.session.request(
+            method=method,
+            url=url,
+            data=body_bytes if body_bytes else data,
+            files=files,
+            headers=headers,
+            stream=stream,
+            timeout=timeout
+        )
+
     def execute_command(
         self,
         command: str,

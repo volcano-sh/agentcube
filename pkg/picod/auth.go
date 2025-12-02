@@ -2,11 +2,9 @@ package picod
 
 import (
 	"bytes"
-	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"net/http"
@@ -14,7 +12,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -150,39 +147,6 @@ func (am *AuthManager) SavePublicKey(publicKeyStr string) error {
 	return nil
 }
 
-// VerifyRSASignature verifies RSA signature for given key and data
-func VerifyRSASignature(pubKey *rsa.PublicKey, timestamp, body, signature string) bool {
-	if pubKey == nil {
-		return false
-	}
-
-	// Decode signature
-	sigBytes, err := base64.StdEncoding.DecodeString(signature)
-	if err != nil {
-		return false
-	}
-
-	// Create message hash (timestamp + body)
-	message := timestamp + string(body)
-	hashed := sha256.Sum256([]byte(message))
-
-	// Verify signature
-	err = rsa.VerifyPKCS1v15(pubKey, crypto.SHA256, hashed[:], sigBytes)
-	return err == nil
-}
-
-// VerifySignature verifies RSA signature using the session public key
-func (am *AuthManager) VerifySignature(timestamp, body, signature string) bool {
-	am.mutex.RLock()
-	defer am.mutex.RUnlock()
-
-	if !am.initialized || am.publicKey == nil {
-		return false
-	}
-
-	return VerifyRSASignature(am.publicKey, timestamp, body, signature)
-}
-
 // IsInitialized checks if server is initialized
 func (am *AuthManager) IsInitialized() bool {
 	am.mutex.RLock()
@@ -285,40 +249,7 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 	})
 }
 
-// Helper function to validate timestamp
-func validateTimestamp(c *gin.Context, timestamp string) bool {
-	// Validate timestamp (prevent replay attacks, allow 5-minute window)
-	ts, err := time.Parse(time.RFC3339, timestamp)
-	if err != nil {
-		// Try Unix timestamp format
-		unixTs := parseInt(timestamp, 0)
-		if unixTs > 0 {
-			ts = time.Unix(unixTs, 0)
-		} else {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":  "Invalid timestamp format",
-				"code":   http.StatusUnauthorized,
-				"detail": "Use RFC3339 format or Unix timestamp",
-			})
-			c.Abort()
-			return false
-		}
-	}
-
-	// Check timestamp window (5 minutes)
-	if time.Since(ts) > 5*time.Minute || ts.After(time.Now().Add(5*time.Minute)) {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":  "Timestamp out of range",
-			"code":   http.StatusUnauthorized,
-			"detail": "Timestamp must be within 5 minutes of current time",
-		})
-		c.Abort()
-		return false
-	}
-	return true
-}
-
-// AuthMiddleware creates authentication middleware with RSA signature verification
+// AuthMiddleware creates authentication middleware with JWT verification
 func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Skip authentication for health check and init endpoint
@@ -338,26 +269,65 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Get timestamp and signature from headers
-		timestamp := c.GetHeader("X-Timestamp")
-		signature := c.GetHeader("X-Signature")
-
-		if timestamp == "" || signature == "" {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":  "Missing X-Timestamp or X-Signature headers",
+				"error":  "Missing Authorization header",
 				"code":   http.StatusUnauthorized,
-				"detail": "Please provide both X-Timestamp and X-Signature headers",
+				"detail": "Request requires JWT authentication",
 			})
 			c.Abort()
 			return
 		}
 
-		// Validate timestamp (prevent replay attacks, allow 5-minute window)
-		if !validateTimestamp(c, timestamp) {
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error":  "Invalid Authorization header format",
+				"code":   http.StatusUnauthorized,
+				"detail": "Use Bearer <token>",
+			})
+			c.Abort()
 			return
 		}
 
-		// Read request body for signature verification
+		tokenString := parts[1]
+
+		// Parse and validate JWT using Session Public Key
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			// Use the session public key for verification
+			// Lock is handled by IsInitialized check above, but safe to read pointer here
+			// strictly speaking we should lock to read am.publicKey if it can change,
+			// but it's set once at init.
+			am.mutex.RLock()
+			defer am.mutex.RUnlock()
+			return am.publicKey, nil
+		})
+
+		if err != nil || !token.Valid {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error":  "Invalid token",
+				"code":   http.StatusUnauthorized,
+				"detail": fmt.Sprintf("JWT verification failed: %v", err),
+			})
+			c.Abort()
+			return
+		}
+
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid claims",
+				"code":  http.StatusUnauthorized,
+			})
+			c.Abort()
+			return
+		}
+
+		// Read request body for hash verification
 		bodyBytes, err := c.GetRawData()
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -372,35 +342,39 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 		// Restore request body for subsequent handlers
 		c.Request.Body = &RequestBody{Buffer: bytes.NewBuffer(bodyBytes)}
 
-		// Verify signature
-		if !am.VerifySignature(timestamp, string(bodyBytes), signature) {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":  "Invalid signature",
-				"code":   http.StatusUnauthorized,
-				"detail": "Signature verification failed",
-			})
-			c.Abort()
-			return
+		// Verify body hash if present in claims
+		// We mandate body_sha256 for requests with body to ensure integrity
+		if claimHash, ok := claims["body_sha256"].(string); ok {
+			// Calculate SHA256 of actual body
+			hash := sha256.Sum256(bodyBytes)
+			computedHash := fmt.Sprintf("%x", hash)
+
+			if claimHash != computedHash {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error":  "Body integrity check failed",
+					"code":   http.StatusUnauthorized,
+					"detail": "The request body does not match the body_sha256 claim",
+				})
+				c.Abort()
+				return
+			}
+		} else {
+			// Ideally we should enforce this, but for GET requests without body it might be empty.
+			// For now, if body is not empty, enforce hash presence?
+			// Let's enforce it if the body is not empty.
+			if len(bodyBytes) > 0 {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error":  "Missing body_sha256 claim",
+					"code":   http.StatusUnauthorized,
+					"detail": "Token must contain body_sha256 claim for integrity",
+				})
+				c.Abort()
+				return
+			}
 		}
 
 		c.Next()
 	}
-}
-
-// Helper function to parse integer
-func parseInt(s string, defaultValue int64) int64 {
-	if s == "" {
-		return defaultValue
-	}
-
-	var result int64
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return defaultValue
-		}
-		result = result*10 + int64(r-'0')
-	}
-	return result
 }
 
 // RequestBody wraps bytes.Buffer to implement io.ReadCloser

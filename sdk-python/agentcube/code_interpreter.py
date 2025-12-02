@@ -1,5 +1,5 @@
 from typing import Dict, List
-from agentcube.clients import SandboxClient, SandboxSSHClient
+from agentcube.clients import SandboxClient, SandboxSSHClient, PicoDClient
 from agentcube.sandbox import Sandbox
 
 import agentcube.clients.constants as constants
@@ -13,7 +13,9 @@ class CodeInterpreterClient(Sandbox):
             self,
             ttl: int = constants.DEFAULT_TTL,
             image: str = constants.DEFAULT_IMAGE,
-            api_url: str = None
+            api_url: str = None,
+            use_ssh: bool = False,
+            namespace: str = "default"
         ):
         """Initialize a code interpreter sandbox instance
         
@@ -21,21 +23,35 @@ class CodeInterpreterClient(Sandbox):
             ttl: Time-to-live in seconds for the sandbox
             image: Container image to use for the sandbox
             api_url: API server URL (defaults to environment variable API_URL or DEFAULT_API_URL)
+            use_ssh: Whether to use SSH for connection (default: False, uses PicoD)
+            namespace: Kubernetes namespace (default: "default")
         """
         self._executor = None
         
-        # Generate SSH key pair for secure connection
-        public_key, private_key = SandboxSSHClient.generate_ssh_key_pair()
-        
-        # Initialize base class with SSH public key
-        super().__init__(ttl=ttl, image=image, api_url=api_url, ssh_public_key=public_key)
-        
-        # Establish tunnel and SSH connection for dataplane operations
-        sock = self._client.establish_tunnel(self.id)
-        self._executor = SandboxSSHClient(
-            private_key=private_key, 
-            tunnel_sock=sock
-        )
+        if use_ssh:
+            # Generate SSH key pair for secure connection
+            public_key, private_key = SandboxSSHClient.generate_ssh_key_pair()
+            
+            # Initialize base class with SSH public key
+            super().__init__(ttl=ttl, image=image, api_url=api_url, ssh_public_key=public_key)
+            
+            # Establish tunnel and SSH connection for dataplane operations
+            sock = self._client.establish_tunnel(self.id)
+            self._executor = SandboxSSHClient(
+                private_key=private_key, 
+                tunnel_sock=sock
+            )
+        else:
+            # Initialize base class without SSH key
+            super().__init__(ttl=ttl, image=image, api_url=api_url, ssh_public_key=None)
+            
+            # Initialize PicoD client
+            self._executor = PicoDClient(
+                api_url=self.api_url,
+                namespace=namespace,
+                name=self.id
+            )
+            self._executor.start_session()
     
     def execute_command(self, command: str) -> str:
         """Execute a command over SSH

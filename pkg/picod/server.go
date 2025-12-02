@@ -13,7 +13,8 @@ var startTime = time.Now() // Server start time
 
 // Config defines server configuration
 type Config struct {
-	Port int `json:"port"`
+	Port         int    `json:"port"`
+	BootstrapKey string `json:"bootstrap_key"`
 }
 
 // Server defines the PicoD HTTP server
@@ -36,6 +37,15 @@ func NewServer(config Config) *Server {
 
 	// Create auth manager
 	authManager := NewAuthManager()
+
+	// Load bootstrap key if provided
+	if config.BootstrapKey != "" {
+		if err := authManager.LoadBootstrapKey(config.BootstrapKey); err != nil {
+			fmt.Printf("Failed to load bootstrap key: %v\n", err)
+		} else {
+			fmt.Println("Bootstrap key loaded successfully")
+		}
+	}
 
 	// Load existing public key if available
 	if err := authManager.LoadPublicKey(); err != nil {

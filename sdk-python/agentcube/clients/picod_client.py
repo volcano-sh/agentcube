@@ -168,73 +168,28 @@ class PicoDClient:
 
         return public_pem.decode('utf-8')
 
-    def initialize_server(self) -> bool:
-        """Initialize the PicoD server with this client's public key
 
-        Returns:
-            True if successful
-
-        Raises:
-            ValueError: If no key pair is available
-        """
-        if not self.key_pair:
-            # Try to load existing keys
-            try:
-                self.load_rsa_key_pair()
-            except FileNotFoundError:
-                # Generate new keys if none exist
-                logger.info("No key pair found. Generating new keys...")
-                self.generate_rsa_key_pair()
-
-        public_key_pem = self.get_public_key_pem()
-
-        payload = {
-            "public_key": public_key_pem
-        }
-
-        try:
-            response = self.session.post(
-                f"{self.base_url}/api/init",
-                json=payload,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-
-            result = response.json()
-            if result.get("success"):
-                self.initialized = True
-                logger.info(f"Server initialized: {result.get('message')}")
-                return True
-            else:
-                raise Exception(result.get("message", "Unknown error"))
-        except Exception as e:
-            logger.error(f"Server initialization failed: {e}")
-            return False
-
-    def _sign_request(self, timestamp: str, body: str) -> str:
-        """Sign a request with RSA private key
-
-        Args:
-            timestamp: RFC3339 formatted timestamp
-            body: Request body as string
-
-        Returns:
-            Base64-encoded signature
-        """
-        if not self.key_pair:
-            raise ValueError("No key pair loaded. Generate or load keys first.")
-
+    def _sign_with_key(self, private_key, timestamp: str, body: str) -> str:
+        """Sign a request with a specific RSA private key"""
         # Create message: timestamp + body
         message = timestamp + body
 
         # Sign the message directly (no manual hashing)
-        signature = self.key_pair.private_key.sign(
+        signature = private_key.sign(
             message.encode('utf-8'),
             padding.PKCS1v15(),
             hashes.SHA256()
         )
 
         return base64.b64encode(signature).decode('utf-8')
+
+    def _sign_request(self, timestamp: str, body: str) -> str:
+        """Sign a request with the session RSA private key"""
+        if not self.key_pair:
+            raise ValueError("No key pair loaded. Generate or load keys first.")
+        
+        return self._sign_with_key(self.key_pair.private_key, timestamp, body)
+
 
     def _make_authenticated_request(self, method: str, url: str, **kwargs) -> requests.Response:
         """Make an authenticated HTTP request with RSA signature

@@ -3,16 +3,30 @@ package main
 import (
 	"flag"
 	"log"
+	"os"
 
 	"github.com/volcano-sh/agentcube/pkg/picod"
 )
 
 func main() {
 	port := flag.Int("port", 9527, "Port for the PicoD server to listen on")
+	bootstrapKeyFile := flag.String("bootstrap-key", "/etc/picod/bootstrap.pem", "Path to the bootstrap public key file")
 	flag.Parse()
 
+	// Read bootstrap key from file
+	var bootstrapKey string
+	if data, err := os.ReadFile(*bootstrapKeyFile); err == nil {
+		bootstrapKey = string(data)
+	} else {
+		// Only log if the user explicitly provided a flag that failed,
+		// or if we want to warn about missing default.
+		// Since we want strict security, logging a warning is good.
+		log.Printf("Warning: Could not read bootstrap key from %s: %v", *bootstrapKeyFile, err)
+	}
+
 	config := picod.Config{
-		Port: *port,
+		Port:         *port,
+		BootstrapKey: bootstrapKey,
 	}
 
 	// Create and start server

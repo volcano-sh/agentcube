@@ -12,10 +12,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 const (
@@ -24,10 +26,11 @@ const (
 
 // AuthManager manages RSA public key authentication
 type AuthManager struct {
-	publicKey   *rsa.PublicKey
-	mutex       sync.RWMutex
-	keyFile     string
-	initialized bool
+	publicKey    *rsa.PublicKey
+	bootstrapKey *rsa.PublicKey // Key injected at startup for init authentication
+	mutex        sync.RWMutex
+	keyFile      string
+	initialized  bool
 }
 
 // InitRequest represents initialization request with public key
@@ -47,6 +50,31 @@ func NewAuthManager() *AuthManager {
 		keyFile:     KeyFile,
 		initialized: false,
 	}
+}
+
+// LoadBootstrapKey loads the bootstrap public key from string
+func (am *AuthManager) LoadBootstrapKey(keyStr string) error {
+	if keyStr == "" {
+		return nil
+	}
+
+	block, _ := pem.Decode([]byte(keyStr))
+	if block == nil {
+		return fmt.Errorf("failed to decode bootstrap key PEM block")
+	}
+
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse bootstrap public key: %v", err)
+	}
+
+	rsaPub, ok := pub.(*rsa.PublicKey)
+	if !ok {
+		return fmt.Errorf("bootstrap key is not an RSA public key")
+	}
+
+	am.bootstrapKey = rsaPub
+	return nil
 }
 
 // LoadPublicKey loads public key from file
@@ -109,7 +137,7 @@ func (am *AuthManager) SavePublicKey(publicKeyStr string) error {
 		return fmt.Errorf("server already initialized with a public key")
 	}
 
-	// Save to file
+	// Save to file with read-only permissions
 	if err := os.WriteFile(am.keyFile, []byte(publicKeyStr), 0400); err != nil {
 		return fmt.Errorf("failed to save public key file: %v", err)
 	}
@@ -122,12 +150,9 @@ func (am *AuthManager) SavePublicKey(publicKeyStr string) error {
 	return nil
 }
 
-// VerifySignature verifies RSA signature
-func (am *AuthManager) VerifySignature(timestamp, body, signature string) bool {
-	am.mutex.RLock()
-	defer am.mutex.RUnlock()
-
-	if !am.initialized || am.publicKey == nil {
+// VerifyRSASignature verifies RSA signature for given key and data
+func VerifyRSASignature(pubKey *rsa.PublicKey, timestamp, body, signature string) bool {
+	if pubKey == nil {
 		return false
 	}
 
@@ -142,8 +167,20 @@ func (am *AuthManager) VerifySignature(timestamp, body, signature string) bool {
 	hashed := sha256.Sum256([]byte(message))
 
 	// Verify signature
-	err = rsa.VerifyPKCS1v15(am.publicKey, crypto.SHA256, hashed[:], sigBytes)
+	err = rsa.VerifyPKCS1v15(pubKey, crypto.SHA256, hashed[:], sigBytes)
 	return err == nil
+}
+
+// VerifySignature verifies RSA signature using the session public key
+func (am *AuthManager) VerifySignature(timestamp, body, signature string) bool {
+	am.mutex.RLock()
+	defer am.mutex.RUnlock()
+
+	if !am.initialized || am.publicKey == nil {
+		return false
+	}
+
+	return VerifyRSASignature(am.publicKey, timestamp, body, signature)
 }
 
 // IsInitialized checks if server is initialized
@@ -165,17 +202,76 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 		return
 	}
 
-	var req InitRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	// Always require bootstrap key authentication
+	if am.bootstrapKey == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":  "PicoD is not configured for secure initialization",
+			"code":   http.StatusServiceUnavailable,
+			"detail": "Bootstrap key is missing. Please configure PICOD_BOOTSTRAP_KEY environment variable.",
+		})
+		return
+	}
+
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":  "Missing Authorization header",
+			"code":   http.StatusUnauthorized,
+			"detail": "Init requires JWT authentication",
+		})
+		return
+	}
+
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":  "Invalid Authorization header format",
+			"code":   http.StatusUnauthorized,
+			"detail": "Use Bearer <token>",
+		})
+		return
+	}
+
+	tokenString := parts[1]
+
+	// Parse and validate JWT
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return am.bootstrapKey, nil
+	})
+
+	if err != nil || !token.Valid {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":  "Invalid token",
+			"code":   http.StatusUnauthorized,
+			"detail": fmt.Sprintf("JWT verification failed: %v", err),
+		})
+		return
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "Invalid claims",
+			"code":  http.StatusUnauthorized,
+		})
+		return
+	}
+
+	// Extract session_public_key
+	sessionPublicKey, ok := claims["session_public_key"].(string)
+	if !ok || sessionPublicKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
+			"error": "Missing session_public_key in token",
 			"code":  http.StatusBadRequest,
 		})
 		return
 	}
 
 	// Save the public key
-	if err := am.SavePublicKey(req.PublicKey); err != nil {
+	if err := am.SavePublicKey(sessionPublicKey); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to save public key: %v", err),
 			"code":  http.StatusInternalServerError,
@@ -187,6 +283,39 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 		Message: "Server initialized successfully. This Picod instance is now locked to your public key.",
 		Success: true,
 	})
+}
+
+// Helper function to validate timestamp
+func validateTimestamp(c *gin.Context, timestamp string) bool {
+	// Validate timestamp (prevent replay attacks, allow 5-minute window)
+	ts, err := time.Parse(time.RFC3339, timestamp)
+	if err != nil {
+		// Try Unix timestamp format
+		unixTs := parseInt(timestamp, 0)
+		if unixTs > 0 {
+			ts = time.Unix(unixTs, 0)
+		} else {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error":  "Invalid timestamp format",
+				"code":   http.StatusUnauthorized,
+				"detail": "Use RFC3339 format or Unix timestamp",
+			})
+			c.Abort()
+			return false
+		}
+	}
+
+	// Check timestamp window (5 minutes)
+	if time.Since(ts) > 5*time.Minute || ts.After(time.Now().Add(5*time.Minute)) {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":  "Timestamp out of range",
+			"code":   http.StatusUnauthorized,
+			"detail": "Timestamp must be within 5 minutes of current time",
+		})
+		c.Abort()
+		return false
+	}
+	return true
 }
 
 // AuthMiddleware creates authentication middleware with RSA signature verification
@@ -224,31 +353,7 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 		}
 
 		// Validate timestamp (prevent replay attacks, allow 5-minute window)
-		ts, err := time.Parse(time.RFC3339, timestamp)
-		if err != nil {
-			// Try Unix timestamp format
-			unixTs := parseInt(timestamp, 0)
-			if unixTs > 0 {
-				ts = time.Unix(unixTs, 0)
-			} else {
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"error":  "Invalid timestamp format",
-					"code":   http.StatusUnauthorized,
-					"detail": "Use RFC3339 format or Unix timestamp",
-				})
-				c.Abort()
-				return
-			}
-		}
-
-		// Check timestamp window (5 minutes)
-		if time.Since(ts) > 5*time.Minute || ts.After(time.Now().Add(5*time.Minute)) {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":  "Timestamp out of range",
-				"code":   http.StatusUnauthorized,
-				"detail": "Timestamp must be within 5 minutes of current time",
-			})
-			c.Abort()
+		if !validateTimestamp(c, timestamp) {
 			return
 		}
 

@@ -283,12 +283,13 @@ func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alph
 	podSpec := corev1.PodSpec{
 		Containers: []corev1.Container{
 			{
-				Name:      "codeinterpreter",
-				Image:     template.Image,
-				Command:   template.Command,
-				Args:      template.Args,
-				Env:       template.Environment,
-				Resources: template.Resources,
+				Name:            "codeinterpreter",
+				Image:           template.Image,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				Command:         template.Command,
+				Args:            template.Args,
+				Env:             template.Environment,
+				Resources:       template.Resources,
 			},
 		},
 		RuntimeClassName: template.RuntimeClassName,

@@ -10,7 +10,7 @@ import (
 
 func main() {
 	port := flag.Int("port", 9527, "Port for the PicoD server to listen on")
-	bootstrapKeyFile := flag.String("bootstrap-key", "/etc/picod/bootstrap.pem", "Path to the bootstrap public key file")
+	bootstrapKeyFile := flag.String("bootstrap-key", "/etc/picod/public-key.pem", "Path to the bootstrap public key file")
 	flag.Parse()
 
 	// Read bootstrap key from file

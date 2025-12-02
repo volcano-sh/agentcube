@@ -23,11 +23,12 @@ type SandboxInitResponse struct {
 }
 
 // InitCodeInterpreterSandbox initializes a code interpreter sandbox by calling its /init endpoint
-func (s *Server) InitCodeInterpreterSandbox(ctx context.Context, endpoint, sessionID string, metadata map[string]string) error {
+func (s *Server) InitCodeInterpreterSandbox(ctx context.Context, endpoint, sessionID, publicKey string, metadata map[string]string) error {
 	// Generate JWT token for authentication
 	claims := map[string]interface{}{
-		"sessionId": sessionID,
-		"purpose":   "sandbox_init",
+		"sessionId":          sessionID,
+		"purpose":            "sandbox_init",
+		"session_public_key": publicKey,
 	}
 
 	token, err := s.jwtManager.GenerateToken(claims)

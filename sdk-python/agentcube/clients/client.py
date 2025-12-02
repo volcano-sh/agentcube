@@ -38,26 +38,32 @@ class SandboxClient:
         ttl: int = constants.DEFAULT_TTL,
         image: str = constants.DEFAULT_IMAGE,
         ssh_public_key: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        kind: str = "CodeInterpreter",
+        namespace: str = "default"
     ) -> str:
         """Create a new sandbox on the Pico server
         
         Args:
             ttl: sandbox timeout in seconds
-            image: Container image to use
-            ssh_public_key: SSH public key for authentication
+            image: Name of the CodeInterpreter CRD to use as template
+            ssh_public_key: SSH public key for authentication (or Session Public Key for PicoD)
             metadata: Optional sandbox metadata
+            kind: Sandbox kind (AgentRuntime or CodeInterpreter)
+            namespace: Kubernetes namespace
             
         Returns:
             Created sandbox ID and sandbox details
         """
         req_data = {
-            "ttl": ttl,
-            "image": image,
+            "kind": kind,
+            "name": image, # Map 'image' param to 'name' (CRD name)
+            "namespace": namespace,
             "metadata": metadata or {}
         }
         if ssh_public_key :
-            req_data["sshPublicKey"] = ssh_public_key
+            req_data["publicKey"] = ssh_public_key # Map to publicKey field expected by backend
+            
         url = f"{self.api_url}/v1/sandboxes"
         response = requests.post(
             url,
@@ -69,7 +75,7 @@ class SandboxClient:
             raise Exception(f"Failed to create sandbox: {response.status_code} - {response.text}")
         
         sandbox_data = response.json()
-        return sandbox_data.get("sandboxId")
+        return sandbox_data.get("sessionId") # Backend returns sessionId (which is sandboxId)
     
     def get_sandbox(self, sandbox_id: str) -> Optional[Dict[str, Any]]:
         """Get sandbox details by ID"""

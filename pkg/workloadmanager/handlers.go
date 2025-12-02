@@ -148,8 +148,46 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		return
 	}
 
-	// TODO: Code Interpreter sandbox created, init code interpreter
-	return
+	// Code Interpreter sandbox created, init code interpreter
+	// Find the /init endpoint from accesses
+	var initEndpoint string
+	for _, access := range redisCacheInfo.Accesses {
+		if access.Path == "/init" {
+			initEndpoint = fmt.Sprintf("%s://%s", access.Protocol, access.Endpoint)
+			break
+		}
+	}
+
+	// If no /init path found, use the first access endpoint with /init appended
+	if initEndpoint == "" {
+		if len(redisCacheInfo.Accesses) > 0 {
+			initEndpoint = fmt.Sprintf("%s://%s/init",
+				redisCacheInfo.Accesses[0].Protocol,
+				redisCacheInfo.Accesses[0].Endpoint)
+		} else {
+			respondError(c, http.StatusInternalServerError, "SANDBOX_INIT_FAILED",
+				"No access endpoint found for sandbox initialization")
+			return
+		}
+	}
+
+	// Call sandbox init endpoint with JWT-signed request
+	err = s.InitCodeInterpreterSandbox(
+		c.Request.Context(),
+		initEndpoint,
+		sandbox.Labels[SessionIdLabelKey],
+		createAgentRequest.Metadata,
+	)
+
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "SANDBOX_INIT_FAILED",
+			fmt.Sprintf("Failed to initialize code interpreter: %v", err))
+		return
+	}
+
+	// Init successful, no need to rollback
+	needRollbackSandbox = false
+	respondJSON(c, http.StatusOK, response)
 }
 
 // handleDeleteSandbox handles sandbox deletion requests

@@ -18,7 +18,7 @@ COPY pkg/ pkg/
 # Build with dynamic architecture support
 # Supports amd64, arm64, arm/v7, etc.
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -o agentcube-apiserver ./cmd/apiserver
+    go build -o agentcube-apiserver ./cmd/workload-manager
 
 # Runtime image
 FROM alpine:3.19

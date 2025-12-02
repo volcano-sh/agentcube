@@ -280,14 +280,13 @@ func convertSandboxToRedisCache(sandboxCRD *sandboxv1alpha1.Sandbox, podIP strin
 	if sandboxCRD.Spec.ShutdownTime != nil {
 		expiresAt = sandboxCRD.Spec.ShutdownTime.Time
 	}
-	protocol := string(externalInfo.Ports[0].Protocol)
-	endpoint := net.JoinHostPort(podIP, strconv.Itoa(int(externalInfo.Ports[0].Port)))
-	accesses := []types.SandboxEntryPoints{
-		{
-			Path:     "/",
-			Protocol: protocol,
-			Endpoint: endpoint,
-		},
+	accesses := make([]types.SandboxEntryPoints, 0, len(externalInfo.Ports))
+	for _, port := range externalInfo.Ports {
+		accesses = append(accesses, types.SandboxEntryPoints{
+			Path:     port.PathPrefix,
+			Protocol: string(port.Protocol),
+			Endpoint: net.JoinHostPort(podIP, strconv.Itoa(int(port.Port))),
+		})
 	}
 	sandboxRedis := &types.SandboxRedis{
 		SandboxID:        string(sandboxCRD.GetUID()),

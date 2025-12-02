@@ -20,7 +20,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
-	apiserver "github.com/volcano-sh/agentcube/pkg/workloadmanager"
+	"github.com/volcano-sh/agentcube/pkg/workloadmanager"
 )
 
 var (
@@ -63,12 +63,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	sandboxReconciler := &apiserver.SandboxReconciler{
+	sandboxReconciler := &workloadmanager.SandboxReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}
 
-	codeInterpreterReconciler := &apiserver.CodeInterpreterReconciler{
+	codeInterpreterReconciler := &workloadmanager.CodeInterpreterReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}
@@ -79,7 +79,7 @@ func main() {
 	}
 
 	// Create API server configuration
-	config := &apiserver.Config{
+	config := &workloadmanager.Config{
 		Port:             *port,
 		RuntimeClassName: *runtimeClassName,
 		EnableTLS:        *enableTLS,
@@ -90,7 +90,7 @@ func main() {
 	}
 
 	// Create and initialize API server
-	server, err := apiserver.NewServer(config, sandboxReconciler)
+	server, err := workloadmanager.NewServer(config, sandboxReconciler)
 	if err != nil {
 		log.Fatalf("Failed to create API server: %v", err)
 	}
@@ -132,7 +132,7 @@ func main() {
 	log.Println("Server stopped")
 }
 
-func setupControllers(mgr ctrl.Manager, sandboxReconciler *apiserver.SandboxReconciler, codeInterpreterReconciler *apiserver.CodeInterpreterReconciler) error {
+func setupControllers(mgr ctrl.Manager, sandboxReconciler *workloadmanager.SandboxReconciler, codeInterpreterReconciler *workloadmanager.CodeInterpreterReconciler) error {
 	// Setup Sandbox controller
 	if err := ctrl.NewControllerManagedBy(mgr).
 		For(&sandboxv1alpha1.Sandbox{}).

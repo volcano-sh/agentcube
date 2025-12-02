@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	gcOnceTimeout = time.Minute
+	gcOnceTimeout = 2 * time.Minute
 )
 
 type garbageCollector struct {
@@ -45,7 +45,7 @@ func (gc *garbageCollector) run(stopCh <-chan struct{}) {
 }
 
 func (gc *garbageCollector) once() {
-	// Sandboxes idle timeout
+	// List sandboxes idle timeout
 	ctx, cancel := context.WithTimeout(context.Background(), gcOnceTimeout)
 	defer cancel()
 	inactiveTime := time.Now().Add(-DefaultSandboxIdleTimeout)
@@ -53,7 +53,7 @@ func (gc *garbageCollector) once() {
 	if err != nil {
 		log.Printf("error listing inactive sandboxes: %v", err)
 	}
-	// Sandboxes reach DDL
+	// List sandboxes reach DDL
 	expiredSandboxes, err := gc.redisClient.ListExpiredSandboxes(ctx, time.Now(), 16)
 	if err != nil {
 		log.Printf("error listing inactive sandboxes: %v", err)
@@ -73,7 +73,7 @@ func (gc *garbageCollector) once() {
 	}
 
 	errs := make([]error, 0, len(names))
-	// delete sandbox
+	// delete sandboxes
 	for i := range names {
 		err = gc.deleteSandbox(ctx, namespaces[i], names[i])
 		if err != nil {
@@ -92,7 +92,7 @@ func (gc *garbageCollector) once() {
 }
 
 func (gc *garbageCollector) deleteSandbox(ctx context.Context, namespace, name string) error {
-	err := gc.k8sClient.dynamicClient.Resource(SandboxGVR).Namespace(namespace).Delete(ctx, namespace, metav1.DeleteOptions{})
+	err := gc.k8sClient.dynamicClient.Resource(SandboxGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return nil

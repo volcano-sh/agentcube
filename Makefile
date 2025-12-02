@@ -70,7 +70,7 @@ gen-check: gen-all ## Check if generated code is up to date
 # Build targets
 build: generate ## Build agentcube-apiserver binary
 	@echo "Building agentcube-apiserver..."
-	go build -o bin/agentcube-apiserver ./cmd/apiserver
+	go build -o bin/agentcube-apiserver ./cmd/workload-manager
 
 build-agentd: generate ## Build agentd binary
 	@echo "Building agentd..."
@@ -85,7 +85,7 @@ build-all: build build-agentd build-test-tunnel ## Build all binaries
 # Run server (development mode)
 run:
 	@echo "Running agentcube-apiserver..."
-	go run ./cmd/apiserver/main.go \
+	go run ./cmd/workload-manager/main.go \
 		--port=8080 \
 		--ssh-username=sandbox \
 		--ssh-port=22
@@ -93,7 +93,7 @@ run:
 # Run server (with kubeconfig)
 run-local:
 	@echo "Running agentcube-apiserver with local kubeconfig..."
-	go run ./cmd/apiserver/main.go \
+	go run ./cmd/workload-manager/main.go \
 		--port=8080 \
 		--kubeconfig=${HOME}/.kube/config \
 		--ssh-username=sandbox \

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/volcano-sh/agentcube/pkg/redis"
 )
 
 // Server is the main structure for workload manager
@@ -20,6 +21,7 @@ type Server struct {
 	sandboxStore      *SandboxStore
 	tokenCache        *TokenCache
 	informers         *Informers
+	redisClient       redis.Client
 }
 
 type Config struct {
@@ -60,6 +62,7 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 		sandboxController: sandboxController,
 		tokenCache:        tokenCache,
 		informers:         NewInformers(k8sClient),
+		redisClient:       redis.NewClient(nil),
 	}
 
 	// Setup routes

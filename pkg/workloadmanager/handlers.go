@@ -126,7 +126,11 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		return
 	}
 
-	// TODO: store into redis
+	err = s.redisClient.StoreSandbox(c.Request.Context(), redisCacheInfo, DefaultRedisTTL)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "SANDBOX_STORE_REDIS_FAILED", err.Error())
+		return
+	}
 
 	response := &types.CreateSandboxResponse{
 		SessionID: sandbox.Labels[SessionIdLabelKey],

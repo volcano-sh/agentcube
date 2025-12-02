@@ -3,9 +3,9 @@ package workloadmanager
 import (
 	"context"
 	"fmt"
-	agentcuberuntime "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	"time"
 
+	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -23,6 +23,7 @@ import (
 const (
 	DefaultSandboxTTL         = 8 * time.Hour
 	DefaultSandboxIdleTimeout = 15 * time.Minute
+	DefaultRedisTTL           = 7 * 24 * time.Hour
 )
 
 var (
@@ -49,7 +50,7 @@ type K8sClient struct {
 }
 
 type sandboxExternalInfo struct {
-	Ports []agentcuberuntime.TargetPort
+	Ports []runtimev1alpha1.TargetPort
 }
 
 // NewK8sClient creates a new Kubernetes client

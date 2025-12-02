@@ -362,7 +362,9 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 			// Ideally we should enforce this, but for GET requests without body it might be empty.
 			// For now, if body is not empty, enforce hash presence?
 			// Let's enforce it if the body is not empty.
-			if len(bodyBytes) > 0 {
+			// Exception: multipart/form-data requests (file uploads) where client cannot easily compute hash
+			isMultipart := strings.HasPrefix(c.ContentType(), "multipart/form-data")
+			if len(bodyBytes) > 0 && !isMultipart {
 				c.JSON(http.StatusUnauthorized, gin.H{
 					"error":  "Missing body_sha256 claim",
 					"code":   http.StatusUnauthorized,

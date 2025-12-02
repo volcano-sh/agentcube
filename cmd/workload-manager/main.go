@@ -41,8 +41,6 @@ func main() {
 		enableTLS        = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
 		tlsCert          = flag.String("tls-cert", "", "Path to TLS certificate file")
 		tlsKey           = flag.String("tls-key", "", "Path to TLS key file")
-		redisAddr        = flag.String("redis-addr", "localhost:6379", "Redis server address")
-		redisPassword    = flag.String("redis-password", "", "Redis server password")
 	)
 
 	// Parse command line flags
@@ -85,8 +83,6 @@ func main() {
 		EnableTLS:        *enableTLS,
 		TLSCert:          *tlsCert,
 		TLSKey:           *tlsKey,
-		RedisAddr:        *redisAddr,
-		RedisPassword:    *redisPassword,
 	}
 
 	// Create and initialize API server

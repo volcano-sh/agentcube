@@ -2,6 +2,7 @@ package workloadmanager
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -110,7 +111,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 			return
 		}
 		if err := sandboxRollbackFunc(); err != nil {
-			fmt.Printf(fmt.Sprintf("sandbox rollback failed: %v", err))
+			log.Printf("sandbox rollback failed: %v\n", err)
 		}
 	}()
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -36,10 +37,23 @@ type Config struct {
 	TLSCert string
 	// TLSKey is the path to the TLS private key file
 	TLSKey string
-	// RedisAddr redis address
-	RedisAddr string
-	// RedisPassword redis password
-	RedisPassword string
+}
+
+// makeRedisOptions make redis options by environment
+func makeRedisOptions() (*redisv9.Options, error) {
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		return nil, fmt.Errorf("missing env var REDIS_ADDR")
+	}
+	redisPassword := os.Getenv("REDIS_PASSWORD")
+	if redisPassword == "" {
+		return nil, fmt.Errorf("missing env var REDIS_PASSWORD")
+	}
+	redisOptions := &redisv9.Options{
+		Addr:     redisAddr,
+		Password: redisPassword,
+	}
+	return redisOptions, nil
 }
 
 // NewServer creates a new API server instance
@@ -54,9 +68,9 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
-	redisOptions := &redisv9.Options{
-		Addr:     config.RedisAddr,
-		Password: config.RedisPassword,
+	redisOptions, err := makeRedisOptions()
+	if err != nil {
+		return nil, fmt.Errorf("make redis options failed: %w", err)
 	}
 
 	// Create sandbox store

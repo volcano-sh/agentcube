@@ -11,12 +11,12 @@ import (
 
 var (
 	AgentRuntimeGVR = schema.GroupVersionResource{
-		Group:    "agents.x-k8s.io",
+		Group:    "runtime.agentcube.volcano.sh",
 		Version:  "v1alpha1",
 		Resource: "agentruntimes",
 	}
 	CodeInterpreterGVR = schema.GroupVersionResource{
-		Group:    "agents.x-k8s.io",
+		Group:    "runtime.agentcube.volcano.sh",
 		Version:  "v1alpha1",
 		Resource: "codeinterpreters",
 	}

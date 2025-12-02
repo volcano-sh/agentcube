@@ -80,6 +80,7 @@ func (gc *garbageCollector) once() {
 			errs = append(errs, err)
 			continue
 		}
+		log.Printf("sandbox %s/%s deleted", namespaces[i], names[i])
 		err = gc.redisClient.DeleteSessionBySandboxIDTx(ctx, sandboxIDs[i])
 		if err != nil {
 			errs = append(errs, err)

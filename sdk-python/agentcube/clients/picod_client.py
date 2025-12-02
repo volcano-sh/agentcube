@@ -50,40 +50,33 @@ class PicoDClient:
 
     This client provides the same interface as SandboxSSHClient,
     making it an alternative to SSH-based communication.
-
-    Example:
-        >>> client = PicoDClient(host="localhost", port=9527)
-        >>> client.generate_rsa_key_pair()  # First time setup
-        >>> client.initialize_server()      # Initialize server with public key
-        >>> result = client.execute_command("echo 'Hello World'")
-        >>> print(result)
-        Hello World
-
-        >>> client.write_file(content="test data", remote_path="/tmp/test.txt")
-        >>> client.download_file(remote_path="/tmp/test.txt", local_path="./test.txt")
     """
 
     def __init__(
         self,
-        host: str,
-        port: int = 9527,
+        api_url: str,
+        namespace: str,
+        name: str,
+        session_id: Optional[str] = None,
         timeout: int = 30,
-        key_file: Optional[str] = None,
     ):
         """Initialize PicoD client connection parameters
 
         Args:
-            host: PicoD server hostname or IP address
-            port: PicoD server port (default: 9527)
+            api_url: AgentCube API URL (serves as both Manager and Gateway)
+            namespace: Kubernetes namespace of the Code Interpreter
+            name: Name of the Code Interpreter
+            session_id: Pre-existing session ID (optional)
             timeout: Default request timeout in seconds
-            key_file: Path to RSA private key file (optional, for authentication)
         """
-        self.base_url = f"http://{host}:{port}"
+        self.manager_url = api_url
+        self.gateway_url = api_url
+        self.namespace = namespace
+        self.name = name
+        self.session_id = session_id
         self.timeout = timeout
         self.session = requests.Session()
-        self.key_file = key_file or "picod_client_keys.pem"
         self.key_pair: Optional[RSAKeyPair] = None
-        self.initialized = False
 
     def generate_rsa_key_pair(self, key_file: Optional[str] = None) -> RSAKeyPair:
         """Generate a new RSA-2048 key pair
@@ -94,7 +87,7 @@ class PicoDClient:
         Returns:
             RSAKeyPair containing the generated keys
         """
-        key_file = key_file or self.key_file
+        key_file = key_file or "picod_client_keys.pem" # Default key file for SDK generated keys.
 
         # Generate private key
         private_key = rsa.generate_private_key(
@@ -117,7 +110,7 @@ class PicoDClient:
         os.chmod(key_file, 0o600)
 
         self.key_pair = RSAKeyPair(private_key, public_key)
-        self.key_file = key_file
+        # self.key_file = key_file # Removed as per new design
 
         logger.info(f"RSA key pair generated and saved to {key_file}")
         return self.key_pair
@@ -134,7 +127,7 @@ class PicoDClient:
         Raises:
             FileNotFoundError: If key file doesn't exist
         """
-        key_file = key_file or self.key_file
+        key_file = key_file or "picod_client_keys.pem" # Default key file for SDK generated keys.
 
         if not os.path.exists(key_file):
             raise FileNotFoundError(f"Private key file not found: {key_file}")
@@ -148,84 +141,43 @@ class PicoDClient:
 
         public_key = private_key.public_key()
         self.key_pair = RSAKeyPair(private_key, public_key)
-        self.key_file = key_file
+        # self.key_file = key_file # Removed as per new design
 
         return self.key_pair
 
-    def get_public_key_pem(self) -> str:
-        """Get public key in PEM format for server initialization
-
-        Returns:
-            Public key as PEM-encoded string
-        """
+    def _create_signed_jwt(self, claims_payload: Dict[str, Any], exp_delta_seconds: int = 300) -> str:
+        """Create a signed JWT token using the session private key"""
         if not self.key_pair:
             raise ValueError("No key pair loaded. Generate or load keys first.")
 
-        public_pem = self.key_pair.public_key.public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
-        )
+        # Default claims
+        now = int(time.time())
+        claims = {
+            "iss": "sdk-client",
+            "iat": now,
+            "exp": now + exp_delta_seconds,  # Token valid for exp_delta_seconds
+        }
+        claims.update(claims_payload)
 
-        return public_pem.decode('utf-8')
+        # Create JWT header (RS256 is default for cryptography lib)
+        # Manually constructing JWT as there's no official PyJWT for cryptography's RSA keys directly
+        # This is a simplified JWT creation for RS256
+        jwt_header = json.dumps({"alg": "RS256", "typ": "JWT"}).encode("utf-8")
+        jwt_claims = json.dumps(claims).encode("utf-8")
 
+        encoded_header = base64.urlsafe_b64encode(jwt_header).rstrip(b"=")
+        encoded_claims = base64.urlsafe_b64encode(jwt_claims).rstrip(b"=")
 
-    def _sign_with_key(self, private_key, timestamp: str, body: str) -> str:
-        """Sign a request with a specific RSA private key"""
-        # Create message: timestamp + body
-        message = timestamp + body
+        unsigned_token = encoded_header + b"." + encoded_claims
 
-        # Sign the message directly (no manual hashing)
-        signature = private_key.sign(
-            message.encode('utf-8'),
+        signature = self.key_pair.private_key.sign(
+            unsigned_token,
             padding.PKCS1v15(),
             hashes.SHA256()
         )
+        encoded_signature = base64.urlsafe_b64encode(signature).rstrip(b"=")
 
-        return base64.b64encode(signature).decode('utf-8')
-
-    def _sign_request(self, timestamp: str, body: str) -> str:
-        """Sign a request with the session RSA private key"""
-        if not self.key_pair:
-            raise ValueError("No key pair loaded. Generate or load keys first.")
-        
-        return self._sign_with_key(self.key_pair.private_key, timestamp, body)
-
-
-    def _make_authenticated_request(self, method: str, url: str, **kwargs) -> requests.Response:
-        """Make an authenticated HTTP request with RSA signature
-
-        Args:
-            method: HTTP method
-            url: Full URL
-            **kwargs: Additional arguments for requests
-
-        Returns:
-            HTTP response
-        """
-        if not self.key_pair:
-            raise ValueError("No key pair loaded. Generate or load keys first.")
-
-        # Get or create request body
-        body_str = ""
-        if 'json' in kwargs:
-            body_str = json.dumps(kwargs['json'], sort_keys=True, separators=(',', ':'))
-        elif 'data' in kwargs and isinstance(kwargs['data'], str):
-            body_str = kwargs['data']
-        elif 'files' in kwargs:
-            # For multipart requests, use empty body for signature
-            body_str = ""
-
-        # Generate timestamp with sub-second precision to prevent replay attacks
-        timestamp = datetime.utcnow().isoformat() + 'Z'
-        signature = self._sign_request(timestamp, body_str)
-
-        # Add headers
-        headers = kwargs.get('headers', {})
-        headers['X-Timestamp'] = timestamp
-        headers['X-Signature'] = signature
-        kwargs['headers'] = headers
-
-        return self.session.request(method, url, **kwargs)
+        return unsigned_token.decode("utf-8") + "." + encoded_signature.decode("utf-8")
     
     def execute_command(
         self,
@@ -233,8 +185,6 @@ class PicoDClient:
         timeout: Optional[float] = None,
     ) -> str:
         """Execute command in sandbox and return stdout
-
-        Compatible with SandboxSSHClient.execute_command()
 
         Args:
             command: Command to execute
@@ -250,25 +200,16 @@ class PicoDClient:
             "command": command,
             "timeout": timeout or self.timeout,
         }
+        body_bytes = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
-        if self.key_pair:
-            # Use authenticated request
-            response = self._make_authenticated_request(
-                "POST",
-                f"{self.base_url}/api/execute",
-                json=payload,
-                timeout=timeout or self.timeout,
-            )
-        else:
-            # Use unauthenticated request
-            response = self.session.post(
-                f"{self.base_url}/api/execute",
-                json=payload,
-                timeout=timeout or self.timeout,
-            )
+        response = self._make_authenticated_request(
+            "POST",
+            "api/execute", # Path relative to invocations URL
+            body_bytes=body_bytes,
+            timeout=timeout or self.timeout,
+        )
 
         response.raise_for_status()
-
         result = response.json()
 
         if result["exit_code"] != 0:
@@ -347,8 +288,6 @@ class PicoDClient:
     ) -> None:
         """Write content to file in sandbox (JSON/base64)
 
-        Compatible with SandboxSSHClient.write_file()
-
         Args:
             content: Content to write to remote file
             remote_path: Write path on remote server
@@ -366,22 +305,14 @@ class PicoDClient:
             "content": content_b64,
             "mode": "0644"
         }
+        body_bytes = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
-        if self.key_pair:
-            # Use authenticated request
-            response = self._make_authenticated_request(
-                "POST",
-                f"{self.base_url}/api/files",
-                json=payload,
-                timeout=self.timeout,
-            )
-        else:
-            # Use unauthenticated request
-            response = self.session.post(
-                f"{self.base_url}/api/files",
-                json=payload,
-                timeout=self.timeout,
-            )
+        response = self._make_authenticated_request(
+            "POST",
+            "api/files",
+            body_bytes=body_bytes,
+            timeout=self.timeout,
+        )
 
         response.raise_for_status()
 
@@ -391,8 +322,6 @@ class PicoDClient:
         remote_path: str,
     ) -> None:
         """Upload local file to sandbox (multipart/form-data)
-
-        Compatible with SandboxSSHClient.upload_file()
 
         Args:
             local_path: Local file path to upload
@@ -404,27 +333,18 @@ class PicoDClient:
         if not os.path.exists(local_path):
             raise FileNotFoundError(f"Local file not found: {local_path}")
 
+        # For multipart, we can't compute hash easily, so no body_sha256 claim
         with open(local_path, 'rb') as f:
             files = {'file': f}
             data = {'path': remote_path, 'mode': '0644'}
 
-            if self.key_pair:
-                # Use authenticated request
-                response = self._make_authenticated_request(
-                    "POST",
-                    f"{self.base_url}/api/files",
-                    files=files,
-                    data=data,
-                    timeout=self.timeout,
-                )
-            else:
-                # Use unauthenticated request
-                response = self.session.post(
-                    f"{self.base_url}/api/files",
-                    files=files,
-                    data=data,
-                    timeout=self.timeout,
-                )
+            response = self._make_authenticated_request(
+                "POST",
+                "api/files",
+                files=files,
+                data=data,
+                timeout=self.timeout,
+            )
 
             response.raise_for_status()
 
@@ -434,8 +354,6 @@ class PicoDClient:
         local_path: str
     ) -> None:
         """Download file from sandbox
-
-        Compatible with SandboxSSHClient.download_file()
 
         Args:
             remote_path: Download path on remote server
@@ -449,21 +367,13 @@ class PicoDClient:
         # Handle path: remove leading /
         clean_remote_path = remote_path.lstrip('/')
 
-        if self.key_pair:
-            # Use authenticated request
-            response = self._make_authenticated_request(
-                "GET",
-                f"{self.base_url}/api/files/{clean_remote_path}",
-                stream=True,
-                timeout=self.timeout,
-            )
-        else:
-            # Use unauthenticated request
-            response = self.session.get(
-                f"{self.base_url}/api/files/{clean_remote_path}",
-                stream=True,
-                timeout=self.timeout,
-            )
+        response = self._make_authenticated_request(
+            "GET",
+            f"api/files/{clean_remote_path}", # Path relative to invocations URL
+            body_bytes=None, # GET requests typically have no body
+            stream=True,
+            timeout=self.timeout,
+        )
 
         response.raise_for_status()
 

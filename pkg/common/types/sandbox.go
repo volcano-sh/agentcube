@@ -6,18 +6,19 @@ import (
 )
 
 type SandboxRedis struct {
-	SandboxID   string          `json:"sandboxId"`
-	SandboxName string          `json:"sandboxName"`
-	EntryPoints []SandboxAccess `json:"entrypoints"`
-	SessionID   string          `json:"sessionId"`
-	CreatedAt   time.Time       `json:"createdAt"`
-	ExpiresAt   time.Time       `json:"expiresAt"`
+	SandboxID        string               `json:"sandboxId"`
+	SandboxNamespace string               `json:"sandboxNamespace"`
+	SandboxName      string               `json:"sandboxName"`
+	EntryPoints      []SandboxEntryPoints `json:"entryPoints"`
+	SessionID        string               `json:"sessionId"`
+	CreatedAt        time.Time            `json:"createdAt"`
+	ExpiresAt        time.Time            `json:"expiresAt"`
 	// LastActivityAt is intentionally omitted from this type.
 	// Last activity is tracked in Redis via a sorted set index.
 	Status string `json:"status"`
 }
 
-type SandboxAccess struct {
+type SandboxEntryPoints struct {
 	Path     string `json:"path"`
 	Protocol string `json:"protocol"`
 	Endpoint string `json:"endpoint"`
@@ -37,10 +38,10 @@ type Auth struct {
 }
 
 type CreateSandboxResponse struct {
-	SessionID   string          `json:"sessionId"`
-	SandboxID   string          `json:"sandboxId"`
-	SandboxName string          `json:"sandboxName"`
-	Accesses    []SandboxAccess `json:"accesses"`
+	SessionID   string               `json:"sessionId"`
+	SandboxID   string               `json:"sandboxId"`
+	SandboxName string               `json:"sandboxName"`
+	EntryPoints []SandboxEntryPoints `json:"entryPoints"`
 }
 
 func (car *CreateSandboxRequest) Validate() error {

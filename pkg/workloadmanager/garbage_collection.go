@@ -1,0 +1,104 @@
+package workloadmanager
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/volcano-sh/agentcube/pkg/redis"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+)
+
+const (
+	gcOnceTimeout = 2 * time.Minute
+)
+
+type garbageCollector struct {
+	k8sClient   *K8sClient
+	interval    time.Duration
+	redisClient redis.Client
+}
+
+func newGarbageCollector(k8sClient *K8sClient, redisClient redis.Client, interval time.Duration) *garbageCollector {
+	return &garbageCollector{
+		k8sClient:   k8sClient,
+		interval:    interval,
+		redisClient: redisClient,
+	}
+}
+
+func (gc *garbageCollector) run(stopCh <-chan struct{}) {
+	ticker := time.NewTicker(gc.interval)
+	for {
+		select {
+		case <-stopCh:
+			ticker.Stop()
+			log.Println("garbage collector stopped")
+			return
+		case <-ticker.C:
+			gc.once()
+		}
+	}
+}
+
+func (gc *garbageCollector) once() {
+	// List sandboxes idle timeout
+	ctx, cancel := context.WithTimeout(context.Background(), gcOnceTimeout)
+	defer cancel()
+	inactiveTime := time.Now().Add(-DefaultSandboxIdleTimeout)
+	inactiveSandboxes, err := gc.redisClient.ListInactiveSandboxes(ctx, inactiveTime, 16)
+	if err != nil {
+		log.Printf("error listing inactive sandboxes: %v", err)
+	}
+	// List sandboxes reach DDL
+	expiredSandboxes, err := gc.redisClient.ListExpiredSandboxes(ctx, time.Now(), 16)
+	if err != nil {
+		log.Printf("error listing inactive sandboxes: %v", err)
+	}
+	namespaces := make([]string, 0, len(inactiveSandboxes)+len(expiredSandboxes))
+	names := make([]string, 0, len(inactiveSandboxes)+len(expiredSandboxes))
+	sandboxIDs := make([]string, 0, len(inactiveSandboxes)+len(expiredSandboxes))
+	for _, inactive := range inactiveSandboxes {
+		namespaces = append(namespaces, inactive.SandboxNamespace)
+		names = append(names, inactive.SandboxName)
+		sandboxIDs = append(sandboxIDs, inactive.SandboxID)
+	}
+	for _, expired := range expiredSandboxes {
+		namespaces = append(namespaces, expired.SandboxNamespace)
+		names = append(names, expired.SandboxName)
+		sandboxIDs = append(sandboxIDs, expired.SandboxID)
+	}
+
+	errs := make([]error, 0, len(names))
+	// delete sandboxes
+	for i := range names {
+		err = gc.deleteSandbox(ctx, namespaces[i], names[i])
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		log.Printf("sandbox %s/%s deleted", namespaces[i], names[i])
+		err = gc.redisClient.DeleteSessionBySandboxIDTx(ctx, sandboxIDs[i])
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	err = utilerrors.NewAggregate(errs)
+	if err != nil {
+		log.Printf("garbage collector failed with error: %v", err)
+	}
+}
+
+func (gc *garbageCollector) deleteSandbox(ctx context.Context, namespace, name string) error {
+	err := gc.k8sClient.dynamicClient.Resource(SandboxGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("error deleting sandbox %s/%s: %w", namespace, name, err)
+	}
+	return nil
+}

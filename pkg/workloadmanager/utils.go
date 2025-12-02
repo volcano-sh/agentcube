@@ -1,7 +1,6 @@
-package apiserver
+package workloadmanager
 
 import (
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -29,19 +28,4 @@ func respondError(c *gin.Context, statusCode int, errorCode, message string) {
 		Timestamp: time.Now(),
 	}
 	respondJSON(c, statusCode, response)
-}
-
-// getIntQueryParam gets an integer value from query parameters, returns default value if not present
-func getIntQueryParam(c *gin.Context, key string, defaultValue int) int {
-	valueStr := c.Query(key)
-	if valueStr == "" {
-		return defaultValue
-	}
-
-	value, err := strconv.Atoi(valueStr)
-	if err != nil {
-		return defaultValue
-	}
-
-	return value
 }

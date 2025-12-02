@@ -1,16 +1,19 @@
-package apiserver
+package workloadmanager
 
 import (
 	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	redisv9 "github.com/redis/go-redis/v9"
+	"github.com/volcano-sh/agentcube/pkg/redis"
 )
 
-// Server is the main structure for apiserver
+// Server is the main structure for workload manager
 type Server struct {
 	config            *Config
 	router            *gin.Engine
@@ -19,6 +22,38 @@ type Server struct {
 	sandboxController *SandboxReconciler
 	sandboxStore      *SandboxStore
 	tokenCache        *TokenCache
+	informers         *Informers
+	redisClient       redis.Client
+}
+
+type Config struct {
+	// Port is the port the API server listens on
+	Port string
+	// RuntimeClassName is the RuntimeClassName for sandbox pods
+	RuntimeClassName string
+	// EnableTLS enables HTTPS
+	EnableTLS bool
+	// TLSCert is the path to the TLS certificate file
+	TLSCert string
+	// TLSKey is the path to the TLS private key file
+	TLSKey string
+}
+
+// makeRedisOptions make redis options by environment
+func makeRedisOptions() (*redisv9.Options, error) {
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		return nil, fmt.Errorf("missing env var REDIS_ADDR")
+	}
+	redisPassword := os.Getenv("REDIS_PASSWORD")
+	if redisPassword == "" {
+		return nil, fmt.Errorf("missing env var REDIS_PASSWORD")
+	}
+	redisOptions := &redisv9.Options{
+		Addr:     redisAddr,
+		Password: redisPassword,
+	}
+	return redisOptions, nil
 }
 
 // NewServer creates a new API server instance
@@ -33,6 +68,11 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
+	redisOptions, err := makeRedisOptions()
+	if err != nil {
+		return nil, fmt.Errorf("make redis options failed: %w", err)
+	}
+
 	// Create sandbox store
 	sandboxStore := NewSandboxStore()
 
@@ -45,6 +85,8 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 		sandboxStore:      sandboxStore,
 		sandboxController: sandboxController,
 		tokenCache:        tokenCache,
+		informers:         NewInformers(k8sClient),
+		redisClient:       redis.NewClient(redisOptions),
 	}
 
 	// Setup routes
@@ -76,13 +118,9 @@ func (s *Server) setupRoutes() {
 
 	// Sandbox management endpoints
 	v1.POST("/sandboxes", s.handleCreateSandbox)
-	v1.GET("/sandboxes", s.handleListSandboxes)
-	v1.GET("/sandboxes/:sandboxId", s.handleGetSandbox)
+	v1.POST("/code-interpreter/start", s.handleCreateSandbox)
+	v1.POST("/code-interpreter/stop", s.handleDeleteSandbox)
 	v1.DELETE("/sandboxes/:sandboxId", s.handleDeleteSandbox)
-
-	// HTTP CONNECT tunnel endpoint - for SSH/SFTP proxy
-	// Path: /v1/sandboxes/{sandboxId} with CONNECT method
-	v1.Handle("CONNECT", "/sandboxes/:sandboxId", s.handleTunnel)
 }
 
 // Start starts the API server
@@ -90,6 +128,14 @@ func (s *Server) Start(ctx context.Context) error {
 	// Initialize store with informer before starting server
 	if err := s.InitializeStore(ctx); err != nil {
 		return fmt.Errorf("failed to initialize sandbox store: %w", err)
+	}
+
+	if err := s.informers.RunAndWaitForCacheSync(ctx); err != nil {
+		return fmt.Errorf("failed to wait for caches to sync: %w", err)
+	}
+
+	if err := s.redisClient.Ping(ctx); err != nil {
+		return fmt.Errorf("failed to ping redis: %w", err)
 	}
 
 	addr := ":" + s.config.Port
@@ -116,6 +162,9 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	log.Printf("Server listening on %s", addr)
+
+	gc := newGarbageCollector(s.k8sClient, s.redisClient, 15*time.Second)
+	go gc.run(ctx.Done())
 
 	// Start HTTP or HTTPS server
 	if s.config.EnableTLS {

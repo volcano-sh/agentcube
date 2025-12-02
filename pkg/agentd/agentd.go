@@ -10,7 +10,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	apiserver "github.com/volcano-sh/agentcube/pkg/apiserver"
+	"github.com/volcano-sh/agentcube/pkg/workloadmanager"
 )
 
 var (
@@ -33,7 +33,7 @@ func (r *AgentdReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	lastActivityStr, exists := sandbox.Annotations[apiserver.LastActivityAnnotationKey]
+	lastActivityStr, exists := sandbox.Annotations[workloadmanager.LastActivityAnnotationKey]
 	var lastActivity time.Time
 	if exists && lastActivityStr != "" {
 		lastActivity, err = time.Parse(time.RFC3339, lastActivityStr)

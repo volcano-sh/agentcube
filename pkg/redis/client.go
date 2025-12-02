@@ -27,6 +27,10 @@ type Client interface {
 	BindSessionWithSandbox(ctx context.Context, sessionID string, sandboxRedis *types.SandboxRedis, ttl time.Duration) error
 	// DeleteSessionBySandboxIDTx removes the bidirectional mapping by sandbox ID.
 	DeleteSessionBySandboxIDTx(ctx context.Context, sandboxID string) error
+	// StoreSandbox store sandbox into redis
+	StoreSandbox(ctx context.Context, sandboxRedis *types.SandboxRedis, ttl time.Duration) error
+	// Ping redis ping
+	Ping(ctx context.Context) error
 
 	// ListExpiredSandboxes returns up to limit sandboxes with ExpiresAt before the given time.
 	ListExpiredSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxRedis, error)
@@ -149,6 +153,16 @@ func (c *client) BindSessionWithSandbox(ctx context.Context, sessionID string, s
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("BindSessionWithSandbox: redis TxPipeline EXEC: %w", err)
 	}
+	return nil
+}
+
+func (c *client) StoreSandbox(ctx context.Context, sandboxRedis *types.SandboxRedis, ttl time.Duration) error {
+	// TODO: implement
+	return nil
+}
+
+func (c *client) Ping(ctx context.Context) error {
+	// TODO: implement
 	return nil
 }
 

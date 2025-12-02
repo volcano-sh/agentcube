@@ -1,11 +1,14 @@
-package apiserver
+package workloadmanager
 
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/volcano-sh/agentcube/pkg/common/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -185,13 +188,13 @@ func (s *SandboxStore) onSandboxDelete(obj interface{}) {
 
 	// Get sandbox ID from labels
 	labels := unstructuredObj.GetLabels()
-	sandboxID := labels["sandbox-id"]
-	if sandboxID == "" {
+	sessionID := labels[SessionIdLabelKey]
+	if sessionID == "" {
 		return
 	}
 
 	s.mu.Lock()
-	delete(s.sandboxes, sandboxID)
+	delete(s.sandboxes, sessionID)
 	s.mu.Unlock()
 }
 
@@ -271,6 +274,32 @@ func convertTypedSandboxToSandbox(sandboxCRD *sandboxv1alpha1.Sandbox) (*Sandbox
 	return sandbox, nil
 }
 
+func convertSandboxToRedisCache(sandboxCRD *sandboxv1alpha1.Sandbox, podIP string, externalInfo *sandboxExternalInfo) (*types.SandboxRedis, error) {
+	createdAt := sandboxCRD.GetCreationTimestamp().Time
+	expiresAt := createdAt.Add(DefaultSandboxTTL)
+	if sandboxCRD.Spec.ShutdownTime != nil {
+		expiresAt = sandboxCRD.Spec.ShutdownTime.Time
+	}
+	accesses := make([]types.SandboxEntryPoints, 0, len(externalInfo.Ports))
+	for _, port := range externalInfo.Ports {
+		accesses = append(accesses, types.SandboxEntryPoints{
+			Path:     port.PathPrefix,
+			Protocol: string(port.Protocol),
+			Endpoint: net.JoinHostPort(podIP, strconv.Itoa(int(port.Port))),
+		})
+	}
+	sandboxRedis := &types.SandboxRedis{
+		SandboxID:        string(sandboxCRD.GetUID()),
+		SandboxName:      sandboxCRD.GetName(),
+		SandboxNamespace: sandboxCRD.GetNamespace(),
+		EntryPoints:      accesses,
+		CreatedAt:        createdAt,
+		ExpiresAt:        expiresAt,
+		Status:           getSandboxStatus(sandboxCRD),
+	}
+	return sandboxRedis, nil
+}
+
 // getSandboxStatus extracts status from Sandbox CRD conditions
 func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) string {
 	// Check conditions for Ready status
@@ -280,12 +309,4 @@ func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) string {
 		}
 	}
 	return "paused"
-}
-
-// CreateSandboxRequest represents the request structure for creating a sandbox
-type CreateSandboxRequest struct {
-	TTL          int                    `json:"ttl,omitempty"`
-	Image        string                 `json:"image,omitempty"`
-	SSHPublicKey string                 `json:"sshPublicKey,omitempty"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 }

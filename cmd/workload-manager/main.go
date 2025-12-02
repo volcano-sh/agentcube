@@ -20,7 +20,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
-	apiserver "github.com/volcano-sh/agentcube/pkg/apiserver"
+	"github.com/volcano-sh/agentcube/pkg/workloadmanager"
 )
 
 var (
@@ -37,8 +37,6 @@ func init() {
 func main() {
 	var (
 		port             = flag.String("port", "8080", "API server port")
-		sshUsername      = flag.String("ssh-username", "sandbox", "Default SSH username for sandbox pods")
-		sshPort          = flag.Int("ssh-port", 22, "SSH port on sandbox pods")
 		runtimeClassName = flag.String("runtime-class-name", "kuasar-vmm", "RuntimeClassName for sandbox pods")
 		enableTLS        = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
 		tlsCert          = flag.String("tls-cert", "", "Path to TLS certificate file")
@@ -63,12 +61,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	sandboxReconciler := &apiserver.SandboxReconciler{
+	sandboxReconciler := &workloadmanager.SandboxReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}
 
-	codeInterpreterReconciler := &apiserver.CodeInterpreterReconciler{
+	codeInterpreterReconciler := &workloadmanager.CodeInterpreterReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}
@@ -79,10 +77,8 @@ func main() {
 	}
 
 	// Create API server configuration
-	config := &apiserver.Config{
+	config := &workloadmanager.Config{
 		Port:             *port,
-		SSHUsername:      *sshUsername,
-		SSHPort:          *sshPort,
 		RuntimeClassName: *runtimeClassName,
 		EnableTLS:        *enableTLS,
 		TLSCert:          *tlsCert,
@@ -90,7 +86,7 @@ func main() {
 	}
 
 	// Create and initialize API server
-	server, err := apiserver.NewServer(config, sandboxReconciler)
+	server, err := workloadmanager.NewServer(config, sandboxReconciler)
 	if err != nil {
 		log.Fatalf("Failed to create API server: %v", err)
 	}
@@ -132,7 +128,7 @@ func main() {
 	log.Println("Server stopped")
 }
 
-func setupControllers(mgr ctrl.Manager, sandboxReconciler *apiserver.SandboxReconciler, codeInterpreterReconciler *apiserver.CodeInterpreterReconciler) error {
+func setupControllers(mgr ctrl.Manager, sandboxReconciler *workloadmanager.SandboxReconciler, codeInterpreterReconciler *workloadmanager.CodeInterpreterReconciler) error {
 	// Setup Sandbox controller
 	if err := ctrl.NewControllerManagedBy(mgr).
 		For(&sandboxv1alpha1.Sandbox{}).

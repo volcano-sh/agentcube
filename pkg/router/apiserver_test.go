@@ -2,11 +2,22 @@ package router
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 )
 
 func TestNewServer(t *testing.T) {
+	// Set required environment variables for tests
+	os.Setenv("REDIS_ADDR", "localhost:6379")
+	os.Setenv("REDIS_PASSWORD", "test-password")
+	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	defer func() {
+		os.Unsetenv("REDIS_ADDR")
+		os.Unsetenv("REDIS_PASSWORD")
+		os.Unsetenv("WORKLOAD_MGR_URL")
+	}()
+
 	tests := []struct {
 		name    string
 		config  *Config
@@ -76,9 +87,9 @@ func TestNewServer(t *testing.T) {
 					t.Error("Session manager was not created")
 				}
 
-				// Verify redis manager was created
-				if server.redisManager == nil {
-					t.Error("Redis manager was not created")
+				// Verify redis client was created
+				if server.redisClient == nil {
+					t.Error("Redis client was not created")
 				}
 
 				// Verify semaphore was created with correct capacity
@@ -112,6 +123,16 @@ func TestNewServer(t *testing.T) {
 }
 
 func TestServer_DefaultValues(t *testing.T) {
+	// Set required environment variables for tests
+	os.Setenv("REDIS_ADDR", "localhost:6379")
+	os.Setenv("REDIS_PASSWORD", "test-password")
+	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	defer func() {
+		os.Unsetenv("REDIS_ADDR")
+		os.Unsetenv("REDIS_PASSWORD")
+		os.Unsetenv("WORKLOAD_MGR_URL")
+	}()
+
 	config := &Config{
 		Port: "8080",
 		// Leave other values as zero to test defaults
@@ -145,6 +166,16 @@ func TestServer_DefaultValues(t *testing.T) {
 }
 
 func TestServer_ConcurrencyLimitMiddleware(t *testing.T) {
+	// Set required environment variables for tests
+	os.Setenv("REDIS_ADDR", "localhost:6379")
+	os.Setenv("REDIS_PASSWORD", "test-password")
+	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	defer func() {
+		os.Unsetenv("REDIS_ADDR")
+		os.Unsetenv("REDIS_PASSWORD")
+		os.Unsetenv("WORKLOAD_MGR_URL")
+	}()
+
 	config := &Config{
 		Port:                  "8080",
 		MaxConcurrentRequests: 2, // Small limit for testing
@@ -168,6 +199,16 @@ func TestServer_ConcurrencyLimitMiddleware(t *testing.T) {
 }
 
 func TestServer_SetupRoutes(t *testing.T) {
+	// Set required environment variables for tests
+	os.Setenv("REDIS_ADDR", "localhost:6379")
+	os.Setenv("REDIS_PASSWORD", "test-password")
+	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	defer func() {
+		os.Unsetenv("REDIS_ADDR")
+		os.Unsetenv("REDIS_PASSWORD")
+		os.Unsetenv("WORKLOAD_MGR_URL")
+	}()
+
 	config := &Config{
 		Port: "8080",
 	}
@@ -187,6 +228,16 @@ func TestServer_SetupRoutes(t *testing.T) {
 }
 
 func TestServer_StartContext(t *testing.T) {
+	// Set required environment variables for tests
+	os.Setenv("REDIS_ADDR", "localhost:6379")
+	os.Setenv("REDIS_PASSWORD", "test-password")
+	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	defer func() {
+		os.Unsetenv("REDIS_ADDR")
+		os.Unsetenv("REDIS_PASSWORD")
+		os.Unsetenv("WORKLOAD_MGR_URL")
+	}()
+
 	config := &Config{
 		Port: "0", // Use port 0 to let the OS assign a free port
 	}
@@ -225,6 +276,16 @@ func TestServer_StartContext(t *testing.T) {
 }
 
 func TestServer_TLSConfiguration(t *testing.T) {
+	// Set required environment variables for tests
+	os.Setenv("REDIS_ADDR", "localhost:6379")
+	os.Setenv("REDIS_PASSWORD", "test-password")
+	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	defer func() {
+		os.Unsetenv("REDIS_ADDR")
+		os.Unsetenv("REDIS_PASSWORD")
+		os.Unsetenv("WORKLOAD_MGR_URL")
+	}()
+
 	tests := []struct {
 		name      string
 		config    *Config
@@ -294,50 +355,27 @@ func TestServer_TLSConfiguration(t *testing.T) {
 }
 
 func TestServer_RedisIntegration(t *testing.T) {
-	tests := []struct {
-		name        string
-		enableRedis bool
-	}{
-		{
-			name:        "Redis enabled",
-			enableRedis: true,
-		},
-		{
-			name:        "Redis disabled",
-			enableRedis: false,
-		},
+	// Set required environment variables for tests
+	os.Setenv("REDIS_ADDR", "localhost:6379")
+	os.Setenv("REDIS_PASSWORD", "test-password")
+	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	defer func() {
+		os.Unsetenv("REDIS_ADDR")
+		os.Unsetenv("REDIS_PASSWORD")
+		os.Unsetenv("WORKLOAD_MGR_URL")
+	}()
+
+	config := &Config{
+		Port: "8080",
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &Config{
-				Port:        "8080",
-				EnableRedis: tt.enableRedis,
-			}
+	server, err := NewServer(config)
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
 
-			server, err := NewServer(config)
-			if err != nil {
-				t.Fatalf("Failed to create server: %v", err)
-			}
-
-			// Verify Redis manager was created
-			if server.redisManager == nil {
-				t.Error("Redis manager was not created")
-			}
-
-			// Test Redis manager functionality based on enabled state
-			err = server.redisManager.UpdateSessionActivity("test-session")
-			if tt.enableRedis {
-				if err != nil {
-					t.Errorf("Expected no error when Redis is enabled, got: %v", err)
-				}
-			} else {
-				// When disabled, UpdateSessionActivity should not return an error
-				// (it silently skips)
-				if err != nil {
-					t.Errorf("Expected no error when Redis is disabled, got: %v", err)
-				}
-			}
-		})
+	// Verify Redis client was created
+	if server.redisClient == nil {
+		t.Error("Redis client was not created")
 	}
 }

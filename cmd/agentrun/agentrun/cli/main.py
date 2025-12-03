@@ -143,14 +143,13 @@ def pack(
 
             result = runtime.pack(workspace_path, **options)
 
-            progress.update(task, description="Packaging completed! ✅")
+            progress.update(task, description="Packaging completed!")
 
-        console.print(f"✅ Successfully packaged agent: [bold green]{result['agent_name']}[/bold green]")
-        console.print(f"📁 Workspace: [blue]{result['workspace_path']}[/blue]")
-        console.print(f"📄 Metadata: [blue]{result['metadata_path']}[/blue]")
-
+        console.print(f"Successfully packaged agent: [bold green]{result['agent_name']}[/bold green]")
+        console.print(f"Workspace: [blue]{result['workspace_path']}[/blue]")
+        console.print(f"Metadata: [blue]{result['metadata_path']}[/blue]")
     except Exception as e:
-        console.print(f"❌ Error packaging agent: [red]{str(e)}[/red]")
+        console.print(f"Error packaging agent: [red]{str(e)}[/red]")
         if verbose:
             import traceback
             console.print(traceback.format_exc())
@@ -215,14 +214,13 @@ def build(
 
             result = runtime.build(workspace_path, **options)
 
-            progress.update(task, description="Build completed! ✅")
+            progress.update(task, description="Build completed!")
 
-        console.print(f"✅ Successfully built agent image: [bold green]{result['image_name']}[/bold green]")
-        console.print(f"🏷️  Tag: [blue]{result['image_tag']}[/blue]")
-        console.print(f"📏 Size: [blue]{result['image_size']}[/blue]")
-
+        console.print(f"Successfully built agent image: [bold green]{result['image_name']}[/bold green]")
+        console.print(f"Tag: [blue]{result['image_tag']}[/blue]")
+        console.print(f"Size: [blue]{result['image_size']}[/blue]")
     except Exception as e:
-        console.print(f"❌ Error building agent: [red]{str(e)}[/red]")
+        console.print(f"Error building agent: [red]{str(e)}[/red]")
         if verbose:
             import traceback
             console.print(traceback.format_exc())
@@ -340,22 +338,22 @@ def publish(
 
             result = runtime.publish(workspace_path, **options)
 
-            progress.update(task, description="Publishing completed! ✅")
+            progress.update(task, description="Publishing completed!")
 
-        console.print(f"✅ Successfully published agent: [bold green]{result['agent_name']}[/bold green]")
-        console.print(f"🆔 Agent ID: [blue]{result['agent_id']}[/blue]")
+        console.print(f"Successfully published agent: [bold green]{result['agent_name']}[/bold green]")
+        console.print(f"Agent ID: [blue]{result['agent_id']}[/blue]")
         if "agent_endpoint" in result:
-            console.print(f"🌐 Endpoint: [blue]{result['agent_endpoint']}[/blue]")
+            console.print(f"Endpoint: [blue]{result['agent_endpoint']}[/blue]")
 
         if provider == "agentcube" or provider == "k8s":
-            console.print(f"📦 Namespace: [blue]{result.get('namespace', 'agentrun')}[/blue]")
+            console.print(f"Namespace: [blue]{result.get('namespace', 'agentrun')}[/blue]")
             if "status" in result:
-                 console.print(f"📊 Status: [blue]{result['status']}[/blue]")
+                 console.print(f"Status: [blue]{result['status']}[/blue]")
             if "node_port" in result: # For standard K8s provider if it returns node_port
-                console.print(f"🔌 NodePort: [blue]{result['node_port']}[/blue]")
+                console.print(f"NodePort: [blue]{result['node_port']}[/blue]")
 
     except Exception as e:
-        console.print(f"❌ Error publishing agent: [red]{str(e)}[/red]")
+        console.print(f"Error publishing agent: [red]{str(e)}[/red]")
         if verbose:
             import traceback
             console.print(traceback.format_exc())
@@ -413,7 +411,7 @@ def invoke(
             try:
                 payload_data = json.loads(payload)
             except json.JSONDecodeError:
-                console.print(f"❌ Invalid JSON payload: [red]{payload}[/red]")
+                console.print(f"Invalid JSON payload: [red]{payload}[/red]")
                 raise typer.Exit(1)
 
             # Parse headers
@@ -426,13 +424,13 @@ def invoke(
 
             result = runtime.invoke(workspace_path, payload_data, headers)
 
-            progress.update(task, description="Invocation completed! ✅")
+            progress.update(task, description="Invocation completed!")
 
-        console.print(f"✅ Successfully invoked agent")
-        console.print(f"📤 Response: [green]{result}[/green]")
+        console.print(f"Successfully invoked agent")
+        console.print(f"Response: [green]{result}[/green]")
 
     except Exception as e:
-        console.print(f"❌ Error invoking agent: [red]{str(e)}[/red]")
+        console.print(f"Error invoking agent: [red]{str(e)}[/red]")
         if verbose:
             import traceback
             console.print(traceback.format_exc())
@@ -471,11 +469,11 @@ def status(
         status_info = runtime.get_status(workspace_path, provider=provider)
 
         if status_info.get("status") == "not_published":
-            console.print("❌ No agent found. Please publish an agent first.")
+            console.print("No agent found. Please publish an agent first.")
             raise typer.Exit(1)
 
         if status_info.get("status") == "error":
-            console.print(f"❌ Error checking status: {status_info.get('error')}")
+            console.print(f"Error checking status: {status_info.get('error')}")
             raise typer.Exit(1)
 
         # Display status information
@@ -524,7 +522,7 @@ def status(
         console.print(table)
 
     except Exception as e:
-        console.print(f"❌ Error checking status: [red]{str(e)}[/red]")
+        console.print(f"Error checking status: [red]{str(e)}[/red]")
         if verbose:
             import traceback
             console.print(traceback.format_exc())

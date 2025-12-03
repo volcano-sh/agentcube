@@ -60,9 +60,6 @@ func NewServer(config *Config) (*Server, error) {
 	if config.MaxConnsPerHost <= 0 {
 		config.MaxConnsPerHost = 10 // Default 10 connections per host
 	}
-	if config.SessionExpireDuration <= 0 {
-		config.SessionExpireDuration = 3600 // Default 1 hour
-	}
 
 	// Initialize Redis client
 	redisOptions, err := makeRedisOptions()

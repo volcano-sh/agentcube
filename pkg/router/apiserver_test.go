@@ -43,7 +43,6 @@ func TestNewServer(t *testing.T) {
 				RequestTimeout:        60,
 				MaxIdleConns:          200,
 				MaxConnsPerHost:       20,
-				SessionExpireDuration: 7200,
 				EnableRedis:           true,
 				Debug:                 true,
 			},
@@ -114,9 +113,6 @@ func TestNewServer(t *testing.T) {
 				if server.config.MaxConnsPerHost <= 0 {
 					t.Error("MaxConnsPerHost should have been set to default")
 				}
-				if server.config.SessionExpireDuration <= 0 {
-					t.Error("SessionExpireDuration should have been set to default")
-				}
 			}
 		})
 	}
@@ -158,10 +154,6 @@ func TestServer_DefaultValues(t *testing.T) {
 
 	if server.config.MaxConnsPerHost != 10 {
 		t.Errorf("Expected default MaxConnsPerHost 10, got %d", server.config.MaxConnsPerHost)
-	}
-
-	if server.config.SessionExpireDuration != 3600 {
-		t.Errorf("Expected default SessionExpireDuration 3600, got %d", server.config.SessionExpireDuration)
 	}
 }
 

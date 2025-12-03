@@ -79,7 +79,7 @@ func TestGetSandboxBySession_Success(t *testing.T) {
 		redisClient: r,
 	}
 
-	got, err := m.GetSandboxBySession("sess-1", "default", "test", "AgentRuntime")
+	got, err := m.GetSandboxBySession(context.Background(), "sess-1", "default", "test", "AgentRuntime")
 	if err != nil {
 		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestGetSandboxBySession_NotFound(t *testing.T) {
 		redisClient: r,
 	}
 
-	_, err := m.GetSandboxBySession("sess-1", "default", "test", "AgentRuntime")
+	_, err := m.GetSandboxBySession(context.Background(), "sess-1", "default", "test", "AgentRuntime")
 	if err == nil {
 		t.Fatalf("expected error for not found session")
 	}

@@ -89,9 +89,18 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+          env:
+            - name: REDIS_ADDR
+              value: "redis-service:6379"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: password
+            - name: WORKLOAD_MGR_URL
+              value: "http://agentcube-workload-manager:8080"
           args:
             - --port=8080
-            - --runtime-class-name=
             - --debug
           resources:
             requests:

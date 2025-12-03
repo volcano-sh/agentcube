@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/volcano-sh/agentcube/pkg/router"
 )
@@ -30,12 +29,7 @@ func main() {
 
 	// Create Router API server configuration
 	config := &router.Config{
-		Port: *port,
-		SandboxEndpoints: []string{
-			"http://sandbox-1:8080",
-			"http://sandbox-2:8080",
-			"http://sandbox-3:8080",
-		}, // Default sandbox endpoints, can be configured via env vars
+		Port:                  *port,
 		Debug:                 *debug,
 		EnableTLS:             *enableTLS,
 		TLSCert:               *tlsCert,
@@ -69,8 +63,10 @@ func main() {
 	select {
 	case <-ctx.Done():
 		log.Println("Received shutdown signal, shutting down gracefully...")
-		// Wait for server to finish shutting down
-		time.Sleep(2 * time.Second)
+		// Cancel the context to trigger server shutdown
+		cancel()
+		// Wait for server goroutine to exit after graceful shutdown is complete
+		<-errCh
 	case err := <-errCh:
 		log.Fatalf("Server error: %v", err)
 	}

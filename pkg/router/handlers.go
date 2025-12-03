@@ -42,19 +42,15 @@ func (s *Server) handleHealthReady(c *gin.Context) {
 	})
 }
 
-// handleAgentInvoke handles agent invocation requests
-func (s *Server) handleAgentInvoke(c *gin.Context) {
-	agentNamespace := c.Param("agentNamespace")
-	agentName := c.Param("agentName")
-	path := c.Param("path")
-
-	log.Printf("Agent invoke request: namespace=%s, agent=%s, path=%s", agentNamespace, agentName, path)
+// handleInvoke is a private helper function that handles invocation requests for both agents and code interpreters
+func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string) {
+	log.Printf("%s invoke request: namespace=%s, name=%s, path=%s", kind, namespace, name, path)
 
 	// Extract session ID from header
 	sessionID := c.GetHeader("x-agentcube-session-id")
 
 	// Get sandbox info from session manager
-	sandbox, err := s.sessionManager.GetSandboxBySession(sessionID, agentNamespace, agentName, "AgentRuntime")
+	sandbox, err := s.sessionManager.GetSandboxBySession(c.Request.Context(), sessionID, namespace, name, kind)
 	if err != nil {
 		log.Printf("Failed to get sandbox info: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -97,59 +93,20 @@ func (s *Server) handleAgentInvoke(c *gin.Context) {
 	s.forwardToSandbox(c, endpoint, path, sandbox.SessionID)
 }
 
+// handleAgentInvoke handles agent invocation requests
+func (s *Server) handleAgentInvoke(c *gin.Context) {
+	agentNamespace := c.Param("agentNamespace")
+	agentName := c.Param("agentName")
+	path := c.Param("path")
+	s.handleInvoke(c, agentNamespace, agentName, path, "AgentRuntime")
+}
+
 // handleCodeInterpreterInvoke handles code interpreter invocation requests
 func (s *Server) handleCodeInterpreterInvoke(c *gin.Context) {
 	namespace := c.Param("namespace")
 	name := c.Param("name")
 	path := c.Param("path")
-
-	log.Printf("Code interpreter invoke request: namespace=%s, name=%s, path=%s", namespace, name, path)
-
-	// Extract session ID from header
-	sessionID := c.GetHeader("x-agentcube-session-id")
-
-	// Get sandbox info from session manager
-	sandbox, err := s.sessionManager.GetSandboxBySession(sessionID, namespace, name, "CodeInterpreter")
-	if err != nil {
-		log.Printf("Failed to get sandbox info: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "internal server error",
-			"code":  "INTERNAL_ERROR",
-		})
-		return
-	}
-
-	// Extract endpoint from sandbox - find matching entry point by path
-	var endpoint string
-	for _, ep := range sandbox.EntryPoints {
-		if ep.Path == path || ep.Path == "" {
-			endpoint = ep.Endpoint
-			break
-		}
-	}
-
-	// If no matching endpoint found, use the first one as fallback
-	if endpoint == "" {
-		if len(sandbox.EntryPoints) == 0 {
-			log.Printf("No entry points found for sandbox: %s", sandbox.SandboxID)
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "internal server error",
-				"code":  "INTERNAL_ERROR",
-			})
-			return
-		}
-		endpoint = sandbox.EntryPoints[0].Endpoint
-	}
-
-	// Update session activity in Redis when receiving request
-	if sandbox.SessionID != "" && sandbox.SandboxID != "" {
-		if err := s.redisClient.UpdateSandboxLastActivity(c.Request.Context(), sandbox.SandboxID, time.Now()); err != nil {
-			log.Printf("Failed to update sandbox last activity for request: %v", err)
-		}
-	}
-
-	// Forward request to sandbox with session ID
-	s.forwardToSandbox(c, endpoint, path, sandbox.SessionID)
+	s.handleInvoke(c, namespace, name, path, "CodeInterpreter")
 }
 
 // forwardToSandbox forwards the request to the specified sandbox endpoint

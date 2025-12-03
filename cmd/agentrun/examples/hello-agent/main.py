@@ -134,19 +134,19 @@ def main():
     """Main function to run the Hello Agent."""
     port = int(os.environ.get('PORT', 8080))
 
-    print(f"🚀 Starting Hello Agent on port {port}")
-    print(f"📡 Health check: http://localhost:{port}/health")
-    print(f"👋 Greet endpoint: http://localhost:{port}/greet")
-    print(f"🎯 Agent endpoint: http://localhost:{port}/")
+    print(f"Starting Hello Agent on port {port}")
+    print(f"Health check: http://localhost:{port}/health")
+    print(f"Greet endpoint: http://localhost:{port}/greet")
+    print(f"Agent endpoint: http://localhost:{port}/")
 
     server_address = ('', port)
     httpd = HTTPServer(server_address, HelloAgentHandler)
 
     try:
-        print(f"✅ Hello Agent is running on port {port}")
+        print(f"Hello Agent is running on port {port}")
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print(f"\n🛑 Shutting down Hello Agent")
+        print(f"\nShutting down Hello Agent")
         httpd.server_close()
 
 

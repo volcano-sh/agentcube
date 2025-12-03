@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	redisv9 "github.com/redis/go-redis/v9"
+	"github.com/volcano-sh/agentcube/pkg/redis"
 )
 
 // Server is the main structure for Router apiserver
@@ -16,8 +19,26 @@ type Server struct {
 	engine         *gin.Engine
 	httpServer     *http.Server
 	sessionManager SessionManager
-	redisManager   RedisManager
-	semaphore      chan struct{} // For limiting concurrent requests
+	redisClient    redis.Client
+	semaphore      chan struct{}   // For limiting concurrent requests
+	httpTransport  *http.Transport // Reusable HTTP transport for connection pooling
+}
+
+// makeRedisOptions creates redis options from environment variables
+func makeRedisOptions() (*redisv9.Options, error) {
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		return nil, fmt.Errorf("missing env var REDIS_ADDR")
+	}
+	redisPassword := os.Getenv("REDIS_PASSWORD")
+	if redisPassword == "" {
+		return nil, fmt.Errorf("missing env var REDIS_PASSWORD")
+	}
+	redisOptions := &redisv9.Options{
+		Addr:     redisAddr,
+		Password: redisPassword,
+	}
+	return redisOptions, nil
 }
 
 // NewServer creates a new Router API server instance
@@ -43,11 +64,18 @@ func NewServer(config *Config) (*Server, error) {
 		config.SessionExpireDuration = 3600 // Default 1 hour
 	}
 
-	// Create session manager (using mock implementation)
-	sessionManager := NewMockSessionManager(config.SandboxEndpoints)
+	// Initialize Redis client
+	redisOptions, err := makeRedisOptions()
+	if err != nil {
+		return nil, fmt.Errorf("make redis options failed: %w", err)
+	}
+	redisClient := redis.NewClient(redisOptions)
 
-	// Create Redis manager (using mock implementation)
-	redisManager := NewMockRedisManager(config.EnableRedis)
+	// Create session manager with redis client
+	sessionManager, err := NewSessionManager(redisClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create session manager: %w", err)
+	}
 
 	// Set Gin mode based on environment
 	if config.Debug {
@@ -56,11 +84,21 @@ func NewServer(config *Config) (*Server, error) {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
+	// Create a reusable HTTP transport for connection pooling
+	httpTransport := &http.Transport{
+		MaxIdleConns:        config.MaxIdleConns,
+		MaxIdleConnsPerHost: config.MaxConnsPerHost,
+		IdleConnTimeout:     90 * time.Second,
+		DisableCompression:  false,
+		ForceAttemptHTTP2:   true,
+	}
+
 	server := &Server{
 		config:         config,
 		sessionManager: sessionManager,
-		redisManager:   redisManager,
+		redisClient:    redisClient,
 		semaphore:      make(chan struct{}, config.MaxConcurrentRequests),
+		httpTransport:  httpTransport,
 	}
 
 	// Setup routes

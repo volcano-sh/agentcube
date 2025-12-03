@@ -54,7 +54,7 @@ func (s *Server) handleAgentInvoke(c *gin.Context) {
 	sessionID := c.GetHeader("x-agentcube-session-id")
 
 	// Get sandbox info from session manager
-	endpoint, newSessionID, err := s.sessionManager.GetSandboxInfoBySessionId(sessionID, agentNamespace, agentName, KindAgent)
+	sandbox, err := s.sessionManager.GetSandboxBySession(sessionID, agentNamespace, agentName, "AgentRuntime")
 	if err != nil {
 		log.Printf("Failed to get sandbox info: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -64,15 +64,37 @@ func (s *Server) handleAgentInvoke(c *gin.Context) {
 		return
 	}
 
+	// Extract endpoint from sandbox - find matching entry point by path
+	var endpoint string
+	for _, ep := range sandbox.EntryPoints {
+		if ep.Path == path || ep.Path == "" {
+			endpoint = ep.Endpoint
+			break
+		}
+	}
+
+	// If no matching endpoint found, use the first one as fallback
+	if endpoint == "" {
+		if len(sandbox.EntryPoints) == 0 {
+			log.Printf("No entry points found for sandbox: %s", sandbox.SandboxID)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "internal server error",
+				"code":  "INTERNAL_ERROR",
+			})
+			return
+		}
+		endpoint = sandbox.EntryPoints[0].Endpoint
+	}
+
 	// Update session activity in Redis when receiving request
-	if newSessionID != "" {
-		if err := s.redisManager.UpdateSessionActivity(newSessionID); err != nil {
-			log.Printf("Failed to update session activity for request: %v", err)
+	if sandbox.SessionID != "" && sandbox.SandboxID != "" {
+		if err := s.redisClient.UpdateSandboxLastActivity(c.Request.Context(), sandbox.SandboxID, time.Now()); err != nil {
+			log.Printf("Failed to update sandbox last activity for request: %v", err)
 		}
 	}
 
 	// Forward request to sandbox with session ID
-	s.forwardToSandbox(c, endpoint, path, newSessionID)
+	s.forwardToSandbox(c, endpoint, path, sandbox.SessionID)
 }
 
 // handleCodeInterpreterInvoke handles code interpreter invocation requests
@@ -87,7 +109,7 @@ func (s *Server) handleCodeInterpreterInvoke(c *gin.Context) {
 	sessionID := c.GetHeader("x-agentcube-session-id")
 
 	// Get sandbox info from session manager
-	endpoint, newSessionID, err := s.sessionManager.GetSandboxInfoBySessionId(sessionID, namespace, name, KindCodeInterpreter)
+	sandbox, err := s.sessionManager.GetSandboxBySession(sessionID, namespace, name, "CodeInterpreter")
 	if err != nil {
 		log.Printf("Failed to get sandbox info: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -97,15 +119,37 @@ func (s *Server) handleCodeInterpreterInvoke(c *gin.Context) {
 		return
 	}
 
+	// Extract endpoint from sandbox - find matching entry point by path
+	var endpoint string
+	for _, ep := range sandbox.EntryPoints {
+		if ep.Path == path || ep.Path == "" {
+			endpoint = ep.Endpoint
+			break
+		}
+	}
+
+	// If no matching endpoint found, use the first one as fallback
+	if endpoint == "" {
+		if len(sandbox.EntryPoints) == 0 {
+			log.Printf("No entry points found for sandbox: %s", sandbox.SandboxID)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "internal server error",
+				"code":  "INTERNAL_ERROR",
+			})
+			return
+		}
+		endpoint = sandbox.EntryPoints[0].Endpoint
+	}
+
 	// Update session activity in Redis when receiving request
-	if newSessionID != "" {
-		if err := s.redisManager.UpdateSessionActivity(newSessionID); err != nil {
-			log.Printf("Failed to update session activity for request: %v", err)
+	if sandbox.SessionID != "" && sandbox.SandboxID != "" {
+		if err := s.redisClient.UpdateSandboxLastActivity(c.Request.Context(), sandbox.SandboxID, time.Now()); err != nil {
+			log.Printf("Failed to update sandbox last activity for request: %v", err)
 		}
 	}
 
 	// Forward request to sandbox with session ID
-	s.forwardToSandbox(c, endpoint, path, newSessionID)
+	s.forwardToSandbox(c, endpoint, path, sandbox.SessionID)
 }
 
 // forwardToSandbox forwards the request to the specified sandbox endpoint
@@ -121,17 +165,11 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 		return
 	}
 
-	// Create reverse proxy with optimized transport
+	// Create reverse proxy with reusable transport
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 
-	// Configure HTTP transport for better concurrency
-	proxy.Transport = &http.Transport{
-		MaxIdleConns:        s.config.MaxIdleConns,
-		MaxIdleConnsPerHost: s.config.MaxConnsPerHost,
-		IdleConnTimeout:     90 * time.Second,
-		DisableCompression:  false,
-		ForceAttemptHTTP2:   true,
-	}
+	// Use the shared HTTP transport for connection pooling
+	proxy.Transport = s.httpTransport
 
 	// Customize the director to modify the request
 	originalDirector := proxy.Director
@@ -186,11 +224,6 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 		// Always set session ID in response header
 		if sessionID != "" {
 			resp.Header.Set("x-agentcube-session-id", sessionID)
-
-			// Update session activity in Redis when returning response
-			if err := s.redisManager.UpdateSessionActivity(sessionID); err != nil {
-				log.Printf("Failed to update session activity for response: %v", err)
-			}
 		}
 		return nil
 	}

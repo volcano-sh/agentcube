@@ -52,12 +52,9 @@ func main() {
 		log.Fatalf("Failed to create Router API server: %v", err)
 	}
 
-	// Setup signal handling
-	ctx, cancel := context.WithCancel(context.Background())
+	// Setup signal handling with context cancellation
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
 	// Start Router API server in goroutine
 	errCh := make(chan error, 1)
@@ -70,10 +67,10 @@ func main() {
 
 	// Wait for signal or error
 	select {
-	case <-sigCh:
+	case <-ctx.Done():
 		log.Println("Received shutdown signal, shutting down gracefully...")
-		cancel()
-		time.Sleep(2 * time.Second) // Give server time to shutdown gracefully
+		// Wait for server to finish shutting down
+		time.Sleep(2 * time.Second)
 	case err := <-errCh:
 		log.Fatalf("Server error: %v", err)
 	}

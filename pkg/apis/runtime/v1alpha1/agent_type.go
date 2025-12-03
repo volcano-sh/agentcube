@@ -19,7 +19,7 @@ type AgentRuntime struct {
 
 type AgentRuntimeSpec struct {
 	// Ports is a list of ports that the agent runtime will expose.
-	Ports []TargetPort
+	Ports []TargetPort `json:"targetPort"`
 
 	// PodTemplate describes the template that will be used to create an agent sandbox.
 	// +kubebuilder:validation:Required

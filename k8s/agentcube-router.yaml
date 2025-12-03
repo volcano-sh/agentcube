@@ -41,6 +41,15 @@ rules:
   - apiGroups: ["runtime.agentcube.volcano.sh"]
     resources: ["codeinterpreters/finalizers"]
     verbs: ["update"]
+  - apiGroups: ["runtime.agentcube.volcano.sh"]
+    resources: ["agentruntimes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["runtime.agentcube.volcano.sh"]
+    resources: ["agentruntimes/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["runtime.agentcube.volcano.sh"]
+    resources: ["agentruntimes/finalizers"]
+    verbs: ["update"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
@@ -91,12 +100,9 @@ spec:
               protocol: TCP
           env:
             - name: REDIS_ADDR
-              value: "redis-service:6379"
+              value: "127.0.0.1:6379"
             - name: REDIS_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: redis-secret
-                  key: password
+              value: ""
             - name: WORKLOAD_MGR_URL
               value: "http://agentcube-workload-manager:8080"
           args:

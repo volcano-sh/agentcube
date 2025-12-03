@@ -343,28 +343,48 @@ func ListFilesHandler(c *gin.Context) {
 	})
 }
 
+var workspaceDir string
+
+// SetWorkspace sets the global workspace directory
+func SetWorkspace(dir string) {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		log.Printf("Warning: Failed to resolve absolute path for workspace '%s': %v", dir, err)
+		workspaceDir = dir // Fallback to provided path
+	} else {
+		workspaceDir = absDir
+	}
+}
+
+// GetWorkspace returns the current workspace directory
+func GetWorkspace() string {
+	return workspaceDir
+}
+
 // sanitizePath ensures path is within allowed scope, preventing directory traversal attacks
 func sanitizePath(p string) (string, error) {
-	// Clean path
+	if workspaceDir == "" {
+		return "", fmt.Errorf("workspace directory not initialized")
+	}
+
 	cleanPath := filepath.Clean(p)
 
-	// If relative path, convert to absolute based on current working directory
-	if !filepath.IsAbs(cleanPath) {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return "", fmt.Errorf("failed to get current working directory: %w", err)
-		}
-		cleanPath = filepath.Join(cwd, cleanPath)
+	if filepath.IsAbs(cleanPath) {
+		cleanPath = strings.TrimPrefix(cleanPath, "/")
 	}
 
-	// Get absolute path to ensure normalization
-	absPath, err := filepath.Abs(cleanPath)
+	fullPath := filepath.Join(workspaceDir, cleanPath)
+
+	absPath, err := filepath.Abs(fullPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to get absolute path: %w", err)
+		return "", fmt.Errorf("failed to resolve absolute path: %w", err)
 	}
 
-	// After filepath.Abs and filepath.Clean, the path is already normalized
-	// and safe from traversal attacks. The combination of Clean and Abs
-	// resolves all ".." references and produces a canonical absolute path.
+	cleanWorkspace := filepath.Clean(workspaceDir)
+	sep := string(os.PathSeparator)
+	if !strings.HasPrefix(absPath, cleanWorkspace+sep) && absPath != cleanWorkspace {
+		return "", fmt.Errorf("access denied: path '%s' escapes workspace jail '%s'", p, cleanWorkspace)
+	}
+
 	return absPath, nil
 }

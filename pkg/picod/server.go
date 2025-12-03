@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -15,6 +16,7 @@ var startTime = time.Now() // Server start time
 type Config struct {
 	Port         int    `json:"port"`
 	BootstrapKey string `json:"bootstrap_key"`
+	Workspace    string `json:"workspace"`
 }
 
 // Server defines the PicoD HTTP server
@@ -26,6 +28,19 @@ type Server struct {
 
 // NewServer creates a new PicoD server instance
 func NewServer(config Config) *Server {
+	// Initialize global workspace directory
+	if config.Workspace != "" {
+		SetWorkspace(config.Workspace)
+	} else {
+		// Default to current working directory if not specified
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Printf("Warning: Failed to get current working directory: %v\n", err)
+		} else {
+			SetWorkspace(cwd)
+		}
+	}
+
 	// Disable Gin debug output in production mode
 	gin.SetMode(gin.ReleaseMode)
 

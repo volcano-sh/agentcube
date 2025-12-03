@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -62,6 +63,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 	config := Config{
 		Port:         0, // Test server handles port
 		BootstrapKey: bootstrapPubStr,
+		Workspace:    tmpDir, // Set workspace to temp dir
 	}
 
 	server := NewServer(config)
@@ -272,6 +274,41 @@ func TestPicoD_EndToEnd(t *testing.T) {
 			}
 		}
 		assert.True(t, found, "test.txt should be found in listing")
+
+		// 6. Jail Escape Attempt (Should Fail)
+		// Attempt to access /etc/passwd or relative ../../../
+		escapeReq := UploadFileRequest{
+			Path:    "../outside.txt",
+			Content: contentB64,
+		}
+		escapeBody, _ := json.Marshal(escapeReq)
+		req, _ = http.NewRequest("POST", ts.URL+"/api/files", bytes.NewBuffer(escapeBody))
+		req.Header = getAuthHeaders(escapeBody)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err = client.Do(req)
+		require.NoError(t, err)
+		// Expect Bad Request or similar because sanitizePath should block it
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+		// Attempt absolute path outside workspace
+		absEscapeReq := UploadFileRequest{
+			Path:    "/etc/passwd",
+			Content: contentB64,
+		}
+		absEscapeBody, _ := json.Marshal(absEscapeReq)
+		req, _ = http.NewRequest("POST", ts.URL+"/api/files", bytes.NewBuffer(absEscapeBody))
+		req.Header = getAuthHeaders(absEscapeBody)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err = client.Do(req)
+		require.NoError(t, err)
+		// Since we trim leading /, "/etc/passwd" becomes "{workspace}/etc/passwd", which IS allowed.
+		// This is the correct behavior: treating absolute paths as relative to workspace root.
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// Verify it was written inside workspace, not actual /etc/passwd
+		_, err = os.Stat(filepath.Join(tmpDir, "etc", "passwd"))
+		assert.NoError(t, err, "File should be created inside workspace")
+		// Actual /etc/passwd should be untouched (obviously we can't check that easily without root, but logic holds)
 	})
 
 	t.Run("Security Checks", func(t *testing.T) {

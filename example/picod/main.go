@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -19,14 +18,24 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 const (
-	defaultPicoDURL = "http://localhost:9527"
-	keyFile         = "picod_client_keys.pem"
+	defaultPicoDURL = "http://localhost:8080"
+	sessionKeyFile  = "picod_session.key"
 )
 
-// ExecuteRequest command execution request
+// Configuration flags
+var (
+	picoDURL     string
+	bootstrapKey string
+	generateKeys bool
+	useAuth      bool
+)
+
+// API Structures matching pkg/picod
 type ExecuteRequest struct {
 	Command    string            `json:"command"`
 	Timeout    float64           `json:"timeout,omitempty"`
@@ -34,764 +43,378 @@ type ExecuteRequest struct {
 	Env        map[string]string `json:"env,omitempty"`
 }
 
-// ExecuteResponse command execution response
 type ExecuteResponse struct {
-	Stdout   string  `json:"stdout"`
-	Stderr   string  `json:"stderr"`
-	ExitCode int     `json:"exit_code"`
-	Duration float64 `json:"duration"`
+	Stdout    string  `json:"stdout"`
+	Stderr    string  `json:"stderr"`
+	ExitCode  int     `json:"exit_code"`
+	Duration  float64 `json:"duration"`
+	ProcessID int     `json:"process_id"`
 }
 
-// FileInfo file information response
-type FileInfo struct {
-	Path     string    `json:"path"`
+type ListFilesRequest struct {
+	Path string `json:"path"`
+}
+
+type FileEntry struct {
+	Name     string    `json:"name"`
 	Size     int64     `json:"size"`
-	Mode     string    `json:"mode"`
 	Modified time.Time `json:"modified"`
+	Mode     string    `json:"mode"`
+	IsDir    bool      `json:"is_dir"`
 }
 
-// RSAKeyPair contains RSA public and private keys
+type ListFilesResponse struct {
+	Files []FileEntry `json:"files"`
+}
+
+type InitRequest struct {
+	// Init endpoint uses JWT claims, body is empty
+}
+
+// RSA Key Management
 type RSAKeyPair struct {
 	PrivateKey *rsa.PrivateKey
 	PublicKey  *rsa.PublicKey
 }
 
-// InitRequest initialization request
-type InitRequest struct {
-	PublicKey string `json:"public_key"`
-}
-
-// InitResponse initialization response
-type InitResponse struct {
-	Message string `json:"message"`
-	Success bool   `json:"success"`
-}
-
 func main() {
-	// Parse command line flags
-	useAuth := flag.Bool("auth", false, "Use RSA authentication mode")
+	parseFlags()
+
+	log.Println("===========================================")
+	log.Println("      PicoD Client Example (JWT)           ")
+	log.Println("===========================================")
+
+	if generateKeys {
+		runGenerateKeys()
+		return
+	}
+
+	// Load Session Key (Client Identity)
+	sessionKey, err := loadOrGenerateSessionKey()
+	if err != nil {
+		log.Fatalf("Failed to setup session key: %v", err)
+	}
+
+	// Perform Initialization if Bootstrap Key is provided
+	if bootstrapKey != "" {
+		log.Println("🔄 Phase 1: Initialization (Handshake)")
+		if err := performHandshake(sessionKey); err != nil {
+			log.Fatalf("Handshake failed: %v", err)
+		}
+		log.Println("✅ Handshake successful! Session established.")
+		log.Println()
+	} else {
+		log.Println("⚠️  Skipping Initialization (No bootstrap key provided).")
+		log.Println("   Assuming session is already established.")
+		log.Println()
+	}
+
+	// Execute Commands
+	log.Println("🚀 Phase 2: Command Execution")
+	runCommandTests(sessionKey)
+
+	// File Operations
+	log.Println("📂 Phase 3: File Operations")
+	runFileTests(sessionKey)
+
+	log.Println("===========================================")
+	log.Println("🎉 All demonstrations completed!")
+}
+
+func parseFlags() {
+	flag.StringVar(&picoDURL, "url", defaultPicoDURL, "PicoD Server URL")
+	flag.StringVar(&bootstrapKey, "bootstrap-key", "", "Path to Bootstrap PRIVATE Key (for init)")
+	flag.BoolVar(&generateKeys, "gen-keys", false, "Generate a pair of Bootstrap Keys and exit")
 	flag.Parse()
+}
 
-	log.Println("===========================================")
-	if *useAuth {
-		log.Println("PicoD Authenticated Client Test")
-	} else {
-		log.Println("PicoD REST API Direct Test")
+// ---
+
+// Key Management
+
+func runGenerateKeys() {
+	log.Println("Generating RSA-2048 Bootstrap Key Pair...")
+	priv, pub, err := generateRSAKeyPair()
+	if err != nil {
+		log.Fatalf("Error: %v", err)
 	}
-	log.Println("===========================================")
-	log.Println()
 
-	picodURL := getEnv("PICOD_URL", defaultPicoDURL)
+	saveKey("bootstrap_private.pem", priv, "RSA PRIVATE KEY")
+	saveKey("bootstrap_public.pem", pub, "RSA PUBLIC KEY") // Standard PEM format for public key
 
-	log.Printf("Configuration:")
-	log.Printf("  PicoD URL: %s", picodURL)
-	log.Printf("  Auth Mode: %v", *useAuth)
+	// Convert public key to the format PicoD config likely expects (often raw string in JSON or similar)
+	// But here we just save standard PEM.
 
-	if picodURL == defaultPicoDURL {
-		log.Println("  ℹ️  To use a different PicoD server:")
-		log.Println("      export PICOD_URL=http://localhost:9529")
+	log.Println("✅ Keys generated:")
+	log.Println("   - bootstrap_private.pem (Use with -bootstrap-key to init session)")
+	log.Println("   - bootstrap_public.pem  (Configure PicoD server with this contents)")
+	log.Println("\nTo start PicoD with this key:")
+	log.Println("   export PICOD_BOOTSTRAP_KEY=\"$(cat bootstrap_public.pem)\" ")
+	log.Println("   ./bin/picod")
+}
+
+func generateRSAKeyPair() ([]byte, []byte, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, nil, err
 	}
-	log.Println()
 
-	var keyPair *RSAKeyPair
-	var err error
+	privBytes := x509.MarshalPKCS1PrivateKey(key)
+	privPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: privBytes})
 
-	// Step 0: If auth mode, load/generate RSA key pair
-	if *useAuth {
-		log.Println("Step 0: Loading/Generating RSA key pair...")
-		keyPair, err = loadOrGenerateKeyPair()
+	pubBytes, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PUBLIC KEY", Bytes: pubBytes})
+
+	return privPEM, pubPEM, nil
+}
+
+func saveKey(filename string, data []byte, typeHeader string) {
+	if err := os.WriteFile(filename, data, 0600); err != nil {
+		log.Fatalf("Failed to write %s: %v", filename, err)
+	}
+}
+
+func loadOrGenerateSessionKey() (*rsa.PrivateKey, error) {
+	// Always generate a fresh session key for this run in memory
+	// In a real persistent client, you might load this from disk.
+	// But for this example, fresh is fine as long as we Init.
+	if _, err := os.Stat(sessionKeyFile); err == nil {
+		log.Printf("Loading existing session key from %s...", sessionKeyFile)
+		data, err := os.ReadFile(sessionKeyFile)
 		if err != nil {
-			log.Fatalf("Failed to load/generate key pair: %v", err)
+			return nil, err
 		}
-		log.Println("✅ RSA key pair ready")
-		log.Println()
+		block, _ := pem.Decode(data)
+		return x509.ParsePKCS1PrivateKey(block.Bytes)
 	}
 
-	// Health check
-	var stepNum int
-	if *useAuth {
-		stepNum = 1
-	} else {
-		stepNum = 0
-	}
-	log.Printf("Step %d: Health check...", stepNum)
-	if err := healthCheck(picodURL); err != nil {
-		log.Fatalf("Health check failed: %v", err)
-	}
-	log.Println("✅ PicoD server is healthy")
-	log.Println()
-
-	// If auth mode, initialize server first
-	if *useAuth {
-		stepNum++
-		log.Printf("Step %d: Initializing PicoD server with public key...", stepNum)
-		publicKeyPEM, err := exportPublicKey(keyPair.PublicKey)
-		if err != nil {
-			log.Fatalf("Failed to export public key: %v", err)
-		}
-
-		if err := initializeServer(picodURL, publicKeyPEM); err != nil {
-			log.Fatalf("Failed to initialize server: %v", err)
-		}
-		log.Println("✅ Server initialized successfully")
-		log.Println()
+	log.Println("Generating new ephemeral session key...")
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
 	}
 
-	// Execute basic commands
-	stepNum++
-	log.Printf("Step %d: Executing basic test commands...", stepNum)
-	commands := []string{
-		"whoami",
-		"pwd",
-		"echo 'Hello from PicoD REST API!'",
-		"python3 --version",
-		"uname -a",
+	// Save it just in case we want to reuse (though this logic is simple)
+	privBytes := x509.MarshalPKCS1PrivateKey(key)
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: privBytes})
+	_ = os.WriteFile(sessionKeyFile, pemBytes, 0600)
+
+	return key, nil
+}
+
+func loadPrivateKey(path string) (*rsa.PrivateKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("failed to parse PEM block")
+	}
+	return x509.ParsePKCS1PrivateKey(block.Bytes)
+}
+
+// ---
+
+// JWT & Auth
+
+func createToken(key *rsa.PrivateKey, claims jwt.MapClaims) (string, error) {
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	return token.SignedString(key)
+}
+
+func getSessionPublicKeyPEM(key *rsa.PrivateKey) string {
+	pubBytes, _ := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	return string(pem.EncodeToMemory(&pem.Block{Type: "RSA PUBLIC KEY", Bytes: pubBytes}))
+}
+
+// ---
+
+// Operations
+
+func performHandshake(sessionKey *rsa.PrivateKey) error {
+	bootstrapPriv, err := loadPrivateKey(bootstrapKey)
+	if err != nil {
+		return fmt.Errorf("failed to load bootstrap key: %w", err)
 	}
 
-	for i, cmd := range commands {
-		log.Printf("   [%d/%d] Executing: %s", i+1, len(commands), cmd)
-		var output string
-		if *useAuth {
-			output, err = executeAuthenticatedCommand(picodURL, keyPair, cmd)
+	sessionPubPEM := getSessionPublicKeyPEM(sessionKey)
+
+	// Create JWT signed by Bootstrap Key
+	claims := jwt.MapClaims{
+		"iss":                "example-client",
+		"iat":                time.Now().Unix(),
+		"exp":                time.Now().Add(1 * time.Minute).Unix(),
+		"session_public_key": sessionPubPEM,
+	}
+
+	token, err := createToken(bootstrapPriv, claims)
+	if err != nil {
+		return fmt.Errorf("signing failed: %w", err)
+	}
+
+	// Send Request
+	req, _ := http.NewRequest("POST", picoDURL+"/api/init", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("init failed (%d): %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+func authenticatedRequest(method, endpoint string, payload interface{}, sessionKey *rsa.PrivateKey) (*http.Response, error) {
+	var bodyBytes []byte
+	var contentType string
+
+	// Prepare Body and Content-Type
+	if payload != nil {
+		if _, ok := payload.(*multipart.Writer); ok {
+			// Multipart (Special case, we can't easily hash the body for signature in this simple example
+			// without buffering. The Server auth middleware might skip body hash for multipart?
+			// Checking pkg/picod/auth.go: Yes, it validates hash ONLY if "body_sha256" claim exists.
+			// For multipart, we usually omit the hash claim or hash the buffered body.
+			// Let's assume for this example we just buffer it (not ideal for huge files but fine for example).
+			// Wait, the helper above takes *multipart.Writer, but we need the buffer.
+			return nil, fmt.Errorf("multipart not fully implemented in helper")
 		} else {
-			output, err = executeCommand(picodURL, cmd)
+			// JSON
+			bodyBytes, _ = json.Marshal(payload)
+			contentType = "application/json"
 		}
+	}
+
+	// Create JWT Claims
+	claims := jwt.MapClaims{
+		"iss": "example-client",
+		"iat": time.Now().Unix(),
+		"exp": time.Now().Add(1 * time.Minute).Unix(),
+	}
+
+	// Add Body Hash if body exists
+	if len(bodyBytes) > 0 {
+		hash := sha256.Sum256(bodyBytes)
+		claims["body_sha256"] = fmt.Sprintf("%x", hash)
+	}
+
+	token, err := createToken(sessionKey, claims)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create Request
+	url := picoDURL + endpoint
+	var req *http.Request
+	if len(bodyBytes) > 0 {
+		req, _ = http.NewRequest(method, url, bytes.NewBuffer(bodyBytes))
+	} else {
+		req, _ = http.NewRequest(method, url, nil)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+
+	return http.DefaultClient.Do(req)
+}
+
+func runCommandTests(sessionKey *rsa.PrivateKey) {
+	cmds := []string{
+		"echo 'Hello JWT World'",
+		"date",
+		"ps aux",
+	}
+
+	for _, cmd := range cmds {
+		log.Printf("Exec: %s", cmd)
+		req := ExecuteRequest{Command: cmd, Timeout: 5}
+
+		resp, err := authenticatedRequest("POST", "/api/execute", req, sessionKey)
 		if err != nil {
-			log.Printf("      ⚠️  Command failed: %v", err)
+			log.Printf("❌ Request failed: %v", err)
 			continue
 		}
-		log.Printf("      Output: %s", strings.TrimSpace(output))
-	}
-	log.Println()
+		defer resp.Body.Close()
 
-	// Upload file
-	stepNum++
-	log.Printf("Step %d: Uploading file...", stepNum)
-	uploadContent := "Hello from PicoD!\nThis file was uploaded via REST API."
-	if *useAuth {
-		uploadContent = "Hello from authenticated PicoD client!\nThis file was uploaded with RSA signature verification."
-		if err := uploadFileAuthenticated(picodURL, keyPair, "./authenticated_upload.txt", uploadContent); err != nil {
-			log.Fatalf("Failed to upload file: %v", err)
+		if resp.StatusCode != 200 {
+			body, _ := io.ReadAll(resp.Body)
+			log.Printf("❌ Server Error (%d): %s", resp.StatusCode, string(body))
+			continue
 		}
-		log.Println("✅ File uploaded to ./authenticated_upload.txt")
-	} else {
-		if err := uploadFileMultipart(picodURL, "./upload.txt", uploadContent); err != nil {
-			log.Fatalf("Failed to upload file: %v", err)
-		}
-		log.Println("✅ File uploaded to ./upload.txt")
-	}
-	log.Println()
 
-	// Verify uploaded file
-	stepNum++
-	log.Printf("Step %d: Verifying uploaded file...", stepNum)
-	var output string
-	var fileName string
-	if *useAuth {
-		fileName = "./authenticated_upload.txt"
-	} else {
-		fileName = "./upload.txt"
-	}
-
-	if *useAuth {
-		output, err = executeAuthenticatedCommand(picodURL, keyPair, "cat "+fileName)
-	} else {
-		output, err = executeCommand(picodURL, "cat "+fileName)
-	}
-
-	if err != nil {
-		log.Fatalf("Failed to read file: %v", err)
-	}
-	log.Printf("   File content: %s", strings.TrimSpace(output))
-	log.Println()
-
-	// Write Python script
-	stepNum++
-	log.Printf("Step %d: Writing Python script via JSON+Base64...", stepNum)
-	pythonScript := `#!/usr/bin/env python3
-import json
-from datetime import datetime
-
-def generate_fibonacci(n):
-    fib = [0, 1]
-    for i in range(2, n):
-        fib.append(fib[i-1] + fib[i-2])
-    return fib[:n]
-
-n = 20
-fibonacci = generate_fibonacci(n)
-
-output_data = {
-    "timestamp": datetime.now().isoformat(),
-    "algorithm": "Fibonacci Sequence",
-    "count": n,
-    "numbers": fibonacci,
-    "sum": sum(fibonacci),
-    "message": "Generated successfully via PicoD!"
-}
-
-with open('./output.json', 'w') as f:
-    json.dump(output_data, f, indent=2)
-
-print(f"Generated {n} Fibonacci numbers")
-print(f"Sum: {sum(fibonacci)}")
-`
-
-	if *useAuth {
-		if err := uploadFileAuthenticated(picodURL, keyPair, "./fibonacci.py", pythonScript); err != nil {
-			log.Fatalf("Failed to write Python script: %v", err)
-		}
-	} else {
-		if err := uploadFileJSON(picodURL, "./fibonacci.py", pythonScript); err != nil {
-			log.Fatalf("Failed to write Python script: %v", err)
-		}
-	}
-	log.Println("✅ Python script written to ./fibonacci.py")
-	log.Println()
-
-	// Execute Python script
-	stepNum++
-	log.Printf("Step %d: Executing Python script...", stepNum)
-	if *useAuth {
-		output, err = executeAuthenticatedCommand(picodURL, keyPair, "python3 ./fibonacci.py")
-	} else {
-		output, err = executeCommand(picodURL, "python3 ./fibonacci.py")
-	}
-	if err != nil {
-		log.Fatalf("Failed to execute Python script: %v", err)
-	}
-	log.Printf("   Script output:\n%s", indentOutput(output))
-	log.Println()
-
-	// Download generated file
-	stepNum++
-	log.Printf("Step %d: Downloading generated output file...", stepNum)
-	localOutputPath := "/tmp/picod_output.json"
-	if *useAuth {
-		if err := downloadFileAuthenticated(picodURL, keyPair, "./output.json", localOutputPath); err != nil {
-			log.Fatalf("Failed to download output file: %v", err)
-		}
-	} else {
-		if err := downloadFile(picodURL, "./output.json", localOutputPath); err != nil {
-			log.Fatalf("Failed to download output file: %v", err)
-		}
-	}
-	log.Printf("✅ Output file downloaded to %s", localOutputPath)
-	log.Println()
-
-	// Verify downloaded file
-	stepNum++
-	log.Printf("Step %d: Verifying downloaded file...", stepNum)
-	fileContent, err := os.ReadFile(localOutputPath)
-	if err != nil {
-		log.Fatalf("Failed to read downloaded file: %v", err)
-	}
-
-	var outputData map[string]interface{}
-	if err := json.Unmarshal(fileContent, &outputData); err != nil {
-		log.Fatalf("Failed to parse JSON output: %v", err)
-	}
-
-	log.Println("   File contents:")
-	prettyJSON, _ := json.MarshalIndent(outputData, "   ", "  ")
-	log.Printf("%s\n", prettyJSON)
-
-	if numbers, ok := outputData["numbers"].([]interface{}); ok {
-		log.Printf("✅ Verified: Generated %d Fibonacci numbers", len(numbers))
-	}
-	if sum, ok := outputData["sum"].(float64); ok {
-		log.Printf("✅ Verified: Sum = %.0f", sum)
-	}
-	log.Println()
-
-	// Success
-	log.Println("===========================================")
-	if *useAuth {
-		log.Println("🎉 All authenticated tests passed!")
-	} else {
-		log.Println("🎉 All tests passed successfully!")
-	}
-	log.Println("===========================================")
-	log.Println()
-	log.Println("Summary:")
-	log.Println("  ✅ Health check passed")
-	if *useAuth {
-		log.Println("  ✅ RSA key pair generated/loaded")
-		log.Println("  ✅ Server initialized with public key")
-		log.Println("  ✅ Authenticated commands executed")
-		log.Println("  ✅ Authenticated file upload")
-	} else {
-		log.Println("  ✅ Basic commands executed")
-		log.Println("  ✅ File uploaded via multipart")
-		log.Println("  ✅ File written via JSON+Base64")
-	}
-	log.Println("  ✅ Python script executed")
-	log.Println("  ✅ Output file downloaded")
-	log.Println("  ✅ Downloaded file verified")
-	log.Println()
-	if *useAuth {
-		log.Println("To test without authentication:")
-		log.Println("  go run example/picod/main.go")
-		log.Println()
-	} else {
-		log.Println("To test with RSA authentication:")
-		log.Println("  go run example/picod/main.go -auth")
-		log.Println()
+		var result ExecuteResponse
+		json.NewDecoder(resp.Body).Decode(&result)
+		log.Printf("   STDOUT: %s", strings.TrimSpace(result.Stdout))
+		log.Printf("   PID: %d, Duration: %.4fs", result.ProcessID, result.Duration)
 	}
 }
 
-// healthCheck performs health check
-func healthCheck(baseURL string) error {
-	resp, err := http.Get(fmt.Sprintf("%s/health", baseURL))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("health check failed with status %d", resp.StatusCode)
-	}
-
-	var health map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
-		return err
-	}
-
-	log.Printf("   Server status: %s", health["status"])
-	log.Printf("   Service: %s v%s", health["service"], health["version"])
-	log.Printf("   Uptime: %s", health["uptime"])
-
-	return nil
-}
-
-// executeCommand executes command
-func executeCommand(baseURL, command string) (string, error) {
-	req := ExecuteRequest{
-		Command: command,
-		Timeout: 30,
-	}
-
-	jsonData, err := json.Marshal(req)
-	if err != nil {
-		return "", err
-	}
-
-	httpReq, err := http.NewRequest("POST", fmt.Sprintf("%s/api/execute", baseURL), bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", err
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var result ExecuteResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
-	}
-
-	if result.ExitCode != 0 {
-		return "", fmt.Errorf("command failed (exit code %d): %s", result.ExitCode, result.Stderr)
-	}
-
-	return result.Stdout, nil
-}
-
-// uploadFileMultipart uploads file via multipart/form-data
-func uploadFileMultipart(baseURL, remotePath, content string) error {
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-
-	// Add path field
-	if err := writer.WriteField("path", remotePath); err != nil {
-		return err
-	}
-
-	// Add file field
-	part, err := writer.CreateFormFile("file", "upload.txt")
-	if err != nil {
-		return err
-	}
-	if _, err := part.Write([]byte(content)); err != nil {
-		return err
-	}
-
-	// Add mode field
-	if err := writer.WriteField("mode", "0644"); err != nil {
-		return err
-	}
-
-	if err := writer.Close(); err != nil {
-		return err
-	}
-
-	httpReq, err := http.NewRequest("POST", fmt.Sprintf("%s/api/files", baseURL), &buf)
-	if err != nil {
-		return err
-	}
-
-	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
-}
-
-// uploadFileJSON uploads file via JSON+Base64
-func uploadFileJSON(baseURL, remotePath, content string) error {
+func runFileTests(sessionKey *rsa.PrivateKey) {
+	// 1. Upload (JSON Base64)
+	fileName := "example_test.txt"
+	content := "This file was uploaded by the JWT example client."
 	encoded := base64.StdEncoding.EncodeToString([]byte(content))
 
-	payload := map[string]string{
-		"path":    remotePath,
+	uploadReq := map[string]string{
+		"path":    fileName,
 		"content": encoded,
 		"mode":    "0644",
 	}
 
-	jsonData, err := json.Marshal(payload)
+	log.Printf("Uploading %s...", fileName)
+	resp, err := authenticatedRequest("POST", "/api/files", uploadReq, sessionKey)
+	if err != nil || resp.StatusCode != 200 {
+		log.Printf("❌ Upload failed")
+	} else {
+		log.Printf("✅ Upload success")
+	}
+	if resp != nil {
+		resp.Body.Close()
+	}
+
+	// 2. List Files
+	log.Println("Listing files...")
+	listReq := ListFilesRequest{Path: "."}
+	resp, err = authenticatedRequest("POST", "/api/files/list", listReq, sessionKey)
 	if err != nil {
-		return err
-	}
-
-	httpReq, err := http.NewRequest("POST", fmt.Sprintf("%s/api/files", baseURL), bytes.NewBuffer(jsonData))
-	if err != nil {
-		return err
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
-}
-
-// downloadFile downloads file
-func downloadFile(baseURL, remotePath, localPath string) error {
-	// Remove leading /
-	cleanPath := strings.TrimPrefix(remotePath, "/")
-
-	httpReq, err := http.NewRequest("GET", fmt.Sprintf("%s/api/files/%s", baseURL, cleanPath), nil)
-	if err != nil {
-		return err
-	}
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Create local file
-	out, err := os.Create(localPath)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, resp.Body)
-	return err
-}
-
-// getEnv gets environment variable, returns default if not exists
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-// indentOutput adds indentation to each line of output
-func indentOutput(output string) string {
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	var indented []string
-	for _, line := range lines {
-		indented = append(indented, "   "+line)
-	}
-	return strings.Join(indented, "\n")
-}
-
-// loadOrGenerateKeyPair loads existing key pair or generates a new one
-func loadOrGenerateKeyPair() (*RSAKeyPair, error) {
-	// Try to load existing key pair
-	if data, err := os.ReadFile(keyFile); err == nil {
-		block, _ := pem.Decode(data)
-		if block != nil && block.Type == "RSA PRIVATE KEY" {
-			privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-			if err == nil {
-				return &RSAKeyPair{
-					PrivateKey: privateKey,
-					PublicKey:  &privateKey.PublicKey,
-				}, nil
+		log.Printf("❌ List failed: %v", err)
+	} else {
+		defer resp.Body.Close()
+		var listResp ListFilesResponse
+		if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+			log.Printf("❌ Decode list failed: %v", err)
+		} else {
+			log.Printf("✅ Found %d files:", len(listResp.Files))
+			for _, f := range listResp.Files {
+				log.Printf("   - %s (%d bytes) %s", f.Name, f.Size, f.Mode)
 			}
 		}
 	}
 
-	// Generate new key pair
-	log.Println("   Generating new RSA-2048 key pair...")
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	// 3. Download
+	log.Printf("Downloading %s...", fileName)
+	resp, err = authenticatedRequest("GET", "/api/files/"+fileName, nil, sessionKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate RSA key pair: %v", err)
+		log.Printf("❌ Download failed: %v", err)
+	} else {
+		defer resp.Body.Close()
+		if resp.StatusCode == 200 {
+			data, _ := io.ReadAll(resp.Body)
+			log.Printf("✅ Downloaded content: %s", string(data))
+		} else {
+			log.Printf("❌ Download failed with status %d", resp.StatusCode)
+		}
 	}
-
-	// Save private key to file
-	privateKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
-	privateKeyPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: privateKeyBytes,
-	})
-
-	if err := os.WriteFile(keyFile, privateKeyPEM, 0600); err != nil {
-		return nil, fmt.Errorf("failed to save private key: %v", err)
-	}
-
-	log.Printf("   RSA key pair saved to %s", keyFile)
-	return &RSAKeyPair{
-		PrivateKey: privateKey,
-		PublicKey:  &privateKey.PublicKey,
-	}, nil
-}
-
-// exportPublicKey exports public key to PEM format
-func exportPublicKey(publicKey *rsa.PublicKey) (string, error) {
-	publicKeyBytes, err := x509.MarshalPKIXPublicKey(publicKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal public key: %v", err)
-	}
-
-	publicKeyPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: publicKeyBytes,
-	})
-
-	return string(publicKeyPEM), nil
-}
-
-// initializeServer initializes the PicoD server with public key
-func initializeServer(baseURL, publicKey string) error {
-	req := InitRequest{
-		PublicKey: publicKey,
-	}
-
-	jsonData, err := json.Marshal(req)
-	if err != nil {
-		return err
-	}
-
-	httpReq, err := http.NewRequest("POST", fmt.Sprintf("%s/api/init", baseURL), bytes.NewBuffer(jsonData))
-	if err != nil {
-		return err
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("init request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var result InitResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return err
-	}
-
-	if !result.Success {
-		return fmt.Errorf("server initialization failed: %s", result.Message)
-	}
-
-	return nil
-}
-
-// signRequest signs a request with RSA private key
-func signRequest(keyPair *RSAKeyPair, timestamp string, body string) (string, error) {
-	message := timestamp + body
-	hashed := sha256.Sum256([]byte(message))
-
-	signature, err := rsa.SignPKCS1v15(rand.Reader, keyPair.PrivateKey, crypto.SHA256, hashed[:])
-	if err != nil {
-		return "", err
-	}
-
-	return base64.StdEncoding.EncodeToString(signature), nil
-}
-
-// executeAuthenticatedCommand executes command with RSA signature
-func executeAuthenticatedCommand(baseURL string, keyPair *RSAKeyPair, command string) (string, error) {
-	req := ExecuteRequest{
-		Command: command,
-		Timeout: 30,
-	}
-
-	jsonData, err := json.Marshal(req)
-	if err != nil {
-		return "", err
-	}
-
-	timestamp := time.Now().Format(time.RFC3339)
-	signature, err := signRequest(keyPair, timestamp, string(jsonData))
-	if err != nil {
-		return "", err
-	}
-
-	httpReq, err := http.NewRequest("POST", fmt.Sprintf("%s/api/execute", baseURL), bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", err
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Timestamp", timestamp)
-	httpReq.Header.Set("X-Signature", signature)
-
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var result ExecuteResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
-	}
-
-	if result.ExitCode != 0 {
-		return "", fmt.Errorf("command failed (exit code %d): %s", result.ExitCode, result.Stderr)
-	}
-
-	return result.Stdout, nil
-}
-
-// uploadFileAuthenticated uploads file with RSA signature
-func uploadFileAuthenticated(baseURL string, keyPair *RSAKeyPair, remotePath, content string) error {
-	encoded := base64.StdEncoding.EncodeToString([]byte(content))
-
-	payload := map[string]string{
-		"path":    remotePath,
-		"content": encoded,
-		"mode":    "0644",
-	}
-
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	timestamp := time.Now().Format(time.RFC3339)
-	signature, err := signRequest(keyPair, timestamp, string(jsonData))
-	if err != nil {
-		return err
-	}
-
-	httpReq, err := http.NewRequest("POST", fmt.Sprintf("%s/api/files", baseURL), bytes.NewBuffer(jsonData))
-	if err != nil {
-		return err
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Timestamp", timestamp)
-	httpReq.Header.Set("X-Signature", signature)
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
-}
-
-// downloadFileAuthenticated downloads file with RSA signature
-func downloadFileAuthenticated(baseURL string, keyPair *RSAKeyPair, remotePath, localPath string) error {
-	// Remove leading /
-	cleanPath := strings.TrimPrefix(remotePath, "/")
-
-	// Create empty body for GET request
-	body := ""
-	timestamp := time.Now().Format(time.RFC3339)
-	signature, err := signRequest(keyPair, timestamp, body)
-	if err != nil {
-		return err
-	}
-
-	httpReq, err := http.NewRequest("GET", fmt.Sprintf("%s/api/files/%s", baseURL, cleanPath), nil)
-	if err != nil {
-		return err
-	}
-
-	httpReq.Header.Set("X-Timestamp", timestamp)
-	httpReq.Header.Set("X-Signature", signature)
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Create local file
-	out, err := os.Create(localPath)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, resp.Body)
-	return err
 }

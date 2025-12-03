@@ -142,6 +142,9 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		resp := doExec("echo hello", nil, 0)
 		assert.Equal(t, "hello\n", resp.Stdout)
 		assert.Equal(t, 0, resp.ExitCode)
+		assert.Greater(t, resp.ProcessID, 0)
+		assert.False(t, resp.StartTime.IsZero())
+		assert.False(t, resp.EndTime.IsZero())
 
 		// 2. Environment Variables
 		resp = doExec("echo $TEST_VAR", map[string]string{"TEST_VAR": "picod_env"}, 0)
@@ -244,6 +247,31 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		fileContent, err = os.ReadFile("multipart.txt")
 		require.NoError(t, err)
 		assert.Equal(t, "multipart content", string(fileContent))
+
+		// 5. List Files
+		listReq := ListFilesRequest{Path: "."}
+		listBody, _ := json.Marshal(listReq)
+
+		req, _ = http.NewRequest("POST", ts.URL+"/api/files/list", bytes.NewBuffer(listBody))
+		req.Header = getAuthHeaders(listBody)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err = client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var listResp ListFilesResponse
+		json.NewDecoder(resp.Body).Decode(&listResp)
+		// We expect at least test.txt and multipart.txt
+		assert.GreaterOrEqual(t, len(listResp.Files), 2)
+		found := false
+		for _, f := range listResp.Files {
+			if f.Name == "test.txt" {
+				found = true
+				assert.Equal(t, int64(10), f.Size) // "hello file" length is 10
+				break
+			}
+		}
+		assert.True(t, found, "test.txt should be found in listing")
 	})
 
 	t.Run("Security Checks", func(t *testing.T) {

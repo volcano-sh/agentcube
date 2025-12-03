@@ -62,6 +62,7 @@ func NewServer(config Config) *Server {
 		api.POST("/init", authManager.InitHandler)
 		api.POST("/execute", ExecuteHandler)
 		api.POST("/files", UploadFileHandler)
+		api.POST("/files/list", ListFilesHandler)
 		api.GET("/files/*path", DownloadFileHandler)
 	}
 

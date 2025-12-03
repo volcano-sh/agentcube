@@ -21,10 +21,13 @@ type ExecuteRequest struct {
 
 // ExecuteResponse defines command execution response body
 type ExecuteResponse struct {
-	Stdout   string  `json:"stdout"`
-	Stderr   string  `json:"stderr"`
-	ExitCode int     `json:"exit_code"`
-	Duration float64 `json:"duration"`
+	Stdout    string    `json:"stdout"`
+	Stderr    string    `json:"stderr"`
+	ExitCode  int       `json:"exit_code"`
+	Duration  float64   `json:"duration"`
+	ProcessID int       `json:"process_id"`
+	StartTime time.Time `json:"start_time"`
+	EndTime   time.Time `json:"end_time"`
 }
 
 // ExecuteHandler handles command execution requests
@@ -94,11 +97,20 @@ func ExecuteHandler(c *gin.Context) {
 	}
 
 	duration := time.Since(start).Seconds()
+	endTime := time.Now()
+
+	var pid int
+	if cmd.Process != nil {
+		pid = cmd.Process.Pid
+	}
 
 	c.JSON(http.StatusOK, ExecuteResponse{
-		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
-		ExitCode: exitCode,
-		Duration: duration,
+		Stdout:    stdout.String(),
+		Stderr:    stderr.String(),
+		ExitCode:  exitCode,
+		Duration:  duration,
+		ProcessID: pid,
+		StartTime: start,
+		EndTime:   endTime,
 	})
 }

@@ -425,6 +425,28 @@ class PicoDClient:
                 if chunk:
                     f.write(chunk)
     
+    def list_files(self, path: str) -> List[Dict[str, Any]]:
+        """List files in directory
+
+        Args:
+            path: Directory path to list
+
+        Returns:
+            List of file entries containing name, size, modified, etc.
+        """
+        payload = {"path": path}
+        body_bytes = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+        response = self._make_authenticated_request(
+            "POST",
+            "api/files/list",
+            body_bytes=body_bytes,
+            timeout=self.timeout,
+        )
+
+        response.raise_for_status()
+        return response.json()["files"]
+    
     def cleanup(self) -> None:
         """Clean up resources (close HTTP session)
 

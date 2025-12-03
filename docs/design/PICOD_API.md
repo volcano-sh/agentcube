@@ -34,46 +34,49 @@ Content-Type: application/json
 **Request Body:**
 ```json
 {
-  "command": "ls",
-  "args": ["-la", "/tmp"]
+  "command": "ls -la /tmp",
+  "timeout": 30,
+  "working_dir": "/tmp",
+  "env": {
+    "MY_VAR": "value"
+  }
 }
 ```
 
 **Parameters:**
 - `command` (string, **required**): The shell command to execute
-- `args` (array of strings, **optional**): Command-line arguments
+- `timeout` (float, **optional**): Execution timeout in seconds (default: 30)
+- `working_dir` (string, **optional**): Working directory for the command
+- `env` (map[string]string, **optional**): Environment variables
 
 **Success Response (200 OK):**
 ```json
 {
-  "result": "total 12\ndrwxr-xr-x 1 user group 4096...",
-  "stdout": "output text",
-  "stderr": "error messages",
+  "stdout": "total 12\ndrwxr-xr-x 1 user group 4096...",
+  "stderr": "",
   "exit_code": 0,
+  "duration": 0.005,
   "process_id": 1234,
   "start_time": "2025-03-15T10:30:00.000Z",
-  "end_time": "2025-03-15T10:30:01.234Z",
-  "duration": "1.234s"
+  "end_time": "2025-03-15T10:30:00.005Z"
 }
 ```
 
 **Response Fields:**
-- `result`: Output text or error description
 - `stdout`: Standard output from the command
 - `stderr`: Error messages and warnings
 - `exit_code`: 0 for success
-- `process_id`: Unique identifier
-- `start_time`: ISO 8601 format
-- `end_time`: ISO 8601 format
-- `duration`: Execution time
+- `duration`: Execution time in seconds
+- `process_id`: Process ID of the executed command
+- `start_time`: Execution start time
+- `end_time`: Execution end time
 
 **Example:**
 ```bash
 curl -X POST http://localhost:8080/api/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "command": "ls",
-    "args": ["/"]
+    "command": "ls -la /"
   }'
 ```
 
@@ -81,7 +84,9 @@ curl -X POST http://localhost:8080/api/execute \
 
 ### 2. Upload File
 
-Upload a file using base64 encoding.
+Upload a file using base64 encoding (JSON) or multipart/form-data.
+
+#### Option A: JSON with Base64
 
 **Endpoint:**
 ```http
@@ -96,53 +101,66 @@ Content-Type: application/json
 **Request Body:**
 ```json
 {
-  "path": "/tmp/",
-  "filename": "document.pdf",
+  "path": "/tmp/document.pdf",
   "content": "JVBERi0xLjQK...",
-  "options": {
-    "allow_overwrite": false
-  }
+  "mode": "0644"
 }
 ```
 
 **Parameters:**
-- `path`: Directory path (must end with `/`)
-- `filename`: Name of the file
+- `path`: Full file path (absolute or relative to cwd)
 - `content`: Base64-encoded content
-- `options`: Additional options
+- `mode`: File permissions (octal string, e.g., "0644")
 
 **Success Response:**
 ```json
 {
-  "success": true,
   "path": "/tmp/document.pdf",
   "size": 5120,
-  "content_type": "application/pdf"
+  "mode": "-rw-r--r--",
+  "modified": "2025-03-15T10:30:00.000Z"
 }
 ```
+
+#### Option B: Multipart/Form-Data
+
+**Endpoint:**
+```http
+POST /api/files
+```
+
+**Headers:**
+```
+Content-Type: multipart/form-data
+```
+
+**Form Fields:**
+- `file`: The file content
+- `path`: Full file path on the server
+- `mode`: File permissions (optional)
 
 ---
 
 ### 3. Download File
 
+Download a file by path.
+
 **Endpoint:**
 ```http
-GET /api/files/{reference}
+GET /api/files/*path
 ```
 
 **Parameters:**
-- `reference`: Reference to the uploaded file
+- `*path`: The path to the file to download. Can be absolute or relative.
+
+**Example:**
+`GET /api/files/tmp/document.pdf`
 
 **Response:**
-```json
-{
-  "success": true,
-  "path": "/tmp/document.pdf",
-  "size": 5120,
-  "content_type": "application/pdf",
-  "url": "http://localhost:8080/temp/download/document.pdf"
-}
-```
+- The file content binary stream.
+- Headers:
+  - `Content-Type`: Mime type (guessed from extension)
+  - `Content-Disposition`: attachment; filename="filename"
 
 ---
 
@@ -153,6 +171,11 @@ List all files in a specified directory.
 **Endpoint:**
 ```http
 POST /api/files/list
+```
+
+**Headers:**
+```
+Content-Type: application/json
 ```
 
 **Request Body:**
@@ -170,7 +193,7 @@ POST /api/files/list
       "name": "document.pdf",
       "size": 5120,
       "modified": "2025-03-15T10:30:00.000Z",
-      "content_type": "application/pdf",
+      "mode": "-rw-r--r--",
       "is_dir": false
     }
   ]
@@ -208,15 +231,15 @@ GET /health
 # List files
 curl -X POST http://localhost:8080/api/execute \
   -H "Content-Type: application/json" \
-  -d '{"command": "ls", "args": ["/"]}'
+  -d '{"command": "ls -la /"}'
 
 # Read file
 curl -X POST http://localhost:8080/api/execute \
   -H "Content-Type: application/json" \
-  -d '{"command": "cat", "args": ["/etc/hosts"]}'
+  -d '{"command": "cat /etc/hosts"}'
 ```
 
-### Upload File
+### Upload File (JSON)
 
 ```bash
 # Encode and upload
@@ -225,10 +248,16 @@ base64_content=$(base64 -i /path/to/document.pdf | tr -d '\n')
 curl -X POST http://localhost:8080/api/files \
   -H "Content-Type: application/json" \
   -d "{
-    \"path\": \"/tmp/\",
-    \"filename\": \"document.pdf\",
-    \"content\": \"$base64_content\"
+    \"path\": \"/tmp/document.pdf\",
+    \"content\": \"$base64_content\",
+    \"mode\": \"0644\"
   }"
+```
+
+### Download File
+
+```bash
+curl -O -J http://localhost:8080/api/files/tmp/document.pdf
 ```
 
 ### List Files

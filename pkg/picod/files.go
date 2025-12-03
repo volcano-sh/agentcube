@@ -267,6 +267,82 @@ func DownloadFileHandler(c *gin.Context) {
 	c.File(safePath)
 }
 
+// ListFilesRequest defines file listing request body
+type ListFilesRequest struct {
+	Path string `json:"path" binding:"required"`
+}
+
+// FileEntry defines a single file entry in the list response
+type FileEntry struct {
+	Name     string    `json:"name"`
+	Size     int64     `json:"size"`
+	Modified time.Time `json:"modified"`
+	Mode     string    `json:"mode"`
+	IsDir    bool      `json:"is_dir"`
+}
+
+// ListFilesResponse defines file listing response body
+type ListFilesResponse struct {
+	Files []FileEntry `json:"files"`
+}
+
+// ListFilesHandler handles file listing requests
+func ListFilesHandler(c *gin.Context) {
+	var req ListFilesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+			"code":  http.StatusBadRequest,
+		})
+		return
+	}
+
+	// Ensure path safety
+	safePath, err := sanitizePath(req.Path)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+			"code":  http.StatusBadRequest,
+		})
+		return
+	}
+
+	entries, err := os.ReadDir(safePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "Directory not found",
+				"code":  http.StatusNotFound,
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": fmt.Sprintf("Failed to read directory: %v", err),
+				"code":  http.StatusInternalServerError,
+			})
+		}
+		return
+	}
+
+	var files []FileEntry
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			continue // Skip files with errors
+		}
+		files = append(files, FileEntry{
+			Name:     entry.Name(),
+			Size:     info.Size(),
+			Modified: info.ModTime(),
+			Mode:     info.Mode().String(),
+			IsDir:    entry.IsDir(),
+		})
+	}
+
+	c.JSON(http.StatusOK, ListFilesResponse{
+		Files: files,
+	})
+}
+
 // sanitizePath ensures path is within allowed scope, preventing directory traversal attacks
 func sanitizePath(p string) (string, error) {
 	// Clean path

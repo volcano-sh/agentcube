@@ -27,8 +27,16 @@ except ImportError:
     )
 
 try:
+    import jwt
+except ImportError:
+    raise ImportError(
+        "PyJWT library is required for PicoDClient. "
+        "Install it with: pip install PyJWT"
+    )
+
+try:
     from cryptography.hazmat.primitives import serialization, hashes
-    from cryptography.hazmat.primitives.asymmetric import rsa, padding
+    from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.hazmat.backends import default_backend
 except ImportError:
     raise ImportError(
@@ -158,25 +166,16 @@ class PicoDClient:
         }
         claims.update(claims_payload)
 
-        # Create JWT header (RS256 is default for cryptography lib)
-        # Manually constructing JWT as there's no official PyJWT for cryptography's RSA keys directly
-        # This is a simplified JWT creation for RS256
-        jwt_header = json.dumps({"alg": "RS256", "typ": "JWT"}).encode("utf-8")
-        jwt_claims = json.dumps(claims).encode("utf-8")
-
-        encoded_header = base64.urlsafe_b64encode(jwt_header).rstrip(b"=")
-        encoded_claims = base64.urlsafe_b64encode(jwt_claims).rstrip(b"=")
-
-        unsigned_token = encoded_header + b"." + encoded_claims
-
-        signature = self.key_pair.private_key.sign(
-            unsigned_token,
-            padding.PKCS1v15(),
-            hashes.SHA256()
+        # Use PyJWT to encode the token
+        # We need to pass the private key object (cryptography's RSAPrivateKey) directly.
+        # PyJWT handles the conversion and signing.
+        token = jwt.encode(
+            payload=claims,
+            key=self.key_pair.private_key,
+            algorithm="RS256"
         )
-        encoded_signature = base64.urlsafe_b64encode(signature).rstrip(b"=")
 
-        return unsigned_token.decode("utf-8") + "." + encoded_signature.decode("utf-8")
+        return token
     
     def start_session(self):
         """Start a new session by generating a key pair"""

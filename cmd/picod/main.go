@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	port := flag.Int("port", 9527, "Port for the PicoD server to listen on")
+	port := flag.Int("port", 8080, "Port for the PicoD server to listen on")
 	bootstrapKeyFile := flag.String("bootstrap-key", "/etc/picod/public-key.pem", "Path to the bootstrap public key file")
 	workspace := flag.String("workspace", "", "Root directory for file operations (default: current working directory)")
 	flag.Parse()

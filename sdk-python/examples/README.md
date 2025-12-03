@@ -56,7 +56,7 @@ PicoD Client RSA Authentication Example
 
 Configuration:
   Host: localhost
-  Port: 9527
+  Port: 8080
   Key File: picod_client_keys.pem
 
 Step 1: Loading/Generating RSA key pair...
@@ -81,7 +81,7 @@ You can customize the connection using environment variables:
 
 ```bash
 export PICOD_HOST=localhost
-export PICOD_PORT=9527
+export PICOD_PORT=8080
 export PICOD_KEY_FILE=my_custom_keys.pem
 
 python3 examples/picod_example.py
@@ -93,7 +93,7 @@ python3 examples/picod_example.py
 from agentcube.clients.picod_client import PicoDClient
 
 # Create client
-client = PicoDClient(host="localhost", port=9527)
+client = PicoDClient(host="localhost", port=8080)
 
 # Generate or load keys
 client.generate_rsa_key_pair()
@@ -113,7 +113,7 @@ client.download_file("/tmp/output.txt", "local.txt")
 client.cleanup()
 
 # Or use context manager
-with PicoDClient(host="localhost", port=9527) as client:
+with PicoDClient(host="localhost", port=8080) as client:
     client.generate_rsa_key_pair()
     result = client.execute_command("whoami")
 ```

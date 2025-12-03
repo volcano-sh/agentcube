@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -144,12 +145,12 @@ func (am *AuthManager) SavePublicKey(publicKeyStr string) error {
 	if runtime.GOOS == "linux" {
 		cmd := exec.Command("chattr", "+i", am.keyFile)
 		if err := cmd.Run(); err != nil {
-			fmt.Printf("Warning: failed to make key file immutable: %v. File permissions still set to read-only.\n", err)
+			log.Printf("Warning: failed to make key file immutable: %v. File permissions still set to read-only.", err)
 		} else {
-			fmt.Println("Key file successfully set to immutable (chattr +i)")
+			log.Printf("Key file successfully set to immutable (chattr +i)")
 		}
 	} else {
-		fmt.Printf("Note: chattr command is Linux-specific. Current OS: %s. File permissions set to read-only.\n", runtime.GOOS)
+		log.Printf("Note: chattr command is Linux-specific. Current OS: %s. File permissions set to read-only.", runtime.GOOS)
 	}
 
 	am.publicKey = rsaPub

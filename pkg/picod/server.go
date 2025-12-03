@@ -35,7 +35,7 @@ func NewServer(config Config) *Server {
 		// Default to current working directory if not specified
 		cwd, err := os.Getwd()
 		if err != nil {
-			fmt.Printf("Warning: Failed to get current working directory: %v\n", err)
+			log.Printf("Warning: Failed to get current working directory: %v", err)
 		} else {
 			SetWorkspace(cwd)
 		}
@@ -53,19 +53,21 @@ func NewServer(config Config) *Server {
 	// Create auth manager
 	authManager := NewAuthManager()
 
-	// Load bootstrap key if provided
-	if config.BootstrapKey != "" {
-		if err := authManager.LoadBootstrapKey(config.BootstrapKey); err != nil {
-			fmt.Printf("Failed to load bootstrap key: %v\n", err)
-		} else {
-			fmt.Println("Bootstrap key loaded successfully")
-		}
+	// Load bootstrap key (Required)
+	if config.BootstrapKey == "" {
+		log.Fatal("Bootstrap key is missing. Please configure PICOD_BOOTSTRAP_KEY environment variable.")
+	}
+
+	if err := authManager.LoadBootstrapKey(config.BootstrapKey); err != nil {
+		log.Fatalf("Failed to load bootstrap key: %v", err)
+	} else {
+		log.Printf("Bootstrap key loaded successfully")
 	}
 
 	// Load existing public key if available
 	if err := authManager.LoadPublicKey(); err != nil {
 		// Log that server is not initialized, but don't fail startup
-		fmt.Printf("Server not initialized: %v\n", err)
+		log.Printf("Server not initialized: %v", err)
 	}
 
 	// Apply authentication middleware

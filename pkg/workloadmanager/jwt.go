@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -22,11 +23,18 @@ const (
 	jwtExpiration = 5 * time.Minute
 	// JWTPublicKeySecretName is the name of the secret storing JWT public key
 	JWTPublicKeySecretName = "agentcube-jwt-public-key"
-	// JWTPublicKeySecretNamespace is the namespace for the JWT public key secret
-	JWTPublicKeySecretNamespace = "default"
 	// JWTPublicKeyDataKey is the key in the secret data map
 	JWTPublicKeyDataKey = "public-key.pem"
 )
+
+// JWTPublicKeySecretNamespace is the namespace for the JWT public key secret
+var JWTPublicKeySecretNamespace = "default"
+
+func init() {
+	if ns := os.Getenv("JWT_PUBLIC_KEY_SECRET_NAMESPACE"); ns != "" {
+		JWTPublicKeySecretNamespace = ns
+	}
+}
 
 // JWTManager handles JWT token generation and key management
 type JWTManager struct {

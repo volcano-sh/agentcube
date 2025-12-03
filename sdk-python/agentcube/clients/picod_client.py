@@ -13,8 +13,8 @@ import base64
 import time
 import json
 import logging
-from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
+from urllib.parse import urljoin
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,6 @@ class PicoDClient:
             session_id: Pre-existing session ID (optional)
             timeout: Default request timeout in seconds
         """
-        self.manager_url = api_url
         self.gateway_url = api_url
         self.namespace = namespace
         self.name = name
@@ -194,9 +193,9 @@ class PicoDClient:
         timeout: Optional[float] = None,
     ) -> requests.Response:
         """Make an authenticated request to the PicoD API"""
-        
+
         # Construct URL relative to the gateway/manager
-        url = f"{self.gateway_url}/{path}"
+        url = urljoin(self.gateway_url, path)
         
         headers = {}
         claims = {}
@@ -452,15 +451,13 @@ class PicoDClient:
 
     @staticmethod
     def generate_ssh_key_pair():
-        """Generate SSH key pair (not applicable for PicoD)
+        """Generate SSH key pair
 
         This method is kept for API compatibility with SandboxSSHClient,
-        but raises an error as PicoD uses RSA authentication, not SSH.
+        but raises an error as PicoD uses JWT authentication, not SSH.
 
-        Use generate_rsa_key_pair() instead for PicoD.
         """
         raise NotImplementedError(
-            "PicoD uses RSA authentication, not SSH. "
-            "Use generate_rsa_key_pair() instead."
+            "PicoD uses JWT authentication, not SSH. "
         )
 

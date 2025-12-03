@@ -42,8 +42,8 @@ class Sandbox:
         self.id = None # Initialize id as None
         if not skip_creation: # Create only if not skipped
             self.id = self._client.create_sandbox(
-                ttl=self.ttl, 
-                image=self.image,
+                ttl=self.ttl,
+                template_name=self.image,
                 ssh_public_key=ssh_public_key
             )
     
@@ -52,8 +52,8 @@ class Sandbox:
         if self.id:
             raise exceptions.SandboxError("Sandbox already created.")
         self.id = self._client.create_sandbox(
-            ttl=self.ttl, 
-            image=self.image,
+            ttl=self.ttl,
+            template_name=self.image,
             ssh_public_key=ssh_public_key
         )
 
@@ -77,7 +77,7 @@ class Sandbox:
         Returns:
             None to propagate any exception that occurred
         """
-        self.cleanup()
+        self.stop()
         return None
 
     def is_running(self) -> bool:

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -140,7 +141,16 @@ func (am *AuthManager) SavePublicKey(publicKeyStr string) error {
 	}
 
 	// Try to make the file immutable (Linux only)
-	exec.Command("chattr", "+i", am.keyFile).Run()
+	if runtime.GOOS == "linux" {
+		cmd := exec.Command("chattr", "+i", am.keyFile)
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("Warning: failed to make key file immutable: %v. File permissions still set to read-only.\n", err)
+		} else {
+			fmt.Println("Key file successfully set to immutable (chattr +i)")
+		}
+	} else {
+		fmt.Printf("Note: chattr command is Linux-specific. Current OS: %s. File permissions set to read-only.\n", runtime.GOOS)
+	}
 
 	am.publicKey = rsaPub
 	am.initialized = true

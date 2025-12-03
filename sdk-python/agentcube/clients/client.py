@@ -36,28 +36,28 @@ class SandboxClient:
     def create_sandbox(
         self,
         ttl: int = constants.DEFAULT_TTL,
-        image: str = constants.DEFAULT_IMAGE,
+        template_name: str = constants.DEFAULT_IMAGE,
         ssh_public_key: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         kind: str = "CodeInterpreter",
         namespace: str = "default"
     ) -> str:
         """Create a new sandbox on the Pico server
-        
+
         Args:
             ttl: sandbox timeout in seconds
-            image: Name of the CodeInterpreter CRD to use as template
+            template_name: Name of the CodeInterpreter CRD to use as template
             ssh_public_key: SSH public key for authentication (or Session Public Key for PicoD)
             metadata: Optional sandbox metadata
             kind: Sandbox kind (AgentRuntime or CodeInterpreter)
             namespace: Kubernetes namespace
-            
+
         Returns:
             Created sandbox ID and sandbox details
         """
         req_data = {
             "kind": kind,
-            "name": image, # Map 'image' param to 'name' (CRD name)
+            "name": template_name,  # CodeInterpreter CRD template name
             "namespace": namespace,
             "metadata": metadata or {}
         }

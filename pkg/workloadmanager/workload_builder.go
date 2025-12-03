@@ -2,12 +2,15 @@ package workloadmanager
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/pointer"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
@@ -110,9 +113,15 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 		return nil, nil, fmt.Errorf("agent runtime %s not found", agentRuntimeKey)
 	}
 
-	agentRuntimeObj, ok := runtimeObj.(*runtimev1alpha1.AgentRuntime)
+	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
 	if !ok {
+		log.Printf("agent runtime %s type asserting unstructured.Unstructured failed", agentRuntimeKey)
 		return nil, nil, fmt.Errorf("agent runtime type asserting failed")
+	}
+
+	var agentRuntimeObj runtimev1alpha1.AgentRuntime
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.Object, &agentRuntimeObj); err != nil {
+		return nil, nil, fmt.Errorf("failed to convert unstructured to AgentRuntime: %w", err)
 	}
 
 	if agentRuntimeObj.Spec.Template == nil {
@@ -136,7 +145,8 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	}
 	sandbox := buildSandboxObject(buildParams)
 	externalInfo := &sandboxExternalInfo{
-		Ports: agentRuntimeObj.Spec.Ports,
+		Ports:     agentRuntimeObj.Spec.Ports,
+		SessionID: sessionId,
 	}
 	return sandbox, externalInfo, nil
 }
@@ -152,20 +162,29 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		return nil, nil, nil, fmt.Errorf("code interpreter %s not found", codeInterpreterKey)
 	}
 
-	codeInterpreterObj, ok := runtimeObj.(*runtimev1alpha1.CodeInterpreter)
+	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
 	if !ok {
+		log.Printf("code interpreter %s type asserting unstructured.Unstructured failed", codeInterpreterKey)
 		return nil, nil, nil, fmt.Errorf("code interpreter type asserting failed")
 	}
 
+	var codeInterpreterObj runtimev1alpha1.CodeInterpreter
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.Object, &codeInterpreterObj); err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to convert unstructured to CodeInterpreter: %w", err)
+	}
+
+	sessionId := uuid.New().String()
 	sandboxName := "code-interpreter-" + uuid.New().String()
 	externalInfo := &sandboxExternalInfo{
-		Ports: codeInterpreterObj.Spec.Ports,
+		Ports:     codeInterpreterObj.Spec.Ports,
+		SessionID: sessionId,
 	}
 
 	if codeInterpreterObj.Spec.WarmPoolSize != nil && *codeInterpreterObj.Spec.WarmPoolSize > 0 {
+		sandboxClaimName := sandboxName
 		sandboxClaim := buildSandboxClaimObject(&buildSandboxClaimParams{
 			namespace:           namespace,
-			name:                sandboxName,
+			name:                sandboxClaimName,
 			sandboxTemplateName: codeInterpreterName,
 		})
 		simpleSandbox := &sandboxv1alpha1.Sandbox{
@@ -174,6 +193,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				Name:      sandboxName,
 			},
 		}
+		externalInfo.SandboxClaimName = sandboxClaimName
 		return simpleSandbox, sandboxClaim, externalInfo, nil
 	}
 
@@ -193,7 +213,6 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 			},
 		},
 	}
-	sessionId := uuid.New().String()
 	buildParams := &buildSandboxParams{
 		sandboxName:    sandboxName,
 		namespace:      namespace,

@@ -50,7 +50,9 @@ type K8sClient struct {
 }
 
 type sandboxExternalInfo struct {
-	Ports []runtimev1alpha1.TargetPort
+	SandboxClaimName string
+	SessionID        string
+	Ports            []runtimev1alpha1.TargetPort
 }
 
 // NewK8sClient creates a new Kubernetes client
@@ -157,7 +159,7 @@ func (c *K8sClient) GetOrCreateUserK8sClient(userToken, namespace, serviceAccoun
 }
 
 // createSandbox creates a Sandbox using the provided dynamic client
-func createSandbox(ctx context.Context, client dynamic.Interface, namespace string, sandbox *sandboxv1alpha1.Sandbox) (*SandboxInfo, error) {
+func createSandbox(ctx context.Context, client dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox) (*SandboxInfo, error) {
 	// Convert to unstructured for dynamic client
 	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(sandbox)
 	if err != nil {
@@ -167,7 +169,7 @@ func createSandbox(ctx context.Context, client dynamic.Interface, namespace stri
 	unstructuredSandbox := &unstructured.Unstructured{Object: unstructuredObj}
 
 	// Create Sandbox
-	created, err := client.Resource(SandboxGVR).Namespace(namespace).Create(
+	created, err := client.Resource(SandboxGVR).Namespace(sandbox.Namespace).Create(
 		ctx,
 		unstructuredSandbox,
 		metav1.CreateOptions{},
@@ -183,7 +185,7 @@ func createSandbox(ctx context.Context, client dynamic.Interface, namespace stri
 }
 
 // createSandboxClaim creates a SandboxClaim using the provided dynamic client
-func createSandboxClaim(ctx context.Context, client dynamic.Interface, namespace string, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
+func createSandboxClaim(ctx context.Context, client dynamic.Interface, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
 	// Convert to unstructured for dynamic client
 	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(sandboxClaim)
 	if err != nil {
@@ -193,7 +195,7 @@ func createSandboxClaim(ctx context.Context, client dynamic.Interface, namespace
 	unstructuredSandbox := &unstructured.Unstructured{Object: unstructuredObj}
 
 	// Create SandboxClaim
-	_, err = client.Resource(SandboxClaimGVR).Namespace(namespace).Create(
+	_, err = client.Resource(SandboxClaimGVR).Namespace(sandboxClaim.Namespace).Create(
 		ctx,
 		unstructuredSandbox,
 		metav1.CreateOptions{},
@@ -233,12 +235,12 @@ func deleteSandboxClaim(ctx context.Context, client dynamic.Interface, namespace
 
 // CreateSandboxClaim creates a new SandboxClaim using user's permissions
 func (u *UserK8sClient) CreateSandboxClaim(ctx context.Context, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
-	return createSandboxClaim(ctx, u.dynamicClient, u.namespace, sandboxClaim)
+	return createSandboxClaim(ctx, u.dynamicClient, sandboxClaim)
 }
 
 // CreateSandbox creates a new Sandbox using user's permissions
 func (u *UserK8sClient) CreateSandbox(ctx context.Context, sandbox *sandboxv1alpha1.Sandbox) (*SandboxInfo, error) {
-	return createSandbox(ctx, u.dynamicClient, u.namespace, sandbox)
+	return createSandbox(ctx, u.dynamicClient, sandbox)
 }
 
 // DeleteSandbox deletes a Sandbox resource using user's permissions
@@ -258,7 +260,7 @@ func (c *K8sClient) GetSandboxPodIP(ctx context.Context, namespace, sandboxName 
 	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
 	})
-	if err == nil && len(pods.Items) > 0 {
+	if err == nil && pods != nil && len(pods.Items) > 0 {
 		return validateAndGetPodIP(&pods.Items[0])
 	}
 	return "", fmt.Errorf("no pod found for sandbox %s", sandboxName)

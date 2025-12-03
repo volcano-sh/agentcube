@@ -216,6 +216,7 @@ bin/
 *.so
 *.dylib
 apiserver
+cmd/workload-manager/workload-manager
 
 # Test binaries
 *.test

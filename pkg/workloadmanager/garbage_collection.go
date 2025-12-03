@@ -60,16 +60,16 @@ func (gc *garbageCollector) once() {
 	}
 	namespaces := make([]string, 0, len(inactiveSandboxes)+len(expiredSandboxes))
 	names := make([]string, 0, len(inactiveSandboxes)+len(expiredSandboxes))
-	sandboxIDs := make([]string, 0, len(inactiveSandboxes)+len(expiredSandboxes))
+	sessionIDs := make([]string, 0, len(inactiveSandboxes)+len(expiredSandboxes))
 	for _, inactive := range inactiveSandboxes {
 		namespaces = append(namespaces, inactive.SandboxNamespace)
 		names = append(names, inactive.SandboxName)
-		sandboxIDs = append(sandboxIDs, inactive.SandboxID)
+		sessionIDs = append(sessionIDs, inactive.SessionID)
 	}
 	for _, expired := range expiredSandboxes {
 		namespaces = append(namespaces, expired.SandboxNamespace)
 		names = append(names, expired.SandboxName)
-		sandboxIDs = append(sandboxIDs, expired.SandboxID)
+		sessionIDs = append(sessionIDs, expired.SessionID)
 	}
 
 	errs := make([]error, 0, len(names))
@@ -80,8 +80,8 @@ func (gc *garbageCollector) once() {
 			errs = append(errs, err)
 			continue
 		}
-		log.Printf("sandbox %s/%s deleted", namespaces[i], names[i])
-		err = gc.redisClient.DeleteSessionBySandboxIDTx(ctx, sandboxIDs[i])
+		log.Printf("sandbox %s/%s session %s deleted", namespaces[i], names[i], sessionIDs[i])
+		err = gc.redisClient.DeleteSandboxBySessionIDTx(ctx, sessionIDs[i])
 		if err != nil {
 			errs = append(errs, err)
 		}

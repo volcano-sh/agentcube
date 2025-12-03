@@ -1,116 +1,155 @@
 package router
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"sync"
+	"io"
+	"net/http"
+	"os"
+	"time"
 
-	"github.com/google/uuid"
+	"github.com/volcano-sh/agentcube/pkg/common/types"
+	"github.com/volcano-sh/agentcube/pkg/redis"
 )
 
-// Kind constants for sandbox types
-const (
-	KindAgent           = "agent"
-	KindCodeInterpreter = "codeinterpreter"
-)
-
-// SessionManager interface for managing sandbox sessions
+// SessionManager defines the session management behavior on top of Redis and the workload manager.
 type SessionManager interface {
-	// GetSandboxInfoBySessionId returns sandbox endpoint and session ID
-	// When sessionId is empty, creates a new session
-	// kind can be "agent" or "codeinterpreter"
-	GetSandboxInfoBySessionId(sessionId, namespace, name, kind string) (endpoint string, newSessionId string, err error)
+	// GetSandboxBySession returns the sandbox associated with the given sessionID.
+	// When sessionID is empty, it creates a new sandbox by calling the external API.
+	// When sessionID is not empty, it queries Redis for the sandbox.
+	GetSandboxBySession(sessionID string, namespace string, name string, kind string) (*types.SandboxRedis, error)
 }
 
-// MockSessionManager is a simple implementation for testing
-type MockSessionManager struct {
-	mu               sync.RWMutex
-	sandboxEndpoints []string
-	currentIndex     int
-	sessions         map[string]string // sessionId -> endpoint
+// manager is the default implementation of the SessionManager interface.
+type manager struct {
+	redisClient    redis.Client
+	workloadMgrURL string
+	httpClient     *http.Client
 }
 
-// NewMockSessionManager creates a new mock session manager
-func NewMockSessionManager(sandboxEndpoints []string) *MockSessionManager {
-	if len(sandboxEndpoints) == 0 {
-		// Default sandbox endpoints for testing
-		sandboxEndpoints = []string{
-			"http://sandbox-1:8080",
-			"http://sandbox-2:8080",
-			"http://sandbox-3:8080",
+// NewSessionManager returns a SessionManager implementation.
+// redisClient is used to query sandbox information from Redis.
+// workloadMgrURL is read from the environment variable WORKLOAD_MGR_URL.
+func NewSessionManager(redisClient redis.Client) (SessionManager, error) {
+	workloadMgrURL := os.Getenv("WORKLOAD_MGR_URL")
+	if workloadMgrURL == "" {
+		return nil, fmt.Errorf("WORKLOAD_MGR_URL environment variable is not set")
+	}
+
+	return &manager{
+		redisClient:    redisClient,
+		workloadMgrURL: workloadMgrURL,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second, // Set a reasonable timeout to prevent hanging
+		},
+	}, nil
+}
+
+// GetSandboxBySession returns the sandbox associated with the given sessionID.
+// When sessionID is empty, it creates a new sandbox by calling the external API.
+// When sessionID is not empty, it queries Redis for the sandbox.
+func (m *manager) GetSandboxBySession(sessionID string, namespace string, name string, kind string) (*types.SandboxRedis, error) {
+	ctx := context.Background()
+
+	// When sessionID is empty, create a new sandbox
+	if sessionID == "" {
+		return m.createSandbox(ctx, namespace, name, kind)
+	}
+
+	// When sessionID is not empty, query Redis
+	sandbox, err := m.redisClient.GetSandboxBySessionID(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, redis.ErrNotFound) {
+			return nil, ErrSessionNotFound
 		}
+		return nil, fmt.Errorf("failed to get sandbox from redis: %w", err)
 	}
 
-	return &MockSessionManager{
-		sandboxEndpoints: sandboxEndpoints,
-		sessions:         make(map[string]string),
-	}
+	return sandbox, nil
 }
 
-// GetSandboxInfoBySessionId implements SessionManager interface
-func (m *MockSessionManager) GetSandboxInfoBySessionId(sessionId, namespace, name, kind string) (string, string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Validate kind parameter
-	if kind != "" && kind != KindAgent && kind != KindCodeInterpreter {
-		return "", "", fmt.Errorf("invalid kind: %s, must be '%s' or '%s'", kind, KindAgent, KindCodeInterpreter)
-	}
-
-	// If sessionId is empty, create a new session
-	if sessionId == "" {
-		sessionId = m.generateNewSessionId()
-	}
-
-	// Check if session already exists
-	if endpoint, exists := m.sessions[sessionId]; exists {
-		return endpoint, sessionId, nil
-	}
-
-	// Create new session with round-robin endpoint selection
-	if len(m.sandboxEndpoints) == 0 {
-		return "", "", fmt.Errorf("no sandbox endpoints available")
-	}
-
-	// Select endpoint based on kind if specified
+// createSandbox creates a new sandbox by calling the external workload manager API.
+func (m *manager) createSandbox(ctx context.Context, namespace string, name string, kind string) (*types.SandboxRedis, error) {
+	// Determine the API endpoint based on kind
 	var endpoint string
-	if kind == KindAgent {
-		// For agent kind, prefer agent-specific endpoints or use round-robin
-		endpoint = m.sandboxEndpoints[m.currentIndex%len(m.sandboxEndpoints)]
-	} else if kind == KindCodeInterpreter {
-		// For codeinterpreter kind, prefer code interpreter endpoints or use round-robin
-		endpoint = m.sandboxEndpoints[m.currentIndex%len(m.sandboxEndpoints)]
-	} else {
-		// Default behavior for backward compatibility
-		endpoint = m.sandboxEndpoints[m.currentIndex%len(m.sandboxEndpoints)]
+	switch kind {
+	case types.AgentRuntimeKind:
+		endpoint = m.workloadMgrURL + "/v1/agent-runtime"
+	case types.CodeInterpreterKind:
+		endpoint = m.workloadMgrURL + "/v1/code-interpreter"
+	default:
+		return nil, fmt.Errorf("unsupported kind: %s", kind)
 	}
 
-	m.currentIndex++
-
-	// Store the session with additional metadata
-	sessionKey := sessionId
-	if namespace != "" && name != "" {
-		sessionKey = fmt.Sprintf("%s/%s/%s", namespace, name, sessionId)
+	// Prepare the request body
+	reqBody := &types.CreateSandboxRequest{
+		Kind:      kind,
+		Name:      name,
+		Namespace: namespace,
 	}
-	m.sessions[sessionKey] = endpoint
 
-	return endpoint, sessionId, nil
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send the request
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUpstreamUnavailable, err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%w: status code %d, body: %s", ErrCreateSandboxFailed, resp.StatusCode, string(respBody))
+	}
+
+	// Parse response
+	var createResp types.CreateSandboxResponse
+	if err := json.Unmarshal(respBody, &createResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	// Validate response
+	if createResp.SessionID == "" || createResp.SandboxID == "" {
+		return nil, fmt.Errorf("%w: invalid response from workload manager", ErrCreateSandboxFailed)
+	}
+
+	// Construct SandboxRedis from response
+	sandbox := &types.SandboxRedis{
+		SandboxID:   createResp.SandboxID,
+		SandboxName: createResp.SandboxName,
+		SessionID:   createResp.SessionID,
+		EntryPoints: createResp.EntryPoints,
+	}
+
+	return sandbox, nil
 }
 
-// generateNewSessionId generates a new UUID-based session ID
-func (m *MockSessionManager) generateNewSessionId() string {
-	return uuid.New().String()
-}
+var (
+	// ErrSessionNotFound indicates that the session does not exist in redis.
+	ErrSessionNotFound = errors.New("sessionmgr: session not found")
 
-// RemoveSession removes a session (for cleanup)
-func (m *MockSessionManager) RemoveSession(sessionId string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.sessions, sessionId)
-}
+	// ErrUpstreamUnavailable indicates that the workload manager is unavailable.
+	ErrUpstreamUnavailable = errors.New("sessionmgr: workload manager unavailable")
 
-// GetSessionCount returns the number of active sessions
-func (m *MockSessionManager) GetSessionCount() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return len(m.sessions)
-}
+	// ErrCreateSandboxFailed indicates that the workload manager returned an error.
+	ErrCreateSandboxFailed = errors.New("sessionmgr: create sandbox failed")
+)

@@ -95,7 +95,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 
 	// Store placeholder before creating, make sandbox/sandboxClaim GarbageCollection possible
 	sandboxRedisPlaceHolder := buildSandboxRedisCachePlaceHolder(sandbox, externalInfo)
-	if err = s.redisClient.StoreSandbox(c.Request.Context(), sandboxRedisPlaceHolder, DefaultRedisTTL); err != nil {
+	if err = s.redisClient.StoreSandbox(c.Request.Context(), sandboxRedisPlaceHolder, RedisNoExpiredTTL); err != nil {
 		errMessage := fmt.Sprintf("store sandbox place holder into redis failed: %v", err)
 		log.Println(errMessage)
 		respondError(c, http.StatusInternalServerError, "STORE_SANDBOX_FAILED", errMessage)
@@ -175,7 +175,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	}
 
 	if createAgentRequest.Kind != types.CodeInterpreterKind {
-		err = s.redisClient.UpdateSandbox(c.Request.Context(), redisCacheInfo, DefaultRedisTTL)
+		err = s.redisClient.UpdateSandbox(c.Request.Context(), redisCacheInfo, RedisNoExpiredTTL)
 		if err != nil {
 			log.Printf("update redis cache failed: %v", err)
 			respondError(c, http.StatusInternalServerError, "SANDBOX_UPDATE_REDIS_FAILED", err.Error())

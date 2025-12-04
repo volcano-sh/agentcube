@@ -220,8 +220,10 @@ func (c *client) StoreSandbox(ctx context.Context, sandboxRedis *types.SandboxRe
 		return errors.New("StoreSandbox: unexpected empty cmder")
 	}
 
-	if cmder[0].Err() != nil {
-		return fmt.Errorf("StoreSandbox: SET failed: %w", cmder[0].Err())
+	for i, cmd := range cmder {
+		if err = cmd.Err(); err != nil {
+			return fmt.Errorf("StoreSandbox: SET failed: %w, cmder index: %v", err, i)
+		}
 	}
 
 	return nil
@@ -270,7 +272,7 @@ func (c *client) DeleteSessionBySandboxIDTx(ctx context.Context, sandboxID strin
 func (c *client) DeleteSandboxBySessionIDTx(ctx context.Context, sessionID string) error {
 	sessionKey := c.sessionKey(sessionID)
 
-	pipe := c.rdb.Pipeline()
+	pipe := c.rdb.TxPipeline()
 	pipe.Del(ctx, sessionKey)
 	pipe.ZRem(ctx, c.expiryIndexKey, sessionID)
 	pipe.ZRem(ctx, c.lastActivityIndexKey, sessionID)

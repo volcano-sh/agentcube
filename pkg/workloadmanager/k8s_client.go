@@ -23,7 +23,7 @@ import (
 const (
 	DefaultSandboxTTL         = 8 * time.Hour
 	DefaultSandboxIdleTimeout = 15 * time.Minute
-	DefaultRedisTTL           = 7 * 24 * time.Hour
+	RedisNoExpiredTTL         = 0
 )
 
 var (

@@ -69,29 +69,33 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		return
 	}
 
-	// Extract user information from context
-	userToken, userNamespace, serviceAccount, serviceAccountName := extractUserInfo(c)
-
-	if userToken == "" || userNamespace == "" || serviceAccountName == "" {
-		respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Unable to extract user credentials")
-		return
-	}
-
 	// Calculate sandbox name and namespace before creating
 	sandboxName := sandbox.Name
 	namespace := sandbox.Namespace
 
+	dynamicClient := s.k8sClient.dynamicClient
+	if s.enableAuth {
+		// Extract user information from context
+		userToken, userNamespace, _, serviceAccountName := extractUserInfo(c)
+		if userToken == "" || userNamespace == "" || serviceAccountName == "" {
+			respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Unable to extract user credentials")
+			return
+		}
+
+		// Create sandbox using user's K8s client
+		userClient, err := s.k8sClient.GetOrCreateUserK8sClient(userToken, userNamespace, serviceAccountName)
+		if err != nil {
+			log.Printf("create user client failed: %v", err)
+			respondError(c, http.StatusInternalServerError, "CLIENT_CREATION_FAILED", err.Error())
+			return
+		}
+
+		dynamicClient = userClient.dynamicClient
+	}
+
 	// CRITICAL: Register watcher BEFORE creating sandbox
 	// This ensures we don't miss the Running state notification
 	resultChan := s.sandboxController.WatchSandboxOnce(c.Request.Context(), namespace, sandboxName)
-
-	// Create sandbox using user's K8s client
-	userClient, err := s.k8sClient.GetOrCreateUserK8sClient(userToken, userNamespace, serviceAccountName)
-	if err != nil {
-		log.Printf("create user client failed: %v", err)
-		respondError(c, http.StatusInternalServerError, "CLIENT_CREATION_FAILED", err.Error())
-		return
-	}
 
 	// Store placeholder before creating, make sandbox/sandboxClaim GarbageCollection possible
 	sandboxRedisPlaceHolder := buildSandboxRedisCachePlaceHolder(sandbox, externalInfo)
@@ -103,19 +107,19 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	}
 
 	if sandboxClaim != nil {
-		err = userClient.CreateSandboxClaim(c.Request.Context(), sandboxClaim)
+		err = createSandboxClaim(c.Request.Context(), dynamicClient, sandboxClaim)
 		if err != nil {
 			log.Printf("create sandbox claim %s/%s failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err)
 			respondError(c, http.StatusForbidden, "SANDBOX_CLAIM_CREATE_FAILED",
-				fmt.Sprintf("Failed to create sandbox claim (service account: %s, namespace: %s): %v", serviceAccount, userNamespace, err))
+				fmt.Sprintf("Failed to create sandbox claim: %v", err))
 			return
 		}
 	} else {
-		_, err = userClient.CreateSandbox(c.Request.Context(), sandbox)
+		_, err = createSandbox(c.Request.Context(), dynamicClient, sandbox)
 		if err != nil {
 			log.Printf("create sandbox %s/%s failed: %v", sandbox.Namespace, sandbox.Name, err)
 			respondError(c, http.StatusForbidden, "SANDBOX_CREATE_FAILED",
-				fmt.Sprintf("Failed to create sandbox (service account: %s, namespace: %s): %v", serviceAccount, userNamespace, err))
+				fmt.Sprintf("Failed to create sandbox: %v", err))
 			return
 		}
 	}
@@ -138,9 +142,9 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	sandboxRollbackFunc := func() error {
 		ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		err := userClient.DeleteSandbox(ctxTimeout, namespace, sandboxName)
+		err := deleteSandbox(ctxTimeout, dynamicClient, namespace, sandboxName)
 		if err != nil {
-			return fmt.Errorf("failed to create sandbox (service account: %s, namespace: %s): %v", serviceAccount, userNamespace, err)
+			return fmt.Errorf("failed to create sandbox: %v", err)
 		}
 		return nil
 	}
@@ -245,35 +249,40 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 		return
 	}
 
-	// Extract user information from context
-	userToken, userNamespace, serviceAccount, serviceAccountName := extractUserInfo(c)
+	dynamicClient := s.k8sClient.dynamicClient
+	if s.enableAuth {
+		// Extract user information from context
+		userToken, userNamespace, _, serviceAccountName := extractUserInfo(c)
 
-	if userToken == "" || userNamespace == "" || serviceAccountName == "" {
-		respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Unable to extract user credentials")
-		return
-	}
+		if userToken == "" || userNamespace == "" || serviceAccountName == "" {
+			respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Unable to extract user credentials")
+			return
+		}
 
-	// Delete sandbox using user's K8s client
-	userClient, clientErr := s.k8sClient.GetOrCreateUserK8sClient(userToken, userNamespace, serviceAccountName)
-	if clientErr != nil {
-		respondError(c, http.StatusInternalServerError, "CLIENT_CREATION_FAILED", clientErr.Error())
-		return
+		// Delete sandbox using user's K8s client
+		userClient, clientErr := s.k8sClient.GetOrCreateUserK8sClient(userToken, userNamespace, serviceAccountName)
+		if clientErr != nil {
+			respondError(c, http.StatusInternalServerError, "CLIENT_CREATION_FAILED", clientErr.Error())
+			return
+		}
+
+		dynamicClient = userClient.dynamicClient
 	}
 
 	if sandbox.SandboxClaimName != "" {
 		// SandboxClaimName is not empty, we should delete SandboxClaim
-		err = userClient.DeleteSandboxClaim(c.Request.Context(), sandbox.SandboxNamespace, sandbox.SandboxClaimName)
+		err = deleteSandboxClaim(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.SandboxClaimName)
 		if err != nil {
 			respondError(c, http.StatusForbidden, "SANDBOX_CLAIM_DELETE_FAILED",
-				fmt.Sprintf("Failed to delete sandbox claim (service account: %s, namespace: %s): %v", serviceAccount, sandbox.SandboxNamespace, err))
+				fmt.Sprintf("Failed to delete sandbox claim (namespace: %s): %v", sandbox.SandboxNamespace, err))
 			return
 		}
 	} else {
 		// SandboxClaimName is empty, we should delete Sandbox directly
-		err = userClient.DeleteSandbox(c.Request.Context(), sandbox.SandboxNamespace, sandbox.SandboxName)
+		err = deleteSandbox(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.SandboxName)
 		if err != nil {
 			respondError(c, http.StatusForbidden, "SANDBOX_DELETE_FAILED",
-				fmt.Sprintf("Failed to delete sandbox (service account: %s, namespace: %s): %v", serviceAccount, sandbox.SandboxNamespace, err))
+				fmt.Sprintf("Failed to delete sandbox (namespace: %s): %v", sandbox.SandboxNamespace, err))
 			return
 		}
 	}

@@ -25,6 +25,7 @@ type Server struct {
 	informers         *Informers
 	redisClient       redis.Client
 	jwtManager        *JWTManager
+	enableAuth        bool
 }
 
 type Config struct {

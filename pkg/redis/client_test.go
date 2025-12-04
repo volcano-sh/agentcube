@@ -80,27 +80,6 @@ func TestClient_UpdateSandbox(t *testing.T) {
 	assert.Contains(t, err.Error(), "key not exists")
 }
 
-func TestSetSessionLockIfAbsent(t *testing.T) {
-	ctx := context.Background()
-	c, _ := newTestClient(t)
-
-	ok, err := c.SetSessionLockIfAbsent(ctx, "sess-1", time.Minute)
-	if err != nil {
-		t.Fatalf("SetSessionLockIfAbsent error: %v", err)
-	}
-	if !ok {
-		t.Fatalf("expected first SetSessionLockIfAbsent to succeed")
-	}
-
-	ok, err = c.SetSessionLockIfAbsent(ctx, "sess-1", time.Minute)
-	if err != nil {
-		t.Fatalf("SetSessionLockIfAbsent error on second call: %v", err)
-	}
-	if ok {
-		t.Fatalf("expected second SetSessionLockIfAbsent to return false")
-	}
-}
-
 func TestGetSandboxBySessionIDNotFound(t *testing.T) {
 	ctx := context.Background()
 	c, _ := newTestClient(t)

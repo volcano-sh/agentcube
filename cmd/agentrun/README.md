@@ -195,7 +195,7 @@ Options:
   -f, --workspace TEXT    Path to the agent workspace directory [default: .]
   --payload TEXT          JSON-formatted input passed to the agent [default: {}]
   --header TEXT           Custom HTTP headers (e.g., 'Authorization: Bearer token')
-  --provider TEXT         Target provider for invocation (agentcube, k8s).
+  --provider TEXT         Target provider for deployment (agentcube, k8s). 'agentcube' deploys AgentRuntime CR, 'k8s' deploys standard K8s Deployment/Service. [default: agentcube]
   --verbose               Enable detailed logging
 ```
 
@@ -207,7 +207,7 @@ kubectl agentrun status [OPTIONS]
 
 Options:
   -f, --workspace TEXT    Path to the agent workspace directory [default: .]
-  --provider TEXT         Target provider for status check (agentcube, k8s).
+  --provider TEXT         Target provider for deployment (agentcube, k8s). 'agentcube' deploys AgentRuntime CR, 'k8s' deploys standard K8s Deployment/Service. [default: agentcube]
   --verbose               Enable detailed logging
 ```
 

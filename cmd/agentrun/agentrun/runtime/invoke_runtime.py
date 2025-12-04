@@ -12,7 +12,9 @@ from typing import Any, Dict, Optional
 
 from agentrun.services.metadata_service import MetadataService
 from agentrun.services.k8s_provider import KubernetesProvider
-from agentrun.services.agentcube_provider import AgentCubeProvider # New import
+from agentrun.services.agentcube_provider import AgentCubeProvider
+
+logger = logging.getLogger(__name__)
 
 
 class InvokeRuntime:
@@ -163,20 +165,10 @@ class InvokeRuntime:
                         "headers": dict(response.headers)
                     }
 
-        except httpx.ConnectError:
-            # If connection fails, return a mock response for testing
+        except httpx.ConnectError as e:
             if self.verbose:
-                logger.warning(f"Could not connect to {endpoint}, returning mock response")
-
-            return {
-                "response": f"Mock response: Agent processed payload {payload}",
-                "agent_endpoint": endpoint,
-                "status": "mock",
-                "note": "Actual agent endpoint not reachable"
-            }
+                logger.error(f"Could not connect to {endpoint}. Please check if the agent is running and the endpoint is correct.")
+            raise RuntimeError(f"Could not connect to agent at {endpoint}: {e}")
 
         except Exception as e:
             raise RuntimeError(f"HTTP invocation failed: {str(e)}")
-
-
-logger = logging.getLogger(__name__)

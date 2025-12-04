@@ -7,6 +7,7 @@ exposing them via NodePort services for testing and development.
 
 import logging
 import time
+import shlex
 from typing import Any, Dict, Optional
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
@@ -47,7 +48,7 @@ class KubernetesProvider:
                     config.load_incluster_config()
                     if self.verbose:
                         logger.info("Loaded in-cluster Kubernetes config")
-                except:
+                except config.ConfigException:
                     config.load_kube_config()
                     if self.verbose:
                         logger.info("Loaded local Kubernetes config")
@@ -164,11 +165,14 @@ class KubernetesProvider:
     ) -> Dict[str, Any]:
         """Create or update a Kubernetes Deployment."""
         # Prepare container spec
+        container_command = None
         container_args = None
         if entrypoint:
-            # Parse entrypoint into command and args
-            parts = entrypoint.split()
-            container_args = parts if len(parts) > 1 else None
+            parts = shlex.split(entrypoint)
+            if parts:
+                container_command = [parts[0]]
+                if len(parts) > 1:
+                    container_args = parts[1:]
 
         # Prepare environment variables
         env = []
@@ -181,6 +185,7 @@ class KubernetesProvider:
             name=name,
             image=image_url,
             ports=[client.V1ContainerPort(container_port=port)],
+            command=container_command,
             args=container_args,
             env=env if env else None,
             image_pull_policy="IfNotPresent"  # Use local images if available
@@ -298,7 +303,7 @@ class KubernetesProvider:
             "node_port": actual_node_port
         }
 
-    def _wait_for_deployment_ready(self, name: str, timeout: int = 120) -> None:
+    def wait_for_deployment_ready(self, name: str, timeout: int = 120) -> None:
         """Wait for deployment to be ready."""
         if self.verbose:
             logger.info(f"Waiting for deployment {name} to be ready...")

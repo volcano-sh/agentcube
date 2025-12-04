@@ -11,7 +11,9 @@ from typing import Any, Dict, Optional
 
 from agentrun.services.metadata_service import MetadataService
 from agentrun.services.k8s_provider import KubernetesProvider
-from agentrun.services.agentcube_provider import AgentCubeProvider # New import
+from agentrun.services.agentcube_provider import AgentCubeProvider
+
+logger = logging.getLogger(__name__)
 
 
 class StatusRuntime:
@@ -82,7 +84,7 @@ class StatusRuntime:
                 "error": str(e)
             }
 
-    def _get_k8s_status(self, metadata) -> Dict[str, Any]: # Renamed
+    def _get_k8s_status(self, metadata) -> Dict[str, Any]:
         """Get status from K8s cluster (standard Deployment/Service)."""
         if self.verbose:
             logger.info(f"Querying Kubernetes for agent status (standard Deployment/Service): {metadata.agent_name}")
@@ -182,5 +184,3 @@ class StatusRuntime:
                 "status": "error",
                 "error": str(e)
             }
-        
-logger = logging.getLogger(__name__)

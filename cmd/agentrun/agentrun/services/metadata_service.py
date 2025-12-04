@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -45,22 +45,25 @@ class AgentMetadata(BaseModel):
     # Kubernetes deployment fields (filled when using K8s provider)
     k8s_deployment: Optional[Dict[str, Any]] = Field(None, description="Kubernetes deployment information")
 
-    @validator('language')
-    def validate_language(cls, v):
+    @field_validator('language')
+    @classmethod
+    def validate_language(cls, v: str) -> str:
         supported_languages = ['python', 'java']
         if v.lower() not in supported_languages:
             raise ValueError(f"Language '{v}' is not supported. Supported languages: {supported_languages}")
         return v.lower()
 
-    @validator('build_mode')
-    def validate_build_mode(cls, v):
+    @field_validator('build_mode')
+    @classmethod
+    def validate_build_mode(cls, v: str) -> str:
         supported_modes = ['local', 'cloud']
         if v.lower() not in supported_modes:
             raise ValueError(f"Build mode '{v}' is not supported. Supported modes: {supported_modes}")
         return v.lower()
 
-    @validator('port')
-    def validate_port(cls, v):
+    @field_validator('port')
+    @classmethod
+    def validate_port(cls, v: int) -> int:
         if not (1 <= v <= 65535):
             raise ValueError(f"Port {v} is not in the valid range (1-65535)")
         return v
@@ -130,7 +133,7 @@ class MetadataService:
         if self.verbose:
             logger.debug(f"Saving metadata to: {metadata_file}")
 
-        metadata_dict = metadata.dict(exclude_none=True)
+        metadata_dict = metadata.model_dump(exclude_none=True)
 
         with open(metadata_file, 'w', encoding='utf-8') as f:
             yaml.dump(metadata_dict, f, default_flow_style=False, indent=2)
@@ -154,11 +157,11 @@ class MetadataService:
         metadata = self.load_metadata(workspace_path)
 
         # Apply updates
-        metadata_dict = metadata.dict()
+        metadata_dict = metadata.model_dump()
         metadata_dict.update(updates)
 
         # Validate and return new metadata
-        updated_metadata = AgentMetadata(**metadata_dict)
+        updated_metadata = metadata.model_copy(update=updates)
 
         # Save updated metadata
         self.save_metadata(workspace_path, updated_metadata)

@@ -6,6 +6,8 @@ the packaging of agent applications into standardized workspaces.
 """
 
 import logging
+import json
+import shlex
 import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -254,6 +256,7 @@ class PackRuntime:
         return dockerfile_path
 
     def _generate_python_dockerfile(self, metadata: AgentMetadata) -> str:
+        cmd_json = json.dumps(shlex.split(metadata.entrypoint))
         """Generate Dockerfile for Python agent."""
         return f"""# Python Agent Dockerfile
 FROM python:3.11-slim
@@ -281,7 +284,7 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # Run the application
-CMD {metadata.entrypoint}
+CMD {cmd_json}
 """
 
     def _generate_java_dockerfile(self, metadata: AgentMetadata) -> str:
@@ -343,12 +346,8 @@ CMD ["java", "-jar", "app.jar"]
                 if self.verbose:
                     logger.debug(f"Copying workspace from {workspace_path} to {output}")
 
-                # Remove existing directory if it exists
-                if output.exists():
-                    shutil.rmtree(output)
-
-                # Copy workspace contents
-                shutil.copytree(workspace_path, output, ignore=shutil.ignore_patterns('.git', '__pycache__'))
+                # Copy workspace contents. This will overwrite existing files.
+                shutil.copytree(workspace_path, output, ignore=shutil.ignore_patterns('.git', '__pycache__'), dirs_exist_ok=True)
 
                 return output
 

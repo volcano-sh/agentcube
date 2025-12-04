@@ -281,11 +281,12 @@ func (r *CodeInterpreterReconciler) deleteSandboxTemplate(ctx context.Context, c
 func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alpha1.CodeInterpreterSandboxTemplate, ci *runtimev1alpha1.CodeInterpreter) sandboxv1alpha1.PodTemplate {
 	// Build pod spec
 	podSpec := corev1.PodSpec{
+		ImagePullSecrets: template.ImagePullSecrets,
 		Containers: []corev1.Container{
 			{
 				Name:            "codeinterpreter",
 				Image:           template.Image,
-				ImagePullPolicy: corev1.PullIfNotPresent,
+				ImagePullPolicy: template.ImagePullPolicy,
 				Command:         template.Command,
 				Args:            template.Args,
 				Env:             template.Environment,

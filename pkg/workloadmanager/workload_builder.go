@@ -207,13 +207,14 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 			{
 				Name:            "code-interpreter",
 				Image:           codeInterpreterObj.Spec.Template.Image,
-				ImagePullPolicy: corev1.PullIfNotPresent,
+				ImagePullPolicy: codeInterpreterObj.Spec.Template.ImagePullPolicy,
 				Env:             codeInterpreterObj.Spec.Template.Environment,
 				Command:         codeInterpreterObj.Spec.Template.Command,
 				Args:            codeInterpreterObj.Spec.Template.Args,
 				Resources:       codeInterpreterObj.Spec.Template.Resources,
 			},
 		},
+		RuntimeClassName: codeInterpreterObj.Spec.Template.RuntimeClassName,
 	}
 
 	// Inject bootstrap key volume and mount

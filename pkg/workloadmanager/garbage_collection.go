@@ -51,12 +51,12 @@ func (gc *garbageCollector) once() {
 	inactiveTime := time.Now().Add(-DefaultSandboxIdleTimeout)
 	inactiveSandboxes, err := gc.redisClient.ListInactiveSandboxes(ctx, inactiveTime, 16)
 	if err != nil {
-		log.Printf("error listing inactive sandboxes: %v", err)
+		log.Printf("garbage collector error listing inactive sandboxes: %v", err)
 	}
 	// List sandboxes reach DDL
 	expiredSandboxes, err := gc.redisClient.ListExpiredSandboxes(ctx, time.Now(), 16)
 	if err != nil {
-		log.Printf("error listing inactive sandboxes: %v", err)
+		log.Printf("garbage collector error listing expired sandboxes: %v", err)
 	}
 	namespaces := make([]string, 0, len(inactiveSandboxes)+len(expiredSandboxes))
 	names := make([]string, 0, len(inactiveSandboxes)+len(expiredSandboxes))
@@ -72,6 +72,10 @@ func (gc *garbageCollector) once() {
 		sessionIDs = append(sessionIDs, expired.SessionID)
 	}
 
+	if len(names) > 0 {
+		log.Printf("garbage collector found %d sandboxes to be delete", len(names))
+	}
+
 	errs := make([]error, 0, len(names))
 	// delete sandboxes
 	for i := range names {
@@ -80,7 +84,7 @@ func (gc *garbageCollector) once() {
 			errs = append(errs, err)
 			continue
 		}
-		log.Printf("sandbox %s/%s session %s deleted", namespaces[i], names[i], sessionIDs[i])
+		log.Printf("garbage collector sandbox %s/%s session %s deleted", namespaces[i], names[i], sessionIDs[i])
 		err = gc.redisClient.DeleteSandboxBySessionIDTx(ctx, sessionIDs[i])
 		if err != nil {
 			errs = append(errs, err)

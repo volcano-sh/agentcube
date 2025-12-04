@@ -202,14 +202,16 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 
 	podSpec := corev1.PodSpec{
+		ImagePullSecrets: codeInterpreterObj.Spec.Template.ImagePullSecrets,
 		Containers: []corev1.Container{
 			{
-				Name:      "code-interpreter",
-				Image:     codeInterpreterObj.Spec.Template.Image,
-				Env:       codeInterpreterObj.Spec.Template.Environment,
-				Command:   codeInterpreterObj.Spec.Template.Command,
-				Args:      codeInterpreterObj.Spec.Template.Args,
-				Resources: codeInterpreterObj.Spec.Template.Resources,
+				Name:            "code-interpreter",
+				Image:           codeInterpreterObj.Spec.Template.Image,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				Env:             codeInterpreterObj.Spec.Template.Environment,
+				Command:         codeInterpreterObj.Spec.Template.Command,
+				Args:            codeInterpreterObj.Spec.Template.Args,
+				Resources:       codeInterpreterObj.Spec.Template.Resources,
 			},
 		},
 	}

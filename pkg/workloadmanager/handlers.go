@@ -226,13 +226,15 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	)
 
 	if err != nil {
+		log.Printf("init sandbox %s/%s failed: %v", createdSandbox.Namespace, createdSandbox.Name, err)
 		respondError(c, http.StatusInternalServerError, "SANDBOX_INIT_FAILED",
 			fmt.Sprintf("Failed to initialize code interpreter: %v", err))
 		return
 	}
 
-	// Init successful, no need to rollback
+	// init successful, no need to rollback
 	needRollbackSandbox = false
+	log.Printf("init sandbox %s/%s successfully, sessionID: %s", createdSandbox.Namespace, createdSandbox.Name, externalInfo.SessionID)
 	respondJSON(c, http.StatusOK, response)
 }
 
@@ -244,9 +246,11 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 	sandbox, err := s.redisClient.GetSandboxBySessionID(c.Request.Context(), sessionID)
 	if err != nil {
 		if errors.Is(err, redis.ErrNotFound) || errors.Is(err, redisv9.Nil) {
+			log.Printf("sessionID %s not found in redis", sessionID)
 			respondError(c, http.StatusNotFound, "SESSION_NOT_FOUND", "Sandbox not found")
 			return
 		}
+		log.Printf("get sandbox from redis by sessionID %s failed: %v", sessionID, err)
 		respondError(c, http.StatusInternalServerError, "FIND_SESSION_FAILED", err.Error())
 		return
 	}
@@ -275,6 +279,7 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 		// SandboxClaimName is not empty, we should delete SandboxClaim
 		err = deleteSandboxClaim(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.SandboxClaimName)
 		if err != nil {
+			log.Printf("failed to delete sandbox claim %s/%s: %v", sandbox.SandboxNamespace, sandbox.SandboxClaimName, err)
 			respondError(c, http.StatusForbidden, "SANDBOX_CLAIM_DELETE_FAILED",
 				fmt.Sprintf("Failed to delete sandbox claim (namespace: %s): %v", sandbox.SandboxNamespace, err))
 			return
@@ -283,6 +288,7 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 		// SandboxClaimName is empty, we should delete Sandbox directly
 		err = deleteSandbox(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.SandboxName)
 		if err != nil {
+			log.Printf("failed to delete sandbox claim %s/%s: %v", sandbox.SandboxNamespace, sandbox.SandboxName, err)
 			respondError(c, http.StatusForbidden, "SANDBOX_DELETE_FAILED",
 				fmt.Sprintf("Failed to delete sandbox (namespace: %s): %v", sandbox.SandboxNamespace, err))
 			return
@@ -295,6 +301,13 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "REDIS_SANDBOX_DELETE_FAILED", err.Error())
 		return
 	}
+
+	objectType := SandboxGVR.Resource
+	objectName := sandbox.SandboxName
+	if sandbox.SandboxClaimName != "" {
+		objectName = sandbox.SandboxClaimName
+	}
+	log.Printf("delete %s %s/%s successfully, sessionID: %v ", objectType, sandbox.SandboxNamespace, objectName, sandbox.SessionID)
 	respondJSON(c, http.StatusOK, map[string]string{
 		"message": "Sandbox deleted successfully",
 	})

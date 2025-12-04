@@ -17,4 +17,4 @@ WORKDIR /root/
 
 COPY --from=builder /app/picod .
 
-CMD ["./picod"]
+ENTRYPOINT ["./picod"]

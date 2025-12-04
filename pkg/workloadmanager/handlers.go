@@ -206,7 +206,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	// If no /init path found, use the first entryPoint endpoint with /init appended
 	if initEndpoint == "" {
 		if len(redisCacheInfo.EntryPoints) > 0 {
-			initEndpoint = fmt.Sprintf("%s://%s/init",
+			initEndpoint = fmt.Sprintf("%s://%s",
 				redisCacheInfo.EntryPoints[0].Protocol,
 				redisCacheInfo.EntryPoints[0].Endpoint)
 		} else {

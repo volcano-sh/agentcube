@@ -76,12 +76,13 @@ func NewServer(config Config) *Server {
 	// API route group
 	api := engine.Group("/api")
 	{
-		api.POST("/init", authManager.InitHandler)
 		api.POST("/execute", ExecuteHandler)
 		api.POST("/files", UploadFileHandler)
 		api.POST("/files/list", ListFilesHandler)
 		api.GET("/files/*path", DownloadFileHandler)
 	}
+
+	engine.POST("/init", authManager.InitHandler)
 
 	// Health check (no authentication required)
 	engine.GET("/health", HealthCheckHandler)

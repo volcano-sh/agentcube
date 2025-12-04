@@ -152,7 +152,7 @@ class TestAgentCubeSDK(unittest.TestCase):
             
             # Call Init API
             resp = requests.post(
-                f"{PICOD_URL}/api/init", 
+                f"{PICOD_URL}/init", 
                 headers={"Authorization": f"Bearer {init_token}"}
             )
             self.assertEqual(resp.status_code, 200, f"Picod Init Failed: {resp.text}")

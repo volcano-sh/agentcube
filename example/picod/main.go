@@ -257,7 +257,7 @@ func performHandshake(sessionKey *rsa.PrivateKey) error {
 	}
 
 	// Send Request
-	req, _ := http.NewRequest("POST", picoDURL+"/api/init", nil)
+	req, _ := http.NewRequest("POST", picoDURL+"/init", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := http.DefaultClient.Do(req)

@@ -97,7 +97,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		}
 		initToken := createToken(bootstrapPriv, initClaims)
 
-		req, _ := http.NewRequest("POST", ts.URL+"/api/init", nil)
+		req, _ := http.NewRequest("POST", ts.URL+"/init", nil)
 		req.Header.Set("Authorization", "Bearer "+initToken)
 		resp, err := client.Do(req)
 		require.NoError(t, err)

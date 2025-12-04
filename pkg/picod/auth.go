@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"log"
@@ -115,8 +116,13 @@ func (am *AuthManager) SavePublicKey(publicKeyStr string) error {
 	am.mutex.Lock()
 	defer am.mutex.Unlock()
 
+	publicKeyByte, err := base64.RawStdEncoding.DecodeString(publicKeyStr)
+	if err != nil {
+		return fmt.Errorf("failed to decode base64")
+	}
+
 	// Parse the public key
-	block, _ := pem.Decode([]byte(publicKeyStr))
+	block, _ := pem.Decode(publicKeyByte)
 	if block == nil {
 		return fmt.Errorf("failed to decode PEM block")
 	}
@@ -137,7 +143,7 @@ func (am *AuthManager) SavePublicKey(publicKeyStr string) error {
 	}
 
 	// Save to file with read-only permissions
-	if err := os.WriteFile(am.keyFile, []byte(publicKeyStr), 0400); err != nil {
+	if err := os.WriteFile(am.keyFile, publicKeyByte, 0400); err != nil {
 		return fmt.Errorf("failed to save public key file: %v", err)
 	}
 
@@ -248,7 +254,7 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 	// Save the public key
 	if err := am.SavePublicKey(sessionPublicKey); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to save public key: %v", err),
+			"error": fmt.Sprintf("Failed to save public key: %v, sessionPublicKey: %s", err, sessionPublicKey),
 			"code":  http.StatusInternalServerError,
 		})
 		return
@@ -263,8 +269,10 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 // AuthMiddleware creates authentication middleware with JWT verification
 func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		log.Printf("Request URL is %+v", c.Request.URL)
+
 		// Skip authentication for health check and init endpoint
-		if c.Request.URL.Path == "/health" || c.Request.URL.Path == "/api/init" {
+		if c.Request.URL.Path == "/health" || c.Request.URL.Path == "/init" {
 			c.Next()
 			return
 		}
@@ -274,7 +282,7 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 			c.JSON(http.StatusForbidden, gin.H{
 				"error":  "Server not initialized",
 				"code":   http.StatusForbidden,
-				"detail": "Please initialize this Picod instance first via /api/init",
+				"detail": fmt.Sprintf("Please initialize this Picod instance first via /init. Request URL is %+v", c.Request.URL),
 			})
 			c.Abort()
 			return

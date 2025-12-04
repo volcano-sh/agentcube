@@ -6,7 +6,7 @@ a rich and developer-friendly experience for managing AI agents.
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 import typer
 from rich.console import Console
@@ -38,6 +38,14 @@ def version_callback(value: bool) -> None:
         from agentrun import __version__
         console.print(f"AgentRun CLI (kubectl agentrun) version: [bold green]{__version__}[/bold green]")
         raise typer.Exit()
+
+# Error handling  
+def _handle_error(e: Exception, command_name: str, verbose: bool):
+    console.print(f"Error {command_name}: [red]{str(e)}[/red]")
+    if verbose:
+        import traceback
+        console.print(traceback.format_exc())
+    raise typer.Exit(1)
 
 @app.callback()
 def main(
@@ -149,11 +157,7 @@ def pack(
         console.print(f"Workspace: [blue]{result['workspace_path']}[/blue]")
         console.print(f"Metadata: [blue]{result['metadata_path']}[/blue]")
     except Exception as e:
-        console.print(f"Error packaging agent: [red]{str(e)}[/red]")
-        if verbose:
-            import traceback
-            console.print(traceback.format_exc())
-        raise typer.Exit(1)
+        _handle_error(e, "packaging agent", verbose)
 
 @app.command()
 def build(
@@ -220,11 +224,7 @@ def build(
         console.print(f"Tag: [blue]{result['image_tag']}[/blue]")
         console.print(f"Size: [blue]{result['image_size']}[/blue]")
     except Exception as e:
-        console.print(f"Error building agent: [red]{str(e)}[/red]")
-        if verbose:
-            import traceback
-            console.print(traceback.format_exc())
-        raise typer.Exit(1)
+        _handle_error(e, "building agent", verbose)
 
 @app.command()
 def publish(
@@ -273,7 +273,7 @@ def publish(
     provider: str = typer.Option(
         "agentcube",
         "--provider",
-        help="Target provider for deployment (agentcube, k8s).",
+        help="Target provider for deployment (agentcube, k8s). 'agentcube' deploys AgentRuntime CR, 'k8s' deploys standard K8s Deployment/Service. [default: agentcube]",
     ),
     node_port: Optional[int] = typer.Option(
         None,
@@ -353,11 +353,7 @@ def publish(
                 console.print(f"NodePort: [blue]{result['node_port']}[/blue]")
 
     except Exception as e:
-        console.print(f"Error publishing agent: [red]{str(e)}[/red]")
-        if verbose:
-            import traceback
-            console.print(traceback.format_exc())
-        raise typer.Exit(1)
+        _handle_error(e, "publishing agent", verbose)
 
 @app.command()
 def invoke(
@@ -373,15 +369,15 @@ def invoke(
         "--payload",
         help="JSON-formatted input passed to the agent",
     ),
-    header: Optional[str] = typer.Option(
+    header: Optional[List[str]] = typer.Option(
         None,
         "--header",
-        help="Custom HTTP headers (e.g., 'Authorization: Bearer token')",
+        help="Custom HTTP headers (e.g., 'Authorization: Bearer token'). Can be specified multiple times.",
     ),
     provider: str = typer.Option(
         "agentcube",
         "--provider",
-        help="Target provider for invocation (agentcube, k8s).",
+        help="Target provider for deployment (agentcube, k8s). 'agentcube' deploys AgentRuntime CR, 'k8s' deploys standard K8s Deployment/Service. [default: agentcube]",
     ),
     verbose: bool = typer.Option(
         False,
@@ -430,11 +426,7 @@ def invoke(
         console.print(f"Response: [green]{result}[/green]")
 
     except Exception as e:
-        console.print(f"Error invoking agent: [red]{str(e)}[/red]")
-        if verbose:
-            import traceback
-            console.print(traceback.format_exc())
-        raise typer.Exit(1)
+        _handle_error(e, "invoking agent", verbose)
 
 @app.command()
 def status(
@@ -448,7 +440,7 @@ def status(
     provider: str = typer.Option(
         "agentcube",
         "--provider",
-        help="Target provider for status check (agentcube, k8s)",
+        help="Target provider for deployment (agentcube, k8s). 'agentcube' deploys AgentRuntime CR, 'k8s' deploys standard K8s Deployment/Service. [default: agentcube]",
     ),
     verbose: bool = typer.Option(
         False,
@@ -522,11 +514,7 @@ def status(
         console.print(table)
 
     except Exception as e:
-        console.print(f"Error checking status: [red]{str(e)}[/red]")
-        if verbose:
-            import traceback
-            console.print(traceback.format_exc())
-        raise typer.Exit(1)
+        _handle_error(e, "checking status", verbose)
 
 if __name__ == "__main__":
     app()

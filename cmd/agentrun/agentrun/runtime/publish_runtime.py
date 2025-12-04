@@ -6,14 +6,15 @@ the publishing of agent images to AgentCube.
 """
 
 import logging
-import time # New import
 from pathlib import Path
 from typing import Any, Dict
 
 from agentrun.services.docker_service import DockerService
 from agentrun.services.metadata_service import MetadataService
 from agentrun.services.k8s_provider import KubernetesProvider
-from agentrun.services.agentcube_provider import AgentCubeProvider # Use AgentCubeProvider for CRD
+from agentrun.services.agentcube_provider import AgentCubeProvider
+
+logger = logging.getLogger(__name__)
 
 
 class PublishRuntime:
@@ -74,7 +75,7 @@ class PublishRuntime:
         else:
             raise ValueError(f"Unsupported provider: {provider}. Supported providers are 'agentcube' and 'k8s'.")
 
-    def _publish_crd_to_k8s( # Renamed from _publish_to_k8s
+    def _publish_crd_to_k8s(
         self,
         workspace_path: Path,
         **options: Any
@@ -219,7 +220,7 @@ class PublishRuntime:
             
             final_status = "failed"
             try:
-                self.k8s_provider._wait_for_deployment_ready(k8s_info['deployment_name'], timeout=120)
+                self.k8s_provider.wait_for_deployment_ready(k8s_info['deployment_name'], timeout=120)
                 final_status = "deployed"
             except Exception as e:
                 error_message = str(e)
@@ -327,12 +328,6 @@ class PublishRuntime:
                 "Use --image-url option."
             )
 
-        if not username or not password:
-            raise ValueError(
-                "Image repository credentials are required. "
-                "Use --image-username and --image-password options."
-            )
-
         # Tag and push the image
         try:
             if self.verbose:
@@ -386,5 +381,3 @@ class PublishRuntime:
 
         if self.verbose:
             logger.debug(f"Updated metadata with publish info: {updates}")
-
-logger = logging.getLogger(__name__)

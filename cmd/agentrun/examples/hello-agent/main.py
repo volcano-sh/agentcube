@@ -8,7 +8,6 @@ This agent provides a basic HTTP API for greeting users.
 import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
-import urllib.parse
 from typing import Dict, Any
 
 

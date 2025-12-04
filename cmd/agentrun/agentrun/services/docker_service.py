@@ -128,7 +128,10 @@ class DockerService:
             logger.error(error_msg)
             # Log build logs if available
             if hasattr(e, 'build_log'):
-                logger.error(f"Build logs: {e.build_log}")
+                logger.error("Docker build logs:")
+                for line in e.build_log:
+                    if 'stream' in line:
+                        logger.error(line['stream'].strip())
             raise RuntimeError(error_msg)
         except APIError as e:
             error_msg = f"Docker API error during build: {e}"

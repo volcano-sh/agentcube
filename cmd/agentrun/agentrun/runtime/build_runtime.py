@@ -12,6 +12,8 @@ from typing import Any, Dict
 from agentrun.services.docker_service import DockerService
 from agentrun.services.metadata_service import MetadataService
 
+logger = logging.getLogger(__name__)
+
 
 class BuildRuntime:
     """Runtime for the build command."""
@@ -20,9 +22,6 @@ class BuildRuntime:
         self.verbose = verbose
         self.metadata_service = MetadataService(verbose=verbose)
         self.docker_service = DockerService(verbose=verbose)
-
-        if verbose:
-            logging.basicConfig(level=logging.DEBUG)
 
     def build(
         self,
@@ -122,7 +121,7 @@ class BuildRuntime:
 
         result = {
             "image_name": build_result["image_name"],
-            "image_tag": build_result["image_name"],
+            "image_tag": tag,
             "image_size": build_result["image_size"],
             "build_time": build_result["build_time"],
             "build_mode": "local"
@@ -168,6 +167,3 @@ class BuildRuntime:
 
         if self.verbose:
             logger.debug(f"Updated metadata with build info: {image_info}")
-
-
-logger = logging.getLogger(__name__)

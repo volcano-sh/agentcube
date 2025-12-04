@@ -6,6 +6,7 @@ specifically designed for the AgentCube ecosystem.
 """
 
 import logging
+import shlex
 from typing import Any, Dict, Optional
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
@@ -46,7 +47,7 @@ class AgentCubeProvider:
                     config.load_incluster_config()
                     if self.verbose:
                         logger.info("Loaded in-cluster Kubernetes config")
-                except Exception:
+                except config.ConfigException:
                     config.load_kube_config()
                     if self.verbose:
                         logger.info("Loaded local Kubernetes config")
@@ -120,7 +121,7 @@ class AgentCubeProvider:
         }
 
         if entrypoint:
-            parts = entrypoint.split()
+            parts = shlex.split(entrypoint)
             if len(parts) > 0:
                 container["command"] = [parts[0]]
                 if len(parts) > 1:

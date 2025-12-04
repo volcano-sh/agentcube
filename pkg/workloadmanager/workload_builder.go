@@ -43,25 +43,6 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 		params.idleTimeout = DefaultSandboxIdleTimeout
 	}
 
-	// Inject bootstrap key volume and mount
-	bootstrapVolume := corev1.Volume{
-		Name: "jwt-public-key",
-		VolumeSource: corev1.VolumeSource{
-			Secret: &corev1.SecretVolumeSource{
-				SecretName: "agentcube-jwt-public-key",
-			},
-		},
-	}
-	params.podSpec.Volumes = append(params.podSpec.Volumes, bootstrapVolume)
-
-	if len(params.podSpec.Containers) > 0 {
-		params.podSpec.Containers[0].VolumeMounts = append(params.podSpec.Containers[0].VolumeMounts, corev1.VolumeMount{
-			Name:      "jwt-public-key",
-			MountPath: "/etc/picod",
-			ReadOnly:  true,
-		})
-	}
-
 	shutdownTime := metav1.NewTime(time.Now().Add(params.ttl))
 	// Create Sandbox object using agent-sandbox types
 	sandbox := &sandboxv1alpha1.Sandbox{
@@ -232,6 +213,26 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 			},
 		},
 	}
+
+	// Inject bootstrap key volume and mount
+	bootstrapVolume := corev1.Volume{
+		Name: "jwt-public-key",
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: "agentcube-jwt-public-key",
+			},
+		},
+	}
+	podSpec.Volumes = append(podSpec.Volumes, bootstrapVolume)
+
+	if len(podSpec.Containers) > 0 {
+		podSpec.Containers[0].VolumeMounts = append(podSpec.Containers[0].VolumeMounts, corev1.VolumeMount{
+			Name:      "jwt-public-key",
+			MountPath: "/etc/picod",
+			ReadOnly:  true,
+		})
+	}
+
 	buildParams := &buildSandboxParams{
 		sandboxName:    sandboxName,
 		namespace:      namespace,

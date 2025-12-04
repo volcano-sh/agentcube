@@ -1,11 +1,11 @@
-# Example to test api of agentcube-apiserver
+# Example to test api of workloadmanager
 
-This test program demonstrates and validates the api of agentcube-apiserver
+This test program demonstrates and validates the api of workloadmanager
 
 ## What it does
 
 1. **Generates SSH Key Pair**: Creates an Ed25519 public/private key pair
-2. **Creates Session**: Sends the public key to agentcube-apiserver when creating a session (waits for sandbox to be running)
+2. **Creates Session**: Sends the public key to workloadmanager when creating a session (waits for sandbox to be running)
 3. **Establishes Tunnel**: Creates an HTTP CONNECT tunnel to the sandbox
 4. **SSH Connection**: Connects via SSH using private key authentication (no password!)
 5. **Executes Commands**: Runs basic test commands to verify SSH connectivity
@@ -16,14 +16,14 @@ This test program demonstrates and validates the api of agentcube-apiserver
 
 ## Prerequisites
 
-- agentcube-apiserver running (locally or in Kubernetes)
+- workloadmanager running (locally or in Kubernetes)
 - Sandbox image built with SSH key support
 - Kubernetes cluster with agent-sandbox controller (if deploying sandboxes)
 - Service Account with appropriate RBAC permissions (see below)
 
 ## Permission Model
 
-**Important:** agentcube-apiserver now uses a caller-permission-based operation model. This means:
+**Important:** workloadmanager now uses a caller-permission-based operation model. This means:
 
 1. **All operations are executed using the caller's Service Account Token**
    - When creating a Sandbox, it's created in the caller's namespace using their permissions
@@ -35,7 +35,7 @@ This test program demonstrates and validates the api of agentcube-apiserver
    - Must have `get` and `list` permissions to view Sandbox status
 
 3. **Sandboxes are created in the caller's namespace**
-   - No longer centrally created in agentcube-apiserver's namespace
+   - No longer centrally created in workloadmanager's namespace
    - Each Service Account manages Sandboxes in their own namespace
 
 ### RBAC Configuration Example

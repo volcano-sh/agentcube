@@ -1,5 +1,5 @@
-# All-in-one deployment file for agentcube-apiserver
-# Apply with: kubectl apply -f k8s/agentcube-apiserver.yaml
+# All-in-one deployment file for workloadmanager
+# Apply with: kubectl apply -f k8s/workloadmanager.yaml
 
 ---
 apiVersion: v1
@@ -11,14 +11,14 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: agentcube-apiserver
+  name: workloadmanager
   namespace: agentcube
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: agentcube-apiserver
+  name: workloadmanager
 rules:
   - apiGroups: ["agents.x-k8s.io"]
     resources: ["sandboxes"]
@@ -58,38 +58,40 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: agentcube-apiserver
+  name: workloadmanager
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: agentcube-apiserver
+  name: workloadmanager
 subjects:
   - kind: ServiceAccount
-    name: agentcube-apiserver
+    name: workloadmanager
     namespace: agentcube
 
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: agentcube-apiserver
+  name: workloadmanager
   namespace: agentcube
   labels:
-    app: agentcube-apiserver
+    app: workloadmanager
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: agentcube-apiserver
+      app: workloadmanager
   template:
     metadata:
       labels:
-        app: agentcube-apiserver
+        app: workloadmanager
     spec:
-      serviceAccountName: agentcube-apiserver
+      serviceAccountName: workloadmanager
+      imagePullSecrets:
+      - name: default-secret
       containers:
-        - name: agentcube-apiserver
-          image: agentcube-apiserver:latest
+        - name: workloadmanager
+          image: workloadmanager:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -127,10 +129,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: agentcube-apiserver
+  name: workloadmanager
   namespace: agentcube
   labels:
-    app: agentcube-apiserver
+    app: workloadmanager
 spec:
   type: ClusterIP
   ports:
@@ -139,4 +141,4 @@ spec:
       protocol: TCP
       name: http
   selector:
-    app: agentcube-apiserver
+    app: workloadmanager

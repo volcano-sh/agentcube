@@ -175,6 +175,8 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 
 	response := &types.CreateSandboxResponse{
 		SessionID:   externalInfo.SessionID,
+		SandboxID:   redisCacheInfo.SandboxID,
+		SandboxName: sandboxName,
 		EntryPoints: redisCacheInfo.EntryPoints,
 	}
 

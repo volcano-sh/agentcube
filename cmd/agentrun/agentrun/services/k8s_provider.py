@@ -20,7 +20,7 @@ class KubernetesProvider:
 
     def __init__(
         self,
-        namespace: str = "agentrun",
+        namespace: str = "default",
         verbose: bool = False,
         kubeconfig: Optional[str] = None
     ) -> None:

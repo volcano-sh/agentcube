@@ -116,11 +116,12 @@ func (s *Server) setupRoutes() {
 	// API v1 routes
 	v1 := s.router.Group("/v1")
 
-	// Sandbox management endpoints
-	v1.POST("/sandboxes", s.handleCreateSandbox)
-	v1.POST("/code-interpreter/start", s.handleCreateSandbox)
-	v1.POST("/code-interpreter/stop", s.handleDeleteSandbox)
-	v1.DELETE("/sandboxes/:sandboxId", s.handleDeleteSandbox)
+	// agent runtime management endpoints
+	v1.POST("/agent-runtime", s.handleCreateSandbox)
+	v1.DELETE("/agent-runtime/sessions/:sessionId", s.handleDeleteSandbox)
+	// code interpreter management endpoints
+	v1.POST("/code-interpreter", s.handleCreateSandbox)
+	v1.DELETE("/code-interpreter/sessions/:sessionId", s.handleDeleteSandbox)
 }
 
 // Start starts the API server
@@ -137,6 +138,7 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := s.redisClient.Ping(ctx); err != nil {
 		return fmt.Errorf("failed to ping redis: %w", err)
 	}
+	log.Println("redis Ping check successfully")
 
 	addr := ":" + s.config.Port
 

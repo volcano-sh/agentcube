@@ -9,6 +9,7 @@ type SandboxRedis struct {
 	SandboxID        string               `json:"sandboxId"`
 	SandboxNamespace string               `json:"sandboxNamespace"`
 	SandboxName      string               `json:"sandboxName"`
+	SandboxClaimName string               `json:"sandboxClaimName"`
 	EntryPoints      []SandboxEntryPoints `json:"entryPoints"`
 	SessionID        string               `json:"sessionId"`
 	CreatedAt        time.Time            `json:"createdAt"`

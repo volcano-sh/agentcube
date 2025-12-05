@@ -32,6 +32,7 @@ type buildSandboxClaimParams struct {
 	namespace           string
 	name                string
 	sandboxTemplateName string
+	sessionID           string
 }
 
 // buildSandboxObject builds a Sandbox object from parameters
@@ -89,9 +90,12 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 			Kind:       "SandboxClaim",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        params.name,
-			Namespace:   params.namespace,
-			Labels:      map[string]string{},
+			Name:      params.name,
+			Namespace: params.namespace,
+			Labels: map[string]string{
+				SessionIdLabelKey: params.sessionID,
+				"sandbox-name":    params.name,
+			},
 			Annotations: map[string]string{},
 		},
 		Spec: extensionsv1alpha1.SandboxClaimSpec{
@@ -186,6 +190,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 			namespace:           namespace,
 			name:                sandboxClaimName,
 			sandboxTemplateName: codeInterpreterName,
+			sessionID:           sessionId,
 		})
 		simpleSandbox := &sandboxv1alpha1.Sandbox{
 			ObjectMeta: metav1.ObjectMeta{

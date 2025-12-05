@@ -38,6 +38,10 @@ class AgentMetadata(BaseModel):
     # Build configuration
     requirements_file: Optional[str] = Field("requirements.txt", description="Python dependency file")
 
+    # AgentCube system configuration
+    workload_manager_url: Optional[str] = Field(None, description="URL for the Workload Manager")
+    router_url: Optional[str] = Field(None, description="URL for the Router")
+
     # AgentCube specific fields (filled after publish)
     agent_id: Optional[str] = Field(None, description="Agent ID assigned by AgentCube")
     agent_endpoint: Optional[str] = Field(None, description="Agent endpoint URL")

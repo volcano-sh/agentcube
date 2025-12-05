@@ -67,14 +67,26 @@ class InvokeRuntime:
             logger.info(f"Starting agent invocation for workspace: {workspace_path}")
 
         # Step 1: Load metadata and validate agent is published
-        agent_id, endpoint = self._validate_invoke_prerequisites(workspace_path)
+        metadata, agent_id, base_endpoint = self._validate_invoke_prerequisites(workspace_path)
+
+        # Determine final endpoint based on deployment type
+        final_endpoint = base_endpoint
+        if metadata.k8s_deployment and metadata.k8s_deployment.get("type") == "AgentRuntime":
+            namespace = metadata.k8s_deployment.get("namespace", "default")
+            agent_name = metadata.agent_name
+            # Ensure base_endpoint doesn't have trailing slash
+            base = base_endpoint.rstrip("/")
+            final_endpoint = f"{base}/v1/namespaces/{namespace}/agent-runtimes/{agent_name}/invocations/"
+            
+            if self.verbose:
+                logger.info(f"Constructed AgentRuntime invocation URL: {final_endpoint}")
 
         # Step 2: Invoke the agent
         response = asyncio.run(self._invoke_agent_via_agentcube(
             agent_id=agent_id,
             payload=payload,
             headers=headers,
-            endpoint=endpoint
+            endpoint=final_endpoint
         ))
 
         if self.verbose:
@@ -82,7 +94,7 @@ class InvokeRuntime:
 
         return response
 
-    def _validate_invoke_prerequisites(self, workspace_path: Path) -> tuple[str, str]:
+    def _validate_invoke_prerequisites(self, workspace_path: Path) -> tuple[Any, str, str]:
         """Validate that the workspace is ready for invocation."""
         # Load metadata
         metadata = self.metadata_service.load_metadata(workspace_path)
@@ -98,14 +110,14 @@ class InvokeRuntime:
         
         if not endpoint:
             raise ValueError(
-                "Agent endpoint is not available in metadata and could not be constructed. "
-                "Please publish with --agentcube-uri or provide it during invocation."
+                "Agent endpoint is not available in metadata. "
+                "Please publish with --endpoint or ensure router_url is set."
             )
 
         if self.verbose:
             logger.debug(f"Invocation prerequisites validated: agent_id={agent_id}, endpoint={endpoint}")
 
-        return agent_id, endpoint
+        return metadata, agent_id, endpoint
 
     async def _invoke_agent_via_agentcube(
         self,

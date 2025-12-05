@@ -125,6 +125,8 @@ class PackRuntime:
                 "port": options.get('port', 8080),
                 "build_mode": options.get('build_mode', 'local'),
                 "requirements_file": "requirements.txt" if language == 'python' else None,
+                "workload_manager_url": "",
+                "router_url": "",
             }
 
             # Add description if provided

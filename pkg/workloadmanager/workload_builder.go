@@ -85,8 +85,8 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha1.SandboxClaim {
 	sandboxClaim := &extensionsv1alpha1.SandboxClaim{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "agents.x-k8s.io/v1alpha1",
-			Kind:       "Sandbox",
+			APIVersion: "extensions.agents.x-k8s.io/v1alpha1",
+			Kind:       "SandboxClaim",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        params.name,

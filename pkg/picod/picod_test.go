@@ -50,6 +50,10 @@ func TestPicoD_EndToEnd(t *testing.T) {
 	bootstrapPriv, _, bootstrapPubStr := generateRSAKeys()
 	sessionPriv, _, sessionPubStr := generateRSAKeys()
 
+	fmt.Printf("sessionPubStr: \n %s \n", sessionPubStr)
+	base := base64.RawStdEncoding.EncodeToString([]byte(sessionPubStr))
+	fmt.Printf("base64 sessionPubStr: \n %s", base)
+
 	// 2. Setup Server Environment
 	tmpDir, err := os.MkdirTemp("", "picod_test")
 	require.NoError(t, err)
@@ -93,7 +97,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		initClaims := jwt.MapClaims{
 			"session_public_key": sessionPubStr,
 			"iat":                time.Now().Unix(),
-			"exp":                time.Now().Add(time.Minute).Unix(),
+			"exp":                time.Now().Add(time.Hour * 6).Unix(),
 		}
 		initToken := createToken(bootstrapPriv, initClaims)
 
@@ -123,13 +127,22 @@ func TestPicoD_EndToEnd(t *testing.T) {
 			claims := jwt.MapClaims{
 				"body_sha256": fmt.Sprintf("%x", hash),
 				"iat":         time.Now().Unix(),
-				"exp":         time.Now().Add(time.Minute).Unix(),
+				"exp":         time.Now().Add(time.Hour * 6).Unix(),
 			}
 			token := createToken(sessionPriv, claims)
+
+			fmt.Printf("token \n %s", token)
 
 			req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(bodyBytes))
 			req.Header.Set("Authorization", "Bearer "+token)
 			req.Header.Set("Content-Type", "application/json")
+
+			// 1. 读取 Body（会消耗 Body）
+			bodyBytes, err := io.ReadAll(req.Body)
+			if err != nil {
+
+			}
+			fmt.Printf("body \n%s\n", string(bodyBytes))
 
 			resp, err := client.Do(req)
 			require.NoError(t, err)
@@ -170,7 +183,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		getAuthHeaders := func(body []byte) http.Header {
 			claims := jwt.MapClaims{
 				"iat": time.Now().Unix(),
-				"exp": time.Now().Add(time.Minute).Unix(),
+				"exp": time.Now().Add(time.Hour * 6).Unix(),
 			}
 			if len(body) > 0 {
 				hash := sha256.Sum256(body)
@@ -234,7 +247,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		// Note: Multipart requests don't need body_sha256 in claims as per AuthMiddleware logic
 		claims := jwt.MapClaims{
 			"iat": time.Now().Unix(),
-			"exp": time.Now().Add(time.Minute).Unix(),
+			"exp": time.Now().Add(time.Hour * 6).Unix(),
 		}
 		token := createToken(sessionPriv, claims)
 
@@ -323,7 +336,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		claims := jwt.MapClaims{
 			"body_sha256": fmt.Sprintf("%x", hash),
 			"iat":         time.Now().Unix(),
-			"exp":         time.Now().Add(time.Minute).Unix(),
+			"exp":         time.Now().Add(time.Hour * 6).Unix(),
 		}
 		token := createToken(sessionPriv, claims)
 

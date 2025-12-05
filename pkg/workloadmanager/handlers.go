@@ -232,6 +232,12 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		return
 	}
 
+	err = s.redisClient.UpdateSandbox(c.Request.Context(), redisCacheInfo, DefaultRedisTTL)
+	if err != nil {
+		log.Printf("update redis cache failed: %v", err)
+		respondError(c, http.StatusInternalServerError, "SANDBOX_UPDATE_REDIS_FAILED", err.Error())
+		return
+	}
 	// init successful, no need to rollback
 	needRollbackSandbox = false
 	log.Printf("init sandbox %s/%s successfully, sessionID: %s", createdSandbox.Namespace, createdSandbox.Name, externalInfo.SessionID)

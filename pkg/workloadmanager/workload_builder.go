@@ -2,12 +2,15 @@ package workloadmanager
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/pointer"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
@@ -29,6 +32,7 @@ type buildSandboxClaimParams struct {
 	namespace           string
 	name                string
 	sandboxTemplateName string
+	sessionID           string
 }
 
 // buildSandboxObject builds a Sandbox object from parameters
@@ -82,13 +86,16 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha1.SandboxClaim {
 	sandboxClaim := &extensionsv1alpha1.SandboxClaim{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "agents.x-k8s.io/v1alpha1",
-			Kind:       "Sandbox",
+			APIVersion: "extensions.agents.x-k8s.io/v1alpha1",
+			Kind:       "SandboxClaim",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        params.name,
-			Namespace:   params.namespace,
-			Labels:      map[string]string{},
+			Name:      params.name,
+			Namespace: params.namespace,
+			Labels: map[string]string{
+				SessionIdLabelKey: params.sessionID,
+				"sandbox-name":    params.name,
+			},
 			Annotations: map[string]string{},
 		},
 		Spec: extensionsv1alpha1.SandboxClaimSpec{
@@ -110,9 +117,15 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 		return nil, nil, fmt.Errorf("agent runtime %s not found", agentRuntimeKey)
 	}
 
-	agentRuntimeObj, ok := runtimeObj.(*runtimev1alpha1.AgentRuntime)
+	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
 	if !ok {
+		log.Printf("agent runtime %s type asserting unstructured.Unstructured failed", agentRuntimeKey)
 		return nil, nil, fmt.Errorf("agent runtime type asserting failed")
+	}
+
+	var agentRuntimeObj runtimev1alpha1.AgentRuntime
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.Object, &agentRuntimeObj); err != nil {
+		return nil, nil, fmt.Errorf("failed to convert unstructured to AgentRuntime: %w", err)
 	}
 
 	if agentRuntimeObj.Spec.Template == nil {
@@ -120,7 +133,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	}
 
 	sessionId := uuid.New().String()
-	sandboxName := "agent-runtime-" + uuid.New().String()
+	sandboxName := fmt.Sprintf("%s-%s", name, RandString(8))
 	buildParams := &buildSandboxParams{
 		namespace:    namespace,
 		workloadName: name,
@@ -136,7 +149,8 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	}
 	sandbox := buildSandboxObject(buildParams)
 	externalInfo := &sandboxExternalInfo{
-		Ports: agentRuntimeObj.Spec.Ports,
+		Ports:     agentRuntimeObj.Spec.Ports,
+		SessionID: sessionId,
 	}
 	return sandbox, externalInfo, nil
 }
@@ -152,21 +166,31 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		return nil, nil, nil, fmt.Errorf("code interpreter %s not found", codeInterpreterKey)
 	}
 
-	codeInterpreterObj, ok := runtimeObj.(*runtimev1alpha1.CodeInterpreter)
+	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
 	if !ok {
+		log.Printf("code interpreter %s type asserting unstructured.Unstructured failed", codeInterpreterKey)
 		return nil, nil, nil, fmt.Errorf("code interpreter type asserting failed")
 	}
 
-	sandboxName := "code-interpreter-" + uuid.New().String()
+	var codeInterpreterObj runtimev1alpha1.CodeInterpreter
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.Object, &codeInterpreterObj); err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to convert unstructured to CodeInterpreter: %w", err)
+	}
+
+	sessionId := uuid.New().String()
+	sandboxName := fmt.Sprintf("%s-%s", codeInterpreterName, RandString(8))
 	externalInfo := &sandboxExternalInfo{
-		Ports: codeInterpreterObj.Spec.Ports,
+		Ports:     codeInterpreterObj.Spec.Ports,
+		SessionID: sessionId,
 	}
 
 	if codeInterpreterObj.Spec.WarmPoolSize != nil && *codeInterpreterObj.Spec.WarmPoolSize > 0 {
+		sandboxClaimName := sandboxName
 		sandboxClaim := buildSandboxClaimObject(&buildSandboxClaimParams{
 			namespace:           namespace,
-			name:                sandboxName,
+			name:                sandboxClaimName,
 			sandboxTemplateName: codeInterpreterName,
+			sessionID:           sessionId,
 		})
 		simpleSandbox := &sandboxv1alpha1.Sandbox{
 			ObjectMeta: metav1.ObjectMeta{
@@ -174,6 +198,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				Name:      sandboxName,
 			},
 		}
+		externalInfo.SandboxClaimName = sandboxClaimName
 		return simpleSandbox, sandboxClaim, externalInfo, nil
 	}
 
@@ -182,18 +207,40 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 
 	podSpec := corev1.PodSpec{
+		ImagePullSecrets: codeInterpreterObj.Spec.Template.ImagePullSecrets,
 		Containers: []corev1.Container{
 			{
-				Name:      "code-interpreter",
-				Image:     codeInterpreterObj.Spec.Template.Image,
-				Env:       codeInterpreterObj.Spec.Template.Environment,
-				Command:   codeInterpreterObj.Spec.Template.Command,
-				Args:      codeInterpreterObj.Spec.Template.Args,
-				Resources: codeInterpreterObj.Spec.Template.Resources,
+				Name:            "code-interpreter",
+				Image:           codeInterpreterObj.Spec.Template.Image,
+				ImagePullPolicy: codeInterpreterObj.Spec.Template.ImagePullPolicy,
+				Env:             codeInterpreterObj.Spec.Template.Environment,
+				Command:         codeInterpreterObj.Spec.Template.Command,
+				Args:            codeInterpreterObj.Spec.Template.Args,
+				Resources:       codeInterpreterObj.Spec.Template.Resources,
+			},
+		},
+		RuntimeClassName: codeInterpreterObj.Spec.Template.RuntimeClassName,
+	}
+
+	// Inject bootstrap key volume and mount
+	bootstrapVolume := corev1.Volume{
+		Name: "jwt-public-key",
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: "agentcube-jwt-public-key",
 			},
 		},
 	}
-	sessionId := uuid.New().String()
+	podSpec.Volumes = append(podSpec.Volumes, bootstrapVolume)
+
+	if len(podSpec.Containers) > 0 {
+		podSpec.Containers[0].VolumeMounts = append(podSpec.Containers[0].VolumeMounts, corev1.VolumeMount{
+			Name:      "jwt-public-key",
+			MountPath: "/etc/picod",
+			ReadOnly:  true,
+		})
+	}
+
 	buildParams := &buildSandboxParams{
 		sandboxName:    sandboxName,
 		namespace:      namespace,

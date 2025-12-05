@@ -45,6 +45,6 @@ spec:
             - name: OPENAI_MODEL
               value: "Qwen/QwQ-32B"
             - name: API_URL
-              value: "http://agentcube-apiserver.agentcube.svc.cluster.local:8080"
+              value: "http://workloadmanager.agentcube.svc.cluster.local:8080"
           command: ["uv"]
           args: ["run", "pcap_analyzer.py"]

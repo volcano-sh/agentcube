@@ -63,6 +63,10 @@ const (
 
 // authMiddleware provides service account token authentication middleware
 func (s *Server) authMiddleware(c *gin.Context) {
+	if !s.enableAuth {
+		c.Next()
+		return
+	}
 	// Skip authentication for health check endpoint
 	if c.Request.URL.Path == "/health" {
 		c.Next()

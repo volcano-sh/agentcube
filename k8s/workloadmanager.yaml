@@ -1,5 +1,5 @@
-# All-in-one deployment file for agentcube-apiserver
-# Apply with: kubectl apply -f k8s/agentcube-apiserver.yaml
+# All-in-one deployment file for workloadmanager
+# Apply with: kubectl apply -f k8s/workloadmanager.yaml
 
 ---
 apiVersion: v1
@@ -11,17 +11,20 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: agentcube-apiserver
+  name: workloadmanager
   namespace: agentcube
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: agentcube-apiserver
+  name: workloadmanager
 rules:
   - apiGroups: ["agents.x-k8s.io"]
     resources: ["sandboxes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["extensions.agents.x-k8s.io"]
+    resources: ["sandboxclaims"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["extensions.agents.x-k8s.io"]
     resources: ["sandboxtemplates"]
@@ -41,54 +44,73 @@ rules:
   - apiGroups: ["runtime.agentcube.volcano.sh"]
     resources: ["codeinterpreters/finalizers"]
     verbs: ["update"]
+  - apiGroups: ["runtime.agentcube.volcano.sh"]
+    resources: ["agentruntimes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["runtime.agentcube.volcano.sh"]
+    resources: ["agentruntimes/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["runtime.agentcube.volcano.sh"]
+    resources: ["agentruntimes/finalizers"]
+    verbs: ["update"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["authentication.k8s.io"]
     resources: ["tokenreviews"]
     verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: agentcube-apiserver
+  name: workloadmanager
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: agentcube-apiserver
+  name: workloadmanager
 subjects:
   - kind: ServiceAccount
-    name: agentcube-apiserver
+    name: workloadmanager
     namespace: agentcube
 
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: agentcube-apiserver
+  name: workloadmanager
   namespace: agentcube
   labels:
-    app: agentcube-apiserver
+    app: workloadmanager
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: agentcube-apiserver
+      app: workloadmanager
   template:
     metadata:
       labels:
-        app: agentcube-apiserver
+        app: workloadmanager
     spec:
-      serviceAccountName: agentcube-apiserver
+      serviceAccountName: workloadmanager
+      imagePullSecrets:
+      - name: default-secret
       containers:
-        - name: agentcube-apiserver
-          image: agentcube-apiserver:latest
+        - name: workloadmanager
+          image: swr.cn-north-4.myhuaweicloud.com/ai-agent/workloadmanager:v20251204
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
+          env:
+            - name: REDIS_ADDR
+              value: "redis-204fa78f-746a-44f0-b222-7a483359e861.cn-north-4.dcs.myhuaweicloud.com:6379"
+            - name: REDIS_PASSWORD
+              value: "Huawei@123"
           args:
             - --port=8080
             - --runtime-class-name=
@@ -116,10 +138,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: agentcube-apiserver
+  name: workloadmanager
   namespace: agentcube
   labels:
-    app: agentcube-apiserver
+    app: workloadmanager
 spec:
   type: ClusterIP
   ports:
@@ -128,4 +150,4 @@ spec:
       protocol: TCP
       name: http
   selector:
-    app: agentcube-apiserver
+    app: workloadmanager

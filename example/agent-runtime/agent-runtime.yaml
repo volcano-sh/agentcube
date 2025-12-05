@@ -1,0 +1,22 @@
+apiVersion: runtime.agentcube.volcano.sh/v1alpha1
+kind: AgentRuntime
+metadata:
+  name: simple-agentruntime
+  namespace: default
+spec:
+  targetPort:
+    - pathPrefix: "/"
+      port: 8080
+      protocol: "HTTP"
+  podTemplate:
+    labels:
+      label-foo: label-bar
+    annotations:
+      annotation-foo: annotation-bar
+    spec:
+      containers:
+        - name: simple
+          image: busybox
+          command: ["/bin/sh", "-c", "sleep 36000"]
+  sessionTimeout: "15m"
+  maxSessionDuration: "8h"

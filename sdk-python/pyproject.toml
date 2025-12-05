@@ -1,20 +1,21 @@
 [project]
 name = "agentcube"
-version = "0.0.1"
-description = "Python SDK for managing Kubernetes sandboxes"
+version = "0.0.2"
+description = "Python SDK for AgentCube Code Interpreter"
 readme = "README.md"
 
-# TODO: need to update it in a follow up
 authors = [
     { name = "Senbo Fu", email = "senbof@gmail.com" }
 ]
 
 dependencies = [
-    "paramiko>=3.4.0",
+    "requests",
+    "PyJWT>=2.0.0",
+    "cryptography"
 ]
 
 [tool.setuptools]
-packages = ["agentcube"]
+packages = ["agentcube", "agentcube.clients", "agentcube.utils"]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

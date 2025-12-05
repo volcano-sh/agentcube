@@ -1,193 +1,141 @@
-from typing import Dict, List
-from agentcube.clients import SandboxSSHClient, PicoDClient
-from agentcube.sandbox import Sandbox
-
-import agentcube.clients.constants as constants
-import agentcube.utils.exceptions as exceptions
-
+import os
+from typing import Optional, Dict, Any
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.backends import default_backend
 
-class CodeInterpreterClient(Sandbox):
-    """Code interpreter client that provides dataplane operations for code execution and file management"""
+from agentcube.clients.control_plane import ControlPlaneClient
+from agentcube.clients.data_plane import DataPlaneClient
+from agentcube.utils.log import get_logger
+
+class CodeInterpreterClient:
+    """
+    AgentCube Code Interpreter Client.
+    
+    Manages the lifecycle of a Code Interpreter session and provides methods
+    to execute code and manage files within it.
+    """
     
     def __init__(
-            self,
-            ttl: int = constants.DEFAULT_TTL,
-            image: str = constants.DEFAULT_IMAGE,
-            api_url: str = None,
-            use_ssh: bool = False,
-            namespace: str = "default"
-        ):
-        """Initialize a code interpreter sandbox instance
-        
-        Args:
-            ttl: Time-to-live in seconds for the sandbox
-            image: Container image to use for the sandbox
-            api_url: API server URL (defaults to environment variable API_URL or DEFAULT_API_URL)
-            use_ssh: Whether to use SSH for connection (default: False, uses PicoD)
-            namespace: Kubernetes namespace (default: "default")
-        """
-        # Call super().__init__ with skip_creation=True to defer sandbox creation
-        super().__init__(ttl=ttl, image=image, api_url=api_url, skip_creation=True)
-        
-        self._executor = None
-        client_public_key_pem = None
-
-        if use_ssh:
-            # Generate SSH key pair for secure connection
-            public_key, private_key = SandboxSSHClient.generate_ssh_key_pair()
-            client_public_key_pem = public_key
-            
-            # Now create the sandbox with the SSH public key
-            self._create_initial_sandbox(ssh_public_key=client_public_key_pem)
-            
-            # Establish tunnel and SSH connection for dataplane operations
-            sock = self._client.establish_tunnel(self.id)
-            self._executor = SandboxSSHClient(
-                private_key=private_key, 
-                tunnel_sock=sock
-            )
-        else:
-            # Initialize PicoD client and generate key pair
-            picod_client = PicoDClient(
-                api_url=self.api_url, # self.api_url is now properly initialized by super().__init__
-                namespace=namespace,
-                name="temp-id" # Placeholder, will be updated after sandbox creation
-            )
-            picod_client.start_session() # This generates the RSA key pair and stores it internally
-            
-            # Extract the public key from the generated key pair in PEM format
-            if picod_client.key_pair and picod_client.key_pair.public_key:
-                pub_key_bytes = picod_client.key_pair.public_key.public_bytes(
-                    encoding=serialization.Encoding.PEM,
-                    format=serialization.PublicFormat.SubjectPublicKeyInfo
-                )
-                client_public_key_pem = pub_key_bytes.decode('utf-8')
-            else:
-                raise exceptions.SandboxError("Failed to generate PicoD client key pair.")
-            
-            # Now create the sandbox with PicoD client's public key
-            self._create_initial_sandbox(ssh_public_key=client_public_key_pem)
-            
-            # Update picod_client's name with the actual sandbox ID
-            picod_client.name = self.id 
-            
-            # Assign PicoD client to executor
-            self._executor = picod_client
-    
-    def execute_command(self, command: str) -> str:
-        """Execute a command over SSH
-        
-        Args:
-            command: Command to execute
-            
-        Returns:
-            Command output
-            
-        Raises:
-            SandboxNotReadyError: If sandbox is not running
-        """
-        if not self.is_running():
-            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
-        return self._executor.execute_command(command)
-    
-    def execute_commands(self, commands: List[str]) -> Dict[str, str]:
-        """Execute multiple commands over SSH
-        
-        Args:
-            commands: List of commands to execute
-            
-        Returns:
-            Dictionary mapping commands to their outputs
-            
-        Raises:
-            SandboxNotReadyError: If sandbox is not running
-        """
-        if not self.is_running():
-            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
-        return self._executor.execute_commands(commands)
-
-    def run_code(
         self,
-        language: str,
-        code: str,
-        timeout: float = 30
-    ) -> str:
-        """Run code snippet in the specified language over SSH
+        image: str = "simple-codeinterpreter",
+        namespace: str = "default",
+        ttl: int = 3600,
+        workload_manager_url: Optional[str] = None,
+        router_url: Optional[str] = None,
+        auth_token: Optional[str] = None,
+        verbose: bool = False
+    ):
+        """
+        Initialize the Code Interpreter Client and start a new session.
         
         Args:
-            language: Programming language of the code snippet (e.g., "python", "bash")
-            code: Code snippet to execute
-            timeout: Execution timeout in seconds
-            
-        Returns:
-            Output from code execution
-            
-        Raises:
-            SandboxNotReadyError: If sandbox is not running
+            image: Name of the CodeInterpreter template (CRD).
+            namespace: Kubernetes namespace.
+            ttl: Time to live (seconds).
+            workload_manager_url: URL of WorkloadManager (Control Plane).
+            router_url: URL of Router (Data Plane).
+            auth_token: Auth token for Kubernetes/WorkloadManager.
         """
-        if not self.is_running():
-            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
-        return self._executor.run_code(language, code)
-
-    def write_file(
-        self,
-        content: str,
-        remote_path: str
-    ) -> None:
-        """Upload file content to remote server via SFTP
+        self.image = image
+        self.namespace = namespace
+        self.ttl = ttl
+        self.logger = get_logger(__name__)
         
-        Args:
-            content: Content to write to remote file
-            remote_path: Path on remote server to upload to
-            
-        Raises:
-            SandboxNotReadyError: If sandbox is not running
-        """
-        if not self.is_running():
-            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
-        self._executor.write_file(content, remote_path)
-
-    def upload_file(
-        self,
-        local_path: str,
-        remote_path: str
-    ) -> None:
-        """Upload file from local path to remote server via SFTP
+        # Clients
+        self.cp_client = ControlPlaneClient(workload_manager_url, auth_token)
+        # Default Router URL localhost:8080 if not provided via args or env
+        self.router_url = router_url or os.getenv("ROUTER_URL", "http://localhost:8080")
         
-        Args:
-            local_path: Path on local machine to upload from
-            remote_path: Path on remote server to upload to
-            
-        Raises:
-            SandboxNotReadyError: If sandbox is not running
-        """
-        if not self.is_running():
-            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
-        self._executor.upload_file(local_path, remote_path)
+        self.dp_client: Optional[DataPlaneClient] = None
+        self.session_id: Optional[str] = None
+        self.private_key: Optional[rsa.RSAPrivateKey] = None
+        self.public_key_pem: Optional[str] = None
 
-    def download_file(
-        self,
-        remote_path: str,
-        local_path: str
-    ) -> str:
-        """Download file content from remote server via SFTP
+        # Start the session immediately
+        self._start_session_internal()
+
+    def _start_session_internal(self):
+        """Internal method to generate keys and create session."""
+        self.logger.info("Generating keys...")
+        self._generate_keys()
         
-        Args:
-            remote_path: Path on remote server to download from
-            local_path: Path on local machine to download to
-            
-        Returns:
-            Content of the downloaded file
-            
-        Raises:
-            SandboxNotReadyError: If sandbox is not running
-        """
-        if not self.is_running():
-            raise exceptions.SandboxNotReadyError(f"Sandbox {self.id} is not running")
-        return self._executor.download_file(remote_path, local_path)
+        self.logger.info(f"Creating Code Interpreter session '{self.image}' in '{self.namespace}'...")
+        self.session_id = self.cp_client.create_session(
+            name=self.image,
+            namespace=self.namespace,
+            public_key=self.public_key_pem
+        )
+        
+        self.logger.info(f"Session created: {self.session_id}")
+        
+        # Initialize Data Plane
+        self.dp_client = DataPlaneClient(
+            router_url=self.router_url,
+            namespace=self.namespace,
+            session_id=self.session_id,
+            private_key=self.private_key
+        )
 
-    def cleanup(self):
-        """Clean up resources associated with the sandbox"""
-        if self._executor is not None:
-            self._executor.cleanup()
+    def _generate_keys(self):
+        """Generate RSA 2048 key pair."""
+        self.private_key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=2048,
+            backend=default_backend()
+        )
+        
+        pub = self.private_key.public_key()
+        self.public_key_pem = pub.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        ).decode('utf-8')
+
+    def __enter__(self):
+        # Session is already started in __init__
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop()
+
+    def stop(self):
+        """Stop the session."""
+        if self.dp_client:
+            self.dp_client.close()
+            
+        if self.session_id:
+            self.logger.info(f"Deleting session {self.session_id}...")
+            self.cp_client.delete_session(self.session_id)
+            self.session_id = None
+
+    # --- Data Plane Methods ---
+
+    def execute_command(self, command: str, timeout: Optional[float] = None) -> str:
+        """Execute a shell command."""
+        if not self.dp_client:
+            raise RuntimeError("Data Plane client not initialized.")
+        return self.dp_client.execute_command(command, timeout)
+
+    def run_code(self, language: str, code: str, timeout: Optional[float] = None) -> str:
+        """Run code (python/bash)."""
+        if not self.dp_client:
+            raise RuntimeError("Data Plane client not initialized.")
+        return self.dp_client.run_code(language, code, timeout)
+
+    def write_file(self, content: str, remote_path: str):
+        """Write content to a file."""
+        if not self.dp_client:
+            raise RuntimeError("Data Plane client not initialized.")
+        self.dp_client.write_file(content, remote_path)
+
+    def upload_file(self, local_path: str, remote_path: str):
+        """Upload a local file."""
+        if not self.dp_client:
+            raise RuntimeError("Data Plane client not initialized.")
+        self.dp_client.upload_file(local_path, remote_path)
+
+    def download_file(self, remote_path: str, local_path: str):
+        """Download a file."""
+        if not self.dp_client:
+            raise RuntimeError("Data Plane client not initialized.")
+        return self.dp_client.download_file(remote_path, local_path)

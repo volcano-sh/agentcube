@@ -133,7 +133,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	}
 
 	sessionId := uuid.New().String()
-	sandboxName := "agent-runtime-" + uuid.New().String()
+	sandboxName := fmt.Sprintf("%s-%s", name, RandString(8))
 	buildParams := &buildSandboxParams{
 		namespace:    namespace,
 		workloadName: name,
@@ -178,7 +178,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 
 	sessionId := uuid.New().String()
-	sandboxName := "code-interpreter-" + uuid.New().String()
+	sandboxName := fmt.Sprintf("%s-%s", codeInterpreterName, RandString(8))
 	externalInfo := &sandboxExternalInfo{
 		Ports:     codeInterpreterObj.Spec.Ports,
 		SessionID: sessionId,

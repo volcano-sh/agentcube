@@ -1,6 +1,7 @@
 package workloadmanager
 
 import (
+	"math/rand"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,4 +29,15 @@ func respondError(c *gin.Context, statusCode int, errorCode, message string) {
 		Timestamp: time.Now(),
 	}
 	respondJSON(c, statusCode, response)
+}
+
+// RandString generates a random string from lowercase alphanumeric characters.
+// The length of the string is n.
+func RandString(n int) string {
+	letters := []byte("abcdefghijklmnopqrstuvwxyz0123456789")
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = letters[rand.Int63()%int64(len(letters))]
+	}
+	return string(b)
 }

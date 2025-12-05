@@ -55,7 +55,7 @@ func NewServer(config Config) *Server {
 
 	// Load bootstrap key (Required)
 	if config.BootstrapKey == "" {
-		log.Fatal("Bootstrap key is missing. Please configure PICOD_BOOTSTRAP_KEY environment variable.")
+		log.Fatal("Bootstrap key is missing. Please ensure the bootstrap public key file is correctly mounted or provided.")
 	}
 
 	if err := authManager.LoadBootstrapKey(config.BootstrapKey); err != nil {

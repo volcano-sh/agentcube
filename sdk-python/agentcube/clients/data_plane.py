@@ -43,7 +43,7 @@ class DataPlaneClient:
         self.logger = get_logger(f"{__name__}.DataPlaneClient")
         
         # Construct the base invocation URL
-        # Router path: /v1/code-namespaces/{namespace}/code-interpreters/{name}/invocations
+        # Router path: /v1/namespaces/{namespace}/code-interpreters/{name}/invocations
         # Note: 'name' here corresponds to the session_id (or the resource name used in creation).
         # In AgentCube, the resource name usually EQUALS the session_id if dynamically created, 
         # OR the template name if static.
@@ -51,7 +51,7 @@ class DataPlaneClient:
         # The URL provided by user: .../code-interpreters/{name}/invocations
         # If create_session returned an ID, we use that.
         
-        base_path = f"/v1/code-namespaces/{namespace}/code-interpreters/{cr_name}/invocations/"
+        base_path = f"/v1/namespaces/{namespace}/code-interpreters/{cr_name}/invocations/"
         self.base_url = urljoin(router_url, base_path)
         if not self.base_url.endswith("/"):
              self.base_url += "/"

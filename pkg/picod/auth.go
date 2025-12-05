@@ -188,7 +188,7 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error":  "PicoD is not configured for secure initialization",
 			"code":   http.StatusServiceUnavailable,
-			"detail": "Bootstrap key is missing. Please configure PICOD_BOOTSTRAP_KEY environment variable.",
+			"detail": "Bootstrap key is missing. Please ensure the bootstrap public key file is correctly mounted or provided.",
 		})
 		return
 	}

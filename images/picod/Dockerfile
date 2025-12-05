@@ -11,7 +11,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o picod ./cmd/picod
 
 # Run stage
-FROM alpine:latest
+FROM ubuntu:24.04
 
 WORKDIR /root/
 

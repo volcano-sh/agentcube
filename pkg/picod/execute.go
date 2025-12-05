@@ -41,8 +41,8 @@ func ExecuteHandler(c *gin.Context) {
 		return
 	}
 
-	// Use bash to execute command
-	cmd := exec.Command("bash", "-c", req.Command)
+	// execute command
+	cmd := exec.Command("sh", "-c", req.Command)
 
 	// Set working directory
 	if req.WorkingDir != "" {

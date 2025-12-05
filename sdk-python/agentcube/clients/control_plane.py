@@ -1,5 +1,4 @@
 import os
-import json
 import requests
 from typing import Dict, Any, Optional
 
@@ -12,8 +11,8 @@ class ControlPlaneClient:
     """
     
     def __init__(
-        self, 
-        workload_manager_url: Optional[str] = None, 
+        self,
+        workload_manager_url: Optional[str] = None,
         auth_token: Optional[str] = None
     ):
         """Initialize the Control Plane client.
@@ -49,7 +48,7 @@ class ControlPlaneClient:
         Args:
             name: Name of the CodeInterpreter template (CRD name).
             namespace: Kubernetes namespace.
-            public_key: RSA Public Key for Data Plane authentication (PEM format).
+            public_key: RSA Public Key for Data Plane authentication (Base64 encoded PEM).
             metadata: Optional metadata.
 
         Returns:

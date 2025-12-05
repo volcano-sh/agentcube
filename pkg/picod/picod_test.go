@@ -50,9 +50,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 	bootstrapPriv, _, bootstrapPubStr := generateRSAKeys()
 	sessionPriv, _, sessionPubStr := generateRSAKeys()
 
-	fmt.Printf("sessionPubStr: \n %s \n", sessionPubStr)
-	base := base64.RawStdEncoding.EncodeToString([]byte(sessionPubStr))
-	fmt.Printf("base64 sessionPubStr: \n %s", base)
+
 
 	// 2. Setup Server Environment
 	tmpDir, err := os.MkdirTemp("", "picod_test")
@@ -94,8 +92,9 @@ func TestPicoD_EndToEnd(t *testing.T) {
 
 	t.Run("Initialization", func(t *testing.T) {
 		// Success Case
+		sessionPubB64 := base64.RawStdEncoding.EncodeToString([]byte(sessionPubStr))
 		initClaims := jwt.MapClaims{
-			"session_public_key": sessionPubStr,
+			"session_public_key": sessionPubB64,
 			"iat":                time.Now().Unix(),
 			"exp":                time.Now().Add(time.Hour * 6).Unix(),
 		}
@@ -131,18 +130,9 @@ func TestPicoD_EndToEnd(t *testing.T) {
 			}
 			token := createToken(sessionPriv, claims)
 
-			fmt.Printf("token \n %s", token)
-
 			req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(bodyBytes))
 			req.Header.Set("Authorization", "Bearer "+token)
 			req.Header.Set("Content-Type", "application/json")
-
-			// 1. 读取 Body（会消耗 Body）
-			bodyBytes, err := io.ReadAll(req.Body)
-			if err != nil {
-
-			}
-			fmt.Printf("body \n%s\n", string(bodyBytes))
 
 			resp, err := client.Do(req)
 			require.NoError(t, err)

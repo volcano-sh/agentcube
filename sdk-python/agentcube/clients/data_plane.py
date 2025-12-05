@@ -22,6 +22,7 @@ class DataPlaneClient:
         self,
         router_url: str,
         namespace: str,
+        cr_name: str,
         session_id: str,
         private_key: rsa.RSAPrivateKey,
         timeout: int = 30
@@ -31,10 +32,11 @@ class DataPlaneClient:
         Args:
             router_url: Base URL of the Router service.
             namespace: Kubernetes namespace.
-            session_id: ID of the Code Interpreter session.
+            cr_name: Code Interpreter resource name (used as session ID).
             private_key: RSA Private Key for signing JWTs.
             timeout: Default request timeout.
         """
+        self.cr_name = cr_name
         self.session_id = session_id
         self.private_key = private_key
         self.timeout = timeout
@@ -49,7 +51,7 @@ class DataPlaneClient:
         # The URL provided by user: .../code-interpreters/{name}/invocations
         # If create_session returned an ID, we use that.
         
-        base_path = f"/v1/code-namespaces/{namespace}/code-interpreters/{session_id}/invocations/"
+        base_path = f"/v1/code-namespaces/{namespace}/code-interpreters/{cr_name}/invocations/"
         self.base_url = urljoin(router_url, base_path)
         if not self.base_url.endswith("/"):
              self.base_url += "/"
@@ -57,7 +59,7 @@ class DataPlaneClient:
         self.session = requests.Session()
         # Add the routing header
         self.session.headers.update({
-            "x-agentcube-session-id": session_id
+            "x-agentcube-session-id": self.session_id
         })
 
     def _create_jwt(self, payload_extra: Dict[str, Any] = None) -> str:

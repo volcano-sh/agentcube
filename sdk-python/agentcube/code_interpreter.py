@@ -1,4 +1,5 @@
 import os
+import base64
 from typing import Optional, Dict, Any
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -18,7 +19,7 @@ class CodeInterpreterClient:
     
     def __init__(
         self,
-        image: str = "simple-codeinterpreter",
+        name: str = "simple-codeinterpreter",
         namespace: str = "default",
         ttl: int = 3600,
         workload_manager_url: Optional[str] = None,
@@ -30,14 +31,14 @@ class CodeInterpreterClient:
         Initialize the Code Interpreter Client and start a new session.
         
         Args:
-            image: Name of the CodeInterpreter template (CRD).
+            name: Name of the CodeInterpreter template (CRD name).
             namespace: Kubernetes namespace.
             ttl: Time to live (seconds).
             workload_manager_url: URL of WorkloadManager (Control Plane).
             router_url: URL of Router (Data Plane).
             auth_token: Auth token for Kubernetes/WorkloadManager.
         """
-        self.image = image
+        self.name = name
         self.namespace = namespace
         self.ttl = ttl
         self.logger = get_logger(__name__)
@@ -59,18 +60,21 @@ class CodeInterpreterClient:
         """Internal method to generate keys and create session."""
         self.logger.info("Generating keys...")
         self._generate_keys()
-        
-        self.logger.info(f"Creating Code Interpreter session '{self.image}' in '{self.namespace}'...")
+
+        # Picod expects the public key to be Base64 encoded (Raw, no padding)
+        public_key_b64 = base64.b64encode(self.public_key_pem.encode('utf-8')).rstrip(b'=').decode('utf-8')
+
         self.session_id = self.cp_client.create_session(
-            name=self.image,
+            name=self.name,
             namespace=self.namespace,
-            public_key=self.public_key_pem
+            public_key=public_key_b64
         )
         
         self.logger.info(f"Session created: {self.session_id}")
         
         # Initialize Data Plane
         self.dp_client = DataPlaneClient(
+            cr_name=self.name,
             router_url=self.router_url,
             namespace=self.namespace,
             session_id=self.session_id,

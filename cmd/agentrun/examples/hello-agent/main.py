@@ -10,6 +10,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
 from typing import Dict, Any
 
+from agentcube import CodeInterpreterClient
+
 
 class HelloAgentHandler(BaseHTTPRequestHandler):
     """HTTP handler for the Hello Agent."""
@@ -74,6 +76,9 @@ class HelloAgentHandler(BaseHTTPRequestHandler):
     def _handle_invoke(self):
         """Handle general invocation requests."""
         try:
+            code_interpreter = CodeInterpreterClient()
+            code_interpreter.execute_command("echo hello from hello agent")
+
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length)
             data = json.loads(post_data.decode('utf-8'))

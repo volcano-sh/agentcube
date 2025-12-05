@@ -346,7 +346,7 @@ def publish(
             console.print(f"Endpoint: [blue]{result['agent_endpoint']}[/blue]")
 
         if provider == "agentcube" or provider == "k8s":
-            console.print(f"Namespace: [blue]{result.get('namespace', 'agentrun')}[/blue]")
+            console.print(f"Namespace: [blue]{result.get('namespace', 'default')}[/blue]")
             if "status" in result:
                  console.print(f"Status: [blue]{result['status']}[/blue]")
             if "node_port" in result: # For standard K8s provider if it returns node_port

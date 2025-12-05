@@ -55,7 +55,7 @@ class PublishRuntime:
             logger.info(f"Starting publish process for workspace: {workspace_path}")
             
         provider = options.get('provider', self.provider)
-        namespace = str(options.get('namespace', 'agentrun'))
+        namespace = str(options.get('namespace', 'default'))
 
         if provider == "agentcube":
             try:

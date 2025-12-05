@@ -6,6 +6,7 @@ specifically designed for the AgentCube ecosystem.
 """
 
 import logging
+import os
 import shlex
 from typing import Any, Dict, Optional
 from kubernetes import client, config
@@ -13,13 +14,16 @@ from kubernetes.client.rest import ApiException
 
 logger = logging.getLogger(__name__)
 
+WORKLOADMANAGER_URL_ENV = "http://10.247.248.181:8080"
+ROUTER_URL_ENV = "http://10.247.14.89:8080"
+
 
 class AgentCubeProvider:
     """Service for deploying AgentCube-specific CRs to Kubernetes cluster."""
 
     def __init__(
         self,
-        namespace: str = "agentrun",
+        namespace: str = "default",
         verbose: bool = False,
         kubeconfig: Optional[str] = None
     ) -> None:
@@ -108,7 +112,7 @@ class AgentCubeProvider:
             logger.info(f"Deploying AgentRuntime {agent_name} to K8s cluster")
 
         k8s_name = self._sanitize_name(agent_name)
-        group = "runtime.agentcube.io"
+        group = "runtime.agentcube.volcano.sh"
         version = "v1alpha1"
         plural = "agentruntimes"
 
@@ -127,6 +131,15 @@ class AgentCubeProvider:
                 if len(parts) > 1:
                     container["args"] = parts[1:]
 
+        if env_vars is None:
+            env_vars = {}
+
+        if os.environ.get(WORKLOADMANAGER_URL_ENV):
+            env_vars[WORKLOADMANAGER_URL_ENV] = os.environ.get(WORKLOADMANAGER_URL_ENV)
+
+        if os.environ.get(ROUTER_URL_ENV):
+            env_vars[ROUTER_URL_ENV] = os.environ.get(ROUTER_URL_ENV)
+
         if env_vars:
             env_list = [{"name": k, "value": str(v)} for k, v in env_vars.items()]
             container["env"] = env_list
@@ -141,24 +154,25 @@ class AgentCubeProvider:
                 "labels": {"app": k8s_name}
             },
             "spec": {
-                "ports": [
+                "targetPort": [
                     {
-                        "name": "http",
                         "port": port,
                         "protocol": "HTTP",
                         "pathPrefix": "/"
                     }
                 ],
-                "template": {
+                "podTemplate": {
                     "spec": {
                         "containers": [container],
                         "restartPolicy": "Always"
                     }
                 },
                 "sessionTimeout": "15m",
-                "maxSessionDuration": "1h"
+                "maxSessionDuration": "8h"
             }
         }
+
+        logger.info(f"Deploying AgentRuntime to K8s cluster: {agent_runtime}")
 
         try:
             # Try to get existing CR
@@ -260,7 +274,7 @@ class AgentCubeProvider:
         Returns:
             A dictionary representing the AgentRuntime CR, or None if not found.
         """
-        group = "runtime.agentcube.io"
+        group = "runtime.agentcube.volcano.sh"
         version = "v1alpha1"
         plural = "agentruntimes"
 

@@ -104,22 +104,21 @@ class PublishRuntime:
         # Step 1: Load metadata
         metadata = self.metadata_service.load_metadata(workspace_path)
 
-        # Step 2: Get image information
-        if not metadata.image:
-            raise ValueError("Agent must be built before publishing. Run 'agentrun build' first.")
-
-        image_url = metadata.image.get("repository_url")
+        # Step 2: Get image information from options
+        image_url = options.get('image_url')
         if not image_url:
-            raise ValueError("No image found in metadata. Build the agent first.")
+            raise ValueError("Image URL must be provided via --image-url option.")
 
         # Step 3: Deploy AgentRuntime CR
         try:
-            k8s_info = self.agentcube_provider.deploy_agent_runtime( # Call the new provider
+            k8s_info = self.agentcube_provider.deploy_agent_runtime(
                 agent_name=metadata.agent_name,
                 image_url=image_url,
                 port=metadata.port,
                 entrypoint=metadata.entrypoint,
-                env_vars=options.get('env_vars', None)
+                env_vars=options.get('env_vars', None),
+                workload_manager_url=metadata.workload_manager_url,
+                router_url=metadata.router_url
             )
         except Exception as e:
             raise RuntimeError(f"Failed to deploy AgentRuntime CR to K8s: {str(e)}")
@@ -130,14 +129,14 @@ class PublishRuntime:
             "k8s_deployment": {
                 **k8s_info,
                 "type": "AgentRuntime",
-                "status": "deployed"
             }
         }
-        
-        endpoint = options.get('endpoint')
+
+        # Use provided endpoint or fall back to router_url from metadata
+        endpoint = options.get('endpoint') or metadata.router_url
         if not endpoint:
-            raise ValueError("Endpoint must be provided for 'agentcube' provider.")
-            
+            raise ValueError("Endpoint must be provided via --endpoint or router_url in metadata.")
+
         updates["agent_endpoint"] = endpoint
         self.metadata_service.update_metadata(workspace_path, updates)
 
@@ -182,12 +181,12 @@ class PublishRuntime:
             )
 
         # Step 1: Load metadata
-        metadata = self._validate_publish_prerequisites(workspace_path)
+        metadata = self.metadata_service.load_metadata(workspace_path)
 
-        # Step 2: Get image information
-        image_url = metadata.image.get("repository_url")
+        # Step 2: Get image information from options
+        image_url = options.get('image_url')
         if not image_url:
-            raise ValueError("No image found in metadata. Build the agent first.")
+            raise ValueError("Image URL must be provided via --image-url option.")
 
         # Step 3: Deploy to K8s
         k8s_info = None
@@ -269,20 +268,6 @@ class PublishRuntime:
                 }
                 self.metadata_service.update_metadata(workspace_path, updates)
             raise RuntimeError(f"Failed to deploy to standard K8s: {error_message}")
-
-    def _validate_publish_prerequisites(self, workspace_path: Path):
-        """Validate that the workspace is ready for publishing."""
-        # Load metadata
-        metadata = self.metadata_service.load_metadata(workspace_path)
-
-        # Check if agent has been built
-        if not metadata.image:
-            raise ValueError("Agent must be built before publishing. Run 'agentrun build' first.")
-
-        if self.verbose:
-            logger.debug(f"Publish prerequisites validated for: {workspace_path}")
-
-        return metadata
 
     def _prepare_image_for_publishing(
         self,

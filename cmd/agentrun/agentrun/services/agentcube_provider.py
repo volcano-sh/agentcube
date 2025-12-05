@@ -14,9 +14,6 @@ from kubernetes.client.rest import ApiException
 
 logger = logging.getLogger(__name__)
 
-WORKLOADMANAGER_URL_ENV = "http://10.247.248.181:8080"
-ROUTER_URL_ENV = "http://10.247.14.89:8080"
-
 
 class AgentCubeProvider:
     """Service for deploying AgentCube-specific CRs to Kubernetes cluster."""
@@ -93,7 +90,9 @@ class AgentCubeProvider:
         image_url: str,
         port: int,
         entrypoint: Optional[str] = None,
-        env_vars: Optional[Dict[str, str]] = None
+        env_vars: Optional[Dict[str, str]] = None,
+        workload_manager_url: Optional[str] = None,
+        router_url: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Deploy an AgentRuntime CR to Kubernetes cluster.
@@ -104,6 +103,8 @@ class AgentCubeProvider:
             port: Container port to expose
             entrypoint: Optional custom entrypoint command
             env_vars: Optional environment variables
+            workload_manager_url: URL for the Workload Manager
+            router_url: URL for the Router
 
         Returns:
             Dict containing deployment information
@@ -134,11 +135,16 @@ class AgentCubeProvider:
         if env_vars is None:
             env_vars = {}
 
-        if os.environ.get(WORKLOADMANAGER_URL_ENV):
-            env_vars[WORKLOADMANAGER_URL_ENV] = os.environ.get(WORKLOADMANAGER_URL_ENV)
+        # Set system environment variables if provided
+        if workload_manager_url:
+            env_vars["WORKLOADMANAGER_URL"] = workload_manager_url
+        elif os.environ.get("WORKLOADMANAGER_URL"):
+             env_vars["WORKLOADMANAGER_URL"] = os.environ.get("WORKLOADMANAGER_URL")
 
-        if os.environ.get(ROUTER_URL_ENV):
-            env_vars[ROUTER_URL_ENV] = os.environ.get(ROUTER_URL_ENV)
+        if router_url:
+            env_vars["ROUTER_URL"] = router_url
+        elif os.environ.get("ROUTER_URL"):
+            env_vars["ROUTER_URL"] = os.environ.get("ROUTER_URL")
 
         if env_vars:
             env_list = [{"name": k, "value": str(v)} for k, v in env_vars.items()]
@@ -164,7 +170,8 @@ class AgentCubeProvider:
                 "podTemplate": {
                     "spec": {
                         "containers": [container],
-                        "restartPolicy": "Always"
+                        "restartPolicy": "Always",
+                        "imagePullSecrets": [{"name": "default-secret"}]
                     }
                 },
                 "sessionTimeout": "15m",

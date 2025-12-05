@@ -26,6 +26,7 @@ class HelloAgentHandler(BaseHTTPRequestHandler):
                 "endpoints": [
                     "GET /health - Health check",
                     "POST /greet - Greet someone",
+                    "POST /runcmd - Execute command using CodeInterpreterClient",
                     "GET / - Agent information"
                 ]
             })
@@ -36,6 +37,8 @@ class HelloAgentHandler(BaseHTTPRequestHandler):
         """Handle POST requests."""
         if self.path == '/greet':
             self._handle_greet()
+        elif self.path == '/runcmd':
+            self._handle_runcmd()
         elif self.path == '/':
             self._handle_invoke()
         else:
@@ -76,8 +79,6 @@ class HelloAgentHandler(BaseHTTPRequestHandler):
     def _handle_invoke(self):
         """Handle general invocation requests."""
         try:
-            code_interpreter = CodeInterpreterClient()
-            code_interpreter.execute_command("echo hello from hello agent")
 
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length)
@@ -94,6 +95,24 @@ class HelloAgentHandler(BaseHTTPRequestHandler):
                 "agent": "hello-agent",
                 "timestamp": self._get_timestamp(),
                 "original_prompt": prompt
+            }
+
+            self._send_json_response(response_data)
+
+        except (json.JSONDecodeError, KeyError) as e:
+            self._send_error(400, f"Invalid request: {str(e)}")
+
+    def _handle_runcmd(self):
+        """Handle runcmd requests using CodeInterpreterClient."""
+        try:
+
+            with CodeInterpreterClient() as code_interpreter:
+                output = code_interpreter.execute_command("echo 'Hello from CodeInterpreterClient!'")
+
+            response_data = {
+                "output": output,
+                "agent": "hello-agent",
+                "timestamp": self._get_timestamp()
             }
 
             self._send_json_response(response_data)
@@ -141,6 +160,7 @@ def main():
     print(f"Starting Hello Agent on port {port}")
     print(f"Health check: http://localhost:{port}/health")
     print(f"Greet endpoint: http://localhost:{port}/greet")
+    print(f"Runcmd endpoint: http://localhost:{port}/runcmd")
     print(f"Agent endpoint: http://localhost:{port}/")
 
     server_address = ('', port)

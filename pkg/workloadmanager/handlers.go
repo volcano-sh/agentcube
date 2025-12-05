@@ -159,7 +159,11 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		}
 	}()
 
-	podIP, err := s.k8sClient.GetSandboxPodIP(c.Request.Context(), namespace, sandboxName)
+	sandboxPodName := ""
+	if podName, exists := createdSandbox.Annotations["agents.x-k8s.io/pod-name"]; exists {
+		sandboxPodName = podName
+	}
+	podIP, err := s.k8sClient.GetSandboxPodIP(c.Request.Context(), namespace, sandboxName, sandboxPodName)
 	if err != nil {
 		log.Printf("failed to get sandbox %s/%s pod IP: %v", namespace, sandboxName, err)
 		respondError(c, http.StatusInternalServerError, "SANDBOX_BUILD_FAILED", err.Error())

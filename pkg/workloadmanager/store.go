@@ -274,6 +274,21 @@ func convertTypedSandboxToSandbox(sandboxCRD *sandboxv1alpha1.Sandbox) (*Sandbox
 	return sandbox, nil
 }
 
+func buildSandboxRedisCachePlaceHolder(sandboxCRD *sandboxv1alpha1.Sandbox, externalInfo *sandboxExternalInfo) *types.SandboxRedis {
+	sandboxRedis := &types.SandboxRedis{
+		SessionID:        externalInfo.SessionID,
+		SandboxNamespace: sandboxCRD.GetNamespace(),
+		ExpiresAt:        time.Now().Add(DefaultSandboxTTL),
+		Status:           "creating",
+	}
+	if externalInfo.SandboxClaimName != "" {
+		sandboxRedis.SandboxClaimName = externalInfo.SandboxClaimName
+	} else {
+		sandboxRedis.SandboxName = sandboxCRD.GetName()
+	}
+	return sandboxRedis
+}
+
 func convertSandboxToRedisCache(sandboxCRD *sandboxv1alpha1.Sandbox, podIP string, externalInfo *sandboxExternalInfo) (*types.SandboxRedis, error) {
 	createdAt := sandboxCRD.GetCreationTimestamp().Time
 	expiresAt := createdAt.Add(DefaultSandboxTTL)
@@ -293,9 +308,13 @@ func convertSandboxToRedisCache(sandboxCRD *sandboxv1alpha1.Sandbox, podIP strin
 		SandboxName:      sandboxCRD.GetName(),
 		SandboxNamespace: sandboxCRD.GetNamespace(),
 		EntryPoints:      accesses,
+		SessionID:        externalInfo.SessionID,
 		CreatedAt:        createdAt,
 		ExpiresAt:        expiresAt,
 		Status:           getSandboxStatus(sandboxCRD),
+	}
+	if externalInfo.SandboxClaimName != "" {
+		sandboxRedis.SandboxClaimName = externalInfo.SandboxClaimName
 	}
 	return sandboxRedis, nil
 }

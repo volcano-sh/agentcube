@@ -1,7 +1,7 @@
 package router
 
 import (
-	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -52,10 +52,10 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	// Get sandbox info from session manager
 	sandbox, err := s.sessionManager.GetSandboxBySession(c.Request.Context(), sessionID, namespace, name, kind)
 	if err != nil {
-		log.Printf("Failed to get sandbox info: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "internal server error",
-			"code":  "INTERNAL_ERROR",
+		log.Printf("Failed to get sandbox info: %v, session id %s", err, sessionID)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Invalid session id %s", sessionID),
+			"code":  "BadRequest",
 		})
 		return
 	}
@@ -63,8 +63,13 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	// Extract endpoint from sandbox - find matching entry point by path
 	var endpoint string
 	for _, ep := range sandbox.EntryPoints {
-		if ep.Path == path || ep.Path == "" {
-			endpoint = ep.Endpoint
+		if strings.HasPrefix(path, ep.Path) {
+			// Only add protocol if not already present
+			if ep.Protocol != "" && !strings.Contains(ep.Endpoint, "://") {
+				endpoint = strings.ToLower(ep.Protocol) + "://" + ep.Endpoint
+			} else {
+				endpoint = ep.Endpoint
+			}
 			break
 		}
 	}
@@ -79,12 +84,19 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 			})
 			return
 		}
-		endpoint = sandbox.EntryPoints[0].Endpoint
+		// Only add protocol if not already present
+		if sandbox.EntryPoints[0].Protocol != "" && !strings.Contains(sandbox.EntryPoints[0].Endpoint, "://") {
+			endpoint = strings.ToLower(sandbox.EntryPoints[0].Protocol) + "://" + sandbox.EntryPoints[0].Endpoint
+		} else {
+			endpoint = sandbox.EntryPoints[0].Endpoint
+		}
 	}
+
+	log.Printf("The selected entrypoint for session-id %s to sandbox is %s", sandbox.SessionID, endpoint)
 
 	// Update session activity in Redis when receiving request
 	if sandbox.SessionID != "" && sandbox.SandboxID != "" {
-		if err := s.redisClient.UpdateSandboxLastActivity(c.Request.Context(), sandbox.SandboxID, time.Now()); err != nil {
+		if err := s.redisClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
 			log.Printf("Failed to update sandbox last activity for request: %v", err)
 		}
 	}
@@ -95,10 +107,10 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 
 // handleAgentInvoke handles agent invocation requests
 func (s *Server) handleAgentInvoke(c *gin.Context) {
-	agentNamespace := c.Param("agentNamespace")
-	agentName := c.Param("agentName")
+	namespace := c.Param("namespace")
+	name := c.Param("name")
 	path := c.Param("path")
-	s.handleInvoke(c, agentNamespace, agentName, path, "AgentRuntime")
+	s.handleInvoke(c, namespace, name, path, "AgentRuntime")
 }
 
 // handleCodeInterpreterInvoke handles code interpreter invocation requests
@@ -185,10 +197,10 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 		return nil
 	}
 
-	// Set timeout for the proxy request using configured timeout
-	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(s.config.RequestTimeout)*time.Second)
-	defer cancel()
-	c.Request = c.Request.WithContext(ctx)
+	// No timeout for invoke requests to allow long-running operations
+	// ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(s.config.RequestTimeout)*time.Second)
+	// defer cancel()
+	// c.Request = c.Request.WithContext(ctx)
 
 	// Use the proxy to serve the request
 	proxy.ServeHTTP(c.Writer, c.Request)

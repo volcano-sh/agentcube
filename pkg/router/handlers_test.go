@@ -182,11 +182,11 @@ func TestHandleInvoke_SessionManagerError(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
+	req, _ := http.NewRequest("POST", "/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
 	server.engine.ServeHTTP(w, req)
 
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("Expected status code %d, got %d", http.StatusInternalServerError, w.Code)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status code %d, got %d", http.StatusBadRequest, w.Code)
 	}
 }
 
@@ -220,7 +220,7 @@ func TestHandleInvoke_NoEntryPoints(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
+	req, _ := http.NewRequest("POST", "/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
 	server.engine.ServeHTTP(w, req)
 
 	if w.Code != http.StatusInternalServerError {
@@ -271,17 +271,28 @@ func TestHandleAgentInvoke(t *testing.T) {
 		},
 	}
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
+	// Use real HTTP client instead of httptest.ResponseRecorder to avoid CloseNotifier panic
+	req, _ := http.NewRequest("POST", "/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
 	req.Header.Set("x-agentcube-session-id", "test-session")
-	server.engine.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected status code %d, got %d", http.StatusOK, w.Code)
+	// Start a real test server
+	testRouterServer := httptest.NewServer(server.engine)
+	defer testRouterServer.Close()
+
+	// Make real HTTP request
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(testRouterServer.URL+"/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", "application/json", nil)
+	if err != nil {
+		t.Fatalf("Failed to make request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status code %d, got %d", http.StatusOK, resp.StatusCode)
 	}
 
 	// Check if session ID is set in response header
-	sessionID := w.Header().Get("x-agentcube-session-id")
+	sessionID := resp.Header.Get("x-agentcube-session-id")
 	if sessionID != "test-session" {
 		t.Errorf("Expected session ID 'test-session', got '%s'", sessionID)
 	}
@@ -330,17 +341,24 @@ func TestHandleCodeInterpreterInvoke(t *testing.T) {
 		},
 	}
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/v1/code-namespaces/default/code-interpreters/test-ci/invocations/execute", nil)
-	req.Header.Set("x-agentcube-session-id", "test-session")
-	server.engine.ServeHTTP(w, req)
+	// Use real HTTP client instead of httptest.ResponseRecorder to avoid CloseNotifier panic
+	testRouterServer := httptest.NewServer(server.engine)
+	defer testRouterServer.Close()
 
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected status code %d, got %d", http.StatusOK, w.Code)
+	// Make real HTTP request
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(testRouterServer.URL+"/v1/namespaces/default/code-interpreters/test-ci/invocations/execute", "application/json", nil)
+	if err != nil {
+		t.Fatalf("Failed to make request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status code %d, got %d", http.StatusOK, resp.StatusCode)
 	}
 
 	// Check if session ID is set in response header
-	sessionID := w.Header().Get("x-agentcube-session-id")
+	sessionID := resp.Header.Get("x-agentcube-session-id")
 	if sessionID != "test-session" {
 		t.Errorf("Expected session ID 'test-session', got '%s'", sessionID)
 	}
@@ -383,7 +401,7 @@ func TestForwardToSandbox_InvalidEndpoint(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
+	req, _ := http.NewRequest("POST", "/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
 	server.engine.ServeHTTP(w, req)
 
 	if w.Code != http.StatusInternalServerError {
@@ -413,6 +431,13 @@ func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 		t.Fatalf("Failed to create server: %v", err)
 	}
 
+	// Create a slow test server
+	slowServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer slowServer.Close()
+
 	// Mock session manager with slow response
 	server.sessionManager = &mockSessionManager{
 		sandbox: &types.SandboxRedis{
@@ -421,32 +446,38 @@ func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 			SandboxName: "test-sandbox",
 			EntryPoints: []types.SandboxEntryPoints{
 				{
-					Endpoint: "http://localhost:9999",
+					Endpoint: slowServer.URL,
 					Path:     "/test",
 				},
 			},
 		},
 	}
 
+	// Start a real test server
+	testRouterServer := httptest.NewServer(server.engine)
+	defer testRouterServer.Close()
+
 	// Start first request (will occupy the semaphore)
 	done := make(chan bool)
 	go func() {
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("GET", "/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
-		server.engine.ServeHTTP(w, req)
+		client := &http.Client{Timeout: 5 * time.Second}
+		_, _ = client.Post(testRouterServer.URL+"/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", "application/json", nil)
 		done <- true
 	}()
 
 	// Give first request time to acquire semaphore
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	// Try second request (should be rejected due to overload)
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
-	server.engine.ServeHTTP(w, req)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(testRouterServer.URL+"/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", "application/json", nil)
+	if err != nil {
+		t.Fatalf("Failed to make request: %v", err)
+	}
+	defer resp.Body.Close()
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("Expected status code %d, got %d", http.StatusServiceUnavailable, w.Code)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("Expected status code %d, got %d", http.StatusServiceUnavailable, resp.StatusCode)
 	}
 
 	// Wait for first request to complete

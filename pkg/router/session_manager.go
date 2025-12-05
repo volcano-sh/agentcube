@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	"github.com/volcano-sh/agentcube/pkg/redis"
@@ -43,7 +42,7 @@ func NewSessionManager(redisClient redis.Client) (SessionManager, error) {
 		redisClient:    redisClient,
 		workloadMgrURL: workloadMgrURL,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second, // Set a reasonable timeout to prevent hanging
+			Timeout: 0, // No timeout for createSandbox requests
 		},
 	}, nil
 }
@@ -126,8 +125,8 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 	}
 
 	// Validate response
-	if createResp.SessionID == "" || createResp.SandboxID == "" {
-		return nil, fmt.Errorf("%w: invalid response from workload manager", ErrCreateSandboxFailed)
+	if createResp.SessionID == "" {
+		return nil, fmt.Errorf("%w: response with empty session id from workload manager", ErrCreateSandboxFailed)
 	}
 
 	// Construct SandboxRedis from response

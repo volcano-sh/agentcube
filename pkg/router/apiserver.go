@@ -145,10 +145,10 @@ func (s *Server) setupRoutes() {
 	v1.Use(s.concurrencyLimitMiddleware()) // Apply concurrency limit to API routes
 
 	// Agent invoke requests
-	v1.Any("/namespaces/:agentNamespace/agent-runtimes/:agentName/invocations/*path", s.handleAgentInvoke)
+	v1.POST("/namespaces/:namespace/agent-runtimes/:name/invocations/*path", s.handleAgentInvoke)
 
-	// Code interpreter invoke requests - use different base path to avoid conflicts
-	v1.Any("/code-namespaces/:namespace/code-interpreters/:name/invocations/*path", s.handleCodeInterpreterInvoke)
+	// Code interpreter invoke requests
+	v1.POST("/namespaces/:namespace/code-interpreters/:name/invocations/*path", s.handleCodeInterpreterInvoke)
 }
 
 // Start starts the Router API server

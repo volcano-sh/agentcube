@@ -39,6 +39,18 @@ func (f *fakeRedisClient) DeleteSessionBySandboxIDTx(ctx context.Context, sandbo
 	return nil
 }
 
+func (f *fakeRedisClient) DeleteSandboxBySessionIDTx(ctx context.Context, sessionID string) error {
+	return nil
+}
+
+func (f *fakeRedisClient) UpdateSandbox(ctx context.Context, sandboxRedis *types.SandboxRedis, ttl time.Duration) error {
+	return nil
+}
+
+func (f *fakeRedisClient) UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error {
+	return nil
+}
+
 func (f *fakeRedisClient) StoreSandbox(ctx context.Context, sandboxRedis *types.SandboxRedis, ttl time.Duration) error {
 	return nil
 }

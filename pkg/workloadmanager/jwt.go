@@ -107,7 +107,13 @@ func (jm *JWTManager) GetPrivateKeyPEM() ([]byte, error) {
 }
 
 // StoreJWTPublicKeyInSecret stores the JWT public key in a Kubernetes secret
-// If the secret already exists, it will be updated
+//
+// Currently, the JWT public key secret is stored in a single namespace (default
+// or from JWT_PUBLIC_KEY_SECRET_NAMESPACE). This causes a multi-tenancy issue
+// because CodeInterpreter sandboxes can be created in any namespace by users,
+// but they expect the secret to be mounted from their own namespace. This will
+// be addressed in a future update to ensure the public key is available in all
+// necessary namespaces.
 func (c *K8sClient) StoreJWTPublicKeyInSecret(ctx context.Context, publicKeyPEM []byte) error {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{

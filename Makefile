@@ -318,6 +318,6 @@ e2e-clean:
 build-python-sdk: ## Build Python SDK
 	@echo "Building Python SDK..."
 	cp LICENSE sdk-python/LICENSE
+	@trap "echo 'Cleaning up temporary LICENSE file...'; rm -f sdk-python/LICENSE" EXIT
 	cd sdk-python && python3 -m build
-	rm sdk-python/LICENSE
 	@echo "Build complete. Artifacts are in sdk-python/dist/"

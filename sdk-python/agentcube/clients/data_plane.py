@@ -184,13 +184,16 @@ class DataPlaneClient:
             self.logger.debug(f"Uploading file {local_path} to {remote_path}")
             resp = self.session.post(url, files=files, data=data, headers=headers, timeout=self.timeout)
             resp.raise_for_status()
+
+    def download_file(self, remote_path: str, local_path: str) -> None:
         """Download a file."""
         # GET request, no body, no body_hash claim
         clean_path = remote_path.lstrip("/")
         resp = self._request("GET", f"api/files/{clean_path}", stream=True)
         resp.raise_for_status()
         
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        if os.path.dirname(local_path):
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
         with open(local_path, 'wb') as f:
             for chunk in resp.iter_content(chunk_size=8192):
                 f.write(chunk)

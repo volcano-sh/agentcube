@@ -312,3 +312,12 @@ e2e-clean:
 	@echo "Cleaning up E2E environment..."
 	kind delete cluster --name $(E2E_CLUSTER_NAME)
 	rm -rf /tmp/agent-sandbox
+
+# Python SDK targets
+.PHONY: build-python-sdk
+build-python-sdk: ## Build Python SDK
+	@echo "Building Python SDK..."
+	cp LICENSE sdk-python/LICENSE
+	cd sdk-python && python3 -m build
+	rm sdk-python/LICENSE
+	@echo "Build complete. Artifacts are in sdk-python/dist/"

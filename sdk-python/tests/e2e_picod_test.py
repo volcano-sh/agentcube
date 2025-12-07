@@ -4,12 +4,10 @@ import subprocess
 import requests
 import jwt
 import base64
-import shutil
 import logging
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
-from urllib.parse import urljoin
 
 from agentcube.clients.data_plane import DataPlaneClient
 

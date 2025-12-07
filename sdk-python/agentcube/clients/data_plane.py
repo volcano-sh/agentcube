@@ -3,7 +3,7 @@ import json
 import time
 import shlex
 import os
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 from urllib.parse import urljoin
 
 import requests

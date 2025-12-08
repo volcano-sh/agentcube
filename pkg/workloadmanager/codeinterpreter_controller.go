@@ -278,7 +278,7 @@ func (r *CodeInterpreterReconciler) deleteSandboxTemplate(ctx context.Context, c
 }
 
 // convertToPodTemplate converts CodeInterpreterSandboxTemplate to sandboxv1alpha1.PodTemplate
-func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alpha1.CodeInterpreterSandboxTemplate, ci *runtimev1alpha1.CodeInterpreter) sandboxv1alpha1.PodTemplate {
+func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alpha1.CodeInterpreterSandboxTemplate, _ *runtimev1alpha1.CodeInterpreter) sandboxv1alpha1.PodTemplate {
 	// Build pod spec
 	podSpec := corev1.PodSpec{
 		Containers: []corev1.Container{

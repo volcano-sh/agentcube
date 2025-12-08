@@ -28,7 +28,7 @@ const (
 
 var (
 	// SessionIdLabelKey labels key for session id
-	SessionIdLabelKey = "runtime.agentcube.io/session-id"
+	SessionIdLabelKey = "runtime.agentcube.io/session-id" // revive:disable-line:var-naming - keep label backward compatible
 	// WorkloadNameLabelKey labels key for workload name
 	WorkloadNameLabelKey = "runtime.agentcube.io/workload-name"
 	// Annotation key for last activity time
@@ -142,7 +142,7 @@ func (c *K8sClient) GetOrCreateUserK8sClient(userToken, namespace, serviceAccoun
 	cacheKey := makeCacheKey(namespace, serviceAccountName)
 
 	// Try to get from cache
-	if cachedClient := c.clientCache.Get(cacheKey, userToken); cachedClient != nil {
+	if cachedClient := c.clientCache.Get(cacheKey); cachedClient != nil {
 		return cachedClient, nil
 	}
 

@@ -1,0 +1,29 @@
+[project]
+name = "agentcube-sdk"
+version = "0.0.7"
+description = "Python SDK for AgentCube Code Interpreter"
+readme = "README.md"
+
+authors = [
+    { name = "Senbo Fu", email = "senbof@gmail.com" }
+]
+
+dependencies = [
+    "requests",
+    "PyJWT>=2.0.0",
+    "cryptography"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentcube*"]
+namespaces = false
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "--strict-markers --import-mode=importlib"
+testpaths = ["tests"]

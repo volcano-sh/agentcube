@@ -127,10 +127,12 @@ class PackRuntime:
                 "requirements_file": "requirements.txt" if language == 'python' else None,
                 "workload_manager_url": "",
                 "router_url": "",
+                "readiness_probe_path": "",
+                "readiness_probe_port": None,
                 "registry_url": options.get('registry_url', ''),
                 "registry_username": options.get('registry_username', ''),
                 "registry_password": options.get('registry_password', ''),
-                "endpoint": "",
+                "agent_endpoint": "",
             }
 
             # Add description if provided

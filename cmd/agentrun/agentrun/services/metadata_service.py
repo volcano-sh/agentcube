@@ -46,11 +46,12 @@ class AgentMetadata(BaseModel):
     # AgentCube system configuration
     workload_manager_url: Optional[str] = Field(None, description="URL for the Workload Manager")
     router_url: Optional[str] = Field(None, description="URL for the Router")
+    readiness_probe_path: Optional[str] = Field(None, description="Path for the readiness probe")
+    readiness_probe_port: Optional[int] = Field(None, description="Port for the readiness probe")
 
     # AgentCube specific fields (filled after publish)
     agent_id: Optional[str] = Field(None, description="Agent ID assigned by AgentCube")
     agent_endpoint: Optional[str] = Field(None, description="Agent endpoint URL")
-    endpoint: Optional[str] = Field(None, description="The endpoint for the agent")
     session_id: Optional[str] = Field(None, description="The session ID for the agent")
 
     # Kubernetes deployment fields (filled when using K8s provider)

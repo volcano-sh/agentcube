@@ -122,6 +122,12 @@ class PublishRuntime:
         if not image_url:
             raise ValueError("Image URL must be provided (resolved by _prepare_image_for_publishing).")
 
+        if not metadata.readiness_probe_path or not metadata.readiness_probe_port:
+            raise ValueError(
+                "Missing required configuration for readiness probe. "
+                "Please ensure 'readiness_probe_path' and 'readiness_probe_port' are set in agent_metadata.yaml."
+            )
+
         # Step 3: Deploy AgentRuntime CR
         try:
             k8s_info = self.agentcube_provider.deploy_agent_runtime(
@@ -131,7 +137,9 @@ class PublishRuntime:
                 entrypoint=metadata.entrypoint,
                 env_vars=options.get('env_vars', None),
                 workload_manager_url=metadata.workload_manager_url,
-                router_url=metadata.router_url
+                router_url=metadata.router_url,
+                readiness_probe_path=metadata.readiness_probe_path,
+                readiness_probe_port=metadata.readiness_probe_port
             )
         except Exception as e:
             raise RuntimeError(f"Failed to deploy AgentRuntime CR to K8s: {str(e)}")
@@ -146,11 +154,10 @@ class PublishRuntime:
         }
 
         # Use provided endpoint or fall back to router_url from metadata
-        endpoint = options.get('endpoint') or metadata.endpoint
+        endpoint = options.get('agent_endpoint') or metadata.agent_endpoint
         if not endpoint:
             raise ValueError("Please enter the endpoint for the agent")
 
-        updates["agent_endpoint"] = endpoint
         self.metadata_service.update_metadata(workspace_path, updates)
 
         result = {

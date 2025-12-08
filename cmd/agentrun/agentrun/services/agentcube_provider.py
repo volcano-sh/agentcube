@@ -92,7 +92,9 @@ class AgentCubeProvider:
         entrypoint: Optional[str] = None,
         env_vars: Optional[Dict[str, str]] = None,
         workload_manager_url: Optional[str] = None,
-        router_url: Optional[str] = None
+        router_url: Optional[str] = None,
+        readiness_probe_path: Optional[str] = None,
+        readiness_probe_port: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Deploy an AgentRuntime CR to Kubernetes cluster.
@@ -105,6 +107,8 @@ class AgentCubeProvider:
             env_vars: Optional environment variables
             workload_manager_url: URL for the Workload Manager
             router_url: URL for the Router
+            readiness_probe_path: Path for the readiness probe
+            readiness_probe_port: Port for the readiness probe
 
         Returns:
             Dict containing deployment information
@@ -123,6 +127,13 @@ class AgentCubeProvider:
             "image": image_url,
             "imagePullPolicy": "IfNotPresent",
             "ports": [{"name": "http", "containerPort": port, "protocol": "TCP"}],
+            "readinessProbe": {
+                "httpGet": {
+                    "path": readiness_probe_path,
+                    "port": readiness_probe_port,
+                },
+                "initialDelaySeconds": 3,
+            }
         }
 
         if entrypoint:

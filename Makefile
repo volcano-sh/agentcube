@@ -68,9 +68,9 @@ gen-check: gen-all ## Check if generated code is up to date
 .PHONY: build run clean test deps
 
 # Build targets
-build: generate ## Build agentcube-apiserver binary
-	@echo "Building agentcube-apiserver..."
-	go build -o bin/agentcube-apiserver ./cmd/workload-manager
+build: generate ## Build workloadmanager binary
+	@echo "Building workloadmanager..."
+	go build -o bin/workloadmanager ./cmd/workload-manager
 
 build-agentd: generate ## Build agentd binary
 	@echo "Building agentd..."
@@ -88,7 +88,7 @@ build-all: build build-agentd build-test-tunnel build-router ## Build all binari
 
 # Run server (development mode)
 run:
-	@echo "Running agentcube-apiserver..."
+	@echo "Running workloadmanager..."
 	go run ./cmd/workload-manager/main.go \
 		--port=8080 \
 		--ssh-username=sandbox \
@@ -96,7 +96,7 @@ run:
 
 # Run server (with kubeconfig)
 run-local:
-	@echo "Running agentcube-apiserver with local kubeconfig..."
+	@echo "Running workloadmanager with local kubeconfig..."
 	go run ./cmd/workload-manager/main.go \
 		--port=8080 \
 		--kubeconfig=${HOME}/.kube/config \
@@ -114,7 +114,7 @@ run-router:
 clean:
 	@echo "Cleaning..."
 	rm -rf bin/
-	rm -f agentcube-apiserver agentd agentcube-router
+	rm -f workloadmanager agentd agentcube-router
 
 # Install dependencies
 deps:
@@ -149,11 +149,11 @@ lint: golangci-lint ## Run golangci-lint
 
 # Install to system
 install: build
-	@echo "Installing agentcube-apiserver..."
-	sudo cp bin/agentcube-apiserver /usr/local/bin/
+	@echo "Installing workloadmanager..."
+	sudo cp bin/workloadmanager /usr/local/bin/
 
 # Docker image variables
-APISERVER_IMAGE ?= agentcube-apiserver:latest
+APISERVER_IMAGE ?= workloadmanager:latest
 ROUTER_IMAGE ?= agentcube-router:latest
 IMAGE_REGISTRY ?= ""
 
@@ -189,15 +189,15 @@ docker-push: docker-build
 
 k8s-deploy:
 	@echo "Deploying to Kubernetes..."
-	kubectl apply -f k8s/agentcube-apiserver.yaml
+	kubectl apply -f k8s/workloadmanager.yaml
 
 k8s-delete:
 	@echo "Deleting from Kubernetes..."
-	kubectl delete -f k8s/agentcube-apiserver.yaml
+	kubectl delete -f k8s/workloadmanager.yaml
 
 k8s-logs:
 	@echo "Showing logs..."
-	kubectl logs -n agentcube -l app=agentcube-apiserver -f
+	kubectl logs -n agentcube -l app=workloadmanager -f
 
 # Load image to kind cluster
 kind-load:

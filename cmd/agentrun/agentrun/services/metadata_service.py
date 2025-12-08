@@ -34,6 +34,11 @@ class AgentMetadata(BaseModel):
 
     # Authentication information
     auth: Optional[Dict[str, Any]] = Field(None, description="Authentication configuration")
+    
+    # Registry configuration
+    registry_url: Optional[str] = Field("", description="Registry URL for image publishing")
+    registry_username: Optional[str] = Field("", description="Registry username")
+    registry_password: Optional[str] = Field("", description="Registry password")
 
     # Build configuration
     requirements_file: Optional[str] = Field("requirements.txt", description="Python dependency file")

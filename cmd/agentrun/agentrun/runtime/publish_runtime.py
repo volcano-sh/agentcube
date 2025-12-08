@@ -30,7 +30,7 @@ class PublishRuntime:
         self.agentcube_provider = None         # For agentcube provider (CRD)
         self.k8s_provider = None    # For k8s provider (Deployment/Service)
 
-        if verbose:
+        if self.verbose:
             logging.basicConfig(level=logging.DEBUG)
 
     def publish(
@@ -57,27 +57,35 @@ class PublishRuntime:
         provider = options.get('provider', self.provider)
         namespace = str(options.get('namespace', 'default'))
 
+        # Load metadata early to prepare image
+        metadata = self.metadata_service.load_metadata(workspace_path)
+        
+        # Determine the final image URL for deployment, potentially pushing it
+        # This will handle the logic of using metadata registry or explicit --image-url
+        final_image_url = self._prepare_image_for_publishing(workspace_path, metadata, options)
+        
+        # Override options['image_url'] with the resolved final_image_url
+        options['image_url'] = final_image_url
+
         if provider == "agentcube":
             try:
                 self.agentcube_provider = AgentCubeProvider(verbose=self.verbose, namespace=namespace)
             except Exception as e:
                 logger.warning(f"Failed to initialize AgentCube provider for CRD: {e}")
+            return self._publish_crd_to_k8s(workspace_path, metadata, **options)
         elif provider == "k8s":
             try:
                 self.k8s_provider = KubernetesProvider(verbose=self.verbose, namespace=namespace)
             except Exception as e:
                 logger.warning(f"Failed to initialize standard K8s provider: {e}")
-
-        if provider == "agentcube":
-            return self._publish_crd_to_k8s(workspace_path, **options)
-        elif provider == "k8s":
-            return self._publish_k8s(workspace_path, **options)
+            return self._publish_k8s(workspace_path, metadata, **options)
         else:
             raise ValueError(f"Unsupported provider: {provider}. Supported providers are 'agentcube' and 'k8s'.")
 
     def _publish_crd_to_k8s(
         self,
         workspace_path: Path,
+        metadata,
         **options: Any
     ) -> Dict[str, Any]:
         """
@@ -85,6 +93,7 @@ class PublishRuntime:
 
         Args:
             workspace_path: Path to the agent workspace directory
+            metadata: AgentMetadata object
             **options: Additional publish options
 
         Returns:
@@ -96,18 +105,15 @@ class PublishRuntime:
         if self.verbose:
             logger.info(f"Publishing to K8s cluster (AgentRuntime CR) for workspace: {workspace_path}")
 
-        if not self.agentcube_provider: # Use the agentcube_provider
+        if not self.agentcube_provider:
             raise RuntimeError(
                 "AgentCube provider is not initialized. Ensure Kubernetes is configured."
             )
 
-        # Step 1: Load metadata
-        metadata = self.metadata_service.load_metadata(workspace_path)
-
-        # Step 2: Get image information from options
+        # Image URL is already resolved in publish()
         image_url = options.get('image_url')
         if not image_url:
-            raise ValueError("Image URL must be provided via --image-url option.")
+            raise ValueError("Image URL must be provided (resolved by _prepare_image_for_publishing).")
 
         # Step 3: Deploy AgentRuntime CR
         try:
@@ -157,6 +163,7 @@ class PublishRuntime:
     def _publish_k8s(
         self,
         workspace_path: Path,
+        metadata,
         **options: Any
     ) -> Dict[str, Any]:
         """
@@ -164,6 +171,7 @@ class PublishRuntime:
 
         Args:
             workspace_path: Path to the agent workspace directory
+            metadata: AgentMetadata object
             **options: Additional publish options
 
         Returns:
@@ -180,13 +188,10 @@ class PublishRuntime:
                 "Standard K8s provider is not initialized. Ensure Kubernetes is configured."
             )
 
-        # Step 1: Load metadata
-        metadata = self.metadata_service.load_metadata(workspace_path)
-
-        # Step 2: Get image information from options
+        # Image URL is already resolved in publish()
         image_url = options.get('image_url')
         if not image_url:
-            raise ValueError("Image URL must be provided via --image-url option.")
+            raise ValueError("Image URL must be provided (resolved by _prepare_image_for_publishing).")
 
         # Step 3: Deploy to K8s
         k8s_info = None
@@ -302,38 +307,44 @@ class PublishRuntime:
         if not local_image_name:
             raise ValueError("No local image found. Build the agent first.")
 
-        # Extract required image repository information
-        image_url = options.get('image_url')
-        username = options.get('image_username')
-        password = options.get('image_password')
+        # Determine registry and credentials
+        # CLI options take precedence over metadata
+        target_registry_url = options.get('image_url') or metadata.registry_url
+        target_username = options.get('image_username') or metadata.registry_username
+        target_password = options.get('image_password') or metadata.registry_password
 
-        if not image_url:
-            raise ValueError(
-                "Image repository URL is required for local build mode. "
-                "Use --image-url option."
-            )
+        final_image_to_deploy = ""
 
-        # Tag and push the image
-        try:
+        if target_registry_url:
+            # We have a registry to push to
             if self.verbose:
-                logger.info(f"Pushing image to repository: {image_url}")
+                logger.info(f"Pushing image to repository: {target_registry_url}")
 
             push_result = self.docker_service.push_image(
                 image_name=local_image_name,
-                registry_url=image_url,
-                username=username,
-                password=password
+                registry_url=target_registry_url,
+                username=target_username,
+                password=target_password
             )
-
-            final_image_url = push_result["pushed_image"]
+            final_image_to_deploy = push_result["pushed_image"]
 
             if self.verbose:
-                logger.info(f"Image pushed successfully: {final_image_url}")
+                logger.info(f"Image pushed successfully: {final_image_to_deploy}")
+        else:
+            # No registry specified, expect a pre-built image URL for deployment
+            # Check if options explicitly provided an image_url which is to be used directly
+            final_image_to_deploy = options.get('image_url')
 
-            return final_image_url
+            if not final_image_to_deploy:
+                raise ValueError(
+                    "No registry URL provided in metadata or via --image-url option. "
+                    "Please provide an image URL via --image-url for direct deployment."
+                )
+            if self.verbose:
+                logger.info(f"Using pre-existing image for deployment: {final_image_to_deploy}")
 
-        except Exception as e:
-            raise RuntimeError(f"Failed to push image: {str(e)}")
+
+        return final_image_to_deploy
 
     def _prepare_cloud_image(
         self,

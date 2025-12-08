@@ -127,6 +127,9 @@ class PackRuntime:
                 "requirements_file": "requirements.txt" if language == 'python' else None,
                 "workload_manager_url": "",
                 "router_url": "",
+                "registry_url": options.get('registry_url', ''),
+                "registry_username": options.get('registry_username', ''),
+                "registry_password": options.get('registry_password', ''),
             }
 
             # Add description if provided

@@ -43,10 +43,13 @@ rules:
     verbs: ["update"]
   - apiGroups: ["runtime.agentcube.volcano.sh"]
     resources: ["agentruntimes"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["runtime.agentcube.volcano.sh"]
     resources: ["agentruntimes/status"]
-    verbs: ["update", "patch"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["runtime.agentcube.volcano.sh"]
+    resources: ["agentruntimes/finalizers"]
+    verbs: ["update"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
@@ -100,9 +103,10 @@ spec:
               value: "127.0.0.1:6379"
             - name: REDIS_PASSWORD
               value: ""
+            - name: WORKLOAD_MGR_URL
+              value: "http://agentcube-workload-manager:8080"
           args:
             - --port=8080
-            - --runtime-class-name=
             - --debug
           resources:
             requests:

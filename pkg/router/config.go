@@ -47,7 +47,4 @@ type Config struct {
 
 	// RedisDB is the Redis database number
 	RedisDB int
-
-	// SessionExpireDuration is the duration after which inactive sessions expire
-	SessionExpireDuration int // seconds, default 3600 (1 hour)
 }

@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 API_URL_ENV = "API_URL"
 API_TOKEN_ENV = "API_TOKEN"
 API_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"

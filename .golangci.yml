@@ -1,0 +1,127 @@
+# golangci-lint configuration file
+# Documentation: https://golangci-lint.run/usage/configuration/
+
+version: 2
+
+run:
+  # Timeout for analysis
+  timeout: 5m
+  
+  # Exit code when at least one issue was found
+  issues-exit-code: 1
+  
+  # Include test files
+  tests: true
+  
+  # Which dirs to skip: issues from them won't be reported
+  skip-dirs:
+    - bin
+    - vendor
+    - client-go  # Generated client code
+  
+  # Which files to skip: they will be analyzed, but issues from them won't be reported
+  skip-files:
+    - ".*\\.pb\\.go$"
+    - ".*_generated\\.go$"
+    - "zz_generated.*\\.go$"
+
+# output configuration options
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  uniq-by-line: true
+  sort-results: true
+
+# all available settings of specific linters
+linters-settings:
+  errcheck:
+    # Report about not checking of errors in type assertions: `a := b.(MyStruct)`
+    check-type-assertions: true
+    # Report about assignment of errors to blank identifier: `num, _ := strconv.Atoi(numStr)`
+    check-blank: false
+  
+  govet:
+    # Enable all analyzers
+    enable-all: true
+    # Disable shadow checking (can be too strict)
+    disable:
+      - shadow
+  
+  gocyclo:
+    # Minimal code complexity to report
+    min-complexity: 15
+  
+  misspell:
+    # Correct spellings using locale preferences for US or UK
+    locale: US
+  
+  unused:
+    # Treat code as a program (not a library)
+    check-exported: false
+  
+  unparam:
+    # Report unused function parameters
+    check-exported: false
+
+  staticcheck:
+    # Select the Go version to target
+    checks: ["all"]
+
+linters:
+  # Disable all linters by default
+  disable-all: true
+  
+  # Enable specific linters
+  enable:
+    - errcheck        # Checks for unchecked errors
+    - govet           # Reports suspicious constructs
+    - ineffassign     # Detects ineffectual assignments
+    - staticcheck     # Go static analysis
+    - unused          # Checks for unused constants, variables, functions and types
+    - misspell        # Finds commonly misspelled English words
+    - revive          # Fast, configurable, extensible, flexible, and beautiful linter for Go
+    - gosec           # Inspects source code for security problems
+    - unconvert       # Removes unnecessary type conversions
+    - unparam         # Reports unused function parameters
+    - goconst         # Finds repeated strings that could be replaced by a constant
+    - gocyclo         # Computes and checks the cyclomatic complexity of functions
+
+issues:
+  # Maximum issues count per one linter
+  max-issues-per-linter: 0
+  
+  # Maximum count of issues with the same text
+  max-same-issues: 0
+  
+  # Show only new issues
+  new: false
+  
+  # Exclude some linters from running on tests files
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+        - goconst
+    
+    # Exclude generated files
+    - path: "zz_generated.*\\.go"
+      linters:
+        - all
+    
+    # Exclude client-go generated code
+    - path: client-go/
+      linters:
+        - all
+    
+    # Exclude some issues from staticcheck
+    - linters:
+        - staticcheck
+      text: "SA1019:"  # Ignore deprecation warnings
+    
+    # Exclude some common issues
+    - text: "G404:"  # Ignore weak random number generator in non-security contexts
+      linters:
+        - gosec

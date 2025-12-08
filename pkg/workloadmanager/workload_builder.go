@@ -32,6 +32,7 @@ type buildSandboxClaimParams struct {
 	namespace           string
 	name                string
 	sandboxTemplateName string
+	sessionID           string
 }
 
 // buildSandboxObject builds a Sandbox object from parameters
@@ -85,13 +86,16 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha1.SandboxClaim {
 	sandboxClaim := &extensionsv1alpha1.SandboxClaim{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "agents.x-k8s.io/v1alpha1",
-			Kind:       "Sandbox",
+			APIVersion: "extensions.agents.x-k8s.io/v1alpha1",
+			Kind:       "SandboxClaim",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        params.name,
-			Namespace:   params.namespace,
-			Labels:      map[string]string{},
+			Name:      params.name,
+			Namespace: params.namespace,
+			Labels: map[string]string{
+				SessionIdLabelKey: params.sessionID,
+				"sandbox-name":    params.name,
+			},
 			Annotations: map[string]string{},
 		},
 		Spec: extensionsv1alpha1.SandboxClaimSpec{
@@ -129,7 +133,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	}
 
 	sessionID := uuid.New().String()
-	sandboxName := "agent-runtime-" + uuid.New().String()
+	sandboxName := fmt.Sprintf("%s-%s", name, RandString(8))
 	buildParams := &buildSandboxParams{
 		namespace:    namespace,
 		workloadName: name,
@@ -174,7 +178,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 
 	sessionID := uuid.New().String()
-	sandboxName := "code-interpreter-" + uuid.New().String()
+	sandboxName := fmt.Sprintf("%s-%s", codeInterpreterName, RandString(8))
 	externalInfo := &sandboxExternalInfo{
 		Ports:     codeInterpreterObj.Spec.Ports,
 		SessionID: sessionID,
@@ -186,6 +190,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 			namespace:           namespace,
 			name:                sandboxClaimName,
 			sandboxTemplateName: codeInterpreterName,
+			sessionID:           sessionID,
 		})
 		simpleSandbox := &sandboxv1alpha1.Sandbox{
 			ObjectMeta: metav1.ObjectMeta{
@@ -202,17 +207,40 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 
 	podSpec := corev1.PodSpec{
+		ImagePullSecrets: codeInterpreterObj.Spec.Template.ImagePullSecrets,
 		Containers: []corev1.Container{
 			{
-				Name:      "code-interpreter",
-				Image:     codeInterpreterObj.Spec.Template.Image,
-				Env:       codeInterpreterObj.Spec.Template.Environment,
-				Command:   codeInterpreterObj.Spec.Template.Command,
-				Args:      codeInterpreterObj.Spec.Template.Args,
-				Resources: codeInterpreterObj.Spec.Template.Resources,
+				Name:            "code-interpreter",
+				Image:           codeInterpreterObj.Spec.Template.Image,
+				ImagePullPolicy: codeInterpreterObj.Spec.Template.ImagePullPolicy,
+				Env:             codeInterpreterObj.Spec.Template.Environment,
+				Command:         codeInterpreterObj.Spec.Template.Command,
+				Args:            codeInterpreterObj.Spec.Template.Args,
+				Resources:       codeInterpreterObj.Spec.Template.Resources,
+			},
+		},
+		RuntimeClassName: codeInterpreterObj.Spec.Template.RuntimeClassName,
+	}
+
+	// Inject bootstrap key volume and mount
+	bootstrapVolume := corev1.Volume{
+		Name: "jwt-public-key",
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: "agentcube-jwt-public-key",
 			},
 		},
 	}
+	podSpec.Volumes = append(podSpec.Volumes, bootstrapVolume)
+
+	if len(podSpec.Containers) > 0 {
+		podSpec.Containers[0].VolumeMounts = append(podSpec.Containers[0].VolumeMounts, corev1.VolumeMount{
+			Name:      "jwt-public-key",
+			MountPath: "/etc/picod",
+			ReadOnly:  true,
+		})
+	}
+
 	buildParams := &buildSandboxParams{
 		sandboxName:    sandboxName,
 		namespace:      namespace,

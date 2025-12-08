@@ -15,5 +15,5 @@ class OperationTimeoutError(SandboxError):
     pass
 
 class ProviderError(SandboxError):
-    """Raised when workloadmanager returns an error"""
+    """Raised when agentcube-apiserver returns an error"""
     pass

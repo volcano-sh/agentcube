@@ -59,6 +59,13 @@ class PublishRuntime:
 
         # Load metadata early to prepare image
         metadata = self.metadata_service.load_metadata(workspace_path)
+
+        if provider == "agentcube":
+            if not metadata.router_url or not metadata.workload_manager_url:
+                 raise ValueError(
+                    "Missing required configuration for AgentCube provider. "
+                    "Please ensure 'router_url' and 'workload_manager_url' are set in agent_metadata.yaml."
+                )
         
         # Determine the final image URL for deployment, potentially pushing it
         # This will handle the logic of using metadata registry or explicit --image-url

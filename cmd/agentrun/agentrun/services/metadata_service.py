@@ -50,6 +50,8 @@ class AgentMetadata(BaseModel):
     # AgentCube specific fields (filled after publish)
     agent_id: Optional[str] = Field(None, description="Agent ID assigned by AgentCube")
     agent_endpoint: Optional[str] = Field(None, description="Agent endpoint URL")
+    endpoint: Optional[str] = Field(None, description="The endpoint for the agent")
+    session_id: Optional[str] = Field(None, description="The session ID for the agent")
 
     # Kubernetes deployment fields (filled when using K8s provider)
     k8s_deployment: Optional[Dict[str, Any]] = Field(None, description="Kubernetes deployment information")

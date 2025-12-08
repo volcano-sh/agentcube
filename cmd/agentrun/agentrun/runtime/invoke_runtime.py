@@ -81,12 +81,19 @@ class InvokeRuntime:
             if self.verbose:
                 logger.info(f"Constructed AgentRuntime invocation URL: {final_endpoint}")
 
+        # Add session ID to headers if it exists
+        if metadata.session_id:
+            if headers is None:
+                headers = {}
+            headers["X-Agentcube-Session-Id"] = metadata.session_id
+
         # Step 2: Invoke the agent
         response = asyncio.run(self._invoke_agent_via_agentcube(
             agent_id=agent_id,
             payload=payload,
             headers=headers,
-            endpoint=final_endpoint
+            endpoint=final_endpoint,
+            workspace_path=workspace_path
         ))
 
         if self.verbose:
@@ -124,7 +131,8 @@ class InvokeRuntime:
         agent_id: str,
         payload: Dict[str, Any],
         headers: Optional[Dict[str, str]],
-        endpoint: str
+        endpoint: str,
+        workspace_path: Path
     ) -> Any:
         """Invoke the agent via AgentCube API."""
         if self.verbose:
@@ -133,7 +141,7 @@ class InvokeRuntime:
         try:
             # Try direct HTTP invocation first (for local testing)
             if endpoint.startswith("http"):
-                response = await self._direct_http_invocation(endpoint, payload, headers)
+                response = await self._direct_http_invocation(endpoint, payload, headers, workspace_path)
 
             return response
 
@@ -144,7 +152,8 @@ class InvokeRuntime:
         self,
         endpoint: str,
         payload: Dict[str, Any],
-        headers: Optional[Dict[str, str]]
+        headers: Optional[Dict[str, str]],
+        workspace_path: Path
     ) -> Dict[str, Any]:
         """Perform direct HTTP invocation of the agent."""
         import httpx
@@ -165,6 +174,11 @@ class InvokeRuntime:
                     headers=request_headers
                 )
                 response.raise_for_status()
+
+                # Save session ID from response header
+                if "X-Agentcube-Session-Id" in response.headers:
+                    session_id = response.headers["X-Agentcube-Session-Id"]
+                    self.metadata_service.update_metadata(workspace_path, {"session_id": session_id})
 
                 # Try to parse JSON response
                 try:

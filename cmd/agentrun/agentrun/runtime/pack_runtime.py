@@ -130,6 +130,7 @@ class PackRuntime:
                 "registry_url": options.get('registry_url', ''),
                 "registry_username": options.get('registry_username', ''),
                 "registry_password": options.get('registry_password', ''),
+                "endpoint": "",
             }
 
             # Add description if provided

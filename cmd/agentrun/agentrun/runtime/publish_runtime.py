@@ -146,9 +146,9 @@ class PublishRuntime:
         }
 
         # Use provided endpoint or fall back to router_url from metadata
-        endpoint = options.get('endpoint') or metadata.router_url
+        endpoint = options.get('endpoint') or metadata.endpoint
         if not endpoint:
-            raise ValueError("Endpoint must be provided via --endpoint or router_url in metadata.")
+            raise ValueError("Please enter the endpoint for the agent")
 
         updates["agent_endpoint"] = endpoint
         self.metadata_service.update_metadata(workspace_path, updates)

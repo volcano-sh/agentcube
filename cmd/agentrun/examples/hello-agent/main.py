@@ -40,7 +40,7 @@ class HelloAgentHandler(BaseHTTPRequestHandler):
         elif self.path == '/runcmd':
             self._handle_runcmd()
         elif self.path == '/':
-            self._handle_invoke()
+            self._handle_runcmd()
         else:
             self._send_error(404, "Endpoint not found")
 
@@ -106,8 +106,9 @@ class HelloAgentHandler(BaseHTTPRequestHandler):
         """Handle runcmd requests using CodeInterpreterClient."""
         try:
 
-            with CodeInterpreterClient() as code_interpreter:
-                output = code_interpreter.execute_command("echo 'Hello from CodeInterpreterClient!'")
+            code_interpreter = CodeInterpreterClient()
+            code_interpreter.run_code("python","print('Hello from CodeInterpreterClient Python!')")
+            output = code_interpreter.execute_command("echo 'Hello from CodeInterpreterClient Shell!'")
 
             response_data = {
                 "output": output,

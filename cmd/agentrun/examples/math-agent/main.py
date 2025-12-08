@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 import uvicorn
 import os
 from dotenv import load_dotenv
+from agentcube import CodeInterpreterClient
 
 # Load environment variables from .env file
 load_dotenv()
@@ -18,19 +19,16 @@ api_key = os.getenv("OPENAI_API_KEY", "")
 api_base_url = os.getenv("OPENAI_API_BASE", "")
 model_name = os.getenv("OPENAI_MODEL", "DeepSeek-V3")
 
-# Global variable for the Code Interpreter client
-ci_client = None
+
 
 @tool
 def run_python_code(code: str) -> str:
     """Wrapper to run Python code inside Code Interpreter."""
-    global ci_client
     try:
-        if ci_client is None:
-            from agentcube import CodeInterpreterClient
-            # Initialize the client (Lazy Loading)
-            # This maintains the session across multiple tool calls
-            ci_client = CodeInterpreterClient(ttl=600)
+
+        # Initialize the client for each call, as requested.
+        # This will create a new session for each tool invocation.
+        ci_client = CodeInterpreterClient()
         
         # Run the code
         return ci_client.run_code("python", code)
@@ -73,23 +71,10 @@ memory = MemorySaver()
 # Added checkpointer for conversation history
 agent_graph = create_agent(llm, tools, checkpointer=memory)
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    # We delay initialization until the first request needs it (Lazy Loading)
-    global ci_client
-    yield
-    
-    # Shutdown
-    if ci_client:
-        try:
-            print("Stopping Code Interpreter session...")
-            ci_client.stop()
-        except Exception as e:
-            print(f"Error stopping Code Interpreter session: {e}")
+
 
 # FastAPI app with lifespan
-app = FastAPI(lifespan=lifespan)
+app = FastAPI()
 
 @app.post("/")
 async def run_agent(request: Request):

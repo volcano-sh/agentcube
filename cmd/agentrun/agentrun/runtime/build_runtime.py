@@ -51,7 +51,10 @@ class BuildRuntime:
         # Step 2: Load metadata
         metadata = self.metadata_service.load_metadata(workspace_path)
 
-        # Step 3: Determine build mode
+        # Step 3: Auto-increment version
+        metadata = self._increment_version(workspace_path, metadata)
+
+        # Step 4: Determine build mode
         build_mode = options.get('build_mode', metadata.build_mode)
 
         if build_mode == 'local':
@@ -60,6 +63,41 @@ class BuildRuntime:
             return self._build_cloud(workspace_path, metadata, options)
         else:
             raise ValueError(f"Unsupported build mode: {build_mode}")
+
+    def _increment_version(self, workspace_path: Path, metadata) -> Any:
+        """
+        Increment the agent version in metadata.
+        Defaults to 0.0.1 if no version is set.
+        Increments the patch version (X.Y.Z -> X.Y.Z+1).
+        """
+        current_version = metadata.version
+        new_version = "0.0.1"
+
+        if current_version:
+            try:
+                # Simple semantic versioning parsing
+                parts = current_version.split('.')
+                if len(parts) >= 3:
+                    # Increment patch version
+                    parts[-1] = str(int(parts[-1]) + 1)
+                    new_version = ".".join(parts)
+                else:
+                    # If not in X.Y.Z format, append .1 or default
+                    new_version = f"{current_version}.1"
+            except ValueError:
+                # Fallback if parsing fails
+                new_version = f"{current_version}-1"
+                logger.warning(f"Could not parse version {current_version}, using {new_version}")
+
+        if self.verbose:
+            logger.info(f"Incrementing version: {current_version} -> {new_version}")
+
+        # Update metadata
+        updates = {"version": new_version}
+        self.metadata_service.update_metadata(workspace_path, updates)
+        
+        # Reload metadata to get the updated object
+        return self.metadata_service.load_metadata(workspace_path)
 
     def _validate_build_prerequisites(self, workspace_path: Path) -> None:
         """Validate that the workspace is ready for building."""
@@ -106,7 +144,10 @@ class BuildRuntime:
         # Build the image
         dockerfile_path = workspace_path / "Dockerfile"
         image_name = metadata.agent_name.lower().replace(' ', '-')
-        tag = options.get('tag', 'latest')
+        
+        # Use version from metadata as default tag, fallback to latest
+        default_tag = metadata.version if metadata.version else 'latest'
+        tag = options.get('tag', default_tag)
 
         build_result = self.docker_service.build_image(
             dockerfile_path=dockerfile_path,
@@ -117,7 +158,7 @@ class BuildRuntime:
         )
 
         # Update metadata with build information
-        self._update_build_metadata(workspace_path, metadata, build_result)
+        self._update_build_metadata(workspace_path, metadata, build_result, tag)
 
         result = {
             "image_name": build_result["image_name"],
@@ -150,12 +191,13 @@ class BuildRuntime:
         self,
         workspace_path: Path,
         metadata,
-        build_result: Dict[str, str]
+        build_result: Dict[str, str],
+        tag: str = "latest"
     ) -> None:
         """Update metadata with build information."""
         image_info = {
             "repository_url": build_result["image_name"],
-            "tag": "latest",
+            "tag": tag,
             "build_mode": "local",
             "build_size": build_result["image_size"],
             "build_time": build_result["build_time"]

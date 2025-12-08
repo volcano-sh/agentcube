@@ -1,5 +1,3 @@
-fastapi
-uvicorn
 langchain
 langchain-core
 langchain-openai

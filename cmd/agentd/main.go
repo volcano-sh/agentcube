@@ -39,7 +39,7 @@ func main() {
 
 	err = ctrl.NewControllerManagedBy(mgr).
 		For(&sandboxv1alpha1.Sandbox{}).
-		Complete(&agentd.AgentdReconciler{
+		Complete(&agentd.Reconciler{
 			Client: mgr.GetClient(),
 			Scheme: mgr.GetScheme(),
 		})

@@ -61,6 +61,7 @@ type Sandbox struct {
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
+// nolint:unparam
 func (e *testEnv) setupSandbox() (string, *ssh.Client, func()) {
 	publicKey, privateKey, err := generateSSHKeyPair()
 	if err != nil {
@@ -264,7 +265,7 @@ func generateSSHKeyPair() (publicKey string, privateKey ssh.Signer, err error) {
 		return "", nil, fmt.Errorf("failed to create signer: %w", err)
 	}
 
-	pubKeyStr := string(ssh.MarshalAuthorizedKey(ssh.PublicKey(signer.PublicKey())))
+	pubKeyStr := string(ssh.MarshalAuthorizedKey(signer.PublicKey()))
 	return pubKeyStr[:len(pubKeyStr)-1], signer, nil
 }
 
@@ -474,6 +475,9 @@ func connectSSHWithKey(conn net.Conn, privateKey ssh.Signer) (*ssh.Client, error
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(privateKey),
 		},
+		// InsecureIgnoreHostKey is acceptable here because the tunnel endpoint is local
+		// and controlled in tests; we don't rely on host key verification.
+		// nolint:gosec // G106: use of InsecureIgnoreHostKey is safe in this test-only context.
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         10 * time.Second,
 	}

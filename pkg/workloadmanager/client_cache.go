@@ -81,7 +81,7 @@ func NewClientCache(maxSize int) *ClientCache {
 // Get retrieves a client from cache based on key (service account)
 // Returns the client if found and cached token is not expired, nil otherwise
 // Different tokens for the same service account can share the same client
-func (c *ClientCache) Get(key, token string) *UserK8sClient {
+func (c *ClientCache) Get(key string) *UserK8sClient {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -158,6 +158,7 @@ func (c *ClientCache) evictOldest() {
 		return
 	}
 
+	// nolint:errcheck
 	entry := back.Value.(*clientCacheEntry)
 	c.lruList.Remove(back)
 	delete(c.cache, entry.key)
@@ -280,7 +281,7 @@ func (c *TokenCache) evictOldest() {
 	if back == nil {
 		return
 	}
-
+	// nolint:errcheck
 	entry := back.Value.(*tokenCacheEntry)
 	c.lruList.Remove(back)
 	delete(c.cache, entry.token)

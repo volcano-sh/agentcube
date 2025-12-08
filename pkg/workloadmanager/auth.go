@@ -176,12 +176,6 @@ func (s *Server) validateServiceAccountToken(ctx context.Context, token string) 
 	return true, username, nil
 }
 
-// checkSandboxAccess checks if the current user has access to the sandbox
-// Returns true if the user is the creator of the sandbox
-func (s *Server) checkSandboxAccess(sandbox *Sandbox, serviceAccountName string) bool {
-	return sandbox.CreatorServiceAccount == serviceAccountName
-}
-
 // extractUserInfo extracts user information from request context
 // Returns userToken, userNamespace, serviceAccount, serviceAccountName
 // If extraction fails, returns empty strings

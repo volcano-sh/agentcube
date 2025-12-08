@@ -17,7 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-func TestAgentdReconciler_Reconcile_WithLastActivity(t *testing.T) {
+func TestReconciler_Reconcile_WithLastActivity(t *testing.T) {
 	testScheme := runtime.NewScheme()
 	utilruntime.Must(scheme.AddToScheme(testScheme))
 	utilruntime.Must(sandboxv1alpha1.AddToScheme(testScheme))
@@ -107,7 +107,7 @@ func TestAgentdReconciler_Reconcile_WithLastActivity(t *testing.T) {
 				WithObjects(tt.sandbox).
 				Build()
 
-			reconciler := &AgentdReconciler{
+			reconciler := &Reconciler{
 				Client: fakeClient,
 				Scheme: testScheme,
 			}

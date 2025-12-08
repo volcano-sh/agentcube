@@ -62,7 +62,7 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	return ctrl.Result{}, nil
 }
 
-func (r *SandboxReconciler) WatchSandboxOnce(ctx context.Context, namespace, name string) <-chan SandboxStatusUpdate {
+func (r *SandboxReconciler) WatchSandboxOnce(_ context.Context, namespace, name string) <-chan SandboxStatusUpdate {
 	resultChan := make(chan SandboxStatusUpdate, 1)
 	key := types.NamespacedName{Namespace: namespace, Name: name}
 

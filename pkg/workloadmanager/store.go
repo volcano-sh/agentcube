@@ -94,17 +94,17 @@ func (s *SandboxStore) List() []*Sandbox {
 }
 
 // InitializeWithInformer initializes the store with an informer and performs initial sync
-func (s *SandboxStore) InitializeWithInformer(ctx context.Context, informer cache.SharedInformer, k8sClient *K8sClient) error {
+func (s *SandboxStore) InitializeWithInformer(ctx context.Context, informer cache.SharedInformer, _ *K8sClient) error {
 	s.mu.Lock()
 	s.informer = informer
 	s.mu.Unlock()
 
 	// Set up event handlers
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, _ = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			s.onSandboxAdd(obj)
 		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
+		UpdateFunc: func(_, newObj interface{}) {
 			s.onSandboxUpdate(newObj)
 		},
 		DeleteFunc: func(obj interface{}) {
@@ -289,7 +289,7 @@ func buildSandboxRedisCachePlaceHolder(sandboxCRD *sandboxv1alpha1.Sandbox, exte
 	return sandboxRedis
 }
 
-func convertSandboxToRedisCache(sandboxCRD *sandboxv1alpha1.Sandbox, podIP string, externalInfo *sandboxExternalInfo) (*types.SandboxRedis, error) {
+func convertSandboxToRedisCache(sandboxCRD *sandboxv1alpha1.Sandbox, podIP string, externalInfo *sandboxExternalInfo) *types.SandboxRedis {
 	createdAt := sandboxCRD.GetCreationTimestamp().Time
 	expiresAt := createdAt.Add(DefaultSandboxTTL)
 	if sandboxCRD.Spec.ShutdownTime != nil {
@@ -316,7 +316,7 @@ func convertSandboxToRedisCache(sandboxCRD *sandboxv1alpha1.Sandbox, podIP strin
 	if externalInfo.SandboxClaimName != "" {
 		sandboxRedis.SandboxClaimName = externalInfo.SandboxClaimName
 	}
-	return sandboxRedis, nil
+	return sandboxRedis
 }
 
 // getSandboxStatus extracts status from Sandbox CRD conditions

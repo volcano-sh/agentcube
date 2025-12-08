@@ -25,6 +25,7 @@ func (s *Server) handleHealth(c *gin.Context) {
 }
 
 // handleCreateSandbox handles sandbox creation requests
+// nolint :gocyclo
 func (s *Server) handleCreateSandbox(c *gin.Context) {
 	createAgentRequest := &types.CreateSandboxRequest{}
 	if err := c.ShouldBindJSON(createAgentRequest); err != nil {
@@ -162,12 +163,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		return
 	}
 
-	redisCacheInfo, err := convertSandboxToRedisCache(createdSandbox, podIP, externalInfo)
-	if err != nil {
-		log.Printf("convert to redis cache info failed: %v", err)
-		respondError(c, http.StatusInternalServerError, "SANDBOX_BUILD_FAILED", err.Error())
-		return
-	}
+	redisCacheInfo := convertSandboxToRedisCache(createdSandbox, podIP, externalInfo)
 
 	response := &types.CreateSandboxResponse{
 		SessionID:   externalInfo.SessionID,

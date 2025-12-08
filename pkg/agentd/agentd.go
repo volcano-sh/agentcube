@@ -17,13 +17,13 @@ var (
 	SessionExpirationTimeout = 15 * time.Minute
 )
 
-// AgentdReconciler reconciles a Sandbox object
-type AgentdReconciler struct {
+// Reconciler reconciles a Sandbox object
+type Reconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
-func (r *AgentdReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	sandbox := &sandboxv1alpha1.Sandbox{}
 	err := r.Get(ctx, req.NamespacedName, sandbox)
 	if err != nil {
@@ -58,7 +58,7 @@ func (r *AgentdReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *AgentdReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&sandboxv1alpha1.Sandbox{}).
 		Complete(r)

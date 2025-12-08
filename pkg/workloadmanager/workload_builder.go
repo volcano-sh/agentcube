@@ -11,7 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 )
@@ -71,7 +71,7 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 				},
 			},
 			ShutdownTime: &shutdownTime,
-			Replicas:     pointer.Int32(1),
+			Replicas:     ptr.To[int32](1),
 		},
 	}
 	if len(sandbox.Spec.PodTemplate.ObjectMeta.Labels) == 0 {
@@ -128,13 +128,13 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 		return nil, nil, fmt.Errorf("agent runtime %s has no template", agentRuntimeKey)
 	}
 
-	sessionId := uuid.New().String()
+	sessionID := uuid.New().String()
 	sandboxName := "agent-runtime-" + uuid.New().String()
 	buildParams := &buildSandboxParams{
 		namespace:    namespace,
 		workloadName: name,
 		sandboxName:  sandboxName,
-		sessionID:    sessionId,
+		sessionID:    sessionID,
 		podSpec:      agentRuntimeObj.Spec.Template.Spec,
 	}
 	if agentRuntimeObj.Spec.MaxSessionDuration != nil {
@@ -146,7 +146,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	sandbox := buildSandboxObject(buildParams)
 	externalInfo := &sandboxExternalInfo{
 		Ports:     agentRuntimeObj.Spec.Ports,
-		SessionID: sessionId,
+		SessionID: sessionID,
 	}
 	return sandbox, externalInfo, nil
 }
@@ -173,11 +173,11 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		return nil, nil, nil, fmt.Errorf("failed to convert unstructured to CodeInterpreter: %w", err)
 	}
 
-	sessionId := uuid.New().String()
+	sessionID := uuid.New().String()
 	sandboxName := "code-interpreter-" + uuid.New().String()
 	externalInfo := &sandboxExternalInfo{
 		Ports:     codeInterpreterObj.Spec.Ports,
-		SessionID: sessionId,
+		SessionID: sessionID,
 	}
 
 	if codeInterpreterObj.Spec.WarmPoolSize != nil && *codeInterpreterObj.Spec.WarmPoolSize > 0 {
@@ -216,7 +216,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	buildParams := &buildSandboxParams{
 		sandboxName:    sandboxName,
 		namespace:      namespace,
-		sessionID:      sessionId,
+		sessionID:      sessionID,
 		podSpec:        podSpec,
 		podLabels:      codeInterpreterObj.Spec.Template.Labels,
 		podAnnotations: codeInterpreterObj.Spec.Template.Annotations,

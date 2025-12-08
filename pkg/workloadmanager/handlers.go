@@ -11,10 +11,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	redisv9 "github.com/redis/go-redis/v9"
-	"github.com/volcano-sh/agentcube/pkg/common/types"
-	"github.com/volcano-sh/agentcube/pkg/redis"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
+
+	"github.com/volcano-sh/agentcube/pkg/common/types"
+	"github.com/volcano-sh/agentcube/pkg/redis"
 )
 
 // handleHealth handles health check requests

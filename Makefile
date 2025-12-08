@@ -72,6 +72,10 @@ build: generate ## Build agentcube-apiserver binary
 	@echo "Building agentcube-apiserver..."
 	go build -o bin/agentcube-apiserver ./cmd/workload-manager
 
+build-router: ## Build agentcube-router binary
+	@echo "Building agentcube-router..."
+	go build -o bin/agentcube-router ./cmd/router
+
 build-agentd: generate ## Build agentd binary
 	@echo "Building agentd..."
 	go build -o bin/agentd ./cmd/agentd
@@ -80,7 +84,7 @@ build-test-tunnel: ## Build test-tunnel tool
 	@echo "Building test-tunnel..."
 	go build -o bin/test-tunnel ./cmd/test-tunnel
 
-build-all: build build-agentd build-test-tunnel ## Build all binaries
+build-all: build build-router build-agentd build-test-tunnel ## Build all binaries
 
 # Run server (development mode)
 run:
@@ -140,12 +144,17 @@ install: build
 
 # Docker image variables
 APISERVER_IMAGE ?= agentcube-apiserver:latest
+ROUTER_IMAGE ?= agentcube-router:latest
 IMAGE_REGISTRY ?= ""
 
 # Docker and Kubernetes targets
 docker-build:
 	@echo "Building Docker image..."
 	docker build -t $(APISERVER_IMAGE) .
+
+docker-build-router: ## Build router Docker image
+	@echo "Building router Docker image..."
+	docker build -f Dockerfile.router -t $(ROUTER_IMAGE) .
 
 # Multi-architecture build (supports amd64, arm64)
 docker-buildx:

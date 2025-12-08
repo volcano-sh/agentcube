@@ -20,7 +20,7 @@ type SessionManager interface {
 	// GetSandboxBySession returns the sandbox associated with the given sessionID.
 	// When sessionID is empty, it creates a new sandbox by calling the external API.
 	// When sessionID is not empty, it queries Redis for the sandbox.
-	GetSandboxBySession(sessionID string, namespace string, name string, kind string) (*types.SandboxRedis, error)
+	GetSandboxBySession(ctx context.Context, sessionID string, namespace string, name string, kind string) (*types.SandboxRedis, error)
 }
 
 // manager is the default implementation of the SessionManager interface.
@@ -43,7 +43,7 @@ func NewSessionManager(redisClient redis.Client) (SessionManager, error) {
 		redisClient:    redisClient,
 		workloadMgrURL: workloadMgrURL,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second, // Set a reasonable timeout to prevent hanging
+			Timeout: time.Minute, // No timeout for createSandbox requests
 		},
 	}, nil
 }
@@ -51,9 +51,7 @@ func NewSessionManager(redisClient redis.Client) (SessionManager, error) {
 // GetSandboxBySession returns the sandbox associated with the given sessionID.
 // When sessionID is empty, it creates a new sandbox by calling the external API.
 // When sessionID is not empty, it queries Redis for the sandbox.
-func (m *manager) GetSandboxBySession(sessionID string, namespace string, name string, kind string) (*types.SandboxRedis, error) {
-	ctx := context.Background()
-
+func (m *manager) GetSandboxBySession(ctx context.Context, sessionID string, namespace string, name string, kind string) (*types.SandboxRedis, error) {
 	// When sessionID is empty, create a new sandbox
 	if sessionID == "" {
 		return m.createSandbox(ctx, namespace, name, kind)
@@ -128,8 +126,8 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 	}
 
 	// Validate response
-	if createResp.SessionID == "" || createResp.SandboxID == "" {
-		return nil, fmt.Errorf("%w: invalid response from workload manager", ErrCreateSandboxFailed)
+	if createResp.SessionID == "" {
+		return nil, fmt.Errorf("%w: response with empty session id from workload manager", ErrCreateSandboxFailed)
 	}
 
 	// Construct SandboxRedis from response

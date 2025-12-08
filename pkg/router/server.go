@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	redisv9 "github.com/redis/go-redis/v9"
+
 	"github.com/volcano-sh/agentcube/pkg/redis"
 )
 
@@ -60,9 +61,6 @@ func NewServer(config *Config) (*Server, error) {
 	if config.MaxConnsPerHost <= 0 {
 		config.MaxConnsPerHost = 10 // Default 10 connections per host
 	}
-	if config.SessionExpireDuration <= 0 {
-		config.SessionExpireDuration = 3600 // Default 1 hour
-	}
 
 	// Initialize Redis client
 	redisOptions, err := makeRedisOptions()
@@ -88,7 +86,7 @@ func NewServer(config *Config) (*Server, error) {
 	httpTransport := &http.Transport{
 		MaxIdleConns:        config.MaxIdleConns,
 		MaxIdleConnsPerHost: config.MaxConnsPerHost,
-		IdleConnTimeout:     90 * time.Second,
+		IdleConnTimeout:     0,
 		DisableCompression:  false,
 		ForceAttemptHTTP2:   true,
 	}
@@ -148,10 +146,10 @@ func (s *Server) setupRoutes() {
 	v1.Use(s.concurrencyLimitMiddleware()) // Apply concurrency limit to API routes
 
 	// Agent invoke requests
-	v1.Any("/namespaces/:agentNamespace/agent-runtimes/:agentName/invocations/*path", s.handleAgentInvoke)
+	v1.POST("/namespaces/:namespace/agent-runtimes/:name/invocations/*path", s.handleAgentInvoke)
 
-	// Code interpreter invoke requests - use different base path to avoid conflicts
-	v1.Any("/code-namespaces/:namespace/code-interpreters/:name/invocations/*path", s.handleCodeInterpreterInvoke)
+	// Code interpreter invoke requests
+	v1.POST("/namespaces/:namespace/code-interpreters/:name/invocations/*path", s.handleCodeInterpreterInvoke)
 }
 
 // Start starts the Router API server

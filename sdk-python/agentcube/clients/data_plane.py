@@ -1,8 +1,8 @@
 import base64
 import json
 import time
-import shlex
 import os
+import ast
 from typing import Dict, Optional, Any
 from urllib.parse import urljoin
 
@@ -133,9 +133,34 @@ class DataPlaneClient:
         """Run a code snippet (python or bash)."""
         lang = language.lower()
         if lang in ["python", "py", "python3"]:
-            cmd = f"python3 -c {shlex.quote(code)}"
+            # Sanitize code: Fix double-escaped newlines if the code is invalid syntax
+            try:
+                ast.parse(code)
+            except SyntaxError:
+                # Try fixing escaped newlines (replace literal "\n" with newline char)
+                # This handles cases where LLMs/parsers double-escape newlines.
+                fixed_code = code.replace("\\n", "\n")
+                try:
+                    ast.parse(fixed_code)
+                    # If fixed code is valid, use it
+                    self.logger.warning("Detected and fixed double-escaped newlines in Python code.")
+                    code = fixed_code
+                except SyntaxError:
+                    # If still invalid, stick to original to preserve user intent/error
+                    pass
+            except Exception:
+                # Fallback for any other ast parsing error (shouldn't break execution flow)
+                pass
+
+            # Use file-based execution to avoid shell quoting issues and length limits
+            filename = f"script_{int(time.time() * 1000)}.py"
+            self.write_file(code, filename)
+            cmd = f"python3 {filename}"
         elif lang in ["bash", "sh"]:
-            cmd = f"bash -c {shlex.quote(code)}"
+            # Also use file execution for bash to be consistent and safe
+            filename = f"script_{int(time.time() * 1000)}.sh"
+            self.write_file(code, filename)
+            cmd = f"bash {filename}"
         else:
             raise ValueError(f"Unsupported language: {language}")
             

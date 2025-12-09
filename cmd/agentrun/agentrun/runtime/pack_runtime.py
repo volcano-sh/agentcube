@@ -128,7 +128,7 @@ class PackRuntime:
                 "workload_manager_url": "",
                 "router_url": "",
                 "readiness_probe_path": "",
-                "readiness_probe_port": None,
+                "readiness_probe_port": 8080,
                 "registry_url": options.get('registry_url', ''),
                 "registry_username": options.get('registry_username', ''),
                 "registry_password": options.get('registry_password', ''),

@@ -34,16 +34,17 @@ class AgentMetadata(BaseModel):
 
     # Authentication information
     auth: Optional[Dict[str, Any]] = Field(None, description="Authentication configuration")
+
+    # Build configuration
+    requirements_file: Optional[str] = Field("requirements.txt", description="Python dependency file")
     
     # Registry configuration
     registry_url: Optional[str] = Field("", description="Registry URL for image publishing")
     registry_username: Optional[str] = Field("", description="Registry username")
     registry_password: Optional[str] = Field("", description="Registry password")
 
-    # Build configuration
-    requirements_file: Optional[str] = Field("requirements.txt", description="Python dependency file")
-
     # AgentCube system configuration
+    agent_endpoint: Optional[str] = Field(None, description="Agent endpoint URL")
     workload_manager_url: Optional[str] = Field(None, description="URL for the Workload Manager")
     router_url: Optional[str] = Field(None, description="URL for the Router")
     readiness_probe_path: Optional[str] = Field(None, description="Path for the readiness probe")
@@ -51,7 +52,6 @@ class AgentMetadata(BaseModel):
 
     # AgentCube specific fields (filled after publish)
     agent_id: Optional[str] = Field(None, description="Agent ID assigned by AgentCube")
-    agent_endpoint: Optional[str] = Field(None, description="Agent endpoint URL")
     session_id: Optional[str] = Field(None, description="The session ID for the agent")
 
     # Kubernetes deployment fields (filled when using K8s provider)
@@ -148,7 +148,7 @@ class MetadataService:
         metadata_dict = metadata.model_dump(exclude_none=True)
 
         with open(metadata_file, 'w', encoding='utf-8') as f:
-            yaml.dump(metadata_dict, f, default_flow_style=False, indent=2)
+            yaml.dump(metadata_dict, f, default_flow_style=False, indent=2, sort_keys=False)
 
     def update_metadata(
         self,

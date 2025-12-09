@@ -60,6 +60,14 @@ class PublishRuntime:
         # Load metadata early to prepare image
         metadata = self.metadata_service.load_metadata(workspace_path)
 
+        # Delete session_id from metadata if it exists
+        if metadata.session_id:
+            if self.verbose:
+                logger.info(f"Removing session_id: {metadata.session_id} from metadata")
+            metadata.session_id = None
+            self.metadata_service.save_metadata(workspace_path, metadata)
+            metadata = self.metadata_service.load_metadata(workspace_path)
+
         if provider == "agentcube":
             if not metadata.router_url or not metadata.workload_manager_url:
                  raise ValueError(

@@ -18,6 +18,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.tools import tool
 from langchain.agents import create_agent
 from agentcube import CodeInterpreterClient
+from pydantic import BaseModel, Field
 
 # Load environment variables from .env file
 load_dotenv()
@@ -27,10 +28,16 @@ api_key = os.getenv("OPENAI_API_KEY", "")
 api_base_url = os.getenv("OPENAI_API_BASE", "")
 model_name = os.getenv("OPENAI_MODEL", "DeepSeek-V3")
 
+class RunPythonCodeArgs(BaseModel):
+    code: str = Field(description="The python code to execute.")
 
-@tool
+@tool(args_schema=RunPythonCodeArgs)
 def run_python_code(code: str) -> str:
-    """Wrapper to run Python code inside Code Interpreter."""
+    """
+    Executes python code in a secure sandbox.
+    Use this tool to perform calculations, analyze data, or run any python script.
+    The code is executed in a persistent session, so variables defined in previous calls are available.
+    """
     try:
         # Initialize the client for each call, as requested.
         # This will create a new session for each tool invocation.

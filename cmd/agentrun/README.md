@@ -165,7 +165,7 @@ Options:
 ```
 
 ### `kubectl agentrun publish`
-Publish the agent image to AgentCube or local Kubernetes cluster.
+Publish the agent to AgentCube
 
 ```bash
 kubectl agentrun publish [OPTIONS]

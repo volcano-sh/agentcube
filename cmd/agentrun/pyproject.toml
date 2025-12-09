@@ -7,12 +7,6 @@ name = "agentrun"
 version = "0.1.0"
 description = "AgentRun CLI - A developer tool for packaging, building, and deploying AI agents to AgentCube"
 readme = "README.md"
-authors = [
-    { name = "AgentCube Community", email = "agentcube@volcano.sh" }
-]
-maintainers = [
-    { name = "Layne Peng", email = "layne.peng@example.com" }
-]
 license = { text = "Apache-2.0" }
 keywords = ["ai", "agent", "kubernetes", "volcano", "agentcube", "cli"]
 classifiers = [

@@ -72,7 +72,7 @@ class StatusRuntime:
             
             if effective_provider == "agentcube":
                 # Get status from K8s cluster (AgentRuntime CR)
-                return self._get_crd_k8s_status(metadata)
+                return self._get_cr_k8s_status(metadata)
             else:
                 # Get status from K8s cluster (standard Deployment/Service)
                 return self._get_k8s_status(metadata)
@@ -121,7 +121,7 @@ class StatusRuntime:
                 "error": str(e)
             }
     
-    def _get_crd_k8s_status(self, metadata) -> Dict[str, Any]:
+    def _get_cr_k8s_status(self, metadata) -> Dict[str, Any]:
         """Get status from K8s cluster (AgentRuntime CR)."""
         if self.verbose:
             logger.info(f"Querying Kubernetes for AgentRuntime CR status: {metadata.agent_name}")
@@ -132,17 +132,17 @@ class StatusRuntime:
             )
 
         try:
-            crd_name = metadata.agent_id
+            cr_name = metadata.agent_id
             cr_namespace = self.agentcube_provider.namespace # Use the provider's namespace
             
-            cr_object = self.agentcube_provider.get_agent_runtime(crd_name, cr_namespace)
+            cr_object = self.agentcube_provider.get_agent_runtime(cr_name, cr_namespace)
             
             agent_status = "unknown"
             agent_endpoint = None
             k8s_deployment_details = {
                 "type": "AgentRuntime",
                 "namespace": cr_namespace,
-                "deployment_name": crd_name
+                "deployment_name": cr_name
             }
 
             if cr_object:
@@ -160,7 +160,7 @@ class StatusRuntime:
                     agent_endpoint = metadata.agent_endpoint
             else:
                 agent_status = "not_found_in_k8s"
-                logger.warning(f"AgentRuntime CR '{crd_name}' not found in K8s, relying on metadata.")
+                logger.warning(f"AgentRuntime CR '{cr_name}' not found in K8s, relying on metadata.")
             
             result = {
                 "agent_id": metadata.agent_id,

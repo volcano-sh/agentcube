@@ -87,7 +87,7 @@ class PublishRuntime:
                 self.agentcube_provider = AgentCubeProvider(verbose=self.verbose, namespace=namespace)
             except Exception as e:
                 logger.warning(f"Failed to initialize AgentCube provider for CRD: {e}")
-            return self._publish_crd_to_k8s(workspace_path, metadata, **options)
+            return self._publish_cr_to_k8s(workspace_path, metadata, **options)
         elif provider == "k8s":
             try:
                 self.k8s_provider = KubernetesProvider(verbose=self.verbose, namespace=namespace)
@@ -97,7 +97,7 @@ class PublishRuntime:
         else:
             raise ValueError(f"Unsupported provider: {provider}. Supported providers are 'agentcube' and 'k8s'.")
 
-    def _publish_crd_to_k8s(
+    def _publish_cr_to_k8s(
         self,
         workspace_path: Path,
         metadata,

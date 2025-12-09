@@ -5,13 +5,15 @@ This module implements the pack command functionality, handling
 the packaging of agent applications into standardized workspaces.
 """
 
-import logging
 import json
+import logging
 import shlex
 import shutil
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from cmd.agentrun.agentrun.models.pack_models import MetadataOptions
 from agentrun.services.metadata_service import AgentMetadata, MetadataService
 
 logger = logging.getLogger(__name__)
@@ -101,70 +103,46 @@ class PackRuntime:
     def _load_or_create_metadata(self, workspace_path: Path, options: Dict[str, Any]) -> AgentMetadata:
         """Load existing metadata or create new one from options."""
         try:
-            # Try to load existing metadata
             metadata = self.metadata_service.load_metadata(workspace_path)
             if self.verbose:
                 logger.debug("Loaded existing metadata")
         except FileNotFoundError:
-            # Create new metadata from options or defaults
             if self.verbose:
                 logger.debug("Creating new metadata")
 
-            # Extract required fields from options or infer from workspace
-            agent_name = options.get('agent_name')
-            if not agent_name:
-                agent_name = workspace_path.name
+            pack_options = MetadataOptions.from_options(options)
 
-            language = options.get('language', 'python')
-            entrypoint = options.get('entrypoint', self._infer_entrypoint(workspace_path, language))
+            if not pack_options.agent_name:
+                pack_options.agent_name = workspace_path.name
+            
+            if not pack_options.language:
+                pack_options.language = "python"
 
-            metadata_dict = {
-                "agent_name": agent_name,
-                "language": language,
-                "entrypoint": entrypoint,
-                "port": options.get('port', 8080),
-                "build_mode": options.get('build_mode', 'local'),
-                "requirements_file": "requirements.txt" if language == 'python' else None,
-                "workload_manager_url": "",
-                "router_url": "",
-                "readiness_probe_path": "",
-                "readiness_probe_port": 8080,
-                "registry_url": options.get('registry_url', ''),
-                "registry_username": options.get('registry_username', ''),
-                "registry_password": options.get('registry_password', ''),
-                "agent_endpoint": "",
-            }
+            if not pack_options.entrypoint:
+                pack_options.entrypoint = self._infer_entrypoint(workspace_path, pack_options.language)
 
-            # Add description if provided
-            if options.get('description'):
-                metadata_dict["description"] = options["description"]
+            if pack_options.language == 'python' and not pack_options.requirements_file:
+                pack_options.requirements_file = "requirements.txt"
+
+            metadata_dict = asdict(pack_options)
+            
+            # Filter out None values so that pydantic model can use defaults
+            metadata_dict = {k: v for k, v in metadata_dict.items() if v is not None}
+
 
             metadata = AgentMetadata(**metadata_dict)
-
-            # Save the new metadata
             self.metadata_service.save_metadata(workspace_path, metadata)
 
         return metadata
 
     def _apply_option_overrides(self, metadata: AgentMetadata, options: Dict[str, Any]) -> AgentMetadata:
         """Apply CLI option overrides to metadata."""
-        overrides = {}
-
-        # Map CLI options to metadata fields
-        option_mappings = {
-            'agent_name': 'agent_name',
-            'language': 'language',
-            'entrypoint': 'entrypoint',
-            'port': 'port',
-            'build_mode': 'build_mode',
-        }
-
-        for cli_option, metadata_field in option_mappings.items():
-            if cli_option in options and options[cli_option] is not None:
-                overrides[metadata_field] = options[cli_option]
+        override_options = MetadataOptions.from_options(options)
+        
+        # Create a dictionary from the dataclass, excluding None values
+        overrides = {k: v for k, v in asdict(override_options).items() if v is not None}
 
         if overrides:
-            # Create new metadata with overrides
             metadata_dict = metadata.dict()
             metadata_dict.update(overrides)
 

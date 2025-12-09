@@ -159,10 +159,10 @@ def main():
     port = int(os.environ.get('PORT', 8080))
 
     print(f"Starting Hello Agent on port {port}")
-    print(f"Health check: http://localhost:{port}/health")
-    print(f"Greet endpoint: http://localhost:{port}/greet")
-    print(f"Runcmd endpoint: http://localhost:{port}/runcmd")
-    print(f"Agent endpoint: http://localhost:{port}/")
+    print(f"Health check: http://0.0.0.0:{port}/health")
+    print(f"Greet endpoint: http://0.0.0.0:{port}/greet")
+    print(f"Runcmd endpoint: http://0.0.0.0:{port}/runcmd")
+    print(f"Agent endpoint: http://0.0.0.0:{port}/")
 
     server_address = ('', port)
     httpd = HTTPServer(server_address, HelloAgentHandler)

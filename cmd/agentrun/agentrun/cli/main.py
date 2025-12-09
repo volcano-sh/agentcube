@@ -7,12 +7,14 @@ a rich and developer-friendly experience for managing AI agents.
 
 from pathlib import Path
 from typing import Optional, List
+from dataclasses import asdict
 
 import typer
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
+from agentrun.models.pack_models import MetadataOptions
 from agentrun.runtime.build_runtime import BuildRuntime
 from agentrun.runtime.invoke_runtime import InvokeRuntime
 from agentrun.runtime.pack_runtime import PackRuntime
@@ -54,7 +56,6 @@ def main(
     version: Optional[bool] = typer.Option(
         None,
         "--version",
-        "-v",
         help="Show version and exit",
         callback=version_callback,
         is_eager=True,
@@ -62,6 +63,7 @@ def main(
     verbose: bool = typer.Option(
         False,
         "--verbose",
+        "-v",
         help="Enable verbose output",
     ),
 ) -> None:
@@ -138,18 +140,17 @@ def pack(
             runtime = PackRuntime(verbose=verbose)
             workspace_path = Path(workspace).resolve()
 
-            options = {
-                "agent_name": agent_name,
-                "language": language,
-                "entrypoint": entrypoint,
-                "port": port,
-                "build_mode": build_mode,
-                "description": description,
-                "output": output,
-            }
-
-            # Filter out None values
-            options = {k: v for k, v in options.items() if v is not None}
+            pack_options = MetadataOptions(
+                agent_name=agent_name,
+                language=language,
+                entrypoint=entrypoint,
+                port=port,
+                build_mode=build_mode,
+                description=description,
+            )
+            options = {k: v for k, v in asdict(pack_options).items() if v is not None}
+            if output:
+                options['output'] = output
 
             result = runtime.pack(workspace_path, **options)
 

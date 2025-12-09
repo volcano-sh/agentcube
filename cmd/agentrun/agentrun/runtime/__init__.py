@@ -9,5 +9,6 @@ from .build_runtime import BuildRuntime
 from .invoke_runtime import InvokeRuntime
 from .pack_runtime import PackRuntime
 from .publish_runtime import PublishRuntime
+from ..models.pack_models import MetadataOptions
 
-__all__ = ["PackRuntime", "BuildRuntime", "PublishRuntime", "InvokeRuntime"]
+__all__ = ["PackRuntime", "BuildRuntime", "PublishRuntime", "InvokeRuntime", "MetadataOptions"]

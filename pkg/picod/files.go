@@ -35,18 +35,18 @@ type UploadFileRequest struct {
 }
 
 // UploadFileHandler handles file upload requests
-func UploadFileHandler(c *gin.Context) {
+func (s *Server) UploadFileHandler(c *gin.Context) {
 	contentType := c.ContentType()
 
 	// Determine request type: multipart or JSON
 	if strings.HasPrefix(contentType, "multipart/form-data") {
-		handleMultipartUpload(c)
+		s.handleMultipartUpload(c)
 	} else {
-		handleJSONBase64Upload(c)
+		s.handleJSONBase64Upload(c)
 	}
 }
 
-func handleMultipartUpload(c *gin.Context) {
+func (s *Server) handleMultipartUpload(c *gin.Context) {
 	path := c.PostForm("path")
 	if path == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -66,7 +66,7 @@ func handleMultipartUpload(c *gin.Context) {
 	}
 
 	// Ensure path safety
-	safePath, err := sanitizePath(path)
+	safePath, err := s.sanitizePath(path)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -126,7 +126,7 @@ func handleMultipartUpload(c *gin.Context) {
 	})
 }
 
-func handleJSONBase64Upload(c *gin.Context) {
+func (s *Server) handleJSONBase64Upload(c *gin.Context) {
 	var req UploadFileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -137,7 +137,7 @@ func handleJSONBase64Upload(c *gin.Context) {
 	}
 
 	// Ensure path safety
-	safePath, err := sanitizePath(req.Path)
+	safePath, err := s.sanitizePath(req.Path)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -207,7 +207,7 @@ func handleJSONBase64Upload(c *gin.Context) {
 }
 
 // DownloadFileHandler handles file download requests
-func DownloadFileHandler(c *gin.Context) {
+func (s *Server) DownloadFileHandler(c *gin.Context) {
 	path := c.Param("path")
 	if path == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -221,7 +221,7 @@ func DownloadFileHandler(c *gin.Context) {
 	path = strings.TrimPrefix(path, "/")
 
 	// Ensure path safety
-	safePath, err := sanitizePath(path)
+	safePath, err := s.sanitizePath(path)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -267,11 +267,6 @@ func DownloadFileHandler(c *gin.Context) {
 	c.File(safePath)
 }
 
-// ListFilesRequest defines file listing request body
-type ListFilesRequest struct {
-	Path string `json:"path" binding:"required"`
-}
-
 // FileEntry defines a single file entry in the list response
 type FileEntry struct {
 	Name     string    `json:"name"`
@@ -287,18 +282,18 @@ type ListFilesResponse struct {
 }
 
 // ListFilesHandler handles file listing requests
-func ListFilesHandler(c *gin.Context) {
-	var req ListFilesRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+func (s *Server) ListFilesHandler(c *gin.Context) {
+	path := c.Query("path")
+	if path == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
+			"error": "Missing 'path' query parameter",
 			"code":  http.StatusBadRequest,
 		})
 		return
 	}
 
 	// Ensure path safety
-	safePath, err := sanitizePath(req.Path)
+	safePath, err := s.sanitizePath(path)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -343,27 +338,20 @@ func ListFilesHandler(c *gin.Context) {
 	})
 }
 
-var workspaceDir string
-
-// SetWorkspace sets the global workspace directory
-func SetWorkspace(dir string) {
+// setWorkspace sets the global workspace directory
+func (s *Server) setWorkspace(dir string) {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		log.Printf("Warning: Failed to resolve absolute path for workspace '%s': %v", dir, err)
-		workspaceDir = dir // Fallback to provided path
+		s.workspaceDir = dir // Fallback to provided path
 	} else {
-		workspaceDir = absDir
+		s.workspaceDir = absDir
 	}
 }
 
-// GetWorkspace returns the current workspace directory
-func GetWorkspace() string {
-	return workspaceDir
-}
-
 // sanitizePath ensures path is within allowed scope, preventing directory traversal attacks
-func sanitizePath(p string) (string, error) {
-	if workspaceDir == "" {
+func (s *Server) sanitizePath(p string) (string, error) {
+	if s.workspaceDir == "" {
 		return "", fmt.Errorf("workspace directory not initialized")
 	}
 
@@ -373,14 +361,14 @@ func sanitizePath(p string) (string, error) {
 		cleanPath = strings.TrimPrefix(cleanPath, "/")
 	}
 
-	fullPath := filepath.Join(workspaceDir, cleanPath)
+	fullPath := filepath.Join(s.workspaceDir, cleanPath)
 
 	absPath, err := filepath.Abs(fullPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve absolute path: %w", err)
 	}
 
-	cleanWorkspace := filepath.Clean(workspaceDir)
+	cleanWorkspace := filepath.Clean(s.workspaceDir)
 	sep := string(os.PathSeparator)
 	if !strings.HasPrefix(absPath, cleanWorkspace+sep) && absPath != cleanWorkspace {
 		return "", fmt.Errorf("access denied: path '%s' escapes workspace jail '%s'", p, cleanWorkspace)

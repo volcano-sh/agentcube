@@ -31,7 +31,7 @@ type ExecuteResponse struct {
 }
 
 // ExecuteHandler handles command execution requests
-func ExecuteHandler(c *gin.Context) {
+func (s *Server) ExecuteHandler(c *gin.Context) {
 	var req ExecuteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{

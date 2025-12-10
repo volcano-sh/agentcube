@@ -10,8 +10,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var startTime = time.Now() // Server start time
-
 // Config defines server configuration
 type Config struct {
 	Port         int    `json:"port"`
@@ -21,23 +19,31 @@ type Config struct {
 
 // Server defines the PicoD HTTP server
 type Server struct {
-	engine      *gin.Engine
-	config      Config
-	authManager *AuthManager
+	engine       *gin.Engine
+	config       Config
+	authManager  *AuthManager
+	startTime    time.Time
+	workspaceDir string
 }
 
 // NewServer creates a new PicoD server instance
 func NewServer(config Config) *Server {
-	// Initialize global workspace directory
+	s := &Server{
+		config:      config,
+		startTime:   time.Now(),
+		authManager: NewAuthManager(),
+	}
+
+	// Initialize workspace directory
 	if config.Workspace != "" {
-		SetWorkspace(config.Workspace)
+		s.setWorkspace(config.Workspace)
 	} else {
 		// Default to current working directory if not specified
 		cwd, err := os.Getwd()
 		if err != nil {
 			log.Printf("Warning: Failed to get current working directory: %v", err)
 		} else {
-			SetWorkspace(cwd)
+			s.setWorkspace(cwd)
 		}
 	}
 
@@ -50,48 +56,40 @@ func NewServer(config Config) *Server {
 	engine.Use(gin.Logger())   // Request logging
 	engine.Use(gin.Recovery()) // Crash recovery
 
-	// Create auth manager
-	authManager := NewAuthManager()
-
 	// Load bootstrap key (Required)
 	if len(config.BootstrapKey) == 0 {
 		log.Fatal("Bootstrap key is missing. Please ensure the bootstrap public key file is correctly mounted or provided.")
 	}
 
-	if err := authManager.LoadBootstrapKey(config.BootstrapKey); err != nil {
+	if err := s.authManager.LoadBootstrapKey(config.BootstrapKey); err != nil {
 		log.Fatalf("Failed to load bootstrap key: %v", err)
 	} else {
 		log.Printf("Bootstrap key loaded successfully")
 	}
 
 	// Load existing public key if available
-	if err := authManager.LoadPublicKey(); err != nil {
+	if err := s.authManager.LoadPublicKey(); err != nil {
 		// Log that server is not initialized, but don't fail startup
 		log.Printf("Server not initialized: %v", err)
 	}
 
-	// Apply authentication middleware
-	engine.Use(authManager.AuthMiddleware())
-
-	// API route group
+	// API route group (Authenticated)
 	api := engine.Group("/api")
+	api.Use(s.authManager.AuthMiddleware())
 	{
-		api.POST("/execute", ExecuteHandler)
-		api.POST("/files", UploadFileHandler)
-		api.POST("/files/list", ListFilesHandler)
-		api.GET("/files/*path", DownloadFileHandler)
+		api.POST("/execute", s.ExecuteHandler)
+		api.POST("/files", s.UploadFileHandler)
+		api.GET("/files", s.ListFilesHandler)
+		api.GET("/files/*path", s.DownloadFileHandler)
 	}
 
-	engine.POST("/init", authManager.InitHandler)
+	engine.POST("/init", s.authManager.InitHandler)
 
 	// Health check (no authentication required)
-	engine.GET("/health", HealthCheckHandler)
+	engine.GET("/health", s.HealthCheckHandler)
 
-	return &Server{
-		engine:      engine,
-		config:      config,
-		authManager: authManager,
-	}
+	s.engine = engine
+	return s
 }
 
 // Run starts the server
@@ -102,11 +100,11 @@ func (s *Server) Run() error {
 }
 
 // HealthCheckHandler handles health check requests
-func HealthCheckHandler(c *gin.Context) {
+func (s *Server) HealthCheckHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "ok",
 		"service": "PicoD",
 		"version": "0.0.1",
-		"uptime":  time.Since(startTime).String(),
+		"uptime":  time.Since(s.startTime).String(),
 	})
 }

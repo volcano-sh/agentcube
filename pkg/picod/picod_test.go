@@ -252,12 +252,8 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		assert.Equal(t, "multipart content", string(fileContent))
 
 		// 5. List Files
-		listReq := ListFilesRequest{Path: "."}
-		listBody, _ := json.Marshal(listReq)
-
-		req, _ = http.NewRequest("POST", ts.URL+"/api/files/list", bytes.NewBuffer(listBody))
-		req.Header = getAuthHeaders(listBody)
-		req.Header.Set("Content-Type", "application/json")
+		req, _ = http.NewRequest("GET", ts.URL+"/api/files?path=.", nil)
+		req.Header = getAuthHeaders(nil)
 		resp, err = client.Do(req)
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode)

@@ -271,12 +271,6 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log.Printf("Request URL is %+v", c.Request.URL)
 
-		// Skip authentication for health check and init endpoint
-		if c.Request.URL.Path == "/health" || c.Request.URL.Path == "/init" {
-			c.Next()
-			return
-		}
-
 		// Check if server is initialized
 		if !am.IsInitialized() {
 			c.JSON(http.StatusForbidden, gin.H{

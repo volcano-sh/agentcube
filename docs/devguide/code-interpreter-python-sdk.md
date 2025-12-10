@@ -1,6 +1,6 @@
-# Using PicoD with Python SDK
+# Using CodeInterpreter with Python SDK
 
-The AgentCube Python SDK (`agentcube`) provides a high-level wrapper for interacting with PicoD. It handles session lifecycle management, authentication, and secure communication (RSA encryption), allowing you to focus on executing code and managing files.
+The AgentCube Python SDK (`agentcube`) provides a high-level wrapper for interacting with CodeInterpreter. It handles session lifecycle management, authentication, and secure communication (RSA encryption), allowing you to focus on executing code and managing files.
 
 This guide describes how to install, configure, and use the SDK to build automation agents.
 
@@ -69,7 +69,7 @@ print(result)
 
 ## 3. File Management
 
-You can transfer files between your local environment and the remote PicoD instance.
+You can transfer files between your local environment and the remote CodeInterpreter instance.
 
 ### Upload Files
 
@@ -108,7 +108,7 @@ client.write_file(
 
 ## 4. Best Practices: Using Context Managers
 
-To ensure that remote resources (Pods) are terminated and local connections are closed properly, it is recommended to use the `with` statement.
+To ensure that remote resources are terminated and local connections are closed properly, it is recommended to use the `with` statement.
 
 **Complete Example:**
 

@@ -19,21 +19,21 @@ By abstracting away operational overhead and providing a consistent interface, t
 A developer wants to create a new agent from scratch and publish it to AgentCube for public access or team collaboration. The CLI supports agents built with any framework, offering a standardized workflow for packaging, building, and publishing. 
 
 After completing development, the CLI enables the following steps:
-1. `agentrun pack -f ./` Packages the agent source code and runtime metadata into a structured workspace directory, preparing it for image creation
-2. `agentrun build -f ./` Builds a container image from the workspace, compatible with AgentCube’s Kubernetes-based runtime environment
-3. `agentrun publish -f ./` Publishes the built agent image to AgentCube, making it available for invocation, sharing, and collaboration
+1. `kubectl agentrun pack -f ./` Packages the agent source code and runtime metadata into a structured workspace directory, preparing it for image creation
+2. `kubectl agentrun build -f ./` Builds a container image from the workspace, compatible with AgentCube’s Kubernetes-based runtime environment
+3. `kubectl agentrun publish -f ./` Publishes the built agent image to AgentCube, making it available for invocation, sharing, and collaboration
 
 ## Use Case 2: Check Published Agent Status
 After publishing an agent to AgentCube, a developer may want to verify that the agent is fully registered and ready for use. The CLI provides a simple status check command:
 
-```agentrun status -f ./```
+```kubectl agentrun status -f ./```
 
-This command queries AgentCube for the current state of the agent associated with the workspace. It returns key information such as the agent ID, endpoint URL, latest version, and log reference. This helps ensure the agent is correctly deployed and ready for invocation.
+This command queries the provider (AgentCube or Kubernetes) for the current state of the agent associated with the workspace. It returns key information such as the agent ID, endpoint URL, latest version, and log reference. This helps ensure the agent is correctly deployed and ready for invocation.
 
 ## Use Case 3: Invoke published Agent
 After publishing an agent to AgentCube, a developer may want to invoke it for testing purposes or integrate it into other system components. The CLI provides a simple and consistent interface to trigger agent execution using the local workspace directory and a structured payload:
 
-```agentrun invoke -f ./ -payload '{"prompt": "what is the weather today in Shanghai?"}'```
+```kubectl agentrun invoke -f ./ --payload '{"prompt": "what is the weather today in Shanghai?"}'```
 
 # Scope
 In Scope:
@@ -42,7 +42,7 @@ In Scope:
 * support agent publishing to AgentCube
 * support agent invocation via CLI
 * support Python SDK for CI/CD integration
-# Function Detail
+# Design Detail
 ### 1. Pack, Build and Publish 
 **Step 0:** The developer creates the agent application using any preferred framework and defines the required runtime metadata. The agent must expose an HTTP interface to support standardized invocation. The metadata should include:
 1. **Agent name** – unique identifier for the agent
@@ -53,15 +53,15 @@ In Scope:
 6. **observability_enabled** – flag to enable metrics and logging integration
 7. **build_mode** – specifies build context: `local` or `cloud`
 
-**Step 1:** The developer runs the `agentrun pack -f ./` command to package the agent application into a standardized workspace. This workspace includes the source code and runtime metadata required for building and deployment. 
+**Step 1:** The developer runs the `kubectl agentrun pack -f ./` command to package the agent application into a standardized workspace. This workspace includes the source code and runtime metadata required for building and deployment. 
 
-The `agentrun pack` command supports options that mirror the fields defined in the metadata configuration file. Its behavior follows these rules:
+The `kubectl agentrun pack` command supports options that mirror the fields defined in the metadata configuration file. Its behavior follows these rules:
 - If no options are provided beyond `-f`, the CLI expects a valid metadata config file to be present in the specified workspace directory
-- Any options explicitly passed via the `agentrun pack` command take precedence over values defined in the metadata config file.
+- Any options explicitly passed via the `kubectl agentrun pack` command take precedence over values defined in the metadata config file.
 - The CLI can validate and update the metadata config file based on the provided options, ensuring consistency and completeness.
 
 **Step 1.1** Validate Source Structure and Metadata Configuration
-The `agentrun pack` command is processed by the **pack** service, which performs a series of validation checks to ensure the agent workspace is correctly structured and compatible with downstream build and deployment steps.
+The `kubectl agentrun pack` command is processed by the **pack** service, which performs a series of validation checks to ensure the agent workspace is correctly structured and compatible with downstream build and deployment steps.
 
 The validation includes:
 1. **Language Compatibility**
@@ -88,14 +88,14 @@ In cloud mode, the CLI prepares the agent workspace for remote build services su
 
 **Step 2:**  After packaging the agent workspace, the developer initiates the build process using: 
 
-```agentrun build -f ./```
+```kubectl agentrun build -f ./```
 
 This command triggers the image build based on the workspace contents and metadata configuration. The CLI supports an optional `-p` flag to specify a **custom proxy**, which is particularly useful for environments with restricted network access or internal mirrors.
 - For **Python agents**, the proxy is applied to `pip` commands during dependency installation   
 - For **Java agents**, the proxy is applied to `mvn` (Maven) commands during build resolution
 
 **Step 2.1** Build Service Validation
-The `agentrun build` command is handled by the **Build** service, which performs a series of validation checks to ensure the build process can succeed in both **local** and **cloud** modes.
+The `kubectl agentrun build` command is handled by the **Build** service, which performs a series of validation checks to ensure the build process can succeed in both **local** and **cloud** modes.
 
 Key validations include:
 - **Workspace integrity**: Verifies that the agent workspace is correctly structured and includes all required files (e.g., source code, metadata, dependencies).
@@ -108,86 +108,59 @@ Key validations include:
 In local build mode, the CLI invokes the local container runtime (Docker or Podman) to build the agent image. The image is tagged using the agent name defined in the metadata configuration file, ensuring traceability and consistency.
 
 **Step 2.1.2** Cloud Build
-TBD
+Currently, cloud build mode is a placeholder and falls back to local build logic in the MVP. Future versions will support remote build services.
 
-**Step 3** Once the agent image is successfully built, the developer can publish it to AgentCube using:
+**Step 3** Once the agent image is successfully built, the developer can publish it using:
 
-```agentrun publish -f ./```
+```kubectl agentrun publish -f ./ --provider agentcube```
 
-This command initiates the publishing process, registering the agent with AgentCube and making it available for invocation, collaboration, and public or team access.
+This command initiates the publishing process. Depending on the `--provider` (default: `agentcube`), it either deploys an **AgentRuntime CR** to a Kubernetes cluster (for AgentCube) or creates standard **Deployment and Service** resources (for standard K8s).
 
-The behavior of the publish process depends on the **build** mode. It requires options:
+The process generally involves:
+
+**Step 3.1**: Update Metadata & Resolve Image
+The CLI reads the metadata, resolves the final image URL (pushing to a registry if in local build mode), and updates the metadata file.
+
 - **Image Repository URL and Credentials**
-    - **Local build mode**: The developer must explicitly provide the image repository URL, along with username and password, via CLI options.
-    - **Cloud build mode**: The image is already built and stored in the cloud image repository. The image location is automatically retrieved and merged into the metadata configuration file during the build process.
-- **Agent Version**
-    - A semantic version string (e.g., `v1.0.0`) used to register the agent.
-    - If publishing a new version, the version must be unique.
-    - If updating an existing version, the same version number can be reused.
-- **Additional Metadata**
-    - Any other fields required by AgentCube’s `create_or_update_agent` API, such as:
-        - Agent description
-        - Deployment region
+    - **Local build mode**: The developer must provide the image repository URL (`--image-url`) and credentials (`--image-username`, `--image-password`) if pushing is required.
+    - **Cloud build mode**: The image is assumed to be in the cloud repository.
 
-**Step 3.1**: Update Metadata Configuration File
-As part of the publish process, the CLI updates and merges deployment-related fields into the agent’s metadata configuration file to ensure consistency and traceability.
+**Step 3.2**: Tag and Push the Agent Image (Local Mode)
+- The CLI logs into the specified image repository using provided credentials.
+- The image is pushed to the repository.
+- The final image URL is recorded.
 
-**Fields updated include:**
-- **Agent version** – Used for version tracking and rollback
-- **Image registry URL** – Required for deployment and invocation
-- **Build mode and deployment region** – Confirmed or updated based on the current publish context
-- **Additional metadata** – Such as tags, and description, as required by AgentCube 
+**Step 3.3** Deploy to Kubernetes
+The CLI interacts with the Kubernetes cluster defined in the local kubeconfig:
+- **Provider: agentcube**: Deploys or updates an `AgentRuntime` Custom Resource (CR). This relies on the AgentCube operator being present in the cluster.
+- **Provider: k8s**: Deploys a standard Kubernetes `Deployment` and `Service` (NodePort).
 
-**Step 3.2**: Tag and Push the Agent Image
-- The agent image is tagged using the specified version (e.g., `my-agent:v1.0.0`).
-- **Local build mode**:
-    - The CLI logs into the specified image repository using provided credentials
-    - The image is pushed to the repository.
-    - The final image URL is retrieved and merged into the metadata configuration file.
-- **Cloud build mode**:
-    - The image is already present in the cloud repository.
-    - The CLI verifies the image location and ensures it is correctly recorded in the metadata configuration file.
+**Step 3.4** Await Deployment Status
+The CLI monitors the deployment status (readiness probes, pod status) until the agent is ready or a timeout occurs.
 
-**Step 3.3** Trigger Agent Registration via AgentCube API
-The CLI calls the `create_or_update_agent()` API to register or update the agent in AgentCube. This is an **asynchronous API**, allowing AgentCube to process the request in the background while the CLI monitors for completion.
-
-The API payload includes:
-- Agent metadata (name, version, description, tags, etc.)
-- Image repository URL
-- Runtime configuration (entrypoint, port, endpoint URI)
-- Deployment region and build mode
-
-**Step 3.4** Await AgentCube Response 
-The CLI waits for the asynchronous response from AgentCube, which confirms the result of the registration or update process. The response includes:
-- **agent_id** – Unique identifier assigned by AgentCube
-- **agent_endpoint** – The fully qualified HTTP endpoint for invoking the agent
-
-This response ensures the agent is now accessible within the AgentCube ecosystem.
-
-**Step 3.5** Merge Response into Metadata Configuration
-The CLI parses the response and updates the metadata configuration file with the returned values:
-- **agent_id** – Used for future updates, versioning, and invocation tracking
-- **agent_endpoint** – Enables direct invocation and integration
-- Any other relevant fields returned by AgentCube
-
-This final step ensures the agent workspace remains complete, consistent, and ready for future operations such as invocation, or monitoring and redeployment. 
+**Step 3.5** Merge Result into Metadata Configuration
+The CLI updates `agent_metadata.yaml` with the deployment results:
+- **agent_id** – The deployment name or CR name.
+- **agent_endpoint** – The service URL or endpoint.
+- **k8s_deployment** – Details about the Kubernetes resources. 
 ### Check Status
 In the same workspace, developers can use the following command to check the status of a published agent: 
 
-```agentrun status```
+```kubectl agentrun status```
 
-This command queries AgentCube for the current state of the agent associated with the workspace. The output includes:
-- **Agent ID** – Unique identifier assigned by AgentCube
+This command queries the provider (Kubernetes) for the current state of the agent associated with the workspace. The output includes:
+- **Agent ID** – Unique identifier (e.g., K8s deployment name)
 - **Agent Name** – Human-readable name of the agent
-- **Agent Endpoint** – Fully qualified URL for invoking the agent
-- **Latest Version** – The most recently published version of the agent
-- **Log Location** – Reference to the agent’s runtime logs (note: in the initial release, the CLI does not tunnel or stream logs directly to the developer)
+- **Agent Endpoint** – URL for invoking the agent
+- **Status** – Current status (e.g., deployed, ready, error)
+- **Version** – The published version
+- **Kubernetes Details** – Namespace, NodePort, replicas, and pod status
 
 This status check helps developers verify successful publication, retrieve invocation details, and confirm versioning—all without leaving the local development environment.
 ### Invocation
 Developers can invoke a published agent either from the current workspace or by specifying the workspace directory using the `-f` option. The invocation is performed via:
 
-```agentrun invoke --payload {"prompt": "What is the weather today in Shanghai?"}```
+```kubectl agentrun invoke --payload {"prompt": "What is the weather today in Shanghai?"}```
 
 This command initiates an HTTP POST request to the agent’s endpoint. The payload structure depends on the agent’s design and is passed directly to the agent application as the HTTP body.
 
@@ -208,9 +181,9 @@ The CLI also supports basic HTTP options:
 - Payload provided via CLI
 - Optional headers (e.g., `Authorization`, `Content-Type`)
 
-**Step 3: Send Request to AgentCube** The CLI sends the HTTP request to AgentCube, which routes it to the correct agent instance based on metadata and deployment context.
+**Step 3: Send Request to Agent Endpoint** The CLI sends the HTTP request directly to the agent's endpoint (resolved from metadata).
 
-**Step 4: Await Agent Response** AgentCube forwards the request to the deployed agent. The agent processes the payload via its entrypoint method and returns a response.
+**Step 4: Await Agent Response** The agent processes the payload via its entrypoint method and returns a response.
 
 **Step 5: Return Result to Developer** The CLI receives the response and displays the result to the developer in the terminal.
 
@@ -238,46 +211,41 @@ flowchart TD
   CLI --> Runtime["Runtimes Layer<br/>Python SDK"]
   class Runtime layer
 
-  Runtime --> Ops["Operations Layer<br/>Business Logic"]
-  class Ops layer
-
-  Ops --> Services["Services Layer<br/>External Integrations"]
+  Runtime --> Services["Services Layer<br/>External Integrations"]
   class Services layer
 
   %% External systems
-  Services --> AgentCube["AgentCube<br/>Agent Registry & Runtime"]
+  Services --> K8sAPI["Kubernetes API<br/>AgentRuntime CRD / Deployments"]
   Services --> Container["Local Builder<br/>Docker / Podman"]
   Services --> Metadata["Metadata Handler<br/>Read / Update / Merge"]
   Services --> CloudInterface["Cloud Provider Interface<br/>Cloud Providers"]
-  class AgentCube,Container,Metadata,CloudInterface external
+  class K8sAPI,Container,Metadata,CloudInterface external
 
   %% Cloud provider grouping
   subgraph Cloud Providers
     direction TB
-    CloudInterface --> Kubernetes["OSS Kubernetes"]
     CloudInterface --> Huawei["Huawei Cloud CodeArts"]
     CloudInterface --> AWS["AWS CodeBuild"]
     CloudInterface --> Azure["Azure Container Registry"]
     CloudInterface --> GCP["Google Cloud Build"]
-    class Kubernetes,Huawei,AWS,Azure,GCP external
+    class Huawei,AWS,Azure,GCP external
   end
 
   %% Lifecycle flow
   subgraph Flow["Agent Lifecycle Flow"]
     CLI -->|parse command & route execution| Runtime
-    Runtime -->| delegate domain-specific logic | Ops
-    Ops -->| call | Services
-    Services -->|send request| AgentCube
+    Runtime -->| delegate logic | Services
+    Services -->|manage resources| K8sAPI
   end
   class Flow flow
 
 ```
 
-The AgentRun CLI is organized into four modular layers, each responsible for a distinct aspect of functionality and extensibility:
+The AgentRun CLI is organized into three modular layers, each responsible for a distinct aspect of functionality and extensibility:
 #### **1. Command Line Layer**
 
 - Built using the `typer` library, a modern CLI framework for Python.
-- Defines the CLI interface and command syntax (`agentrun pack`, `agentrun build`, etc.).
+- Defines the CLI interface and command syntax (`kubectl agentrun pack`, `kubectl agentrun build`, etc.).
 - Parses user input and routes commands to the corresponding runtime logic.
 - Provides help messages, argument validation, and interactive UX.
 
@@ -286,19 +254,12 @@ The AgentRun CLI is organized into four modular layers, each responsible for a d
 - Implements the business logic for each CLI subcommand.
 - Each runtime class corresponds to a specific command (e.g., `PackRuntime`, `BuildRuntime`, `PublishRuntime`).
 - Exposed as a **Python SDK**, enabling developers to integrate AgentRun workflows into CI/CD pipelines or custom automation scripts.
-- Acts as the bridge between CLI input and deeper operational logic.
+- Acts as the bridge between CLI input and operational services.
 
-#### **3. Operations Layer**
-
-- Encapsulates detailed business logic that powers runtime methods.
-- Handles validation, transformation, and orchestration of agent metadata, build artifacts, and deployment configurations.
-- Delegates external interactions to the Services layer while maintaining domain-specific logic.
-- Promotes reusability and testability across runtimes.
-
-#### **4. Services Layer**
+#### **3. Services Layer**
 
 - Interfaces with external systems such as:
-  - **AgentCube APIs** for agent registration, status, and invocation
+  - **Kubernetes API** for deploying AgentRuntime CRs (AgentCube) or standard Deployments (K8s)
   - **Cloud providers** (e.g., Huawei Cloud CodeArts) for remote builds and image hosting
   - **Local container runtimes** (Docker, Podman) for image creation and tagging
   - **Metadata handler** for retrieving, updating, and merging data into the agent’s metadata configuration file
@@ -325,6 +286,14 @@ region: cn-east-1
 
 version: v1.0.0
 
+registry_url: registry.example.com/weather-agent
+readiness_probe_path: /health
+readiness_probe_port: 8080
+
+# AgentCube specific configuration
+router_url: http://router.agentcube.svc
+workload_manager_url: http://workload-manager.agentcube.svc
+
 image:
   repository_url: registry.example.com/weather-agent
   tag: v1.0.0
@@ -349,17 +318,23 @@ requirements_file: requirements.txt
 |`build_mode`|Build strategy: `local` or `cloud`|
 |`region`|Deployment region|
 |`version`|Semantic version string for publishing|
+|`registry_url`|Target registry for pushing the image|
+|`readiness_probe_path`|HTTP path for K8s readiness probe|
+|`readiness_probe_port`|Port for K8s readiness probe|
+|`router_url`|URL for the AgentCube Router (required for AgentCube provider)|
+|`workload_manager_url`|URL for the AgentCube Workload Manager (required for AgentCube provider)|
 |`image.repository_url`|Container registry where the agent image is stored|
 |`image.tag`|Image tag used for versioning|
 |`image.endpoint`|Full URL to the deployed image|
-|`auth`|Authentication configuration for invoking the agent|
+|`auth`|Authentication configuration for invoking the agent (reserved for future use)|
 |`requirements_file`|Python dependency file used during packaging and build|
+|`session_id`|Session ID for maintaining conversation context (managed by CLI)|
 
 This configuration file is automatically validated and updated by the CLI during packaging, building, and publishing. It serves as the single source of truth for agent metadata throughout the development and deployment lifecycle.
 
 ### AgentRun CLI Subcommand API Design
 
-#### `agentrun pack`
+#### `kubectl agentrun pack`
 
 **Purpose**
 Packages the agent application into a standardized workspace, including source code and runtime metadata, preparing it for build and deployment.
@@ -372,7 +347,7 @@ Packages the agent application into a standardized workspace, including source c
 
 **Command Syntax**
 ```shell
-agentrun pack -f <workspace_path> [OPTIONS]
+kubectl agentrun pack -f <workspace_path> [OPTIONS]
 ```
 
 **Required Argument**
@@ -390,7 +365,7 @@ agentrun pack -f <workspace_path> [OPTIONS]
 | `--entrypoint`     | `str`  | Override the entrypoint command for the agent                      |
 | `--port`           | `int`  | Port to expose in the Dockerfile                                   |
 | `--build-mode`     | `str`  | Build strategy: `local` or `cloud`                                 |
-| `--cloud-provider` | `str`  | Cloud provider name (e.g., `huawei`) if using cloud mode           |
+| `--description`    | `str`  | Agent description                                                  |
 | `--output`         | `str`  | Path to save the packaged workspace (default: overwrite in place)  |
 | `--verbose`        | `bool` | Enable detailed logging output                                     |
 
@@ -422,7 +397,7 @@ agentrun pack -f <workspace_path> [OPTIONS]
 - Generates Dockerfile from language-specific template
 - Injects metadata values (entrypoint, port, etc.)
 
-#### `agentrun build`
+#### `kubectl agentrun build`
 
 **Purpose** Builds the agent image based on the packaged workspace and metadata configuration, preparing it for deployment in either local or cloud environments.
 
@@ -435,7 +410,7 @@ agentrun pack -f <workspace_path> [OPTIONS]
 **Command Syntax**
 
 ```shell
-agentrun build -f <workspace_path> [OPTIONS]
+kubectl agentrun build -f <workspace_path> [OPTIONS]
 ```
 
 **Required Argument**
@@ -482,7 +457,7 @@ agentrun build -f <workspace_path> [OPTIONS]
 **Cloud Build**
 - TBD
 
-#### `agentrun publish`
+#### `kubectl agentrun publish`
 
 **Purpose** Publishes the agent image to AgentCube, registering it for invocation, collaboration, and public or team access.
 
@@ -499,28 +474,27 @@ sequenceDiagram
   participant Developer
   participant CLI Layer
   participant PublishRuntime as Runtimes Layer
-  participant PublishOps as Operations Layer
   participant Services Layer
-  participant AgentCubeAPI
+  participant K8sAPI as Kubernetes API
 
-  Developer->>CLI Layer: agentrun publish -f ./
+  Developer->>CLI Layer: kubectl agentrun publish -f ./ --provider agentcube
   CLI Layer->>PublishRuntime: Parse command and delegate to PublishRuntime
-  PublishRuntime->>PublishOps: Initialize publish context and validate metadata
-  PublishOps->>Services Layer: Resolve image (push if local, confirm if cloud)
-  Services Layer-->>PublishOps: Return image URL and resolution status
-  PublishOps->>Services Layer: Prepare and submit agent registration request
-  Services Layer->>AgentCubeAPI: Call create_or_update_agent()
-  AgentCubeAPI-->>Services Layer: Return agent_id and agent_endpoint
-  Services Layer-->>PublishOps: Deliver registration result
-  PublishOps->>PublishRuntime: Merge response into metadata
+  PublishRuntime->>Services Layer: Load and validate metadata
+  PublishRuntime->>Services Layer: Resolve image (push if local, confirm if cloud)
+  Services Layer-->>PublishRuntime: Return final image URL
+  PublishRuntime->>Services Layer: Initialize AgentCube Provider
+  Services Layer->>K8sAPI: Create or Update AgentRuntime CR
+  K8sAPI-->>Services Layer: Return CR status
+  Services Layer-->>PublishRuntime: Return deployment result
+  PublishRuntime->>Services Layer: Update metadata with agent_id and endpoint
   PublishRuntime->>CLI Layer: Format and return result
-  CLI Layer-->>Developer: agent_id, agent_endpoint
+  CLI Layer-->>Developer: agent_id, agent_endpoint, status
 
 ```
 
 **Command Syntax**
 ```
-agentrun publish -f <workspace_path> [OPTIONS]
+kubectl agentrun publish -f <workspace_path> [OPTIONS]
 ```
 
 **Required Argument**
@@ -535,11 +509,15 @@ agentrun publish -f <workspace_path> [OPTIONS]
 | ------------------ | ------ | -------------------------------------------------------------- |
 | `--version`        | `str`  | Semantic version string (e.g., `v1.0.0`)                       |
 | `--image-url`      | `str`  | Image registry URL (required in local build mode)            |
-| `--image-registry-username` | `str`  | Username for image registry (required in local build mode)   |
-| `--image-registry-password` | `str`  | Password for image registry (required in local build mode)   |
+| `--image-username` | `str`  | Username for image registry (required in local build mode)   |
+| `--image-password` | `str`  | Password for image registry (required in local build mode)   |
 | `--description`    | `str`  | Agent description                                              |
 | `--region`         | `str`  | Deployment region                                              |
 | `--cloud-provider` | `str`  | Cloud provider name (e.g., `huawei`) if using cloud build mode |
+| `--provider`       | `str`  | Target provider: `agentcube` (default) or `k8s`                |
+| `--node-port`      | `int`  | Specific NodePort (30000-32767) for K8s deployment             |
+| `--replicas`       | `int`  | Number of replicas for K8s deployment (default: 1)             |
+| `--namespace`      | `str`  | Kubernetes namespace for deployment                            |
 | `--verbose`        | `bool` | Enable detailed logging output                                 |
 
 **Metadata Update Logic**
@@ -565,25 +543,24 @@ agentrun publish -f <workspace_path> [OPTIONS]
 - Image already present in cloud repository
 - Verifies image location and updates metadata configuration file
 
-**Agent Registration Logic**
-- Calls `create_or_update_agent()` API asynchronously
-- Payload includes:
-    - Agent metadata (name, version, description, tags)
-    - Image repository URL
-    - Runtime configuration (entrypoint, port, endpoint URI)
-    - Deployment region and build mode
+**Agent Deployment Logic (AgentCube Provider)**
+- Initializes `AgentCubeProvider` with K8s config
+- Deploys or updates an `AgentRuntime` Custom Resource (CR) in the cluster
+- Sets `readinessProbe` using path and port from metadata
+- Injects environment variables for `ROUTER_URL` and `WORKLOADMANAGER_URL`
 
-**AgentCube Response Handling**
+**Deployment Result Handling**
 
 |Field|Description|
 |---|---|
-|`agent_id`|Unique identifier assigned by AgentCube|
-|`agent_endpoint`|Fully qualified HTTP endpoint for invoking the agent|
+|`agent_id`|Deployment name (CR name)|
+|`agent_endpoint`|Fully qualified HTTP endpoint for invoking the agent (resolved from router or service)|
+|`status`|Deployment status (e.g., deployed)|
 
 **Metadata Merge After Response**
 - Updates metadata file with `agent_id` and `agent_endpoint`
 - Ensures workspace is complete and ready for future operations
-#### `agentrun status`
+#### `kubectl agentrun status`
 
 **Purpose** 
 Retrieves the current status of the agent associated with the workspace by querying AgentCube. This includes metadata, endpoint, version, and log reference.
@@ -596,7 +573,7 @@ Retrieves the current status of the agent associated with the workspace by query
 
 **Command Syntax**
 ```
-agentrun status -f <workspace_path> [OPTIONS]
+kubectl agentrun status -f <workspace_path> [OPTIONS]
 ```
 
 **Required Argument**
@@ -609,6 +586,7 @@ agentrun status -f <workspace_path> [OPTIONS]
 
 |Option|Type|Description|
 |---|---|---|
+|`--provider`|`str`|Target provider: `agentcube` (default) or `k8s`|
 |`--verbose`|`bool`|Enable detailed logging output|
 
 **Agent Status Output**
@@ -621,7 +599,7 @@ agentrun status -f <workspace_path> [OPTIONS]
 | `latest_version` | Most recently published version of the agent                |
 | `log_location`   | Reference to runtime logs (not streamed in initial release) |
 
-#### `agentrun invoke`
+#### `kubectl agentrun invoke`
 
 **Purpose** Sends a request to a published agent via AgentCube, allowing developers to invoke the agent’s entrypoint method with a custom payload and optional headers.
 
@@ -635,7 +613,7 @@ agentrun status -f <workspace_path> [OPTIONS]
 **Command Syntax**
 
 ```shell
-agentrun invoke [OPTIONS]
+kubectl agentrun invoke [OPTIONS]
 ```
 
 **Optional Parameters**
@@ -644,7 +622,8 @@ agentrun invoke [OPTIONS]
 |---|---|---|
 |`-f`, `--workspace`|`str`|Path to the agent workspace directory (if not invoking from current directory)|
 |`--payload`|`str`|JSON-formatted input passed to the agent’s entrypoint method|
-|`--header`|`str`|Custom HTTP headers (e.g., `Authorization`, `Content-Type`)|
+|`--header`|`list`|Custom HTTP headers (e.g., 'Authorization: Bearer token'). Can be specified multiple times.|
+|`--provider`|`str`|Target provider: `agentcube` (default) or `k8s`|
 |`--verbose`|`bool`|Enable detailed logging output|
 
 **Invocation Workflow**
@@ -654,11 +633,15 @@ agentrun invoke [OPTIONS]
 - Retrieve deployment region
 - Retrieve latest version
 - Retrieve authorization and authentication details
+- Retrieve Session ID (if conversation context exists)
 
 **Step 2: Build HTTP Request**
-- Use endpoint URL from metadata
+- **Resolve Endpoint**: 
+    - For `AgentRuntime` provider: Constructs URL path `/v1/namespaces/{namespace}/agent-runtimes/{name}/invocations/` appended to the base router URL.
+    - For `K8s` provider: Uses the service endpoint directly.
 - Include payload from CLI
 - Attach optional headers
+- **Session Management**: Automatically injects `X-Agentcube-Session-Id` header if a session ID is stored in metadata.
 
 **Step 3: Send Request to AgentCube**
 - AgentCube routes the request to the correct agent instance
@@ -666,6 +649,7 @@ agentrun invoke [OPTIONS]
 **Step 4: Await Agent Response**
 
 - Agent processes the payload and returns a response
+- **Capture Session ID**: If response contains `X-Agentcube-Session-Id` header, it is saved to metadata for subsequent invocations.
 
 **Step 5: Return Result to Developer**
 - CLI displays the response in the terminal

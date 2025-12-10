@@ -1,6 +1,10 @@
 # Build stage
 FROM golang:1.24.4 AS builder
 
+# Build arguments for multi-architecture support
+ARG TARGETOS=linux
+ARG TARGETARCH
+
 WORKDIR /app
 
 COPY go.mod go.sum ./
@@ -8,7 +12,7 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o picod ./cmd/picod
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -a -installsuffix cgo -o picod ./cmd/picod
 
 # Run stage
 FROM ubuntu:24.04

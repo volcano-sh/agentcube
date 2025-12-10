@@ -2,6 +2,7 @@ package picod
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -41,8 +42,18 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 		return
 	}
 
-	// execute command
-	cmd := exec.Command("sh", "-c", req.Command)
+	// Set timeout
+	timeoutDuration := 30 * time.Second // Default timeout
+	if req.Timeout > 0 {
+		timeoutDuration = time.Duration(req.Timeout) * time.Second
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutDuration)
+	defer cancel()
+
+	// execute command with context
+	cmd := exec.CommandContext(ctx, "sh", "-c", req.Command)
 
 	// Set working directory
 	if req.WorkingDir != "" {
@@ -62,42 +73,27 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	// Set timeout
-	timeout := 30 * time.Second // Default timeout
-	if req.Timeout > 0 {
-		timeout = time.Duration(req.Timeout) * time.Second
-	}
-
-	done := make(chan error, 1)
 	start := time.Now()
-
-	go func() {
-		done <- cmd.Run()
-	}()
-
-	var exitCode int
-	select {
-	case err := <-done:
-		if err != nil {
-			if exitError, ok := err.(*exec.ExitError); ok {
-				exitCode = exitError.ExitCode()
-			} else {
-				exitCode = 1
-				stderr.WriteString(err.Error())
-			}
-		} else {
-			exitCode = 0
-		}
-	case <-time.After(timeout):
-		if cmd.Process != nil {
-			cmd.Process.Kill()
-		}
-		exitCode = 124 // Timeout exit code
-		stderr.WriteString(fmt.Sprintf("Command timed out after %.0f seconds", timeout.Seconds()))
-	}
-
+	err := cmd.Run()
 	duration := time.Since(start).Seconds()
 	endTime := time.Now()
+
+	var exitCode int
+	if ctx.Err() == context.DeadlineExceeded {
+		exitCode = 124 // Timeout exit code
+		stderr.WriteString(fmt.Sprintf("Command timed out after %.0f seconds", timeoutDuration.Seconds()))
+	} else if err != nil {
+		if cmd.ProcessState != nil {
+			exitCode = cmd.ProcessState.ExitCode()
+		} else {
+			exitCode = 1
+			if stderr.Len() == 0 {
+				stderr.WriteString(err.Error())
+			}
+		}
+	} else {
+		exitCode = 0
+	}
 
 	var pid int
 	if cmd.Process != nil {

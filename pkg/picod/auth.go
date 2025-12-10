@@ -183,16 +183,6 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 		return
 	}
 
-	// Always require bootstrap key authentication
-	if am.bootstrapKey == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error":  "PicoD is not configured for secure initialization",
-			"code":   http.StatusServiceUnavailable,
-			"detail": "Bootstrap key is missing. Please ensure the bootstrap public key file is correctly mounted or provided.",
-		})
-		return
-	}
-
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{

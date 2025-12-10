@@ -49,12 +49,10 @@ func TestPicoD_EndToEnd(t *testing.T) {
 	// 1. Setup Keys
 	bootstrapPriv, _, bootstrapPubStr := generateRSAKeys()
 	sessionPriv, _, sessionPubStr := generateRSAKeys()
-
 	// 2. Setup Server Environment
 	tmpDir, err := os.MkdirTemp("", "picod_test")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
-
 	// Switch to temp dir to avoid polluting source tree and ensure relative path tests work
 	originalWd, _ := os.Getwd()
 	os.Chdir(tmpDir)

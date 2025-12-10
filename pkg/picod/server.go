@@ -41,7 +41,7 @@ func NewServer(config Config) *Server {
 		// Default to current working directory if not specified
 		cwd, err := os.Getwd()
 		if err != nil {
-			log.Printf("Warning: Failed to get current working directory: %v", err)
+			log.Fatalf("Failed to get current working directory: %v", err)
 		} else {
 			s.setWorkspace(cwd)
 		}

@@ -128,7 +128,7 @@ class PublishRuntime:
         # Image URL is already resolved in publish()
         image_url = options.get('image_url')
         if not image_url:
-            raise ValueError("Image URL must be provided (resolved by _prepare_image_for_publishing).")
+            raise ValueError("Image URL must be provided or configured in metadata.")
 
         if not metadata.readiness_probe_path or not metadata.readiness_probe_port:
             raise ValueError(
@@ -213,7 +213,7 @@ class PublishRuntime:
         # Image URL is already resolved in publish()
         image_url = options.get('image_url')
         if not image_url:
-            raise ValueError("Image URL must be provided (resolved by _prepare_image_for_publishing).")
+            raise ValueError("Image URL must be provided or configured in metadata.")
 
         # Step 3: Deploy to K8s
         k8s_info = None

@@ -143,7 +143,7 @@ class PackRuntime:
         overrides = {k: v for k, v in asdict(override_options).items() if v is not None}
 
         if overrides:
-            metadata_dict = metadata.dict()
+            metadata_dict = metadata.model_dump()
             metadata_dict.update(overrides)
 
             metadata = AgentMetadata(**metadata_dict)

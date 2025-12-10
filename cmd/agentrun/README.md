@@ -182,6 +182,8 @@ Options:
   --provider TEXT         Target provider for deployment (agentcube, k8s). 'agentcube' deploys AgentRuntime CR, 'k8s' deploys standard K8s Deployment/Service. [default: agentcube]
   --node-port INTEGER     Specific NodePort to use (30000-32767) for K8s deployment
   --replicas INTEGER      Number of replicas for K8s deployment (default: 1)
+  --endpoint TEXT         Custom API endpoint for AgentCube or Kubernetes cluster
+  --namespace TEXT        Kubernetes namespace to use for deployment [default: default]
   --verbose               Enable detailed logging
 ```
 

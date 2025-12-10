@@ -150,7 +150,7 @@ class AgentCubeProvider:
         if workload_manager_url:
             env_vars["WORKLOADMANAGER_URL"] = workload_manager_url
         elif os.environ.get("WORKLOADMANAGER_URL"):
-             env_vars["WORKLOADMANAGER_URL"] = os.environ.get("WORKLOADMANAGER_URL")
+            env_vars["WORKLOADMANAGER_URL"] = os.environ.get("WORKLOADMANAGER_URL")
 
         if router_url:
             env_vars["ROUTER_URL"] = router_url

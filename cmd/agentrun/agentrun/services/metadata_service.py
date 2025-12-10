@@ -238,4 +238,3 @@ class MetadataService:
             raise ValueError("Maven pom.xml file not found for Java project")
 
         # TODO: Add more Java-specific validation
-        pass

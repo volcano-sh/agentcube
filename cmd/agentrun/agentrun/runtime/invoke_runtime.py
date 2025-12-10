@@ -8,7 +8,7 @@ the invocation of published agents via AgentCube.
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Tuple, Any, Dict, Optional
 
 from agentrun.services.metadata_service import MetadataService
 from agentrun.services.k8s_provider import KubernetesProvider
@@ -101,7 +101,7 @@ class InvokeRuntime:
 
         return response
 
-    def _validate_invoke_prerequisites(self, workspace_path: Path) -> tuple[Any, str, str]:
+    def _validate_invoke_prerequisites(self, workspace_path: Path) -> Tuple[Any, str, str]:
         """Validate that the workspace is ready for invocation."""
         # Load metadata
         metadata = self.metadata_service.load_metadata(workspace_path)

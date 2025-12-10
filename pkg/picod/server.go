@@ -15,7 +15,7 @@ var startTime = time.Now() // Server start time
 // Config defines server configuration
 type Config struct {
 	Port         int    `json:"port"`
-	BootstrapKey string `json:"bootstrap_key"`
+	BootstrapKey []byte `json:"bootstrap_key"`
 	Workspace    string `json:"workspace"`
 }
 
@@ -54,7 +54,7 @@ func NewServer(config Config) *Server {
 	authManager := NewAuthManager()
 
 	// Load bootstrap key (Required)
-	if config.BootstrapKey == "" {
+	if len(config.BootstrapKey) == 0 {
 		log.Fatal("Bootstrap key is missing. Please ensure the bootstrap public key file is correctly mounted or provided.")
 	}
 

@@ -52,13 +52,13 @@ func NewAuthManager() *AuthManager {
 	}
 }
 
-// LoadBootstrapKey loads the bootstrap public key from string
-func (am *AuthManager) LoadBootstrapKey(keyStr string) error {
-	if keyStr == "" {
+// LoadBootstrapKey loads the bootstrap public key from bytes
+func (am *AuthManager) LoadBootstrapKey(keyData []byte) error {
+	if len(keyData) == 0 {
 		return nil
 	}
 
-	block, _ := pem.Decode([]byte(keyStr))
+	block, _ := pem.Decode(keyData)
 	if block == nil {
 		return fmt.Errorf("failed to decode bootstrap key PEM block")
 	}

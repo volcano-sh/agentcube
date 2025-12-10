@@ -50,8 +50,6 @@ func TestPicoD_EndToEnd(t *testing.T) {
 	bootstrapPriv, _, bootstrapPubStr := generateRSAKeys()
 	sessionPriv, _, sessionPubStr := generateRSAKeys()
 
-
-
 	// 2. Setup Server Environment
 	tmpDir, err := os.MkdirTemp("", "picod_test")
 	require.NoError(t, err)
@@ -64,7 +62,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 
 	config := Config{
 		Port:         0, // Test server handles port
-		BootstrapKey: bootstrapPubStr,
+		BootstrapKey: []byte(bootstrapPubStr),
 		Workspace:    tmpDir, // Set workspace to temp dir
 	}
 

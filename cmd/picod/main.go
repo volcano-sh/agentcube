@@ -15,14 +15,11 @@ func main() {
 	flag.Parse()
 
 	// Read bootstrap key from file
-	var bootstrapKey string
+	var bootstrapKey []byte
 	if data, err := os.ReadFile(*bootstrapKeyFile); err == nil {
-		bootstrapKey = string(data)
+		bootstrapKey = data
 	} else {
-		// Only log if the user explicitly provided a flag that failed,
-		// or if we want to warn about missing default.
-		// Since we want strict security, logging a warning is good.
-		log.Printf("Warning: Could not read bootstrap key from %s: %v", *bootstrapKeyFile, err)
+		log.Fatalf("Failed to read bootstrap key from %s: %v", *bootstrapKeyFile, err)
 	}
 
 	config := picod.Config{

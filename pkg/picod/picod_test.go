@@ -164,6 +164,29 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		resp = doExec([]string{"sleep", "2"}, nil, 0.5)
 		assert.Equal(t, 124, resp.ExitCode) // Timeout exit code set in execute.go
 		assert.Contains(t, resp.Stderr, "Command timed out")
+
+		// 5. Working Directory Escape (Should Fail)
+		// Attempt to set working directory outside workspace
+		escapeReq := ExecuteRequest{
+			Command:    []string{"ls"},
+			WorkingDir: "../",
+		}
+		escapeBody, _ := json.Marshal(escapeReq)
+		hash := sha256.Sum256(escapeBody)
+		claims := jwt.MapClaims{
+			"body_sha256": fmt.Sprintf("%x", hash),
+			"iat":         time.Now().Unix(),
+			"exp":         time.Now().Add(time.Hour * 6).Unix(),
+		}
+		token := createToken(sessionPriv, claims)
+
+		req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(escapeBody))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+
+		httpResp, err := client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusBadRequest, httpResp.StatusCode)
 	})
 
 	t.Run("File Operations", func(t *testing.T) {

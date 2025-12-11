@@ -66,7 +66,15 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 
 	// Set working directory
 	if req.WorkingDir != "" {
-		cmd.Dir = req.WorkingDir
+		safeWorkingDir, err := s.sanitizePath(req.WorkingDir)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("Invalid working directory: %v", err),
+				"code":  http.StatusBadRequest,
+			})
+			return
+		}
+		cmd.Dir = safeWorkingDir
 	}
 
 	// Set environment variables

@@ -13,7 +13,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from cmd.agentrun.agentrun.models.pack_models import MetadataOptions
+from agentrun.models.pack_models import MetadataOptions
 from agentrun.services.metadata_service import AgentMetadata, MetadataService
 
 logger = logging.getLogger(__name__)

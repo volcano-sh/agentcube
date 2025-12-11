@@ -56,9 +56,9 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	var err error
 	switch createAgentRequest.Kind {
 	case types.AgentRuntimeKind:
-		sandbox, externalInfo, err = buildSandboxByAgentRuntime(createAgentRequest.Namespace, createAgentRequest.Name, s.informers)
+		sandbox, externalInfo, err = buildSandboxByAgentRuntime(createAgentRequest.Namespace, createAgentRequest.Name, s.informers, createAgentRequest.ReadinessProbe)
 	case types.CodeInterpreterKind:
-		sandbox, sandboxClaim, externalInfo, err = buildSandboxByCodeInterpreter(createAgentRequest.Namespace, createAgentRequest.Name, s.informers)
+		sandbox, sandboxClaim, externalInfo, err = buildSandboxByCodeInterpreter(createAgentRequest.Namespace, createAgentRequest.Name, s.informers, createAgentRequest.ReadinessProbe)
 	default:
 		log.Printf("invalid request kind: %v", createAgentRequest.Kind)
 		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("invalid request kind: %v", createAgentRequest.Kind))

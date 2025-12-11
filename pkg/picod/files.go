@@ -3,6 +3,7 @@ package picod
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"log"
 	"mime"
 	"net/http"
@@ -85,28 +86,37 @@ func (s *Server) handleMultipartUpload(c *gin.Context) {
 		return
 	}
 
-	// Save file
-	if err := c.SaveUploadedFile(fileHeader, safePath); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to save file: %v", err),
-			"code":  http.StatusInternalServerError,
-		})
-		return
+	// Parse mode first
+	modeStr := c.PostForm("mode")
+	fileMode := os.FileMode(0644) // Default permissions
+	if modeStr != "" {
+		if mode, err := strconv.ParseUint(modeStr, 8, 32); err == nil && mode <= maxFileMode {
+			fileMode = os.FileMode(mode)
+		} else {
+			log.Printf("Warning: Invalid or out-of-range file mode '%s', using default 0644.", modeStr)
+		}
 	}
 
-	// Set file permissions
-	modeStr := c.PostForm("mode")
-	if modeStr != "" {
-		mode, err := strconv.ParseUint(modeStr, 8, 32)
-		if err != nil {
-			log.Printf("Warning: Invalid file mode '%s': %v", modeStr, err)
-		} else if mode > maxFileMode {
-			log.Printf("Warning: Invalid file mode '%s': exceeds 0777", modeStr)
-		} else {
-			if err := os.Chmod(safePath, os.FileMode(mode)); err != nil {
-				log.Printf("Warning: Failed to set file mode for '%s': %v", safePath, err)
-			}
-		}
+	// Open source file
+	src, err := fileHeader.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open uploaded file", "code": http.StatusInternalServerError})
+		return
+	}
+	defer src.Close()
+
+	// Create destination file with correct permissions
+	dst, err := os.OpenFile(safePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, fileMode)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create destination file", "code": http.StatusInternalServerError})
+		return
+	}
+	defer dst.Close()
+
+	// Copy content
+	if _, err := io.Copy(dst, src); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file content", "code": http.StatusInternalServerError})
+		return
 	}
 
 	stat, err := os.Stat(safePath)

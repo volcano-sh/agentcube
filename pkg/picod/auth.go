@@ -55,7 +55,7 @@ func NewAuthManager() *AuthManager {
 // LoadBootstrapKey loads the bootstrap public key from bytes
 func (am *AuthManager) LoadBootstrapKey(keyData []byte) error {
 	if len(keyData) == 0 {
-		return nil
+		return fmt.Errorf("bootstrap key string is empty")
 	}
 
 	block, _ := pem.Decode(keyData)
@@ -250,7 +250,7 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 	// Save the public key
 	if err := am.savePublicKeyLocked(sessionPublicKey); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to save public key: %v, sessionPublicKey: %s", err, sessionPublicKey),
+			"error": fmt.Sprintf("Failed to save public key: %v", err),
 			"code":  http.StatusInternalServerError,
 		})
 		return

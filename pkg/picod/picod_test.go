@@ -25,11 +25,13 @@ import (
 )
 
 // Helper to generate RSA key pair
-func generateRSAKeys() (*rsa.PrivateKey, *rsa.PublicKey, string) {
-	privateKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+func generateRSAKeys(t *testing.T) (*rsa.PrivateKey, *rsa.PublicKey, string) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
 	publicKey := &privateKey.PublicKey
 
-	pubASN1, _ := x509.MarshalPKIXPublicKey(publicKey)
+	pubASN1, err := x509.MarshalPKIXPublicKey(publicKey)
+	require.NoError(t, err)
 	pubPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "RSA PUBLIC KEY",
 		Bytes: pubASN1,
@@ -39,16 +41,17 @@ func generateRSAKeys() (*rsa.PrivateKey, *rsa.PublicKey, string) {
 }
 
 // Helper to create signed JWT
-func createToken(key *rsa.PrivateKey, claims jwt.MapClaims) string {
+func createToken(t *testing.T, key *rsa.PrivateKey, claims jwt.MapClaims) string {
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	tokenString, _ := token.SignedString(key)
+	tokenString, err := token.SignedString(key)
+	require.NoError(t, err)
 	return tokenString
 }
 
 func TestPicoD_EndToEnd(t *testing.T) {
 	// 1. Setup Keys
-	bootstrapPriv, _, bootstrapPubStr := generateRSAKeys()
-	sessionPriv, _, sessionPubStr := generateRSAKeys()
+	bootstrapPriv, _, bootstrapPubStr := generateRSAKeys(t)
+	sessionPriv, _, sessionPubStr := generateRSAKeys(t)
 	// 2. Setup Server Environment
 	tmpDir, err := os.MkdirTemp("", "picod_test")
 	require.NoError(t, err)
@@ -94,7 +97,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 			"iat":                time.Now().Unix(),
 			"exp":                time.Now().Add(time.Hour * 6).Unix(),
 		}
-		initToken := createToken(bootstrapPriv, initClaims)
+		initToken := createToken(t, bootstrapPriv, initClaims)
 
 		req, _ := http.NewRequest("POST", ts.URL+"/init", nil)
 		req.Header.Set("Authorization", "Bearer "+initToken)
@@ -124,7 +127,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 				"iat":         time.Now().Unix(),
 				"exp":         time.Now().Add(time.Hour * 6).Unix(),
 			}
-			token := createToken(sessionPriv, claims)
+			token := createToken(t, sessionPriv, claims)
 
 			req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(bodyBytes))
 			req.Header.Set("Authorization", "Bearer "+token)
@@ -178,7 +181,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 			"iat":         time.Now().Unix(),
 			"exp":         time.Now().Add(time.Hour * 6).Unix(),
 		}
-		token := createToken(sessionPriv, claims)
+		token := createToken(t, sessionPriv, claims)
 
 		req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(escapeBody))
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -200,7 +203,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 				hash := sha256.Sum256(body)
 				claims["body_sha256"] = fmt.Sprintf("%x", hash)
 			}
-			token := createToken(sessionPriv, claims)
+			token := createToken(t, sessionPriv, claims)
 
 			h := make(http.Header)
 			h.Set("Authorization", "Bearer "+token)
@@ -260,7 +263,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 			"iat": time.Now().Unix(),
 			"exp": time.Now().Add(time.Hour * 6).Unix(),
 		}
-		token := createToken(sessionPriv, claims)
+		token := createToken(t, sessionPriv, claims)
 
 		req, _ = http.NewRequest("POST", ts.URL+"/api/files", bodyBuf)
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -345,7 +348,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 			"iat":         time.Now().Unix(),
 			"exp":         time.Now().Add(time.Hour * 6).Unix(),
 		}
-		token := createToken(sessionPriv, claims)
+		token := createToken(t, sessionPriv, claims)
 
 		req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(realBody))
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -364,7 +367,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		// Wrong key for this endpoint/phase (middleware uses session key after init)
 		// Wait, AuthMiddleware uses `am.publicKey` which is the session key.
 		// If we sign with `bootstrapPriv`, verification against `sessionPub` should fail.
-		token = createToken(bootstrapPriv, claims) // bootstrapPriv corresponds to bootstrapPub, not sessionPub
+		token = createToken(t, bootstrapPriv, claims) // bootstrapPriv corresponds to bootstrapPub, not sessionPub
 
 		req, _ = http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(realBody))
 		req.Header.Set("Authorization", "Bearer "+token)

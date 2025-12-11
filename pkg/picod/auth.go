@@ -115,7 +115,10 @@ func (am *AuthManager) LoadPublicKey() error {
 func (am *AuthManager) SavePublicKey(publicKeyStr string) error {
 	am.mutex.Lock()
 	defer am.mutex.Unlock()
+	return am.savePublicKeyLocked(publicKeyStr)
+}
 
+func (am *AuthManager) savePublicKeyLocked(publicKeyStr string) error {
 	publicKeyByte, err := base64.RawStdEncoding.DecodeString(publicKeyStr)
 	if err != nil {
 		return fmt.Errorf("failed to decode base64")
@@ -173,8 +176,11 @@ func (am *AuthManager) IsInitialized() bool {
 
 // InitHandler handles initialization requests
 func (am *AuthManager) InitHandler(c *gin.Context) {
+	am.mutex.Lock()
+	defer am.mutex.Unlock()
+
 	// Check if already initialized
-	if am.IsInitialized() {
+	if am.initialized {
 		c.JSON(http.StatusForbidden, gin.H{
 			"error":  "Server already initialized",
 			"code":   http.StatusForbidden,
@@ -242,7 +248,7 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 	}
 
 	// Save the public key
-	if err := am.SavePublicKey(sessionPublicKey); err != nil {
+	if err := am.savePublicKeyLocked(sessionPublicKey); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to save public key: %v, sessionPublicKey: %s", err, sessionPublicKey),
 			"code":  http.StatusInternalServerError,

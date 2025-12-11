@@ -3,6 +3,7 @@ import json
 import time
 import os
 import ast
+import shlex
 from typing import Dict, Optional, Any
 from urllib.parse import urljoin
 
@@ -115,7 +116,7 @@ class DataPlaneClient:
     def execute_command(self, command: str, timeout: Optional[float] = None) -> str:
         """Execute a shell command."""
         payload = {
-            "command": command,
+            "command": shlex.split(command, posix=True),
             "timeout": timeout or self.timeout
         }
         body = json.dumps(payload).encode('utf-8')

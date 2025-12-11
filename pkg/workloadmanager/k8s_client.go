@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
@@ -47,6 +48,8 @@ type K8sClient struct {
 	baseConfig      *rest.Config // Store base config for creating user clients
 	clientCache     *ClientCache // LRU cache for user clients
 	dynamicInformer dynamicinformer.DynamicSharedInformerFactory
+	informerFactory informers.SharedInformerFactory
+	podInformer     cache.SharedIndexInformer
 }
 
 type sandboxExternalInfo struct {
@@ -92,6 +95,12 @@ func NewK8sClient() (*K8sClient, error) {
 		return nil, fmt.Errorf("failed to add agent-sandbox scheme: %w", err)
 	}
 
+	// Create informer factory for core resources (Pods, etc.)
+	informerFactory := informers.NewSharedInformerFactory(clientset, 0)
+
+	// Get pod informer
+	podInformer := informerFactory.Core().V1().Pods().Informer()
+
 	return &K8sClient{
 		clientset:       clientset,
 		dynamicClient:   dynamicClient,
@@ -99,6 +108,8 @@ func NewK8sClient() (*K8sClient, error) {
 		baseConfig:      config,
 		clientCache:     NewClientCache(100), // Cache up to 100 clients
 		dynamicInformer: dynamicinformer.NewDynamicSharedInformerFactory(dynamicClient, 0),
+		informerFactory: informerFactory,
+		podInformer:     podInformer,
 	}, nil
 }
 
@@ -253,16 +264,47 @@ func (u *UserK8sClient) DeleteSandboxClaim(ctx context.Context, namespace, sandb
 	return deleteSandboxClaim(ctx, u.dynamicClient, namespace, sandboxClaimName)
 }
 
-// GetSandboxPodIP gets the IP address of the pod corresponding to the Sandbox
-func (c *K8sClient) GetSandboxPodIP(ctx context.Context, namespace, sandboxName string) (string, error) {
-	// Find pod through label selector (sandbox-name label we set)
-	labelSelector := fmt.Sprintf("sandbox-name=%s", sandboxName)
-	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err == nil && pods != nil && len(pods.Items) > 0 {
-		return validateAndGetPodIP(&pods.Items[0])
+// StartPodInformer starts the pod informer and waits for cache sync
+func (c *K8sClient) StartPodInformer(ctx context.Context) error {
+	// Start the informer factory (this will start all informers including pod informer)
+	stopCh := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		close(stopCh)
+	}()
+
+	c.informerFactory.Start(stopCh)
+
+	// Wait for cache to sync
+	if !cache.WaitForCacheSync(ctx.Done(), c.podInformer.HasSynced) {
+		return fmt.Errorf("failed to sync pod informer cache")
 	}
+
+	return nil
+}
+
+// GetSandboxPodIP gets the IP address of the pod corresponding to the Sandbox
+// It uses the informer cache instead of making direct API calls
+func (c *K8sClient) GetSandboxPodIP(_ context.Context, namespace, sandboxName string) (string, error) {
+	// Get all pods from the cache
+	pods, err := c.podInformer.GetIndexer().ByIndex(cache.NamespaceIndex, namespace)
+	if err != nil {
+		return "", fmt.Errorf("failed to get pods from cache: %w", err)
+	}
+
+	// Filter pods by sandbox-name label
+	for _, obj := range pods {
+		pod, ok := obj.(*corev1.Pod)
+		if !ok {
+			continue
+		}
+
+		// Check if pod has the matching label
+		if pod.Labels != nil && pod.Labels["sandbox-name"] == sandboxName {
+			return validateAndGetPodIP(pod)
+		}
+	}
+
 	return "", fmt.Errorf("no pod found for sandbox %s", sandboxName)
 }
 

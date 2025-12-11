@@ -78,7 +78,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 
 	t.Run("Unauthenticated Access", func(t *testing.T) {
 		// Execute without init
-		execReq := ExecuteRequest{Command: "echo hello"}
+		execReq := ExecuteRequest{Command: []string{"echo", "hello"}}
 		body, _ := json.Marshal(execReq)
 		req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(body))
 		resp, err := client.Do(req)
@@ -110,7 +110,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 
 	t.Run("Command Execution", func(t *testing.T) {
 		// Helper to make authenticated execute requests
-		doExec := func(cmd string, env map[string]string, timeout float64) ExecuteResponse {
+		doExec := func(cmd []string, env map[string]string, timeout float64) ExecuteResponse {
 			reqBody := ExecuteRequest{
 				Command: cmd,
 				Env:     env,
@@ -140,7 +140,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		}
 
 		// 1. Basic Execution
-		resp := doExec("echo hello", nil, 0)
+		resp := doExec([]string{"echo", "hello"}, nil, 0)
 		assert.Equal(t, "hello\n", resp.Stdout)
 		assert.Equal(t, 0, resp.ExitCode)
 		assert.Greater(t, resp.ProcessID, 0)
@@ -148,18 +148,20 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		assert.False(t, resp.EndTime.IsZero())
 
 		// 2. Environment Variables
-		resp = doExec("echo $TEST_VAR", map[string]string{"TEST_VAR": "picod_env"}, 0)
+		// Use sh -c to allow environment variable expansion by the shell
+		resp = doExec([]string{"sh", "-c", "echo $TEST_VAR"}, map[string]string{"TEST_VAR": "picod_env"}, 0)
 		assert.Equal(t, "picod_env\n", resp.Stdout)
 
 		// 3. Stderr and Exit Code
-		resp = doExec("echo error_msg >&2; exit 1", nil, 0)
+		// Use sh -c to allow redirection >&2 and exit command
+		resp = doExec([]string{"sh", "-c", "echo error_msg >&2; exit 1"}, nil, 0)
 		assert.Equal(t, "error_msg\n", resp.Stderr)
 		assert.Equal(t, 1, resp.ExitCode)
 
 		// 4. Timeout
 		// Use a command that sleeps longer than the timeout
 		// Timeout is in seconds. Set timeout to 0.5s, sleep 2s.
-		resp = doExec("sleep 2", nil, 0.5)
+		resp = doExec([]string{"sleep", "2"}, nil, 0.5)
 		assert.Equal(t, 124, resp.ExitCode) // Timeout exit code set in execute.go
 		assert.Contains(t, resp.Stderr, "Command timed out")
 	})
@@ -309,7 +311,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 	t.Run("Security Checks", func(t *testing.T) {
 		// 1. Body Integrity Check Failure
 		// Sign a hash for "A", but send "B"
-		reqBody := ExecuteRequest{Command: "echo malicious"}
+		reqBody := ExecuteRequest{Command: []string{"echo", "malicious"}}
 		realBody, _ := json.Marshal(reqBody)
 
 		fakeBody := []byte("some other content")

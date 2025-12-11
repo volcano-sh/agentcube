@@ -14,7 +14,7 @@ import (
 
 // ExecuteRequest defines command execution request body
 type ExecuteRequest struct {
-	Command    string            `json:"command" binding:"required"`
+	Command    []string          `json:"command" binding:"required"`
 	Timeout    float64           `json:"timeout"`
 	WorkingDir string            `json:"working_dir"`
 	Env        map[string]string `json:"env"`
@@ -42,6 +42,14 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 		return
 	}
 
+	if len(req.Command) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "command cannot be empty",
+			"code":  http.StatusBadRequest,
+		})
+		return
+	}
+
 	// Set timeout
 	timeoutDuration := 30 * time.Second // Default timeout
 	if req.Timeout > 0 {
@@ -53,7 +61,8 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	defer cancel()
 
 	// execute command with context
-	cmd := exec.CommandContext(ctx, "sh", "-c", req.Command)
+	// Use the first element as the command and the rest as arguments
+	cmd := exec.CommandContext(ctx, req.Command[0], req.Command[1:]...)
 
 	// Set working directory
 	if req.WorkingDir != "" {

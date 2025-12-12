@@ -31,7 +31,6 @@ type ExecuteResponse struct {
 	Stderr    string    `json:"stderr"`     // Standard error of the executed command.
 	ExitCode  int       `json:"exit_code"`  // The exit code of the executed command. Timeout is indicated by TimeoutExitCode (124).
 	Duration  float64   `json:"duration"`   // The duration of the command execution in seconds.
-	ProcessID int       `json:"process_id"` // The process ID of the executed command.
 	StartTime time.Time `json:"start_time"` // The start time of the command execution.
 	EndTime   time.Time `json:"end_time"`   // The end time of the command execution.
 }
@@ -56,7 +55,7 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	}
 
 	// Set timeout
-	timeoutDuration := 30 * time.Second // Default timeout
+	timeoutDuration := 60 * time.Second // Default timeout
 	if req.Timeout != "" {
 		var err error
 		timeoutDuration, err = time.ParseDuration(req.Timeout)
@@ -112,23 +111,17 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		exitCode = TimeoutExitCode
 		stderr.WriteString(fmt.Sprintf("Command timed out after %.0f seconds", timeoutDuration.Seconds()))
-	} else if err != nil {
-		if cmd.ProcessState != nil {
-			exitCode = cmd.ProcessState.ExitCode()
-		} else {
-			exitCode = 1
-			if stderr.Len() > 0 {
-				stderr.WriteString("\n")
-			}
+	} else if cmd.ProcessState != nil {
+		exitCode = cmd.ProcessState.ExitCode()
+	} else {
+		exitCode = 1
+		if stderr.Len() > 0 {
+			stderr.WriteString("\n")
+		}
+		// If there's an error from cmd.Run() and no ProcessState, append it to stderr
+		if err != nil {
 			stderr.WriteString(err.Error())
 		}
-	} else {
-		exitCode = 0
-	}
-
-	var pid int
-	if cmd.Process != nil {
-		pid = cmd.Process.Pid
 	}
 
 	c.JSON(http.StatusOK, ExecuteResponse{
@@ -136,7 +129,6 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 		Stderr:    stderr.String(),
 		ExitCode:  exitCode,
 		Duration:  duration,
-		ProcessID: pid,
 		StartTime: start,
 		EndTime:   endTime,
 	})

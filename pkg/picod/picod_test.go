@@ -149,7 +149,6 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		resp := doExec([]string{"echo", "hello"}, nil, "")
 		assert.Equal(t, "hello\n", resp.Stdout)
 		assert.Equal(t, 0, resp.ExitCode)
-		assert.Greater(t, resp.ProcessID, 0)
 		assert.False(t, resp.StartTime.IsZero())
 		assert.False(t, resp.EndTime.IsZero())
 
@@ -341,45 +340,23 @@ func TestPicoD_EndToEnd(t *testing.T) {
 	})
 
 	t.Run("Security Checks", func(t *testing.T) {
-		// 1. Body Integrity Check Failure
-		// Sign a hash for "A", but send "B"
+		// 1. Invalid Token Signature
+		// Sign with bootstrap key instead of session key for execution
+		claims := jwt.MapClaims{
+			"iat": time.Now().Unix(),
+		}
+		// Wrong key for this endpoint/phase (middleware uses session key after init)
+		// If we sign with `bootstrapPriv`, verification against `sessionPub` should fail.
+		token := createToken(t, bootstrapPriv, claims) // bootstrapPriv corresponds to bootstrapPub, not sessionPub
+
 		reqBody := ExecuteRequest{Command: []string{"echo", "malicious"}}
 		realBody, _ := json.Marshal(reqBody)
-
-		fakeBody := []byte("some other content")
-		hash := sha256.Sum256(fakeBody)
-
-		claims := jwt.MapClaims{
-			"body_sha256": fmt.Sprintf("%x", hash),
-			"iat":         time.Now().Unix(),
-			"exp":         time.Now().Add(time.Hour * 6).Unix(),
-		}
-		token := createToken(t, sessionPriv, claims)
 
 		req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(realBody))
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := client.Do(req)
-		require.NoError(t, err)
-		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-
-		// 2. Invalid Token Signature
-		// Sign with bootstrap key instead of session key for execution
-		claims = jwt.MapClaims{
-			"body_sha256": fmt.Sprintf("%x", sha256.Sum256(realBody)),
-			"iat":         time.Now().Unix(),
-		}
-		// Wrong key for this endpoint/phase (middleware uses session key after init)
-		// Wait, AuthMiddleware uses `am.publicKey` which is the session key.
-		// If we sign with `bootstrapPriv`, verification against `sessionPub` should fail.
-		token = createToken(t, bootstrapPriv, claims) // bootstrapPriv corresponds to bootstrapPub, not sessionPub
-
-		req, _ = http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(realBody))
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err = client.Do(req)
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})

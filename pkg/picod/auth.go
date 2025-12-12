@@ -1,9 +1,7 @@
 package picod
 
 import (
-	"bytes"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -43,7 +41,6 @@ type InitRequest struct {
 // InitResponse represents initialization response
 type InitResponse struct {
 	Message string `json:"message"`
-	Success bool   `json:"success"`
 }
 
 // NewAuthManager creates a new auth manager
@@ -111,13 +108,6 @@ func (am *AuthManager) LoadPublicKey() error {
 	am.publicKey = rsaPub
 	am.initialized = true
 	return nil
-}
-
-// SavePublicKey saves public key to file
-func (am *AuthManager) SavePublicKey(publicKeyStr string) error {
-	am.mutex.Lock()
-	defer am.mutex.Unlock()
-	return am.savePublicKeyLocked(publicKeyStr)
 }
 
 func (am *AuthManager) savePublicKeyLocked(publicKeyStr string) error {
@@ -260,7 +250,6 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 
 	c.JSON(http.StatusOK, InitResponse{
 		Message: "Server initialized successfully. This PicoD instance is now locked to your public key.",
-		Success: true,
 	})
 }
 
@@ -327,81 +316,9 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid claims",
-				"code":  http.StatusUnauthorized,
-			})
-			c.Abort()
-			return
-		}
-
 		// Enforce maximum body size to prevent memory exhaustion
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxBodySize)
 
-		// Read request body for hash verification
-		bodyBytes, err := c.GetRawData()
-		if err != nil {
-			status := http.StatusInternalServerError
-			// check if the error is due to request body too large
-			if err.Error() == "http: request body too large" {
-				status = http.StatusRequestEntityTooLarge
-			}
-			c.JSON(status, gin.H{
-				"error":  "Failed to read request body",
-				"code":   status,
-				"detail": err.Error(),
-			})
-			c.Abort()
-			return
-		}
-
-		// Restore request body for subsequent handlers
-		c.Request.Body = &RequestBody{Buffer: bytes.NewBuffer(bodyBytes)}
-
-		// Verify body hash if present in claims
-		// We mandate body_sha256 for requests with body to ensure integrity
-		if claimHash, ok := claims["body_sha256"].(string); ok {
-			// Calculate SHA256 of actual body
-			hash := sha256.Sum256(bodyBytes)
-			computedHash := fmt.Sprintf("%x", hash)
-
-			if claimHash != computedHash {
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"error":  "Body integrity check failed",
-					"code":   http.StatusUnauthorized,
-					"detail": "The request body does not match the body_sha256 claim",
-				})
-				c.Abort()
-				return
-			}
-		} else {
-			// Ideally we should enforce this, but for GET requests without body it might be empty.
-			// For now, if body is not empty, enforce hash presence?
-			// Let's enforce it if the body is not empty.
-			// Exception: multipart/form-data requests (file uploads) where client cannot easily compute hash
-			isMultipart := strings.HasPrefix(c.ContentType(), "multipart/form-data")
-			if len(bodyBytes) > 0 && !isMultipart {
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"error":  "Missing body_sha256 claim",
-					"code":   http.StatusUnauthorized,
-					"detail": "Token must contain body_sha256 claim for integrity",
-				})
-				c.Abort()
-				return
-			}
-		}
-
 		c.Next()
 	}
-}
-
-// RequestBody wraps bytes.Buffer to implement io.ReadCloser
-type RequestBody struct {
-	*bytes.Buffer
-}
-
-func (rb *RequestBody) Close() error {
-	return nil
 }

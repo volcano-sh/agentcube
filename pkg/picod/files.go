@@ -121,8 +121,17 @@ func (s *Server) handleMultipartUpload(c *gin.Context) {
 		return
 	}
 
+	relPath, err := filepath.Rel(s.workspaceDir, safePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to get relative path: %v", err),
+			"code":  http.StatusInternalServerError,
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, FileInfo{
-		Path:     safePath,
+		Path:     relPath,
 		Size:     stat.Size(),
 		Mode:     stat.Mode().String(),
 		Modified: stat.ModTime(),
@@ -191,8 +200,17 @@ func (s *Server) handleJSONBase64Upload(c *gin.Context) {
 		return
 	}
 
+	relPath, err := filepath.Rel(s.workspaceDir, safePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to get relative path: %v", err),
+			"code":  http.StatusInternalServerError,
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, FileInfo{
-		Path:     safePath,
+		Path:     relPath,
 		Size:     stat.Size(),
 		Mode:     stat.Mode().String(),
 		Modified: stat.ModTime(),
@@ -366,58 +384,57 @@ func (s *Server) sanitizePath(p string) (string, error) {
 		return "", fmt.Errorf("workspace directory not initialized")
 	}
 
-	// Resolve workspace directory to handle cases where workspace itself is a symlink
 	resolvedWorkspace, err := filepath.EvalSymlinks(s.workspaceDir)
 	if err != nil {
-		// Fallback if workspace doesn't exist or error (shouldn't happen in normal operation)
 		if abs, err2 := filepath.Abs(s.workspaceDir); err2 == nil {
 			resolvedWorkspace = abs
 		} else {
 			resolvedWorkspace = filepath.Clean(s.workspaceDir)
 		}
 	}
+	// Ensure base workspace path is clean and absolute for reliable comparison with filepath.Rel
+	resolvedWorkspace = filepath.Clean(resolvedWorkspace)
 
+	// Clean the input path; if it's absolute, treat it as relative to the workspace root.
 	cleanPath := filepath.Clean(p)
 	if filepath.IsAbs(cleanPath) {
-		cleanPath = strings.TrimPrefix(cleanPath, "/")
+		cleanPath = strings.TrimPrefix(cleanPath, string(os.PathSeparator))
 	}
 
-	fullPath := filepath.Join(resolvedWorkspace, cleanPath)
+	// Construct the full absolute path candidate within the workspace.
+	// filepath.Join handles cases like "a/../b", but we also need to filepath.Clean it afterwards
+	// to normalize any ".." components that might be introduced by `Join` if `cleanPath` itself
+	// contained them.
+	fullPathCandidate := filepath.Join(resolvedWorkspace, cleanPath)
+	fullPathCandidate = filepath.Clean(fullPathCandidate)
 
-	// Try to resolve the full path (handles existing files/dirs)
-	resolvedPath, err := filepath.EvalSymlinks(fullPath)
+	// Robustly check if fullPathCandidate is truly within resolvedWorkspace using filepath.Rel.
+	// filepath.Rel returns a path relative to base, or an error if target cannot be made relative to base.
+	relPath, relErr := filepath.Rel(resolvedWorkspace, fullPathCandidate)
+	if relErr != nil {
+		return "", fmt.Errorf("access denied: path '%s' escapes workspace jail (rel error: %w)", p, relErr)
+	}
+	// Also explicitly check for ".." at the start of the relative path, which indicates traversal outside the workspace,
+	// or if the path is ".." itself, both implying an escape.
+	if strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) || relPath == ".." {
+		return "", fmt.Errorf("access denied: path '%s' escapes workspace jail (relative path traversal: %s)", p, relPath)
+	}
+
+	// At this point, fullPathCandidate is proven to be within resolvedWorkspace or is resolvedWorkspace itself.
+	// Now, attempt to resolve symlinks for the final path. If this resolution leads outside the workspace,
+	// it indicates a symlink attack.
+	resolvedFinalPath, err := filepath.EvalSymlinks(fullPathCandidate)
 	if err == nil {
-		// Path exists, verify it's within workspace
-		if !strings.HasPrefix(resolvedPath, resolvedWorkspace+string(os.PathSeparator)) && resolvedPath != resolvedWorkspace {
-			return "", fmt.Errorf("access denied: path escapes workspace jail")
+		// If resolvedFinalPath exists and is a symlink, re-check it against the workspace
+		finalRelPath, finalRelErr := filepath.Rel(resolvedWorkspace, resolvedFinalPath)
+		if finalRelErr != nil || strings.HasPrefix(finalRelPath, ".."+string(os.PathSeparator)) || finalRelPath == ".." {
+			return "", fmt.Errorf("access denied: resolved path '%s' (from '%s') escapes workspace jail via symlink", resolvedFinalPath, p)
 		}
-		return resolvedPath, nil
+		return resolvedFinalPath, nil
 	}
 
-	// If path doesn't exist (e.g. creating new file), verify ancestors
-	if os.IsNotExist(err) {
-		currentPath := filepath.Dir(fullPath)
-		for {
-			resolved, err := filepath.EvalSymlinks(currentPath)
-			if err == nil {
-				// Ancestor exists, verify it's within workspace
-				if !strings.HasPrefix(resolved, resolvedWorkspace+string(os.PathSeparator)) && resolved != resolvedWorkspace {
-					return "", fmt.Errorf("access denied: parent path '%s' resolves to '%s' outside workspace", currentPath, resolved)
-				}
-				// Ancestor is safe, so creating file under it is safe
-				return filepath.Abs(fullPath)
-			}
-
-			// Go up one level
-			parent := filepath.Dir(currentPath)
-			if parent == currentPath {
-				break // Reached root
-			}
-			currentPath = parent
-		}
-		// If no existing ancestor found (unlikely if workspace exists), fallback to Abs
-		return filepath.Abs(fullPath)
-	}
-
-	return "", fmt.Errorf("failed to resolve path: %w", err)
+	// If the path does not exist (e.g., a new file/directory is being created),
+	// we have already verified that fullPathCandidate (the intended location) is safe.
+	// Return its absolute, cleaned form.
+	return fullPathCandidate, nil
 }

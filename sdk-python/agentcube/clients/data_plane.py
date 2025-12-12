@@ -21,32 +21,41 @@ class DataPlaneClient:
 
     def __init__(
         self,
-        router_url: str,
-        namespace: str,
-        cr_name: str,
         session_id: str,
         private_key: rsa.RSAPrivateKey,
+        router_url: Optional[str] = None,
+        namespace: Optional[str] = None,
+        cr_name: Optional[str] = None,
+        base_url: Optional[str] = None,
         timeout: int = 30
     ):
         """Initialize Data Plane client.
 
         Args:
-            router_url: Base URL of the Router service.
-            namespace: Kubernetes namespace.
-            cr_name: Code Interpreter resource name (used as session ID).
+            session_id: Session ID (for x-agentcube-session-id header).
             private_key: RSA Private Key for signing JWTs.
+            router_url: Base URL of the Router service (optional if base_url is provided).
+            namespace: Kubernetes namespace (optional if base_url is provided).
+            cr_name: Code Interpreter resource name (optional if base_url is provided).
+            base_url: Direct base URL for invocations (overrides router logic).
             timeout: Default request timeout.
         """
-        self.cr_name = cr_name
         self.session_id = session_id
         self.private_key = private_key
         self.timeout = timeout
         self.logger = get_logger(f"{__name__}.DataPlaneClient")
         
-        # Construct the base invocation URL
-        # Router path: /v1/namespaces/{namespace}/code-interpreters/{name}/invocations
-        base_path = f"/v1/namespaces/{namespace}/code-interpreters/{cr_name}/invocations/"
-        self.base_url = urljoin(router_url, base_path)
+        if base_url:
+            self.base_url = base_url
+            self.cr_name = cr_name # Might be None, but that's fine if base_url is used
+        elif router_url and namespace and cr_name:
+            self.cr_name = cr_name
+            # Construct the base invocation URL
+            # Router path: /v1/namespaces/{namespace}/code-interpreters/{name}/invocations
+            base_path = f"/v1/namespaces/{namespace}/code-interpreters/{cr_name}/invocations/"
+            self.base_url = urljoin(router_url, base_path)
+        else:
+            raise ValueError("Either 'base_url' or all of 'router_url', 'namespace', 'cr_name' must be provided.")
         
         self.session = requests.Session()
         # Add the routing header

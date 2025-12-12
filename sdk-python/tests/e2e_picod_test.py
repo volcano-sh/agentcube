@@ -30,23 +30,15 @@ class DirectDataPlaneClient(DataPlaneClient):
     bypassing the Router URL construction logic.
     """
     def __init__(self, picod_url, session_id, private_key, timeout=30):
-        # We skip super().__init__ because it enforces Router URL logic.
-        # Instead we replicate the necessary parts.
-        
-        self.session_id = session_id
-        self.private_key = private_key
-        self.timeout = timeout
-        self.logger = logging.getLogger(f"{__name__}.DirectDataPlaneClient")
-        
         # Point directly to PicoD root (e.g., http://localhost:8080/)
-        self.base_url = picod_url if picod_url.endswith("/") else picod_url + "/"
+        base_url = picod_url if picod_url.endswith("/") else picod_url + "/"
         
-        self.session = requests.Session()
-        # PicoD doesn't strictly require x-agentcube-session-id if bypassing Router,
-        # but it doesn't hurt.
-        self.session.headers.update({
-            "x-agentcube-session-id": self.session_id
-        })
+        super().__init__(
+            session_id=session_id,
+            private_key=private_key,
+            base_url=base_url,
+            timeout=timeout
+        )
 
 # --- Helper Functions ---
 
@@ -102,9 +94,9 @@ def start_picod_container():
             if resp.status_code == 200:
                 logger.info("PicoD is up and running!")
                 return
-        except Exception:
-            # Ignore exceptions during health check; container may not be ready yet. Retry until healthy or max retries.
-            pass
+        except (requests.ConnectionError, requests.Timeout) as e:
+            # Ignore connection errors during health check; container may not be ready yet. Retry until healthy or max retries.
+            logger.debug(f"Health check attempt {i+1} failed: {e}")
         logger.info("Waiting for PicoD...")
         time.sleep(1)
         

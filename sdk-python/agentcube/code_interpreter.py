@@ -56,7 +56,7 @@ class CodeInterpreterClient:
 
         router_url = router_url or os.getenv("ROUTER_URL")
         if not router_url:
-            raise ValueError("Router URL must be provided via 'router_url' argument or 'ROUTER_URL' environment variable.")
+            raise ValueError("Router URL for Data Plane communication must be provided via 'router_url' argument or 'ROUTER_URL' environment variable.")
         self.router_url = router_url
         
         self.dp_client: Optional[DataPlaneClient] = None
@@ -149,28 +149,67 @@ class CodeInterpreterClient:
         return self.dp_client.run_code(language, code, timeout)
 
     def write_file(self, content: str, remote_path: str):
-        """Write content to a file."""
+        """
+        Write content to a file in the remote environment.
+
+        Args:
+            content: The string content to write to the file.
+            remote_path: The destination path of the file in the remote environment.
+                         This path is relative to the session's working directory.
+        Raises:
+            RuntimeError: If the data plane client is not initialized.
+        """
         self._ensure_started()
         if not self.dp_client:
              raise RuntimeError("Data Plane client not initialized.")
         self.dp_client.write_file(content, remote_path)
 
     def upload_file(self, local_path: str, remote_path: str):
-        """Upload a local file."""
+        """
+        Upload a local file to the remote environment.
+
+        Args:
+            local_path: The path to the file on the local filesystem.
+            remote_path: The destination path of the file in the remote environment.
+                         This path is relative to the session's working directory.
+        Raises:
+            RuntimeError: If the data plane client is not initialized.
+        """
         self._ensure_started()
         if not self.dp_client:
              raise RuntimeError("Data Plane client not initialized.")
         self.dp_client.upload_file(local_path, remote_path)
 
     def download_file(self, remote_path: str, local_path: str):
-        """Download a file."""
+        """
+        Download a file from the remote environment to the local filesystem.
+
+        Args:
+            remote_path: The path to the file in the remote environment.
+                         This path is relative to the session's working directory.
+            local_path: The destination path on the local filesystem to save the file.
+        Returns:
+            The content of the downloaded file as a string.
+        Raises:
+            RuntimeError: If the data plane client is not initialized.
+        """
         self._ensure_started()
         if not self.dp_client:
              raise RuntimeError("Data Plane client not initialized.")
         return self.dp_client.download_file(remote_path, local_path)
 
     def list_files(self, path: str = "."):
-        """List files in a directory."""
+        """
+        List files and directories in a specified path in the remote environment.
+
+        Args:
+            path: The directory path to list. Defaults to ".". This path is relative
+                  to the session's working directory.
+        Returns:
+            A list of strings, where each string is a file or directory name.
+        Raises:
+            RuntimeError: If the data plane client is not initialized.
+        """
         self._ensure_started()
         if not self.dp_client:
              raise RuntimeError("Data Plane client not initialized.")

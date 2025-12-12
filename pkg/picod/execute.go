@@ -117,9 +117,10 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 			exitCode = cmd.ProcessState.ExitCode()
 		} else {
 			exitCode = 1
-			if stderr.Len() == 0 {
-				stderr.WriteString(err.Error())
+			if stderr.Len() > 0 {
+				stderr.WriteString("\n")
 			}
+			stderr.WriteString(err.Error())
 		}
 	} else {
 		exitCode = 0

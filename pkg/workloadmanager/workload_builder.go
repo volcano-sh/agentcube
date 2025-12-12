@@ -7,10 +7,12 @@ import (
 
 	"github.com/google/uuid"
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
+	"github.com/volcano-sh/agentcube/pkg/common/types"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
@@ -26,6 +28,7 @@ type buildSandboxParams struct {
 	podSpec        corev1.PodSpec
 	podLabels      map[string]string
 	podAnnotations map[string]string
+	readinessProbe *types.ReadinessProbe
 }
 
 type buildSandboxClaimParams struct {
@@ -79,6 +82,68 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 	}
 	sandbox.Spec.PodTemplate.ObjectMeta.Labels[SessionIdLabelKey] = params.sessionID
 	sandbox.Spec.PodTemplate.ObjectMeta.Labels["sandbox-name"] = params.sandboxName
+
+	// Handle Readiness Probe
+	if len(sandbox.Spec.PodTemplate.Spec.Containers) > 0 {
+		container := &sandbox.Spec.PodTemplate.Spec.Containers[0]
+
+		if params.readinessProbe != nil {
+			probe := &corev1.Probe{
+				InitialDelaySeconds: params.readinessProbe.InitialDelaySeconds,
+				PeriodSeconds:       params.readinessProbe.PeriodSeconds,
+				SuccessThreshold:    params.readinessProbe.SuccessThreshold,
+				FailureThreshold:    params.readinessProbe.FailureThreshold,
+				TimeoutSeconds:      params.readinessProbe.TimeoutSeconds,
+			}
+
+			if params.readinessProbe.TCPSocket != nil {
+				probe.ProbeHandler = corev1.ProbeHandler{
+					TCPSocket: &corev1.TCPSocketAction{
+						Port: intstr.FromInt(params.readinessProbe.TCPSocket.Port),
+						Host: params.readinessProbe.TCPSocket.Host,
+					},
+				}
+			} else if params.readinessProbe.HTTPGet != nil {
+				headers := []corev1.HTTPHeader{}
+				for k, v := range params.readinessProbe.HTTPGet.HTTPHeaders {
+					headers = append(headers, corev1.HTTPHeader{Name: k, Value: v})
+				}
+				probe.ProbeHandler = corev1.ProbeHandler{
+					HTTPGet: &corev1.HTTPGetAction{
+						Path:        params.readinessProbe.HTTPGet.Path,
+						Port:        intstr.FromInt(params.readinessProbe.HTTPGet.Port),
+						Host:        params.readinessProbe.HTTPGet.Host,
+						Scheme:      corev1.URIScheme(params.readinessProbe.HTTPGet.Scheme),
+						HTTPHeaders: headers,
+					},
+				}
+			} else if params.readinessProbe.Exec != nil {
+				probe.ProbeHandler = corev1.ProbeHandler{
+					Exec: &corev1.ExecAction{
+						Command: params.readinessProbe.Exec.Command,
+					},
+				}
+			}
+			container.ReadinessProbe = probe
+		} else if container.ReadinessProbe == nil {
+			// Add default TCP probe if ports are available
+			if len(container.Ports) > 0 {
+				container.ReadinessProbe = &corev1.Probe{
+					ProbeHandler: corev1.ProbeHandler{
+						TCPSocket: &corev1.TCPSocketAction{
+							Port: intstr.FromInt(int(container.Ports[0].ContainerPort)),
+						},
+					},
+					InitialDelaySeconds: 5,
+					PeriodSeconds:       10,
+					SuccessThreshold:    1,
+					FailureThreshold:    3,
+					TimeoutSeconds:      1,
+				}
+			}
+		}
+	}
+
 	return sandbox
 }
 
@@ -103,7 +168,7 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 	return sandboxClaim
 }
 
-func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxExternalInfo, error) {
+func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers, readinessProbe *types.ReadinessProbe) (*sandboxv1alpha1.Sandbox, *sandboxExternalInfo, error) {
 	agentRuntimeKey := namespace + "/" + name
 	runtimeObj, exists, err := ifm.AgentRuntimeInformer.GetStore().GetByKey(agentRuntimeKey)
 	if err != nil {
@@ -131,11 +196,12 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	sessionID := uuid.New().String()
 	sandboxName := "agent-runtime-" + uuid.New().String()
 	buildParams := &buildSandboxParams{
-		namespace:    namespace,
-		workloadName: name,
-		sandboxName:  sandboxName,
-		sessionID:    sessionID,
-		podSpec:      agentRuntimeObj.Spec.Template.Spec,
+		namespace:      namespace,
+		workloadName:   name,
+		sandboxName:    sandboxName,
+		sessionID:      sessionID,
+		podSpec:        agentRuntimeObj.Spec.Template.Spec,
+		readinessProbe: readinessProbe,
 	}
 	if agentRuntimeObj.Spec.MaxSessionDuration != nil {
 		buildParams.ttl = agentRuntimeObj.Spec.MaxSessionDuration.Duration
@@ -151,7 +217,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	return sandbox, externalInfo, nil
 }
 
-func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxExternalInfo, error) {
+func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, ifm *Informers, readinessProbe *types.ReadinessProbe) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxExternalInfo, error) {
 	codeInterpreterKey := namespace + "/" + codeInterpreterName
 	runtimeObj, exists, err := ifm.CodeInterpreterInformer.GetStore().GetByKey(codeInterpreterKey)
 	if err != nil {
@@ -220,6 +286,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		podSpec:        podSpec,
 		podLabels:      codeInterpreterObj.Spec.Template.Labels,
 		podAnnotations: codeInterpreterObj.Spec.Template.Annotations,
+		readinessProbe: readinessProbe,
 	}
 	if codeInterpreterObj.Spec.MaxSessionDuration != nil {
 		buildParams.ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration

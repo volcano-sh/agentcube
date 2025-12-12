@@ -143,3 +143,9 @@ class CodeInterpreterClient:
         if not self.dp_client:
             raise RuntimeError("Data Plane client not initialized.")
         return self.dp_client.download_file(remote_path, local_path)
+
+    def list_files(self, path: str = "."):
+        """List files in a directory."""
+        if not self.dp_client:
+            raise RuntimeError("Data Plane client not initialized.")
+        return self.dp_client.list_files(path)

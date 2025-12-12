@@ -4,7 +4,7 @@ import time
 import os
 import ast
 import shlex
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List, Union
 from urllib.parse import urljoin
 
 import requests
@@ -113,15 +113,30 @@ class DataPlaneClient:
             **kwargs
         )
 
-    def execute_command(self, command: str, timeout: Optional[float] = None) -> str:
-        """Execute a shell command."""
+    def execute_command(self, command: Union[str, List[str]], timeout: Optional[float] = None) -> str:
+        """Execute a shell command.
+        
+        Args:
+            command: The command to execute, either as a single string or a list of arguments.
+            timeout: Optional timeout for the command execution.
+        """
+        # Convert timeout to string with 's' suffix as expected by PicoD
+        t_val = timeout or self.timeout
+        timeout_str = f"{t_val}s" if isinstance(t_val, (int, float)) else str(t_val)
+
+        cmd_list = shlex.split(command, posix=True) if isinstance(command, str) else command
+
         payload = {
-            "command": shlex.split(command, posix=True),
-            "timeout": timeout or self.timeout
+            "command": cmd_list,
+            "timeout": timeout_str
         }
         body = json.dumps(payload).encode('utf-8')
         
-        resp = self._request("POST", "api/execute", body=body, timeout=timeout or self.timeout)
+        # Add a buffer to the read timeout to allow PicoD to return the timeout response
+        # otherwise requests might raise ReadTimeout before we get the JSON response with exit_code 124
+        read_timeout = t_val + 2.0 if isinstance(t_val, (int, float)) else t_val
+        
+        resp = self._request("POST", "api/execute", body=body, timeout=read_timeout)
         resp.raise_for_status()
         
         result = resp.json()
@@ -156,12 +171,12 @@ class DataPlaneClient:
             # Use file-based execution to avoid shell quoting issues and length limits
             filename = f"script_{int(time.time() * 1000)}.py"
             self.write_file(code, filename)
-            cmd = f"python3 {filename}"
+            cmd = ["python3", filename]
         elif lang in ["bash", "sh"]:
             # Also use file execution for bash to be consistent and safe
             filename = f"script_{int(time.time() * 1000)}.sh"
             self.write_file(code, filename)
-            cmd = f"bash {filename}"
+            cmd = ["bash", filename]
         else:
             raise ValueError(f"Unsupported language: {language}")
             
@@ -223,6 +238,12 @@ class DataPlaneClient:
         with open(local_path, 'wb') as f:
             for chunk in resp.iter_content(chunk_size=8192):
                 f.write(chunk)
+
+    def list_files(self, path: str = ".") -> Any:
+        """List files in a directory."""
+        resp = self._request("GET", "api/files", params={"path": path})
+        resp.raise_for_status()
+        return resp.json().get("files", [])
 
     def close(self):
         self.session.close()

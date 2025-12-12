@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("sdk_e2e_test")
 
 # --- Constants ---
-IMAGE_NAME = "picod:0.2.1"
+IMAGE_NAME = "picod-test:latest"
 CONTAINER_NAME = "picod_e2e_test"
 HOST_PORT = 8080
 BOOTSTRAP_KEY_FILE = os.path.abspath("bootstrap_public.pem")
@@ -185,6 +185,11 @@ def main():
         output = client.execute_command("echo 'Hello SDK'")
         print(f"Output: {output.strip()}")
         assert output.strip() == "Hello SDK"
+
+        logger.info(">>> TEST: Execute Command with List Arguments")
+        output_list_cmd = client.execute_command(["echo", "Hello from list args"])
+        print(f"Output (list args): {output_list_cmd.strip()}")
+        assert output_list_cmd.strip() == "Hello from list args"
         
         logger.info(">>> TEST: Run Python Code")
         code = "print(10 + 20)"
@@ -205,7 +210,59 @@ def main():
         with open("downloaded_test.txt", "r") as f:
             content = f.read()
         assert content == test_content
+
+        logger.info(">>> TEST: File Upload (Multipart)")
+        local_multipart = "local_multipart.txt"
+        multipart_content = "This is multipart content."
+        with open(local_multipart, "w") as f:
+            f.write(multipart_content)
         
+        try:
+            # Test upload_file (multipart)
+            client.upload_file(local_multipart, "remote_multipart.txt")
+            
+            # Verify upload with cat
+            output = client.execute_command("cat remote_multipart.txt")
+            assert output.strip() == multipart_content
+        finally:
+             if os.path.exists(local_multipart):
+                 os.remove(local_multipart)
+
+        logger.info(">>> TEST: List Files")
+        files = client.list_files(".")
+        # We expect at least test.txt (from previous test) and remote_multipart.txt
+        filenames = [f['name'] for f in files]
+        logger.info(f"Files found: {filenames}")
+        assert "test.txt" in filenames
+        assert "remote_multipart.txt" in filenames
+        
+        # Verify file info structure
+        test_file = next(f for f in files if f['name'] == 'test.txt')
+        assert test_file['size'] > 0
+        assert not test_file['is_dir']
+
+        logger.info(">>> TEST: Command Failure")
+        try:
+            client.execute_command("ls /nonexistent_directory_for_test")
+            assert False, "Command should have failed"
+        except Exception as e:
+            logger.info(f"Caught expected error: {e}")
+            assert "exit" in str(e)
+            
+        logger.info(">>> TEST: Timeout")
+        # Should pass with sufficient timeout
+        client.execute_command("sleep 0.1", timeout=1.0)
+        
+        try:
+             # Should fail with short timeout
+             # Note: We rely on the SDK client to pass "0.1s" to PicoD
+             client.execute_command("sleep 2", timeout=0.1)
+             assert False, "Command should have timed out"
+        except Exception as e:
+             logger.info(f"Caught expected timeout error: {e}")
+             # PicoD returns exit code 124 for timeout
+             assert "124" in str(e)
+
         logger.info(">>> ALL TESTS PASSED SUCCESSFULLY! <<<")
         
     except Exception as e:

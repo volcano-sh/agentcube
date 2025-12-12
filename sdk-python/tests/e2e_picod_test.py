@@ -116,7 +116,7 @@ def perform_init_handshake(bootstrap_priv_key, session_pub_pem):
     
     # Create JWT
     now = int(time.time())
-    # Picod expects Base64 encoded (Raw, no padding) public key
+    # Picod expects the public key to be base64-encoded without padding characters (i.e., unpadded base64)
     session_pub_b64 = base64.b64encode(session_pub_pem).decode('utf-8').rstrip("=")
     
     claims = {

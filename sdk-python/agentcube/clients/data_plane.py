@@ -85,12 +85,10 @@ class DataPlaneClient:
         url = urljoin(self.base_url, endpoint)
         
         headers = {}
-        claims = {}
-        
         if body:
             headers["Content-Type"] = "application/json"
-        
-        token = self._create_jwt(claims)
+
+        token = self._create_jwt()
         headers["Authorization"] = f"Bearer {token}"
         
         # Merge headers
@@ -117,8 +115,8 @@ class DataPlaneClient:
             timeout: Optional timeout for the command execution.
         """
         # Convert timeout to string with 's' suffix as expected by PicoD
-        t_val = timeout or self.timeout
-        timeout_str = f"{t_val}s" if isinstance(t_val, (int, float)) else str(t_val)
+        timeout_value = timeout or self.timeout
+        timeout_str = f"{timeout_value}s" if isinstance(timeout_value, (int, float)) else str(timeout_value)
 
         cmd_list = shlex.split(command, posix=True) if isinstance(command, str) else command
 
@@ -130,7 +128,7 @@ class DataPlaneClient:
         
         # Add a buffer to the read timeout to allow PicoD to return the timeout response
         # otherwise requests might raise ReadTimeout before we get the JSON response with exit_code 124
-        read_timeout = t_val + 2.0 if isinstance(t_val, (int, float)) else t_val
+        read_timeout = timeout_value + 2.0 if isinstance(timeout_value, (int, float)) else timeout_value
         
         resp = self._request("POST", "api/execute", body=body, timeout=read_timeout)
         resp.raise_for_status()
@@ -164,9 +162,9 @@ class DataPlaneClient:
                 except SyntaxError:
                     # If still invalid, stick to original to preserve user intent/error
                     pass
-            except Exception:
+            except Exception as e:
                 # Fallback for any other ast parsing error (shouldn't break execution flow)
-                pass
+                self.logger.debug(f"AST parsing fallback error: {e}", exc_info=True)
 
             # Use file-based execution to avoid shell quoting issues and length limits
             filename = f"script_{int(time.time() * 1000)}.py"

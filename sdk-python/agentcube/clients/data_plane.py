@@ -9,10 +9,10 @@ from urllib.parse import urljoin
 
 import requests
 import jwt
-from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from agentcube.utils.log import get_logger
+from agentcube.exceptions import CommandExecutionError
 
 class DataPlaneClient:
     """Client for AgentCube Data Plane (Router -> PicoD).
@@ -45,18 +45,9 @@ class DataPlaneClient:
         
         # Construct the base invocation URL
         # Router path: /v1/namespaces/{namespace}/code-interpreters/{name}/invocations
-        # Note: 'name' here corresponds to the session_id (or the resource name used in creation).
-        # In AgentCube, the resource name usually EQUALS the session_id if dynamically created, 
-        # OR the template name if static.
-        # Based on previous logic, create_sandbox returns sessionId.
-        # The URL provided by user: .../code-interpreters/{name}/invocations
-        # If create_session returned an ID, we use that.
-        
         base_path = f"/v1/namespaces/{namespace}/code-interpreters/{cr_name}/invocations/"
         self.base_url = urljoin(router_url, base_path)
-        if not self.base_url.endswith("/"):
-             self.base_url += "/"
-
+        
         self.session = requests.Session()
         # Add the routing header
         self.session.headers.update({
@@ -88,10 +79,6 @@ class DataPlaneClient:
         claims = {}
         
         if body:
-            # Calculate body hash for JWT
-            digest = hashes.Hash(hashes.SHA256())
-            digest.update(body)
-            claims["body_sha256"] = digest.finalize().hex()
             headers["Content-Type"] = "application/json"
         
         token = self._create_jwt(claims)
@@ -141,7 +128,11 @@ class DataPlaneClient:
         
         result = resp.json()
         if result["exit_code"] != 0:
-             raise Exception(f"Command failed (exit {result['exit_code']}): {result['stderr']}")
+             raise CommandExecutionError(
+                 exit_code=result["exit_code"],
+                 stderr=result["stderr"],
+                 command=command
+             )
         
         return result["stdout"]
 
@@ -207,9 +198,9 @@ class DataPlaneClient:
             data = {'path': remote_path, 'mode': '0644'}
             
             # Note: For multipart, we typically don't hash the body for JWT in this simple client
-            # unless strictly required by server. Picod server logic usually checks body_sha256 
+            # unless strictly required by server. PicoD server logic usually checks body_sha256 
             # if body is raw, but for multipart it might skip or handle differently.
-            # Looking at previous PicodClient, it skipped body_sha256 for multipart.
+            # Looking at previous PicoDClient, it skipped body_sha256 for multipart.
             
             # We use _request but we need to bypass the body hashing logic and let requests handle multipart
             # So we construct headers manually here or modify _request.

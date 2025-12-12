@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
 
 from agentcube.clients.data_plane import DataPlaneClient
+from agentcube.exceptions import CommandExecutionError
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -102,6 +103,7 @@ def start_picod_container():
                 logger.info("PicoD is up and running!")
                 return
         except Exception:
+            # Ignore exceptions during health check; container may not be ready yet. Retry until healthy or max retries.
             pass
         logger.info("Waiting for PicoD...")
         time.sleep(1)
@@ -245,9 +247,11 @@ def main():
         try:
             client.execute_command("ls /nonexistent_directory_for_test")
             assert False, "Command should have failed"
-        except Exception as e:
+        except CommandExecutionError as e:
             logger.info(f"Caught expected error: {e}")
-            assert "exit" in str(e)
+            assert e.exit_code != 0
+        except Exception as e:
+            assert False, f"Caught unexpected exception type: {type(e)}"
             
         logger.info(">>> TEST: Timeout")
         # Should pass with sufficient timeout
@@ -262,6 +266,24 @@ def main():
              logger.info(f"Caught expected timeout error: {e}")
              # PicoD returns exit code 124 for timeout
              assert "124" in str(e)
+
+        logger.info(">>> TEST: ControlPlaneClient without WORKLOADMANAGER_URL")
+        original_workload_manager_url = os.getenv("WORKLOADMANAGER_URL")
+        if original_workload_manager_url:
+            del os.environ["WORKLOADMANAGER_URL"]
+        
+        try:
+            from agentcube.clients.control_plane import ControlPlaneClient
+            ControlPlaneClient()
+            assert False, "ControlPlaneClient should have raised ValueError without WORKLOADMANAGER_URL"
+        except ValueError as e:
+            logger.info(f"Caught expected error: {e}")
+            assert "Workload Manager URL must be provided" in str(e)
+        except Exception as e:
+            assert False, f"Caught unexpected exception type: {type(e)}"
+        finally:
+            if original_workload_manager_url:
+                os.environ["WORKLOADMANAGER_URL"] = original_workload_manager_url
 
         logger.info(">>> ALL TESTS PASSED SUCCESSFULLY! <<<")
         

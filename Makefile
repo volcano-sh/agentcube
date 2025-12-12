@@ -65,6 +65,11 @@ gen-all: generate gen-client ## Generate all code (CRDs, DeepCopy methods, and c
 gen-check: gen-all ## Check if generated code is up to date
 	git diff --exit-code
 
+.PHONY: gen-copyright
+gen-copyright:
+	@echo "Adding copyright headers..."
+	@hack/update-copyright.sh
+
 .PHONY: build run clean test deps
 
 # Build targets

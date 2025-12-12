@@ -135,6 +135,11 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to wait for caches to sync: %w", err)
 	}
 
+	// Start pod informer and wait for cache sync
+	if err := s.k8sClient.StartPodInformer(ctx); err != nil {
+		return fmt.Errorf("failed to start pod informer: %w", err)
+	}
+
 	if err := s.redisClient.Ping(ctx); err != nil {
 		return fmt.Errorf("failed to ping redis: %w", err)
 	}

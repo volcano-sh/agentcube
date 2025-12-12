@@ -1,305 +1,137 @@
-# Sandbox SDK
+# AgentCube Python SDK
 
-A Python SDK for managing Kubernetes sandboxes, providing easy-to-use interfaces for creating, controlling, and interacting with sandbox environments.
+The official Python SDK for **AgentCube**, enabling programmatic interaction with secure, isolated Code Interpreter environments.
 
-## Architecture
+This SDK creates a seamless bridge between your application and the AgentCube runtime, handling the complexity of:
+*   **Session Management**: Automatically creating and destroying isolated environments.
+*   **Security**: End-to-end encryption using client-generated RSA keys and JWTs.
+*   **Execution**: Running shell commands and code (Python, Bash) remotely.
+*   **File Management**: Uploading and downloading files to/from the sandbox.
 
-The SDK provides a clean separation between control plane and data plane operations:
+## Features
 
-- **`Sandbox`**: Base class providing lifecycle management (control plane)
-  - Creating and deleting sandboxes
-  - Checking status and retrieving information
-  - Listing sandboxes
-  
-- **`CodeInterpreterClient`**: Extends `Sandbox` with code execution capabilities (data plane)
-  - All lifecycle methods from `Sandbox`
-  - Command execution
-  - Code snippet execution
-  - File upload/download
-
-This architecture allows future extensions for different use cases (e.g., BrowserUse, ComputerUse) by creating new client classes that extend `Sandbox` with their specific data plane interfaces.
+*   **Secure by Design**: Uses asymmetric cryptography (RSA-2048) to authorize Data Plane requests. Only the client holding the private key can execute code.
+*   **Simple API**: Pythonic context managers (`with` statement) for automatic resource cleanup.
+*   **Flexible**: Supports both short-lived (ephemeral) and long-running sessions.
+*   **Kubernetes Native**: Automatically authenticates using Service Account tokens when running in-cluster.
 
 ## Installation
 
-### From Source
-
-1. Clone the repository:
+**From Source**:
 ```bash
-git clone <repository-url>
-cd sdk-python
+git clone https://github.com/volcano-sh/agentcube.git
+cd agentcube/sdk-python
+pip install .
 ```
 
-2. Install the SDK in development mode:
+**Development Mode**:
 ```bash
 pip install -e .
 ```
 
-## Quick Start
+## Usage
 
-### Using CodeInterpreterClient (Recommended for Code Execution)
+### Quick Start (Context Manager)
 
-```python
-from agentcube import CodeInterpreterClient
-
-# Create a new code interpreter sandbox
-sandbox = CodeInterpreterClient()
-
-try:
-    # Get sandbox information
-    info = sandbox.get_info()
-    print("Sandbox Info:", info)
-    
-    # Execute commands in the sandbox
-    output = sandbox.execute_command("echo 'Hello from Sandbox!'")
-    print("Command Output:", output)
-    
-    # Run Python code directly
-    code = "print('Hello from Python!'); import sys; print(sys.version)"
-    output = sandbox.run_code(language="python", code=code)
-    print("Python Output:", output)
-    
-    # Upload a file
-    script_content = "print('Hello from uploaded script!')"
-    sandbox.write_file(script_content, "/workspace/test.py")
-    
-    # Execute the uploaded file
-    output = sandbox.execute_command("python3 /workspace/test.py")
-    print("Script Output:", output)
-    
-finally:
-    # Stop and clean up the sandbox
-    sandbox.stop()
-```
-
-### Using Base Sandbox (For Lifecycle Management Only)
-
-```python
-from agentcube import Sandbox
-
-# Create a sandbox for lifecycle management only
-sandbox = Sandbox(ttl=3600, image="python:3.9")
-
-try:
-    # Check if running
-    if sandbox.is_running():
-        print("Sandbox is running")
-    
-    # Get sandbox info
-    info = sandbox.get_info()
-    print(f"Status: {info['status']}")
-    
-    # List all sandboxes
-    sandboxes = sandbox.list_sandboxes()
-    print(f"Total sandboxes: {len(sandboxes)}")
-    
-finally:
-    sandbox.stop()
-```
-
-## API Reference
-
-### `Sandbox` Class (Base Class)
-
-The base class provides lifecycle management for sandboxes.
-
-#### Initialization
-```python
-sandbox = Sandbox(
-    ttl=3600,  # Time-to-live in seconds
-    image="sandbox:latest",  # Container image to use
-    api_url="http://localhost:8080"  # API server address (optional)
-)
-```
-
-Environment variable `API_URL` can be used to set the default API server address.
-
-#### Methods
-
-**Lifecycle Management:**
-
-- `is_running() -> bool`: Check if the sandbox is in running state
-  ```python
-  if sandbox.is_running():
-      print("Sandbox is running")
-  ```
-
-- `get_info() -> Dict[str, Any]`: Retrieve detailed information about the sandbox
-  ```python
-  info = sandbox.get_info()
-  ```
-
-- `list_sandboxes() -> List[Dict[str, Any]]`: List all sandboxes from the server
-  ```python
-  sandboxes = sandbox.list_sandboxes()
-  ```
-
-- `stop() -> bool`: Stop and delete the sandbox
-  ```python
-  sandbox.stop()
-  ```
-
-- `cleanup()`: Clean up resources (called automatically by `stop()`)
-
-### `CodeInterpreterClient` Class
-
-Extends `Sandbox` with code execution and file management capabilities.
-
-#### Initialization
-```python
-code_interpreter = CodeInterpreterClient(
-    ttl=3600,  # Time-to-live in seconds
-    image="sandbox:latest",  # Container image to use
-    api_url="http://localhost:8080"  # API server address (optional)
-)
-```
-
-#### Methods
-
-**Inherits all lifecycle methods from `Sandbox`, plus:**
-
-**Command Execution:**
-
-- `execute_command(command: str) -> str`: Execute a shell command
-  ```python
-  output = code_interpreter.execute_command("ls -la")
-  ```
-
-- `execute_commands(commands: List[str]) -> Dict[str, str]`: Execute multiple commands
-  ```python
-  outputs = code_interpreter.execute_commands(["pwd", "whoami"])
-  ```
-
-- `run_code(language: str, code: str, timeout: float = 30) -> str`: Run code snippet
-  ```python
-  output = code_interpreter.run_code(
-      language="python",
-      code="print('Hello World!')"
-  )
-  ```
-
-**File Operations:**
-
-- `write_file(content: str, remote_path: str)`: Write content to a remote file
-  ```python
-  code_interpreter.write_file("file content", "/workspace/data.txt")
-  ```
-
-- `upload_file(local_path: str, remote_path: str)`: Upload a local file
-  ```python
-  code_interpreter.upload_file("/local/file.txt", "/workspace/file.txt")
-  ```
-
-- `download_file(remote_path: str, local_path: str) -> str`: Download a file
-  ```python
-  code_interpreter.download_file("/workspace/results.json", "/local/results.json")
-  ```
-
-## Examples
-
-### Advanced Example: Fibonacci Generator
+The recommended way to use the SDK is with a context manager, which ensures the session is properly closed (and the remote pod deleted) when done.
 
 ```python
 from agentcube import CodeInterpreterClient
-import json
 
-# Create code interpreter sandbox
-sandbox = CodeInterpreterClient()
-print(f"Created sandbox with ID: {sandbox.id}")
+# Initialize client (uses env vars for configuration)
+with CodeInterpreterClient() as client:
+    # 1. Run a simple shell command
+    print("User: whoami")
+    print(client.execute_command("whoami"))
 
-try:
-    # Write a Python script
-    script_content = """
-import json
-from datetime import datetime
-
-def generate_fibonacci(n):
-    fib = [0, 1]
-    for i in range(2, n):
-        fib.append(fib[i-1] + fib[i-2])
-    return fib[:n]
-
-n = 20
-fib = generate_fibonacci(n)
-with open('/workspace/output.json', 'w') as f:
-    json.dump({
-        "timestamp": datetime.now().isoformat(),
-        "count": n,
-        "numbers": fib,
-        "sum": sum(fib)
-    }, f, indent=2)
-"""
-    sandbox.write_file(script_content, "/workspace/fib.py")
-    
-    # Execute the script
-    output = sandbox.execute_command("python3 /workspace/fib.py")
-    print("Script output:", output)
-    
-    # Download and print results
-    sandbox.download_file("/workspace/output.json", "/tmp/fib_results.json")
-    with open("/tmp/fib_results.json", "r") as f:
-        results = json.load(f)
-    print(f"Generated {results['count']} Fibonacci numbers. Sum: {results['sum']}")
-
-finally:
-    # Clean up
-    sandbox.stop()
+    # 2. Execute Python code
+    code = """
+    import math
+    print(f"Pi is approximately {math.pi:.4f}")
+    """
+    output = client.run_code("python", code)
+    print(f"Result: {output}")
 ```
 
-### Running Examples
+### File Operations
 
-```bash
-# Run the main example (code interpreter)
-python examples/examples.py
-
-# Run the refactoring examples (architecture demonstration)
-python examples/refactoring_examples.py
-```
-
-## Future Extensions
-
-The refactored architecture allows for easy extension to support different use cases:
+You can easily move files in and out of the sandbox.
 
 ```python
-# Future: Browser automation
-class BrowserUseClient(Sandbox):
-    def navigate(self, url: str): ...
-    def click(self, selector: str): ...
-    def screenshot(self) -> bytes: ...
-
-# Future: Computer use
-class ComputerUseClient(Sandbox):
-    def mouse_move(self, x: int, y: int): ...
-    def keyboard_type(self, text: str): ...
-    def screen_capture(self) -> bytes: ...
-
-# Future: Agent hosting
-class AgentHostClient(Sandbox):
-    def deploy_agent(self, agent_config: dict): ...
-    def invoke_agent(self, input: dict): ...
+with CodeInterpreterClient() as sandbox:
+    # Upload a local dataset
+    sandbox.upload_file("./data.csv", "/workspace/data.csv")
+    
+    # Process it with Python
+    script = """
+    import pandas as pd
+    df = pd.read_csv('/workspace/data.csv')
+    df.describe().to_csv('/workspace/summary.csv')
+    """
+    sandbox.run_code("python", script)
+    
+    # Download the result
+    sandbox.download_file("/workspace/summary.csv", "./summary.csv")
 ```
 
-## Dependencies
+### Manual Lifecycle Management
 
-- `paramiko`: For SSH connections and file transfers
-- `requests`: For API communication with the sandbox server
+For long-running applications (like a web server managing user sessions), you can manually control the lifecycle.
+
+```python
+# Create a session with a 1-hour timeout
+client = CodeInterpreterClient(ttl=3600) 
+
+try:
+    client.execute_command("echo 'Session started'")
+    # ... perform operations ...
+finally:
+    client.stop() # CRITICAL: Ensure resources are released
+```
+
+### Customizing the Environment
+
+```python
+client = CodeInterpreterClient(
+    name="custom-template",    # Name of the CodeInterpreter CRD template to use
+    namespace="agentcube",     # Kubernetes namespace where AgentCube runs
+    ttl=7200,                  # 2 hours Time-To-Live
+    verbose=True               # Enable debug logging
+)
+```
+
+## Architecture
+
+The SDK operates on a **Split-Plane Architecture**:
+
+1.  **Control Plane (Workload Manager)**: 
+    *   The SDK authenticates via K8s Service Account Token.
+    *   It requests a new session and sends a locally generated **Public Key**.
+    *   The Workload Manager creates the Pod and injects this Public Key.
+2.  **Data Plane (Router -> PicoD)**: 
+    *   The SDK uses the corresponding **Private Key** to sign JWTs for every execution request.
+    *   The agent inside the Pod (PicoD) validates the JWT using the injected Public Key.
+    *   This ensures that **only** the SDK instance that created the session can execute code in it.
 
 ## Development
+
+### Building the Package
+
+Use the provided Makefile in the root directory to build the distribution packages (Wheel and Source):
+
+```bash
+# Build the Python SDK
+make build-python-sdk
+```
+
+Artifacts will be generated in `sdk-python/dist/`.
 
 ### Running Tests
 
 ```bash
-# Run refactoring tests
-python -m unittest tests.test_sandbox_refactoring -v
+# Install test dependencies
+pip install pytest requests PyJWT cryptography
 
-# Run client tests
-python tests/test_client.py
-python tests/test_ssh_client.py
+# Run E2E tests (requires local Docker environment for mocking)
+python3 tests/e2e_picod_test.py
 ```
-
-### Environment Variables
-
-- `API_URL`: Default API server address (defaults to `http://localhost:8080`)
-
-## License
-
-[Add your license information here]

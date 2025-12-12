@@ -1,7 +1,7 @@
-from .client import SandboxClient
-from .ssh_client import SandboxSSHClient
+from .control_plane import ControlPlaneClient
+from .data_plane import DataPlaneClient
 
 __all__ = [
-    "SandboxClient",
-    "SandboxSSHClient"
+    "ControlPlaneClient",
+    "DataPlaneClient"
 ]

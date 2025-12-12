@@ -9,10 +9,10 @@ from urllib.parse import urljoin
 
 import requests
 import jwt
-from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from agentcube.utils.log import get_logger
+from agentcube.exceptions import CommandExecutionError
 
 class DataPlaneClient:
     """Client for AgentCube Data Plane (Router -> PicoD).
@@ -21,42 +21,42 @@ class DataPlaneClient:
 
     def __init__(
         self,
-        router_url: str,
-        namespace: str,
-        cr_name: str,
         session_id: str,
         private_key: rsa.RSAPrivateKey,
+        router_url: Optional[str] = None,
+        namespace: Optional[str] = None,
+        cr_name: Optional[str] = None,
+        base_url: Optional[str] = None,
         timeout: int = 30
     ):
         """Initialize Data Plane client.
 
         Args:
-            router_url: Base URL of the Router service.
-            namespace: Kubernetes namespace.
-            cr_name: Code Interpreter resource name (used as session ID).
+            session_id: Session ID (for x-agentcube-session-id header).
             private_key: RSA Private Key for signing JWTs.
+            router_url: Base URL of the Router service (optional if base_url is provided).
+            namespace: Kubernetes namespace (optional if base_url is provided).
+            cr_name: Code Interpreter resource name (optional if base_url is provided).
+            base_url: Direct base URL for invocations (overrides router logic).
             timeout: Default request timeout.
         """
-        self.cr_name = cr_name
         self.session_id = session_id
         self.private_key = private_key
         self.timeout = timeout
         self.logger = get_logger(f"{__name__}.DataPlaneClient")
         
-        # Construct the base invocation URL
-        # Router path: /v1/namespaces/{namespace}/code-interpreters/{name}/invocations
-        # Note: 'name' here corresponds to the session_id (or the resource name used in creation).
-        # In AgentCube, the resource name usually EQUALS the session_id if dynamically created, 
-        # OR the template name if static.
-        # Based on previous logic, create_sandbox returns sessionId.
-        # The URL provided by user: .../code-interpreters/{name}/invocations
-        # If create_session returned an ID, we use that.
+        if base_url:
+            self.base_url = base_url
+            self.cr_name = cr_name # Might be None, but that's fine if base_url is used
+        elif router_url and namespace and cr_name:
+            self.cr_name = cr_name
+            # Construct the base invocation URL
+            # Router path: /v1/namespaces/{namespace}/code-interpreters/{name}/invocations
+            base_path = f"/v1/namespaces/{namespace}/code-interpreters/{cr_name}/invocations/"
+            self.base_url = urljoin(router_url, base_path)
+        else:
+            raise ValueError("Either 'base_url' or all of 'router_url', 'namespace', 'cr_name' must be provided.")
         
-        base_path = f"/v1/namespaces/{namespace}/code-interpreters/{cr_name}/invocations/"
-        self.base_url = urljoin(router_url, base_path)
-        if not self.base_url.endswith("/"):
-             self.base_url += "/"
-
         self.session = requests.Session()
         # Add the routing header
         self.session.headers.update({
@@ -85,16 +85,10 @@ class DataPlaneClient:
         url = urljoin(self.base_url, endpoint)
         
         headers = {}
-        claims = {}
-        
         if body:
-            # Calculate body hash for JWT
-            digest = hashes.Hash(hashes.SHA256())
-            digest.update(body)
-            claims["body_sha256"] = digest.finalize().hex()
             headers["Content-Type"] = "application/json"
-        
-        token = self._create_jwt(claims)
+
+        token = self._create_jwt()
         headers["Authorization"] = f"Bearer {token}"
         
         # Merge headers
@@ -121,8 +115,8 @@ class DataPlaneClient:
             timeout: Optional timeout for the command execution.
         """
         # Convert timeout to string with 's' suffix as expected by PicoD
-        t_val = timeout or self.timeout
-        timeout_str = f"{t_val}s" if isinstance(t_val, (int, float)) else str(t_val)
+        timeout_value = timeout or self.timeout
+        timeout_str = f"{timeout_value}s" if isinstance(timeout_value, (int, float)) else str(timeout_value)
 
         cmd_list = shlex.split(command, posix=True) if isinstance(command, str) else command
 
@@ -134,14 +128,18 @@ class DataPlaneClient:
         
         # Add a buffer to the read timeout to allow PicoD to return the timeout response
         # otherwise requests might raise ReadTimeout before we get the JSON response with exit_code 124
-        read_timeout = t_val + 2.0 if isinstance(t_val, (int, float)) else t_val
+        read_timeout = timeout_value + 2.0 if isinstance(timeout_value, (int, float)) else timeout_value
         
         resp = self._request("POST", "api/execute", body=body, timeout=read_timeout)
         resp.raise_for_status()
         
         result = resp.json()
         if result["exit_code"] != 0:
-             raise Exception(f"Command failed (exit {result['exit_code']}): {result['stderr']}")
+             raise CommandExecutionError(
+                 exit_code=result["exit_code"],
+                 stderr=result["stderr"],
+                 command=command
+             )
         
         return result["stdout"]
 
@@ -164,9 +162,9 @@ class DataPlaneClient:
                 except SyntaxError:
                     # If still invalid, stick to original to preserve user intent/error
                     pass
-            except Exception:
+            except Exception as e:
                 # Fallback for any other ast parsing error (shouldn't break execution flow)
-                pass
+                self.logger.debug(f"AST parsing fallback error: {e}", exc_info=True)
 
             # Use file-based execution to avoid shell quoting issues and length limits
             filename = f"script_{int(time.time() * 1000)}.py"
@@ -207,9 +205,9 @@ class DataPlaneClient:
             data = {'path': remote_path, 'mode': '0644'}
             
             # Note: For multipart, we typically don't hash the body for JWT in this simple client
-            # unless strictly required by server. Picod server logic usually checks body_sha256 
+            # unless strictly required by server. PicoD server logic usually checks body_sha256 
             # if body is raw, but for multipart it might skip or handle differently.
-            # Looking at previous PicodClient, it skipped body_sha256 for multipart.
+            # Looking at previous PicoDClient, it skipped body_sha256 for multipart.
             
             # We use _request but we need to bypass the body hashing logic and let requests handle multipart
             # So we construct headers manually here or modify _request.

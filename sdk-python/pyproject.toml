@@ -1,12 +1,8 @@
 [project]
 name = "agentcube-sdk"
-version = "0.0.7"
+version = "0.1.0"
 description = "Python SDK for AgentCube Code Interpreter"
 readme = "README.md"
-
-authors = [
-    { name = "Senbo Fu", email = "senbof@gmail.com" }
-]
 
 dependencies = [
     "requests",

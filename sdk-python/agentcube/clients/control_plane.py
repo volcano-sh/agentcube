@@ -13,20 +13,25 @@ class ControlPlaneClient:
     def __init__(
         self,
         workload_manager_url: Optional[str] = None,
-        auth_token: Optional[str] = None
+        auth_token: Optional[str] = None,
+        timeout: int = 60
     ):
         """Initialize the Control Plane client.
         
         Args:
             workload_manager_url: URL of the WorkloadManager service.
             auth_token: Kubernetes Service Account Token for authentication.
+            timeout: Default request timeout in seconds.
         """
-        # Prioritize argument -> env var -> default localhost
-        self.base_url = workload_manager_url or os.getenv("WORKLOADMANAGER_URL", "http://localhost:8080")
+        # Prioritize argument -> env var
+        self.base_url = workload_manager_url or os.getenv("WORKLOAD_MANAGER_URL")
+        if not self.base_url:
+            raise ValueError("Workload Manager URL must be provided via 'workload_manager_url' argument or 'WORKLOAD_MANAGER_URL' environment variable.")
         
         # Prioritize argument -> env var -> k8s service account token file
         token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
         token = auth_token or os.getenv("API_TOKEN") or read_token_from_file(token_path)
+        self.timeout = timeout
         
         self.headers = {
             "Content-Type": "application/json",
@@ -42,6 +47,7 @@ class ControlPlaneClient:
         namespace: str = "default",
         public_key: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        ttl: int = 3600,
     ) -> str:
         """Create a new Code Interpreter session.
 
@@ -50,6 +56,7 @@ class ControlPlaneClient:
             namespace: Kubernetes namespace.
             public_key: RSA Public Key for Data Plane authentication (Base64 encoded PEM).
             metadata: Optional metadata.
+            ttl: Time to live (seconds).
 
         Returns:
             session_id (str): The ID of the created session.
@@ -57,6 +64,7 @@ class ControlPlaneClient:
         payload = {
             "name": name,
             "namespace": namespace,
+            "ttl": ttl,
             "metadata": metadata or {}
         }
         if public_key:
@@ -66,11 +74,15 @@ class ControlPlaneClient:
         self.logger.debug(f"Creating session at {url} with payload: {payload}")
         
         try:
-            response = requests.post(url, headers=self.headers, json=payload, timeout=10)
+            response = requests.post(url, headers=self.headers, json=payload, timeout=self.timeout)
             response.raise_for_status()
             
             data = response.json()
-            return data.get("sessionId")
+            if "sessionId" not in data or not data["sessionId"]:
+                self.logger.error("Response JSON missing 'sessionId' in create_session response.")
+                self.logger.debug(f"Full response data: {data}")
+                raise ValueError("Failed to create session: 'sessionId' missing from response")
+            return data["sessionId"]
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Failed to create session: {e}")
             if e.response is not None:
@@ -90,7 +102,7 @@ class ControlPlaneClient:
         self.logger.debug(f"Deleting session {session_id} at {url}")
         
         try:
-            response = requests.delete(url, headers=self.headers, timeout=10)
+            response = requests.delete(url, headers=self.headers, timeout=self.timeout)
             if response.status_code == 404:
                 return True # Already gone
             response.raise_for_status()

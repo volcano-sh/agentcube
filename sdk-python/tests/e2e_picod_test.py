@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
 
 from agentcube.clients.data_plane import DataPlaneClient
+from agentcube.exceptions import CommandExecutionError
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -29,23 +30,15 @@ class DirectDataPlaneClient(DataPlaneClient):
     bypassing the Router URL construction logic.
     """
     def __init__(self, picod_url, session_id, private_key, timeout=30):
-        # We skip super().__init__ because it enforces Router URL logic.
-        # Instead we replicate the necessary parts.
-        
-        self.session_id = session_id
-        self.private_key = private_key
-        self.timeout = timeout
-        self.logger = logging.getLogger(f"{__name__}.DirectDataPlaneClient")
-        
         # Point directly to PicoD root (e.g., http://localhost:8080/)
-        self.base_url = picod_url if picod_url.endswith("/") else picod_url + "/"
+        base_url = picod_url if picod_url.endswith("/") else picod_url + "/"
         
-        self.session = requests.Session()
-        # PicoD doesn't strictly require x-agentcube-session-id if bypassing Router,
-        # but it doesn't hurt.
-        self.session.headers.update({
-            "x-agentcube-session-id": self.session_id
-        })
+        super().__init__(
+            session_id=session_id,
+            private_key=private_key,
+            base_url=base_url,
+            timeout=timeout
+        )
 
 # --- Helper Functions ---
 
@@ -101,8 +94,9 @@ def start_picod_container():
             if resp.status_code == 200:
                 logger.info("PicoD is up and running!")
                 return
-        except Exception:
-            pass
+        except (requests.ConnectionError, requests.Timeout) as e:
+            # Ignore connection errors during health check; container may not be ready yet. Retry until healthy or max retries.
+            logger.debug(f"Health check attempt {i+1} failed: {e}")
         logger.info("Waiting for PicoD...")
         time.sleep(1)
         
@@ -122,7 +116,7 @@ def perform_init_handshake(bootstrap_priv_key, session_pub_pem):
     
     # Create JWT
     now = int(time.time())
-    # Picod expects Base64 encoded (Raw, no padding) public key
+    # Picod expects the public key to be base64-encoded without padding characters (i.e., unpadded base64)
     session_pub_b64 = base64.b64encode(session_pub_pem).decode('utf-8').rstrip("=")
     
     claims = {
@@ -245,9 +239,11 @@ def main():
         try:
             client.execute_command("ls /nonexistent_directory_for_test")
             assert False, "Command should have failed"
-        except Exception as e:
+        except CommandExecutionError as e:
             logger.info(f"Caught expected error: {e}")
-            assert "exit" in str(e)
+            assert e.exit_code != 0
+        except Exception as e:
+            assert False, f"Caught unexpected exception type: {type(e)}"
             
         logger.info(">>> TEST: Timeout")
         # Should pass with sufficient timeout
@@ -262,6 +258,27 @@ def main():
              logger.info(f"Caught expected timeout error: {e}")
              # PicoD returns exit code 124 for timeout
              assert "124" in str(e)
+
+        logger.info(">>> TEST: ControlPlaneClient without WORKLOAD_MANAGER_URL")
+        original_workload_manager_url = os.getenv("WORKLOAD_MANAGER_URL")
+        if original_workload_manager_url:
+            del os.environ["WORKLOAD_MANAGER_URL"]
+        
+        try:
+            from agentcube.clients.control_plane import ControlPlaneClient
+            ControlPlaneClient()
+            assert False, "ControlPlaneClient should have raised ValueError without WORKLOAD_MANAGER_URL"
+        except ValueError as e:
+            logger.info(f"Caught expected error: {e}")
+            assert "Workload Manager URL must be provided" in str(e)
+        except Exception as e:
+            assert False, f"Caught unexpected exception type: {type(e)}"
+        finally:
+            if original_workload_manager_url:
+                os.environ["WORKLOAD_MANAGER_URL"] = original_workload_manager_url
+            else:
+                if "WORKLOAD_MANAGER_URL" in os.environ:
+                    del os.environ["WORKLOAD_MANAGER_URL"]
 
         logger.info(">>> ALL TESTS PASSED SUCCESSFULLY! <<<")
         

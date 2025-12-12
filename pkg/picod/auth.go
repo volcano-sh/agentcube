@@ -15,13 +15,15 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
 
 const (
-	KeyFile = "picod_public_key.pem"
+	keyFile     = "picod_public_key.pem"
+	MaxBodySize = 32 << 20 // 32 MB limit to prevent memory exhaustion
 )
 
 // AuthManager manages RSA public key authentication
@@ -47,7 +49,7 @@ type InitResponse struct {
 // NewAuthManager creates a new auth manager
 func NewAuthManager() *AuthManager {
 	return &AuthManager{
-		keyFile:     KeyFile,
+		keyFile:     keyFile,
 		initialized: false,
 	}
 }
@@ -217,7 +219,7 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return am.bootstrapKey, nil
-	})
+	}, jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithLeeway(time.Minute))
 
 	if err != nil || !token.Valid {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -257,7 +259,7 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, InitResponse{
-		Message: "Server initialized successfully. This Picod instance is now locked to your public key.",
+		Message: "Server initialized successfully. This PicoD instance is now locked to your public key.",
 		Success: true,
 	})
 }
@@ -265,14 +267,13 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 // AuthMiddleware creates authentication middleware with JWT verification
 func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		log.Printf("Request URL is %+v", c.Request.URL)
 
 		// Check if server is initialized
 		if !am.IsInitialized() {
 			c.JSON(http.StatusForbidden, gin.H{
 				"error":  "Server not initialized",
 				"code":   http.StatusForbidden,
-				"detail": fmt.Sprintf("Please initialize this Picod instance first via /init. Request URL is %+v", c.Request.URL),
+				"detail": fmt.Sprintf("Please initialize this Picod instance first via /init. Request path is %s", c.Request.URL.Path),
 			})
 			c.Abort()
 			return
@@ -314,7 +315,7 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 			am.mutex.RLock()
 			defer am.mutex.RUnlock()
 			return am.publicKey, nil
-		})
+		}, jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithLeeway(time.Minute))
 
 		if err != nil || !token.Valid {
 			c.JSON(http.StatusUnauthorized, gin.H{
@@ -336,12 +337,20 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// Enforce maximum body size to prevent memory exhaustion
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxBodySize)
+
 		// Read request body for hash verification
 		bodyBytes, err := c.GetRawData()
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
+			status := http.StatusInternalServerError
+			// check if the error is due to request body too large
+			if err.Error() == "http: request body too large" {
+				status = http.StatusRequestEntityTooLarge
+			}
+			c.JSON(status, gin.H{
 				"error":  "Failed to read request body",
-				"code":   http.StatusInternalServerError,
+				"code":   status,
 				"detail": err.Error(),
 			})
 			c.Abort()

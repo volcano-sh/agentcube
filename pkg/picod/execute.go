@@ -3,6 +3,7 @@ package picod
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,23 +13,27 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const (
+	TimeoutExitCode = 124 // Standard timeout exit code used by GNU timeout command.
+)
+
 // ExecuteRequest defines command execution request body
 type ExecuteRequest struct {
-	Command    []string          `json:"command" binding:"required"`
-	Timeout    float64           `json:"timeout"`
-	WorkingDir string            `json:"working_dir"`
-	Env        map[string]string `json:"env"`
+	Command    []string          `json:"command" binding:"required"` // The command and its arguments to execute. The first element is the executable.
+	Timeout    string            `json:"timeout"`                    // Optional: Timeout for the command execution (e.g., "30s", "500ms"). Defaults to "30s".
+	WorkingDir string            `json:"working_dir"`                // Optional: The working directory for the command.
+	Env        map[string]string `json:"env"`                        // Optional: Environment variables to set for the command.
 }
 
 // ExecuteResponse defines command execution response body
 type ExecuteResponse struct {
-	Stdout    string    `json:"stdout"`
-	Stderr    string    `json:"stderr"`
-	ExitCode  int       `json:"exit_code"`
-	Duration  float64   `json:"duration"`
-	ProcessID int       `json:"process_id"`
-	StartTime time.Time `json:"start_time"`
-	EndTime   time.Time `json:"end_time"`
+	Stdout    string    `json:"stdout"`     // Standard output of the executed command.
+	Stderr    string    `json:"stderr"`     // Standard error of the executed command.
+	ExitCode  int       `json:"exit_code"`  // The exit code of the executed command. Timeout is indicated by TimeoutExitCode (124).
+	Duration  float64   `json:"duration"`   // The duration of the command execution in seconds.
+	ProcessID int       `json:"process_id"` // The process ID of the executed command.
+	StartTime time.Time `json:"start_time"` // The start time of the command execution.
+	EndTime   time.Time `json:"end_time"`   // The end time of the command execution.
 }
 
 // ExecuteHandler handles command execution requests
@@ -52,15 +57,23 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 
 	// Set timeout
 	timeoutDuration := 30 * time.Second // Default timeout
-	if req.Timeout > 0 {
-		timeoutDuration = time.Duration(req.Timeout) * time.Second
+	if req.Timeout != "" {
+		var err error
+		timeoutDuration, err = time.ParseDuration(req.Timeout)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("Invalid timeout format: %v", err),
+				"code":  http.StatusBadRequest,
+			})
+			return
+		}
 	}
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), timeoutDuration)
 	defer cancel()
 
-	// execute command with context
+	// Execute command with context
 	// Use the first element as the command and the rest as arguments
 	cmd := exec.CommandContext(ctx, req.Command[0], req.Command[1:]...)
 
@@ -96,8 +109,8 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	endTime := time.Now()
 
 	var exitCode int
-	if ctx.Err() == context.DeadlineExceeded {
-		exitCode = 124 // Timeout exit code
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		exitCode = TimeoutExitCode
 		stderr.WriteString(fmt.Sprintf("Command timed out after %.0f seconds", timeoutDuration.Seconds()))
 	} else if err != nil {
 		if cmd.ProcessState != nil {

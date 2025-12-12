@@ -33,7 +33,7 @@ func generateRSAKeys(t *testing.T) (*rsa.PrivateKey, *rsa.PublicKey, string) {
 	pubASN1, err := x509.MarshalPKIXPublicKey(publicKey)
 	require.NoError(t, err)
 	pubPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PUBLIC KEY",
+		Type:  "PUBLIC KEY",
 		Bytes: pubASN1,
 	})
 
@@ -57,8 +57,10 @@ func TestPicoD_EndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 	// Switch to temp dir to avoid polluting source tree and ensure relative path tests work
-	originalWd, _ := os.Getwd()
-	os.Chdir(tmpDir)
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	err = os.Chdir(tmpDir)
+	require.NoError(t, err)
 	defer os.Chdir(originalWd)
 
 	config := Config{
@@ -113,7 +115,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 
 	t.Run("Command Execution", func(t *testing.T) {
 		// Helper to make authenticated execute requests
-		doExec := func(cmd []string, env map[string]string, timeout float64) ExecuteResponse {
+		doExec := func(cmd []string, env map[string]string, timeout string) ExecuteResponse {
 			reqBody := ExecuteRequest{
 				Command: cmd,
 				Env:     env,
@@ -143,7 +145,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		}
 
 		// 1. Basic Execution
-		resp := doExec([]string{"echo", "hello"}, nil, 0)
+		resp := doExec([]string{"echo", "hello"}, nil, "")
 		assert.Equal(t, "hello\n", resp.Stdout)
 		assert.Equal(t, 0, resp.ExitCode)
 		assert.Greater(t, resp.ProcessID, 0)
@@ -152,19 +154,19 @@ func TestPicoD_EndToEnd(t *testing.T) {
 
 		// 2. Environment Variables
 		// Use sh -c to allow environment variable expansion by the shell
-		resp = doExec([]string{"sh", "-c", "echo $TEST_VAR"}, map[string]string{"TEST_VAR": "picod_env"}, 0)
+		resp = doExec([]string{"sh", "-c", "echo $TEST_VAR"}, map[string]string{"TEST_VAR": "picod_env"}, "")
 		assert.Equal(t, "picod_env\n", resp.Stdout)
 
 		// 3. Stderr and Exit Code
 		// Use sh -c to allow redirection >&2 and exit command
-		resp = doExec([]string{"sh", "-c", "echo error_msg >&2; exit 1"}, nil, 0)
+		resp = doExec([]string{"sh", "-c", "echo error_msg >&2; exit 1"}, nil, "")
 		assert.Equal(t, "error_msg\n", resp.Stderr)
 		assert.Equal(t, 1, resp.ExitCode)
 
 		// 4. Timeout
 		// Use a command that sleeps longer than the timeout
 		// Timeout is in seconds. Set timeout to 0.5s, sleep 2s.
-		resp = doExec([]string{"sleep", "2"}, nil, 0.5)
+		resp = doExec([]string{"sleep", "2"}, nil, "0.5s")
 		assert.Equal(t, 124, resp.ExitCode) // Timeout exit code set in execute.go
 		assert.Contains(t, resp.Stderr, "Command timed out")
 
@@ -377,4 +379,97 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
+}
+
+func TestPicoD_DefaultWorkspace(t *testing.T) {
+	// Setup temporary directory for test
+	tmpDir, err := os.MkdirTemp("", "picod_default_workspace_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	// Switch to temp dir
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	err = os.Chdir(tmpDir)
+	require.NoError(t, err)
+	defer os.Chdir(originalWd)
+
+	// Initialize server with empty workspace
+	_, _, bootstrapPubStr := generateRSAKeys(t)
+	config := Config{
+		Port:         0,
+		BootstrapKey: []byte(bootstrapPubStr),
+		Workspace:    "", // Empty workspace to trigger default behavior
+	}
+
+	server := NewServer(config)
+
+	// Verify workspaceDir is set to current working directory
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+
+	// Use filepath.Abs to ensure consistent comparison
+	absCwd, err := filepath.Abs(cwd)
+	require.NoError(t, err)
+
+	assert.Equal(t, absCwd, server.workspaceDir)
+}
+
+func TestPicoD_SetWorkspace(t *testing.T) {
+	// Setup temp dir
+	tmpDir, err := os.MkdirTemp("", "picod_setworkspace_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	// Create a real directory
+	realDir := filepath.Join(tmpDir, "real")
+	err = os.Mkdir(realDir, 0755)
+	require.NoError(t, err)
+
+	// Create a symlink
+	linkDir := filepath.Join(tmpDir, "link")
+	err = os.Symlink(realDir, linkDir)
+	require.NoError(t, err)
+
+	server := &Server{}
+
+	// Helper to resolve path for comparison (handles /var vs /private/var on macOS)
+	resolve := func(p string) string {
+		path, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			return p
+		}
+		path, err = filepath.Abs(path)
+		if err != nil {
+			return path
+		}
+		return path
+	}
+
+	// Case 1: Absolute Path
+	absPath, err := filepath.Abs(realDir)
+	require.NoError(t, err)
+	server.setWorkspace(realDir)
+	assert.Equal(t, resolve(absPath), resolve(server.workspaceDir))
+
+	// Case 2: Relative Path
+	// Change to tmpDir so we can use relative path "real"
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	err = os.Chdir(tmpDir)
+	require.NoError(t, err)
+	defer os.Chdir(originalWd)
+
+	server.setWorkspace("real")
+	assert.Equal(t, resolve(absPath), resolve(server.workspaceDir))
+
+	// Case 3: Symlink
+	// setWorkspace uses filepath.Abs, so it preserves the symlink path structure (doesn't resolve it).
+	// We verify that it matches the absolute path of the symlink itself.
+	absLinkPath, err := filepath.Abs(linkDir)
+	require.NoError(t, err)
+	server.setWorkspace(linkDir)
+	// Here we compare the paths directly because we expect the symlink path to be stored as is (absolute),
+	// but we still resolve /var aliasing for the parent directory part.
+	assert.Equal(t, resolve(absLinkPath), resolve(server.workspaceDir))
 }

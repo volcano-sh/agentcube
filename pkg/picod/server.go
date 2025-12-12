@@ -42,9 +42,8 @@ func NewServer(config Config) *Server {
 		cwd, err := os.Getwd()
 		if err != nil {
 			log.Fatalf("Failed to get current working directory: %v", err)
-		} else {
-			s.setWorkspace(cwd)
 		}
+		s.setWorkspace(cwd)
 	}
 
 	// Disable Gin debug output in production mode

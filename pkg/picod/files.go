@@ -88,14 +88,7 @@ func (s *Server) handleMultipartUpload(c *gin.Context) {
 
 	// Parse mode first
 	modeStr := c.PostForm("mode")
-	fileMode := os.FileMode(0644) // Default permissions
-	if modeStr != "" {
-		if mode, err := strconv.ParseUint(modeStr, 8, 32); err == nil && mode <= maxFileMode {
-			fileMode = os.FileMode(mode)
-		} else {
-			log.Printf("Warning: Invalid or out-of-range file mode '%s', using default 0644.", modeStr)
-		}
-	}
+	fileMode := parseFileMode(modeStr)
 
 	// Open source file
 	src, err := fileHeader.Open()
@@ -129,7 +122,7 @@ func (s *Server) handleMultipartUpload(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, FileInfo{
-		Path:     path,
+		Path:     safePath,
 		Size:     stat.Size(),
 		Mode:     stat.Mode().String(),
 		Modified: stat.ModTime(),
@@ -177,17 +170,7 @@ func (s *Server) handleJSONBase64Upload(c *gin.Context) {
 	}
 
 	// Parse and validate file permissions
-	fileMode := os.FileMode(0644) // default
-	if req.Mode != "" {
-		mode, err := strconv.ParseUint(req.Mode, 8, 32)
-		if err != nil {
-			log.Printf("Warning: Invalid file mode '%s': %v, using default 0644", req.Mode, err)
-		} else if mode > maxFileMode {
-			log.Printf("Warning: Invalid file mode '%s': exceeds 0777, using default 0644", req.Mode)
-		} else {
-			fileMode = os.FileMode(mode)
-		}
-	}
+	fileMode := parseFileMode(req.Mode)
 
 	// Write file with the specified permissions
 	err = os.WriteFile(safePath, decodedContent, fileMode)
@@ -209,7 +192,7 @@ func (s *Server) handleJSONBase64Upload(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, FileInfo{
-		Path:     req.Path,
+		Path:     safePath,
 		Size:     stat.Size(),
 		Mode:     stat.Mode().String(),
 		Modified: stat.ModTime(),
@@ -332,6 +315,7 @@ func (s *Server) ListFilesHandler(c *gin.Context) {
 	for _, entry := range entries {
 		info, err := entry.Info()
 		if err != nil {
+			log.Printf("Warning: Failed to get info for entry '%s': %v", entry.Name(), err)
 			continue // Skip files with errors
 		}
 		files = append(files, FileEntry{
@@ -346,6 +330,23 @@ func (s *Server) ListFilesHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, ListFilesResponse{
 		Files: files,
 	})
+}
+
+// parseFileMode parses file mode string
+func parseFileMode(modeStr string) os.FileMode {
+	if modeStr == "" {
+		return 0644
+	}
+	mode, err := strconv.ParseUint(modeStr, 8, 32)
+	if err != nil {
+		log.Printf("Warning: Invalid file mode '%s': %v, using default 0644", modeStr, err)
+		return 0644
+	}
+	if mode > maxFileMode {
+		log.Printf("Warning: Invalid file mode '%s': exceeds 0777, using default 0644", modeStr)
+		return 0644
+	}
+	return os.FileMode(mode)
 }
 
 // setWorkspace sets the global workspace directory
@@ -365,24 +366,58 @@ func (s *Server) sanitizePath(p string) (string, error) {
 		return "", fmt.Errorf("workspace directory not initialized")
 	}
 
-	cleanPath := filepath.Clean(p)
+	// Resolve workspace directory to handle cases where workspace itself is a symlink
+	resolvedWorkspace, err := filepath.EvalSymlinks(s.workspaceDir)
+	if err != nil {
+		// Fallback if workspace doesn't exist or error (shouldn't happen in normal operation)
+		if abs, err2 := filepath.Abs(s.workspaceDir); err2 == nil {
+			resolvedWorkspace = abs
+		} else {
+			resolvedWorkspace = filepath.Clean(s.workspaceDir)
+		}
+	}
 
+	cleanPath := filepath.Clean(p)
 	if filepath.IsAbs(cleanPath) {
 		cleanPath = strings.TrimPrefix(cleanPath, "/")
 	}
 
-	fullPath := filepath.Join(s.workspaceDir, cleanPath)
+	fullPath := filepath.Join(resolvedWorkspace, cleanPath)
 
-	absPath, err := filepath.Abs(fullPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve absolute path: %w", err)
+	// Try to resolve the full path (handles existing files/dirs)
+	resolvedPath, err := filepath.EvalSymlinks(fullPath)
+	if err == nil {
+		// Path exists, verify it's within workspace
+		if !strings.HasPrefix(resolvedPath, resolvedWorkspace+string(os.PathSeparator)) && resolvedPath != resolvedWorkspace {
+			return "", fmt.Errorf("access denied: path escapes workspace jail")
+		}
+		return resolvedPath, nil
 	}
 
-	cleanWorkspace := filepath.Clean(s.workspaceDir)
-	sep := string(os.PathSeparator)
-	if !strings.HasPrefix(absPath, cleanWorkspace+sep) && absPath != cleanWorkspace {
-		return "", fmt.Errorf("access denied: path '%s' escapes workspace jail '%s'", p, cleanWorkspace)
+	// If path doesn't exist (e.g. creating new file), verify ancestors
+	if os.IsNotExist(err) {
+		currentPath := filepath.Dir(fullPath)
+		for {
+			resolved, err := filepath.EvalSymlinks(currentPath)
+			if err == nil {
+				// Ancestor exists, verify it's within workspace
+				if !strings.HasPrefix(resolved, resolvedWorkspace+string(os.PathSeparator)) && resolved != resolvedWorkspace {
+					return "", fmt.Errorf("access denied: parent path '%s' resolves to '%s' outside workspace", currentPath, resolved)
+				}
+				// Ancestor is safe, so creating file under it is safe
+				return filepath.Abs(fullPath)
+			}
+
+			// Go up one level
+			parent := filepath.Dir(currentPath)
+			if parent == currentPath {
+				break // Reached root
+			}
+			currentPath = parent
+		}
+		// If no existing ancestor found (unlikely if workspace exists), fallback to Abs
+		return filepath.Abs(fullPath)
 	}
 
-	return absPath, nil
+	return "", fmt.Errorf("failed to resolve path: %w", err)
 }

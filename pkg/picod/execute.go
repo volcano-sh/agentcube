@@ -75,7 +75,7 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 
 	// Execute command with context
 	// Use the first element as the command and the rest as arguments
-	cmd := exec.CommandContext(ctx, req.Command[0], req.Command[1:]...)
+	cmd := exec.CommandContext(ctx, req.Command[0], req.Command[1:]...) //nolint:gosec // This is an agent designed to execute arbitrary commands
 
 	// Set working directory
 	if req.WorkingDir != "" {

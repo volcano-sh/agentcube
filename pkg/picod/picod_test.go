@@ -25,7 +25,7 @@ import (
 )
 
 // Helper to generate RSA key pair
-func generateRSAKeys(t *testing.T) (*rsa.PrivateKey, *rsa.PublicKey, string) {
+func generateRSAKeys(t *testing.T) (*rsa.PrivateKey, string) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	publicKey := &privateKey.PublicKey
@@ -37,7 +37,7 @@ func generateRSAKeys(t *testing.T) (*rsa.PrivateKey, *rsa.PublicKey, string) {
 		Bytes: pubASN1,
 	})
 
-	return privateKey, publicKey, string(pubPEM)
+	return privateKey, string(pubPEM)
 }
 
 // Helper to create signed JWT
@@ -50,8 +50,8 @@ func createToken(t *testing.T, key *rsa.PrivateKey, claims jwt.MapClaims) string
 
 func TestPicoD_EndToEnd(t *testing.T) {
 	// 1. Setup Keys
-	bootstrapPriv, _, bootstrapPubStr := generateRSAKeys(t)
-	sessionPriv, _, sessionPubStr := generateRSAKeys(t)
+	bootstrapPriv, bootstrapPubStr := generateRSAKeys(t)
+	sessionPriv, sessionPubStr := generateRSAKeys(t)
 	// 2. Setup Server Environment
 	tmpDir, err := os.MkdirTemp("", "picod_test")
 	require.NoError(t, err)
@@ -61,7 +61,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
-	defer os.Chdir(originalWd)
+	defer func() { require.NoError(t, os.Chdir(originalWd)) }()
 
 	config := Config{
 		Port:         0, // Test server handles port
@@ -140,7 +140,8 @@ func TestPicoD_EndToEnd(t *testing.T) {
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 			var execResp ExecuteResponse
-			json.NewDecoder(resp.Body).Decode(&execResp)
+			err = json.NewDecoder(resp.Body).Decode(&execResp)
+			require.NoError(t, err)
 			return execResp
 		}
 
@@ -256,8 +257,10 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		bodyBuf := &bytes.Buffer{}
 		writer := multipart.NewWriter(bodyBuf)
 		part, _ := writer.CreateFormFile("file", "multipart.txt")
-		part.Write([]byte("multipart content"))
-		writer.WriteField("path", "multipart.txt")
+		_, err = part.Write([]byte("multipart content"))
+		require.NoError(t, err)
+		err = writer.WriteField("path", "multipart.txt")
+		require.NoError(t, err)
 		writer.Close()
 
 		// Note: Multipart requests don't need body_sha256 in claims as per AuthMiddleware logic
@@ -287,7 +290,8 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 		var listResp ListFilesResponse
-		json.NewDecoder(resp.Body).Decode(&listResp)
+		err = json.NewDecoder(resp.Body).Decode(&listResp)
+		require.NoError(t, err)
 		// We expect at least test.txt and multipart.txt
 		assert.GreaterOrEqual(t, len(listResp.Files), 2)
 		found := false
@@ -392,10 +396,10 @@ func TestPicoD_DefaultWorkspace(t *testing.T) {
 	require.NoError(t, err)
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
-	defer os.Chdir(originalWd)
+	defer func() { require.NoError(t, os.Chdir(originalWd)) }()
 
 	// Initialize server with empty workspace
-	_, _, bootstrapPubStr := generateRSAKeys(t)
+	_, bootstrapPubStr := generateRSAKeys(t)
 	config := Config{
 		Port:         0,
 		BootstrapKey: []byte(bootstrapPubStr),
@@ -458,7 +462,7 @@ func TestPicoD_SetWorkspace(t *testing.T) {
 	require.NoError(t, err)
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
-	defer os.Chdir(originalWd)
+	defer func() { require.NoError(t, os.Chdir(originalWd)) }()
 
 	server.setWorkspace("real")
 	assert.Equal(t, resolve(absPath), resolve(server.workspaceDir))

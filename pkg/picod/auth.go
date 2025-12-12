@@ -154,7 +154,7 @@ func (am *AuthManager) savePublicKeyLocked(publicKeyStr string) error {
 
 	// Try to make the file immutable (Linux only)
 	if runtime.GOOS == "linux" {
-		cmd := exec.Command("chattr", "+i", am.keyFile)
+		cmd := exec.Command("chattr", "+i", am.keyFile) //nolint:gosec // keyFile is internally managed
 		if err := cmd.Run(); err != nil {
 			log.Printf("Warning: failed to make key file immutable: %v. File permissions still set to read-only.", err)
 		} else {

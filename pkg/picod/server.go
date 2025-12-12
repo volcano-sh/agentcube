@@ -62,9 +62,8 @@ func NewServer(config Config) *Server {
 
 	if err := s.authManager.LoadBootstrapKey(config.BootstrapKey); err != nil {
 		log.Fatalf("Failed to load bootstrap key: %v", err)
-	} else {
-		log.Printf("Bootstrap key loaded successfully")
 	}
+	log.Printf("Bootstrap key loaded successfully")
 
 	// Load existing public key if available
 	if err := s.authManager.LoadPublicKey(); err != nil {
@@ -95,7 +94,14 @@ func NewServer(config Config) *Server {
 func (s *Server) Run() error {
 	addr := fmt.Sprintf(":%d", s.config.Port)
 	log.Printf("PicoD server starting on %s", addr)
-	return http.ListenAndServe(addr, s.engine)
+
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           s.engine,
+		ReadHeaderTimeout: 10 * time.Second, // Prevent Slowloris attacks
+	}
+
+	return server.ListenAndServe()
 }
 
 // HealthCheckHandler handles health check requests

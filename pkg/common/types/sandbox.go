@@ -31,6 +31,7 @@ type CreateSandboxRequest struct {
 	Namespace string            `json:"namespace"`
 	Auth      Auth              `json:"auth"`
 	Metadata  map[string]string `json:"metadata"`
+	PublicKey string            `json:"publicKey,omitempty"`
 }
 
 type Auth struct {

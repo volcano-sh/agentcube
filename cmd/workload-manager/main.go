@@ -109,7 +109,7 @@ func main() {
 	// Start API server in goroutine
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("Starting agentcube-apiserver on port %s", *port)
+		log.Printf("Starting workloadmanager on port %s", *port)
 		if err := server.Start(ctx); err != nil {
 			errCh <- err
 		}

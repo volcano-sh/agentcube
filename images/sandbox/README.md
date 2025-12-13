@@ -1,6 +1,6 @@
 # Sandbox Default Image
 
-This is the default sandbox image used by agentcube-apiserver. It includes:
+This is the default sandbox image used by workloadmanager. It includes:
 
 - **Python 3.11**: Full Python environment with common packages
 - **SSH Server**: OpenSSH server for remote access
@@ -44,7 +44,7 @@ ssh -p 2222 sandbox@localhost
 
 ### In Kubernetes
 
-The image is automatically used when creating sandboxes through agentcube-apiserver:
+The image is automatically used when creating sandboxes through workloadmanager:
 
 ```bash
 curl -X POST http://localhost:8080/v1/sessions \

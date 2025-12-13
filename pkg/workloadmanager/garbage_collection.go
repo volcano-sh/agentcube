@@ -22,6 +22,13 @@ type garbageCollector struct {
 	redisClient redis.Client
 }
 
+type garbageCollectorSandbox struct {
+	Kind      string // Sandbox or SandboxClaim
+	Name      string
+	Namespace string
+	SessionID string
+}
+
 func newGarbageCollector(k8sClient *K8sClient, redisClient redis.Client, interval time.Duration) *garbageCollector {
 	return &garbageCollector{
 		k8sClient:   k8sClient,
@@ -51,37 +58,61 @@ func (gc *garbageCollector) once() {
 	inactiveTime := time.Now().Add(-DefaultSandboxIdleTimeout)
 	inactiveSandboxes, err := gc.redisClient.ListInactiveSandboxes(ctx, inactiveTime, 16)
 	if err != nil {
-		log.Printf("error listing inactive sandboxes: %v", err)
+		log.Printf("garbage collector error listing inactive sandboxes: %v", err)
 	}
 	// List sandboxes reach DDL
 	expiredSandboxes, err := gc.redisClient.ListExpiredSandboxes(ctx, time.Now(), 16)
 	if err != nil {
-		log.Printf("error listing inactive sandboxes: %v", err)
+		log.Printf("garbage collector error listing expired sandboxes: %v", err)
 	}
-	namespaces := make([]string, 0, len(inactiveSandboxes)+len(expiredSandboxes))
-	names := make([]string, 0, len(inactiveSandboxes)+len(expiredSandboxes))
-	sessionIDs := make([]string, 0, len(inactiveSandboxes)+len(expiredSandboxes))
+	gcSandboxes := make([]garbageCollectorSandbox, 0, len(inactiveSandboxes)+len(expiredSandboxes))
 	for _, inactive := range inactiveSandboxes {
-		namespaces = append(namespaces, inactive.SandboxNamespace)
-		names = append(names, inactive.SandboxName)
-		sessionIDs = append(sessionIDs, inactive.SessionID)
+		gcSandboxObj := garbageCollectorSandbox{
+			Namespace: inactive.SandboxNamespace,
+			SessionID: inactive.SessionID,
+		}
+		if inactive.SandboxClaimName != "" {
+			gcSandboxObj.Kind = "SandboxClaim"
+			gcSandboxObj.Name = inactive.SandboxClaimName
+		} else {
+			gcSandboxObj.Kind = "Sandbox"
+			gcSandboxObj.Name = inactive.SandboxName
+		}
+		gcSandboxes = append(gcSandboxes, gcSandboxObj)
 	}
 	for _, expired := range expiredSandboxes {
-		namespaces = append(namespaces, expired.SandboxNamespace)
-		names = append(names, expired.SandboxName)
-		sessionIDs = append(sessionIDs, expired.SessionID)
+		gcSandboxObj := garbageCollectorSandbox{
+			Namespace: expired.SandboxNamespace,
+			SessionID: expired.SessionID,
+		}
+		if expired.SandboxClaimName != "" {
+			gcSandboxObj.Kind = "SandboxClaim"
+			gcSandboxObj.Name = expired.SandboxClaimName
+		} else {
+			gcSandboxObj.Kind = "Sandbox"
+			gcSandboxObj.Name = expired.SandboxName
+		}
+		gcSandboxes = append(gcSandboxes, gcSandboxObj)
 	}
 
-	errs := make([]error, 0, len(names))
+	if len(gcSandboxes) > 0 {
+		log.Printf("garbage collector found %d sandboxes to be delete", len(gcSandboxes))
+	}
+
+	errs := make([]error, 0, len(gcSandboxes))
 	// delete sandboxes
-	for i := range names {
-		err = gc.deleteSandbox(ctx, namespaces[i], names[i])
+	for _, gcSandbox := range gcSandboxes {
+		if gcSandbox.Kind == "SandboxClaim" {
+			err = gc.deleteSandboxClaim(ctx, gcSandbox.Namespace, gcSandbox.Name)
+		} else {
+			err = gc.deleteSandbox(ctx, gcSandbox.Namespace, gcSandbox.Name)
+		}
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		log.Printf("sandbox %s/%s session %s deleted", namespaces[i], names[i], sessionIDs[i])
-		err = gc.redisClient.DeleteSandboxBySessionIDTx(ctx, sessionIDs[i])
+		log.Printf("garbage collector %s %s/%s session %s deleted", gcSandbox.Kind, gcSandbox.Namespace, gcSandbox.Name, gcSandbox.SessionID)
+		err = gc.redisClient.DeleteSandboxBySessionIDTx(ctx, gcSandbox.SessionID)
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -99,6 +130,17 @@ func (gc *garbageCollector) deleteSandbox(ctx context.Context, namespace, name s
 			return nil
 		}
 		return fmt.Errorf("error deleting sandbox %s/%s: %w", namespace, name, err)
+	}
+	return nil
+}
+
+func (gc *garbageCollector) deleteSandboxClaim(ctx context.Context, namespace, name string) error {
+	err := gc.k8sClient.dynamicClient.Resource(SandboxClaimGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("error deleting sandboxClaim %s/%s: %w", namespace, name, err)
 	}
 	return nil
 }

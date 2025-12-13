@@ -70,29 +70,33 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		return
 	}
 
-	// Extract user information from context
-	userToken, userNamespace, serviceAccount, serviceAccountName := extractUserInfo(c)
-
-	if userToken == "" || userNamespace == "" || serviceAccountName == "" {
-		respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Unable to extract user credentials")
-		return
-	}
-
 	// Calculate sandbox name and namespace before creating
 	sandboxName := sandbox.Name
 	namespace := sandbox.Namespace
 
+	dynamicClient := s.k8sClient.dynamicClient
+	if s.enableAuth {
+		// Extract user information from context
+		userToken, userNamespace, _, serviceAccountName := extractUserInfo(c)
+		if userToken == "" || userNamespace == "" || serviceAccountName == "" {
+			respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Unable to extract user credentials")
+			return
+		}
+
+		// Create sandbox using user's K8s client
+		userClient, err := s.k8sClient.GetOrCreateUserK8sClient(userToken, userNamespace, serviceAccountName)
+		if err != nil {
+			log.Printf("create user client failed: %v", err)
+			respondError(c, http.StatusInternalServerError, "CLIENT_CREATION_FAILED", err.Error())
+			return
+		}
+
+		dynamicClient = userClient.dynamicClient
+	}
+
 	// CRITICAL: Register watcher BEFORE creating sandbox
 	// This ensures we don't miss the Running state notification
 	resultChan := s.sandboxController.WatchSandboxOnce(c.Request.Context(), namespace, sandboxName)
-
-	// Create sandbox using user's K8s client
-	userClient, err := s.k8sClient.GetOrCreateUserK8sClient(userToken, userNamespace, serviceAccountName)
-	if err != nil {
-		log.Printf("create user client failed: %v", err)
-		respondError(c, http.StatusInternalServerError, "CLIENT_CREATION_FAILED", err.Error())
-		return
-	}
 
 	// Store placeholder before creating, make sandbox/sandboxClaim GarbageCollection possible
 	sandboxRedisPlaceHolder := buildSandboxRedisCachePlaceHolder(sandbox, externalInfo)
@@ -104,19 +108,19 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	}
 
 	if sandboxClaim != nil {
-		err = userClient.CreateSandboxClaim(c.Request.Context(), sandboxClaim)
+		err = createSandboxClaim(c.Request.Context(), dynamicClient, sandboxClaim)
 		if err != nil {
 			log.Printf("create sandbox claim %s/%s failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err)
 			respondError(c, http.StatusForbidden, "SANDBOX_CLAIM_CREATE_FAILED",
-				fmt.Sprintf("Failed to create sandbox claim (service account: %s, namespace: %s): %v", serviceAccount, userNamespace, err))
+				fmt.Sprintf("Failed to create sandbox claim: %v", err))
 			return
 		}
 	} else {
-		_, err = userClient.CreateSandbox(c.Request.Context(), sandbox)
+		_, err = createSandbox(c.Request.Context(), dynamicClient, sandbox)
 		if err != nil {
 			log.Printf("create sandbox %s/%s failed: %v", sandbox.Namespace, sandbox.Name, err)
 			respondError(c, http.StatusForbidden, "SANDBOX_CREATE_FAILED",
-				fmt.Sprintf("Failed to create sandbox (service account: %s, namespace: %s): %v", serviceAccount, userNamespace, err))
+				fmt.Sprintf("Failed to create sandbox: %v", err))
 			return
 		}
 	}
@@ -139,9 +143,9 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	sandboxRollbackFunc := func() error {
 		ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		err := userClient.DeleteSandbox(ctxTimeout, namespace, sandboxName)
+		err := deleteSandbox(ctxTimeout, dynamicClient, namespace, sandboxName)
 		if err != nil {
-			return fmt.Errorf("failed to create sandbox (service account: %s, namespace: %s): %v", serviceAccount, userNamespace, err)
+			return fmt.Errorf("failed to create sandbox: %v", err)
 		}
 		return nil
 	}
@@ -156,7 +160,11 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		}
 	}()
 
-	podIP, err := s.k8sClient.GetSandboxPodIP(c.Request.Context(), namespace, sandboxName)
+	sandboxPodName := ""
+	if podName, exists := createdSandbox.Annotations["agents.x-k8s.io/pod-name"]; exists {
+		sandboxPodName = podName
+	}
+	podIP, err := s.k8sClient.GetSandboxPodIP(c.Request.Context(), namespace, sandboxName, sandboxPodName)
 	if err != nil {
 		log.Printf("failed to get sandbox %s/%s pod IP: %v", namespace, sandboxName, err)
 		respondError(c, http.StatusInternalServerError, "SANDBOX_BUILD_FAILED", err.Error())
@@ -167,6 +175,8 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 
 	response := &types.CreateSandboxResponse{
 		SessionID:   externalInfo.SessionID,
+		SandboxID:   redisCacheInfo.SandboxID,
+		SandboxName: sandboxName,
 		EntryPoints: redisCacheInfo.EntryPoints,
 	}
 
@@ -183,8 +193,55 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		return
 	}
 
-	// TODO: Code Interpreter sandbox created, init code interpreter
-	return
+	// Code Interpreter sandbox created, init code interpreter
+	// Find the /init endpoint from entryPoints
+	var initEndpoint string
+	for _, access := range redisCacheInfo.EntryPoints {
+		if access.Path == "/init" {
+			initEndpoint = fmt.Sprintf("%s://%s", access.Protocol, access.Endpoint)
+			break
+		}
+	}
+
+	// If no /init path found, use the first entryPoint endpoint with /init appended
+	if initEndpoint == "" {
+		if len(redisCacheInfo.EntryPoints) > 0 {
+			initEndpoint = fmt.Sprintf("%s://%s",
+				redisCacheInfo.EntryPoints[0].Protocol,
+				redisCacheInfo.EntryPoints[0].Endpoint)
+		} else {
+			respondError(c, http.StatusInternalServerError, "SANDBOX_INIT_FAILED",
+				"No access endpoint found for sandbox initialization")
+			return
+		}
+	}
+
+	// Call sandbox init endpoint with JWT-signed request
+	err = s.InitCodeInterpreterSandbox(
+		c.Request.Context(),
+		initEndpoint,
+		sandbox.Labels[SessionIdLabelKey],
+		createAgentRequest.PublicKey,
+		createAgentRequest.Metadata,
+	)
+
+	if err != nil {
+		log.Printf("init sandbox %s/%s failed: %v", createdSandbox.Namespace, createdSandbox.Name, err)
+		respondError(c, http.StatusInternalServerError, "SANDBOX_INIT_FAILED",
+			fmt.Sprintf("Failed to initialize code interpreter: %v", err))
+		return
+	}
+
+	err = s.redisClient.UpdateSandbox(c.Request.Context(), redisCacheInfo, RedisNoExpiredTTL)
+	if err != nil {
+		log.Printf("update redis cache failed: %v", err)
+		respondError(c, http.StatusInternalServerError, "SANDBOX_UPDATE_REDIS_FAILED", err.Error())
+		return
+	}
+	// init successful, no need to rollback
+	needRollbackSandbox = false
+	log.Printf("init sandbox %s/%s successfully, sessionID: %s", createdSandbox.Namespace, createdSandbox.Name, externalInfo.SessionID)
+	respondJSON(c, http.StatusOK, response)
 }
 
 // handleDeleteSandbox handles sandbox deletion requests
@@ -195,42 +252,51 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 	sandbox, err := s.redisClient.GetSandboxBySessionID(c.Request.Context(), sessionID)
 	if err != nil {
 		if errors.Is(err, redis.ErrNotFound) || errors.Is(err, redisv9.Nil) {
+			log.Printf("sessionID %s not found in redis", sessionID)
 			respondError(c, http.StatusNotFound, "SESSION_NOT_FOUND", "Sandbox not found")
 			return
 		}
+		log.Printf("get sandbox from redis by sessionID %s failed: %v", sessionID, err)
 		respondError(c, http.StatusInternalServerError, "FIND_SESSION_FAILED", err.Error())
 		return
 	}
 
-	// Extract user information from context
-	userToken, userNamespace, serviceAccount, serviceAccountName := extractUserInfo(c)
+	dynamicClient := s.k8sClient.dynamicClient
+	if s.enableAuth {
+		// Extract user information from context
+		userToken, userNamespace, _, serviceAccountName := extractUserInfo(c)
 
-	if userToken == "" || userNamespace == "" || serviceAccountName == "" {
-		respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Unable to extract user credentials")
-		return
-	}
+		if userToken == "" || userNamespace == "" || serviceAccountName == "" {
+			respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Unable to extract user credentials")
+			return
+		}
 
-	// Delete sandbox using user's K8s client
-	userClient, clientErr := s.k8sClient.GetOrCreateUserK8sClient(userToken, userNamespace, serviceAccountName)
-	if clientErr != nil {
-		respondError(c, http.StatusInternalServerError, "CLIENT_CREATION_FAILED", clientErr.Error())
-		return
+		// Delete sandbox using user's K8s client
+		userClient, clientErr := s.k8sClient.GetOrCreateUserK8sClient(userToken, userNamespace, serviceAccountName)
+		if clientErr != nil {
+			respondError(c, http.StatusInternalServerError, "CLIENT_CREATION_FAILED", clientErr.Error())
+			return
+		}
+
+		dynamicClient = userClient.dynamicClient
 	}
 
 	if sandbox.SandboxClaimName != "" {
 		// SandboxClaimName is not empty, we should delete SandboxClaim
-		err = userClient.DeleteSandboxClaim(c.Request.Context(), sandbox.SandboxNamespace, sandbox.SandboxClaimName)
+		err = deleteSandboxClaim(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.SandboxClaimName)
 		if err != nil {
+			log.Printf("failed to delete sandbox claim %s/%s: %v", sandbox.SandboxNamespace, sandbox.SandboxClaimName, err)
 			respondError(c, http.StatusForbidden, "SANDBOX_CLAIM_DELETE_FAILED",
-				fmt.Sprintf("Failed to delete sandbox claim (service account: %s, namespace: %s): %v", serviceAccount, sandbox.SandboxNamespace, err))
+				fmt.Sprintf("Failed to delete sandbox claim (namespace: %s): %v", sandbox.SandboxNamespace, err))
 			return
 		}
 	} else {
 		// SandboxClaimName is empty, we should delete Sandbox directly
-		err = userClient.DeleteSandbox(c.Request.Context(), sandbox.SandboxNamespace, sandbox.SandboxName)
+		err = deleteSandbox(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.SandboxName)
 		if err != nil {
+			log.Printf("failed to delete sandbox claim %s/%s: %v", sandbox.SandboxNamespace, sandbox.SandboxName, err)
 			respondError(c, http.StatusForbidden, "SANDBOX_DELETE_FAILED",
-				fmt.Sprintf("Failed to delete sandbox (service account: %s, namespace: %s): %v", serviceAccount, sandbox.SandboxNamespace, err))
+				fmt.Sprintf("Failed to delete sandbox (namespace: %s): %v", sandbox.SandboxNamespace, err))
 			return
 		}
 	}
@@ -241,6 +307,13 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "REDIS_SANDBOX_DELETE_FAILED", err.Error())
 		return
 	}
+
+	objectType := SandboxGVR.Resource
+	objectName := sandbox.SandboxName
+	if sandbox.SandboxClaimName != "" {
+		objectName = sandbox.SandboxClaimName
+	}
+	log.Printf("delete %s %s/%s successfully, sessionID: %v ", objectType, sandbox.SandboxNamespace, objectName, sandbox.SessionID)
 	respondJSON(c, http.StatusOK, map[string]string{
 		"message": "Sandbox deleted successfully",
 	})

@@ -24,6 +24,8 @@ type Server struct {
 	tokenCache        *TokenCache
 	informers         *Informers
 	redisClient       redis.Client
+	jwtManager        *JWTManager
+	enableAuth        bool
 }
 
 type Config struct {
@@ -79,6 +81,12 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 	// Create token cache (cache up to 1000 tokens, 5min TTL)
 	tokenCache := NewTokenCache(1000, 5*time.Minute)
 
+	// Create JWT manager for signing sandbox init requests
+	jwtManager, err := NewJWTManager()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create JWT manager: %w", err)
+	}
+
 	server := &Server{
 		config:            config,
 		k8sClient:         k8sClient,
@@ -87,6 +95,7 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 		tokenCache:        tokenCache,
 		informers:         NewInformers(k8sClient),
 		redisClient:       redis.NewClient(redisOptions),
+		jwtManager:        jwtManager,
 	}
 
 	// Setup routes
@@ -126,6 +135,19 @@ func (s *Server) setupRoutes() {
 
 // Start starts the API server
 func (s *Server) Start(ctx context.Context) error {
+	// Store JWT public key in Kubernetes secret
+	publicKeyPEM, err := s.jwtManager.GetPublicKeyPEM()
+	if err != nil {
+		return fmt.Errorf("failed to get JWT public key: %w", err)
+	}
+
+	if err := s.k8sClient.StoreJWTPublicKeyInSecret(ctx, publicKeyPEM); err != nil {
+		log.Printf("Warning: failed to store JWT public key in secret: %v", err)
+		// Don't fail startup if secret storage fails, just log warning
+	} else {
+		log.Println("JWT public key stored in Kubernetes secret successfully")
+	}
+
 	// Initialize store with informer before starting server
 	if err := s.InitializeStore(ctx); err != nil {
 		return fmt.Errorf("failed to initialize sandbox store: %w", err)

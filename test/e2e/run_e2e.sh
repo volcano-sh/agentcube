@@ -5,7 +5,7 @@ set -e
 E2E_CLUSTER_NAME=${E2E_CLUSTER_NAME:-agentcube-e2e}
 AGENT_SANDBOX_REPO=${AGENT_SANDBOX_REPO:-https://github.com/kubernetes-sigs/agent-sandbox.git}
 AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION:-main}
-APISERVER_IMAGE=${APISERVER_IMAGE:-agentcube-apiserver:latest}
+APISERVER_IMAGE=${APISERVER_IMAGE:-workloadmanager:latest}
 SANDBOX_IMAGE=${SANDBOX_IMAGE:-sandbox:latest}
 
 # Function to clean up
@@ -44,15 +44,15 @@ echo "4. Loading images into Kind..."
 kind load docker-image "${APISERVER_IMAGE}" --name "${E2E_CLUSTER_NAME}"
 kind load docker-image "${SANDBOX_IMAGE}" --name "${E2E_CLUSTER_NAME}"
 
-# echo "5. Deploying agentcube-apiserver..."
-# kubectl apply -f k8s/agentcube-apiserver.yaml
+# echo "5. Deploying workloadmanager..."
+# kubectl apply -f k8s/workloadmanager.yaml
 
 # echo "6. Waiting for deployment..."
-# kubectl wait --for=condition=available --timeout=300s deployment/agentcube-apiserver -n agentcube
+# kubectl wait --for=condition=available --timeout=300s deployment/workloadmanager -n agentcube
 
 # echo "7. Creating ServiceAccount and Token..."
 # kubectl create serviceaccount e2e-test -n agentcube || true
-# kubectl create clusterrolebinding e2e-test-binding --clusterrole=agentcube-apiserver --serviceaccount=agentcube:e2e-test || true
+# kubectl create clusterrolebinding e2e-test-binding --clusterrole=workloadmanager --serviceaccount=agentcube:e2e-test || true
 
 # echo "8. Running tests..."
 # # Create token
@@ -60,7 +60,7 @@ kind load docker-image "${SANDBOX_IMAGE}" --name "${E2E_CLUSTER_NAME}"
 # echo "Token created"
 
 # # Port forward in background
-# kubectl port-forward svc/agentcube-apiserver -n agentcube 8080:8080 > /dev/null 2>&1 &
+# kubectl port-forward svc/workloadmanager -n agentcube 8080:8080 > /dev/null 2>&1 &
 # PID=$!
 # echo "Port forward started with PID $PID"
 

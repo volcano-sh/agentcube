@@ -72,14 +72,6 @@ func (c *client) sessionKey(sessionID string) string {
 	return c.sessionPrefix + sessionID
 }
 
-func (c *client) sandboxKey(sandboxID string) string {
-	return c.sandboxPrefix + sandboxID
-}
-
-func (c *client) lockKey(sessionID string) string {
-	return c.lockPrefix + sessionID
-}
-
 // GetSandboxBySessionID looks up the sandbox bound to the given session ID.
 // Underlying Redis: GET session:{sessionID} -> SandboxRedis(JSON).
 func (c *client) GetSandboxBySessionID(ctx context.Context, sessionID string) (*types.SandboxRedis, error) {
@@ -232,71 +224,6 @@ func (c *client) ListInactiveSandboxes(ctx context.Context, before time.Time, li
 	}
 
 	return c.loadSandboxesBySessionIDs(ctx, ids)
-}
-
-// loadSandboxesByIDs loads sandbox objects for the given sandbox IDs.
-func (c *client) loadSandboxesByIDs(ctx context.Context, sandboxIDs []string) ([]*types.SandboxRedis, error) {
-	if len(sandboxIDs) == 0 {
-		return nil, nil
-	}
-
-	sessionIDCmds := make([]*redisv9.StringCmd, len(sandboxIDs))
-	pipe := c.rdb.Pipeline()
-	for i, id := range sandboxIDs {
-		sessionKey := c.sandboxKey(id)
-		sessionIDCmds[i] = pipe.Get(ctx, sessionKey)
-	}
-	_, _ = pipe.Exec(ctx)
-
-	type pair struct {
-		sandboxID string
-		sessionID string
-	}
-	pairs := make([]pair, 0, len(sandboxIDs))
-
-	for i, cmd := range sessionIDCmds {
-		sessionID, err := cmd.Result()
-		if errors.Is(err, redisv9.Nil) {
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("loadSandboxesByIDs: get sessionID for sandbox %s: %w", sandboxIDs[i], err)
-		}
-		pairs = append(pairs, pair{
-			sandboxID: sandboxIDs[i],
-			sessionID: sessionID,
-		})
-	}
-
-	if len(pairs) == 0 {
-		return nil, nil
-	}
-
-	sandboxCmds := make([]*redisv9.StringCmd, len(pairs))
-	pipe = c.rdb.Pipeline()
-	for i, p := range pairs {
-		sessionKey := c.sessionKey(p.sessionID)
-		sandboxCmds[i] = pipe.Get(ctx, sessionKey)
-	}
-	_, _ = pipe.Exec(ctx)
-
-	result := make([]*types.SandboxRedis, 0, len(pairs))
-	for i, cmd := range sandboxCmds {
-		data, err := cmd.Bytes()
-		if errors.Is(err, redisv9.Nil) {
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("loadSandboxesByIDs: get sandbox JSON for session %s: %w", pairs[i].sessionID, err)
-		}
-		var sandboxRedis types.SandboxRedis
-		if err := json.Unmarshal(data, &sandboxRedis); err != nil {
-			return nil, fmt.Errorf("loadSandboxesByIDs: unmarshal sandbox for session %s: %w", pairs[i].sessionID, err)
-		}
-		result = append(result, &sandboxRedis)
-	}
-
-	return result, nil
 }
 
 // loadSandboxesBySessionIDs loads sandbox objects for the given session IDs.

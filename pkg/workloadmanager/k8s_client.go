@@ -261,7 +261,7 @@ func (c *K8sClient) GetSandboxPodIP(ctx context.Context, namespace, sandboxName,
 		if err == nil && pod != nil {
 			return validateAndGetPodIP(pod)
 		}
-		log.Printf("failed to get sandbox pod %s/%s, try get pod by sandbox-name label", namespace, podName)
+		log.Printf("failed to get sandbox pod %s/%s: %v, try get pod by sandbox-name label", namespace, podName, err)
 	}
 
 	// Find pod through label selector (sandbox-name label we set)

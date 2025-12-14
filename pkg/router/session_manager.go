@@ -15,6 +15,17 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/redis"
 )
 
+var (
+	// ErrSessionNotFound indicates that the session does not exist in redis.
+	ErrSessionNotFound = errors.New("sessionmgr: session not found")
+
+	// ErrUpstreamUnavailable indicates that the workload manager is unavailable.
+	ErrUpstreamUnavailable = errors.New("sessionmgr: workload manager unavailable")
+
+	// ErrCreateSandboxFailed indicates that the workload manager returned an error.
+	ErrCreateSandboxFailed = errors.New("sessionmgr: create sandbox failed")
+)
+
 // SessionManager defines the session management behavior on top of Redis and the workload manager.
 type SessionManager interface {
 	// GetSandboxBySession returns the sandbox associated with the given sessionID.
@@ -25,25 +36,25 @@ type SessionManager interface {
 
 // manager is the default implementation of the SessionManager interface.
 type manager struct {
-	redisClient    redis.Client
-	workloadMgrURL string
-	httpClient     *http.Client
+	redisClient     redis.Client
+	workloadMgrAddr string
+	httpClient      *http.Client
 }
 
 // NewSessionManager returns a SessionManager implementation.
 // redisClient is used to query sandbox information from Redis.
-// workloadMgrURL is read from the environment variable WORKLOAD_MGR_URL.
+// workloadMgrAddr is read from the environment variable WORKLOAD_MANAGER_ADDR.
 func NewSessionManager(redisClient redis.Client) (SessionManager, error) {
-	workloadMgrURL := os.Getenv("WORKLOAD_MGR_URL")
-	if workloadMgrURL == "" {
-		return nil, fmt.Errorf("WORKLOAD_MGR_URL environment variable is not set")
+	workloadMgrAddr := os.Getenv("WORKLOAD_MANAGER_ADDR")
+	if workloadMgrAddr == "" {
+		return nil, fmt.Errorf("WORKLOAD_MANAGER_ADDR environment variable is not set")
 	}
 
 	return &manager{
-		redisClient:    redisClient,
-		workloadMgrURL: workloadMgrURL,
+		redisClient:     redisClient,
+		workloadMgrAddr: workloadMgrAddr,
 		httpClient: &http.Client{
-			Timeout: time.Minute, // No timeout for createSandbox requests
+			Timeout: time.Minute, // 1-minute for createSandbox requests
 		},
 	}, nil
 }
@@ -75,9 +86,9 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 	var endpoint string
 	switch kind {
 	case types.AgentRuntimeKind:
-		endpoint = m.workloadMgrURL + "/v1/agent-runtime"
+		endpoint = m.workloadMgrAddr + "/v1/agent-runtime"
 	case types.CodeInterpreterKind:
-		endpoint = m.workloadMgrURL + "/v1/code-interpreter"
+		endpoint = m.workloadMgrAddr + "/v1/code-interpreter"
 	default:
 		return nil, fmt.Errorf("unsupported kind: %s", kind)
 	}
@@ -140,14 +151,3 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 
 	return sandbox, nil
 }
-
-var (
-	// ErrSessionNotFound indicates that the session does not exist in redis.
-	ErrSessionNotFound = errors.New("sessionmgr: session not found")
-
-	// ErrUpstreamUnavailable indicates that the workload manager is unavailable.
-	ErrUpstreamUnavailable = errors.New("sessionmgr: workload manager unavailable")
-
-	// ErrCreateSandboxFailed indicates that the workload manager returned an error.
-	ErrCreateSandboxFailed = errors.New("sessionmgr: create sandbox failed")
-)

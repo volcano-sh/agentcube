@@ -34,17 +34,4 @@ type Config struct {
 
 	// MaxConnsPerHost sets the maximum number of connections per host
 	MaxConnsPerHost int
-
-	// Redis configuration
-	// EnableRedis enables Redis session activity tracking
-	EnableRedis bool
-
-	// RedisAddr is the Redis server address (e.g., "localhost:6379")
-	RedisAddr string
-
-	// RedisPassword is the Redis password (optional)
-	RedisPassword string
-
-	// RedisDB is the Redis database number
-	RedisDB int
 }

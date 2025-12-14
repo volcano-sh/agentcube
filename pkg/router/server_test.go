@@ -11,11 +11,11 @@ func TestNewServer(t *testing.T) {
 	// Set required environment variables for tests
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MGR_URL")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 	}()
 
 	tests := []struct {
@@ -43,7 +43,6 @@ func TestNewServer(t *testing.T) {
 				RequestTimeout:        60,
 				MaxIdleConns:          200,
 				MaxConnsPerHost:       20,
-				EnableRedis:           true,
 				Debug:                 true,
 			},
 			wantErr: false,
@@ -122,11 +121,11 @@ func TestServer_DefaultValues(t *testing.T) {
 	// Set required environment variables for tests
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MGR_URL")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 	}()
 
 	config := &Config{
@@ -161,11 +160,11 @@ func TestServer_ConcurrencyLimitMiddleware(t *testing.T) {
 	// Set required environment variables for tests
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MGR_URL")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 	}()
 
 	config := &Config{
@@ -194,11 +193,11 @@ func TestServer_SetupRoutes(t *testing.T) {
 	// Set required environment variables for tests
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MGR_URL")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 	}()
 
 	config := &Config{
@@ -223,11 +222,11 @@ func TestServer_StartContext(t *testing.T) {
 	// Set required environment variables for tests
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MGR_URL")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 	}()
 
 	config := &Config{
@@ -271,11 +270,11 @@ func TestServer_TLSConfiguration(t *testing.T) {
 	// Set required environment variables for tests
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MGR_URL")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 	}()
 
 	tests := []struct {
@@ -323,7 +322,7 @@ func TestServer_TLSConfiguration(t *testing.T) {
 				t.Fatalf("Failed to create server: %v", err)
 			}
 
-			// Test Start method with a context that will be cancelled immediately
+			// Test Start method with a context that will be canceled immediately
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel() // Cancel immediately to avoid actually starting the server
 
@@ -350,11 +349,11 @@ func TestServer_RedisIntegration(t *testing.T) {
 	// Set required environment variables for tests
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MGR_URL")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 	}()
 
 	config := &Config{

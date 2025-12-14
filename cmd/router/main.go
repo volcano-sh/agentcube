@@ -17,7 +17,7 @@ func main() {
 		enableTLS             = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
 		tlsCert               = flag.String("tls-cert", "", "Path to TLS certificate file")
 		tlsKey                = flag.String("tls-key", "", "Path to TLS key file")
-		debug                 = flag.Bool("debug", true, "Enable debug mode")
+		debug                 = flag.Bool("debug", false, "Enable debug mode")
 		maxConcurrentRequests = flag.Int("max-concurrent-requests", 1000, "Maximum number of concurrent requests")
 		requestTimeout        = flag.Int("request-timeout", 30, "Request timeout in seconds")
 		maxIdleConns          = flag.Int("max-idle-conns", 100, "Maximum number of idle connections")
@@ -57,6 +57,7 @@ func main() {
 		if err := server.Start(ctx); err != nil {
 			errCh <- err
 		}
+		close(errCh)
 	}()
 
 	// Wait for signal or error

@@ -119,7 +119,7 @@ func (s *Server) concurrencyLimitMiddleware() gin.HandlerFunc {
 			c.Next()
 		default:
 			// No slots available, return 503 Service Unavailable
-			c.JSON(http.StatusServiceUnavailable, gin.H{
+			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error": "server overloaded, please try again later",
 				"code":  "SERVER_OVERLOADED",
 			})
@@ -132,17 +132,16 @@ func (s *Server) concurrencyLimitMiddleware() gin.HandlerFunc {
 func (s *Server) setupRoutes() {
 	s.engine = gin.New()
 
-	// Add middleware
-	s.engine.Use(gin.Logger())
-	s.engine.Use(gin.Recovery())
-
 	// Health check endpoints (no authentication required, no concurrency limit)
-	s.engine.GET("/health", s.handleHealth)
 	s.engine.GET("/health/live", s.handleHealthLive)
 	s.engine.GET("/health/ready", s.handleHealthReady)
 
 	// API v1 routes with concurrency limiting
 	v1 := s.engine.Group("/v1")
+	// Add middleware
+	v1.Use(gin.Logger())
+	v1.Use(gin.Recovery())
+
 	v1.Use(s.concurrencyLimitMiddleware()) // Apply concurrency limit to API routes
 
 	// Agent invoke requests

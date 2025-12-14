@@ -10,14 +10,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/volcano-sh/agentcube/pkg/common/types"
 )
-
-// handleHealth handles health check requests
-func (s *Server) handleHealth(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"status": "healthy",
-	})
-}
 
 // handleHealthLive handles liveness probe
 func (s *Server) handleHealthLive(c *gin.Context) {
@@ -78,9 +72,9 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	if endpoint == "" {
 		if len(sandbox.EntryPoints) == 0 {
 			log.Printf("No entry points found for sandbox: %s", sandbox.SandboxID)
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "internal server error",
-				"code":  "INTERNAL_ERROR",
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "no entry points found for sandbox",
+				"code":  "Service not found",
 			})
 			return
 		}
@@ -97,7 +91,7 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	// Update session activity in Redis when receiving request
 	if sandbox.SessionID != "" && sandbox.SandboxID != "" {
 		if err := s.redisClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
-			log.Printf("Failed to update sandbox last activity for request: %v", err)
+			log.Printf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
 		}
 	}
 
@@ -105,7 +99,7 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	s.forwardToSandbox(c, endpoint, path, sandbox.SessionID)
 
 	if err := s.redisClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
-		log.Printf("Failed to update sandbox last activity for request: %v", err)
+		log.Printf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
 	}
 }
 
@@ -114,7 +108,7 @@ func (s *Server) handleAgentInvoke(c *gin.Context) {
 	namespace := c.Param("namespace")
 	name := c.Param("name")
 	path := c.Param("path")
-	s.handleInvoke(c, namespace, name, path, "AgentRuntime")
+	s.handleInvoke(c, namespace, name, path, types.AgentRuntimeKind)
 }
 
 // handleCodeInterpreterInvoke handles code interpreter invocation requests
@@ -122,7 +116,7 @@ func (s *Server) handleCodeInterpreterInvoke(c *gin.Context) {
 	namespace := c.Param("namespace")
 	name := c.Param("name")
 	path := c.Param("path")
-	s.handleInvoke(c, namespace, name, path, "CodeInterpreter")
+	s.handleInvoke(c, namespace, name, path, types.CodeInterpreterKind)
 }
 
 // forwardToSandbox forwards the request to the specified sandbox endpoint
@@ -166,25 +160,33 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 			req.Header.Set("X-Forwarded-Proto", "https")
 		}
 
+		// Set X-Forwarded-For to preserve original client IP
+		clientIP := c.ClientIP()
+		if prior, ok := req.Header["X-Forwarded-For"]; ok {
+			clientIP = strings.Join(prior, ", ") + ", " + clientIP
+		}
+		req.Header.Set("X-Forwarded-For", clientIP)
+
 		log.Printf("Forwarding request to: %s%s", targetURL.String(), path)
 	}
 
 	// Customize error handler
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+	proxy.ErrorHandler = func(_ http.ResponseWriter, _ *http.Request, err error) {
 		log.Printf("Proxy error: %v", err)
 
 		// Determine error type and return appropriate response
-		if strings.Contains(err.Error(), "connection refused") {
+		switch {
+		case strings.Contains(err.Error(), "connection refused"):
 			c.JSON(http.StatusBadGateway, gin.H{
 				"error": "sandbox unreachable",
 				"code":  "SANDBOX_UNREACHABLE",
 			})
-		} else if strings.Contains(err.Error(), "timeout") {
+		case strings.Contains(err.Error(), "timeout"):
 			c.JSON(http.StatusGatewayTimeout, gin.H{
 				"error": "sandbox timeout",
 				"code":  "SANDBOX_TIMEOUT",
 			})
-		} else {
+		default:
 			c.JSON(http.StatusBadGateway, gin.H{
 				"error": "sandbox unreachable",
 				"code":  "SANDBOX_UNREACHABLE",

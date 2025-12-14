@@ -31,47 +31,47 @@ func (f *fakeRedisClient) GetSandboxBySessionID(ctx context.Context, sessionID s
 	return f.sandbox, f.err
 }
 
-func (f *fakeRedisClient) SetSessionLockIfAbsent(ctx context.Context, sessionID string, ttl time.Duration) (bool, error) {
+func (f *fakeRedisClient) SetSessionLockIfAbsent(_ context.Context, _ string, _ time.Duration) (bool, error) {
 	return false, nil
 }
 
-func (f *fakeRedisClient) BindSessionWithSandbox(ctx context.Context, sessionID string, sandboxRedis *types.SandboxRedis, ttl time.Duration) error {
+func (f *fakeRedisClient) BindSessionWithSandbox(_ context.Context, _ string, _ *types.SandboxRedis, _ time.Duration) error {
 	return nil
 }
 
-func (f *fakeRedisClient) DeleteSessionBySandboxIDTx(ctx context.Context, sandboxID string) error {
+func (f *fakeRedisClient) DeleteSessionBySandboxIDTx(_ context.Context, _ string) error {
 	return nil
 }
 
-func (f *fakeRedisClient) DeleteSandboxBySessionIDTx(ctx context.Context, sessionID string) error {
+func (f *fakeRedisClient) DeleteSandboxBySessionIDTx(_ context.Context, _ string) error {
 	return nil
 }
 
-func (f *fakeRedisClient) UpdateSandbox(ctx context.Context, sandboxRedis *types.SandboxRedis, ttl time.Duration) error {
+func (f *fakeRedisClient) UpdateSandbox(_ context.Context, _ *types.SandboxRedis, _ time.Duration) error {
 	return nil
 }
 
-func (f *fakeRedisClient) UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error {
+func (f *fakeRedisClient) UpdateSessionLastActivity(_ context.Context, _ string, _ time.Time) error {
 	return nil
 }
 
-func (f *fakeRedisClient) StoreSandbox(ctx context.Context, sandboxRedis *types.SandboxRedis, ttl time.Duration) error {
+func (f *fakeRedisClient) StoreSandbox(_ context.Context, _ *types.SandboxRedis, _ time.Duration) error {
 	return nil
 }
 
-func (f *fakeRedisClient) Ping(ctx context.Context) error {
+func (f *fakeRedisClient) Ping(_ context.Context) error {
 	return nil
 }
 
-func (f *fakeRedisClient) ListExpiredSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxRedis, error) {
+func (f *fakeRedisClient) ListExpiredSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxRedis, error) {
 	return nil, nil
 }
 
-func (f *fakeRedisClient) ListInactiveSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxRedis, error) {
+func (f *fakeRedisClient) ListInactiveSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxRedis, error) {
 	return nil, nil
 }
 
-func (f *fakeRedisClient) UpdateSandboxLastActivity(ctx context.Context, sandboxID string, at time.Time) error {
+func (f *fakeRedisClient) UpdateSandboxLastActivity(_ context.Context, _ string, _ time.Time) error {
 	return nil
 }
 
@@ -174,15 +174,15 @@ func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer mockServer.Close()
 
 	r := &fakeRedisClient{}
 	m := &manager{
-		redisClient:    r,
-		workloadMgrURL: mockServer.URL,
-		httpClient:     &http.Client{},
+		redisClient:     r,
+		workloadMgrAddr: mockServer.URL,
+		httpClient:      &http.Client{},
 	}
 
 	sandbox, err := m.GetSandboxBySession(context.Background(), "", "default", "test-runtime", types.AgentRuntimeKind)
@@ -244,15 +244,15 @@ func TestGetSandboxBySession_CreateSandbox_CodeInterpreter_Success(t *testing.T)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer mockServer.Close()
 
 	r := &fakeRedisClient{}
 	m := &manager{
-		redisClient:    r,
-		workloadMgrURL: mockServer.URL,
-		httpClient:     &http.Client{},
+		redisClient:     r,
+		workloadMgrAddr: mockServer.URL,
+		httpClient:      &http.Client{},
 	}
 
 	sandbox, err := m.GetSandboxBySession(context.Background(), "", "default", "test-ci", types.CodeInterpreterKind)
@@ -270,9 +270,9 @@ func TestGetSandboxBySession_CreateSandbox_CodeInterpreter_Success(t *testing.T)
 func TestGetSandboxBySession_CreateSandbox_UnsupportedKind(t *testing.T) {
 	r := &fakeRedisClient{}
 	m := &manager{
-		redisClient:    r,
-		workloadMgrURL: "http://localhost:8080",
-		httpClient:     &http.Client{},
+		redisClient:     r,
+		workloadMgrAddr: "http://localhost:8080",
+		httpClient:      &http.Client{},
 	}
 
 	_, err := m.GetSandboxBySession(context.Background(), "", "default", "test", "UnsupportedKind")
@@ -286,7 +286,7 @@ func TestGetSandboxBySession_CreateSandbox_UnsupportedKind(t *testing.T) {
 
 func TestGetSandboxBySession_CreateSandbox_WorkloadManagerUnavailable(t *testing.T) {
 	// Mock workload manager server that closes connection immediately
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		// Close connection without sending response
 		hj, ok := w.(http.Hijacker)
 		if !ok {
@@ -303,9 +303,9 @@ func TestGetSandboxBySession_CreateSandbox_WorkloadManagerUnavailable(t *testing
 
 	r := &fakeRedisClient{}
 	m := &manager{
-		redisClient:    r,
-		workloadMgrURL: serverURL,
-		httpClient:     &http.Client{},
+		redisClient:     r,
+		workloadMgrAddr: serverURL,
+		httpClient:      &http.Client{},
 	}
 
 	_, err := m.GetSandboxBySession(context.Background(), "", "default", "test", types.AgentRuntimeKind)
@@ -319,17 +319,17 @@ func TestGetSandboxBySession_CreateSandbox_WorkloadManagerUnavailable(t *testing
 
 func TestGetSandboxBySession_CreateSandbox_NonOKStatus(t *testing.T) {
 	// Mock workload manager server that returns error
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal server error"))
+		_, _ = w.Write([]byte("internal server error"))
 	}))
 	defer mockServer.Close()
 
 	r := &fakeRedisClient{}
 	m := &manager{
-		redisClient:    r,
-		workloadMgrURL: mockServer.URL,
-		httpClient:     &http.Client{},
+		redisClient:     r,
+		workloadMgrAddr: mockServer.URL,
+		httpClient:      &http.Client{},
 	}
 
 	_, err := m.GetSandboxBySession(context.Background(), "", "default", "test", types.AgentRuntimeKind)
@@ -343,18 +343,18 @@ func TestGetSandboxBySession_CreateSandbox_NonOKStatus(t *testing.T) {
 
 func TestGetSandboxBySession_CreateSandbox_InvalidJSON(t *testing.T) {
 	// Mock workload manager server that returns invalid JSON
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("invalid json"))
+		_, _ = w.Write([]byte("invalid json"))
 	}))
 	defer mockServer.Close()
 
 	r := &fakeRedisClient{}
 	m := &manager{
-		redisClient:    r,
-		workloadMgrURL: mockServer.URL,
-		httpClient:     &http.Client{},
+		redisClient:     r,
+		workloadMgrAddr: mockServer.URL,
+		httpClient:      &http.Client{},
 	}
 
 	_, err := m.GetSandboxBySession(context.Background(), "", "default", "test", types.AgentRuntimeKind)
@@ -368,7 +368,7 @@ func TestGetSandboxBySession_CreateSandbox_InvalidJSON(t *testing.T) {
 
 func TestGetSandboxBySession_CreateSandbox_EmptySessionID(t *testing.T) {
 	// Mock workload manager server that returns empty sessionID
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resp := types.CreateSandboxResponse{
 			SessionID:   "", // Empty sessionID
 			SandboxID:   "sandbox-456",
@@ -379,15 +379,15 @@ func TestGetSandboxBySession_CreateSandbox_EmptySessionID(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer mockServer.Close()
 
 	r := &fakeRedisClient{}
 	m := &manager{
-		redisClient:    r,
-		workloadMgrURL: mockServer.URL,
-		httpClient:     &http.Client{},
+		redisClient:     r,
+		workloadMgrAddr: mockServer.URL,
+		httpClient:      &http.Client{},
 	}
 
 	_, err := m.GetSandboxBySession(context.Background(), "", "default", "test", types.AgentRuntimeKind)

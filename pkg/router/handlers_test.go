@@ -24,7 +24,7 @@ type mockSessionManager struct {
 	err     error
 }
 
-func (m *mockSessionManager) GetSandboxBySession(ctx context.Context, sessionID string, namespace string, name string, kind string) (*types.SandboxRedis, error) {
+func (m *mockSessionManager) GetSandboxBySession(_ context.Context, _ string, _ string, _ string, _ string) (*types.SandboxRedis, error) {
 	return m.sandbox, m.err
 }
 
@@ -32,11 +32,11 @@ func TestHandleHealth(t *testing.T) {
 	// Set required environment variables
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MGR_URL")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 	}()
 
 	config := &Config{
@@ -66,11 +66,11 @@ func TestHandleHealthLive(t *testing.T) {
 	// Set required environment variables
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MGR_URL")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 	}()
 
 	config := &Config{
@@ -100,11 +100,11 @@ func TestHandleHealthReady(t *testing.T) {
 	// Set required environment variables
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MGR_URL")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 	}()
 
 	tests := []struct {
@@ -160,11 +160,11 @@ func TestHandleInvoke_SessionManagerError(t *testing.T) {
 	// Set required environment variables
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MGR_URL")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 	}()
 
 	config := &Config{
@@ -194,11 +194,11 @@ func TestHandleInvoke_NoEntryPoints(t *testing.T) {
 	// Set required environment variables
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MGR_URL")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 	}()
 
 	config := &Config{
@@ -223,8 +223,8 @@ func TestHandleInvoke_NoEntryPoints(t *testing.T) {
 	req, _ := http.NewRequest("POST", "/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
 	server.engine.ServeHTTP(w, req)
 
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("Expected status code %d, got %d", http.StatusInternalServerError, w.Code)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status code %d, got %d", http.StatusNotFound, w.Code)
 	}
 }
 
@@ -232,17 +232,17 @@ func TestHandleAgentInvoke(t *testing.T) {
 	// Set required environment variables
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MGR_URL")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 	}()
 
 	// Create a test HTTP server to act as the sandbox
-	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"result":"success"}`))
+		_, _ = w.Write([]byte(`{"result":"success"}`))
 	}))
 	defer testServer.Close()
 
@@ -302,17 +302,17 @@ func TestHandleCodeInterpreterInvoke(t *testing.T) {
 	// Set required environment variables
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MGR_URL")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 	}()
 
 	// Create a test HTTP server to act as the sandbox
-	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"result":"success"}`))
+		_, _ = w.Write([]byte(`{"result":"success"}`))
 	}))
 	defer testServer.Close()
 
@@ -368,11 +368,11 @@ func TestForwardToSandbox_InvalidEndpoint(t *testing.T) {
 	// Set required environment variables
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MGR_URL")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 	}()
 
 	config := &Config{
@@ -413,11 +413,11 @@ func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 	// Set required environment variables
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MGR_URL", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MGR_URL")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 	}()
 
 	config := &Config{
@@ -432,7 +432,7 @@ func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 	}
 
 	// Create a slow test server
-	slowServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	slowServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(100 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -476,8 +476,8 @@ func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("Expected status code %d, got %d", http.StatusServiceUnavailable, resp.StatusCode)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("Expected status code %d, got %d", http.StatusTooManyRequests, resp.StatusCode)
 	}
 
 	// Wait for first request to complete

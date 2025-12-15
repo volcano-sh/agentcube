@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	redisv9 "github.com/redis/go-redis/v9"
 
-	"github.com/volcano-sh/agentcube/pkg/redis"
+	"github.com/volcano-sh/agentcube/pkg/store"
 )
 
 // Server is the main structure for Router apiserver
@@ -20,26 +18,9 @@ type Server struct {
 	engine         *gin.Engine
 	httpServer     *http.Server
 	sessionManager SessionManager
-	redisClient    redis.Client
+	storeClient    store.Store
 	semaphore      chan struct{}   // For limiting concurrent requests
 	httpTransport  *http.Transport // Reusable HTTP transport for connection pooling
-}
-
-// makeRedisOptions creates redis options from environment variables
-func makeRedisOptions() (*redisv9.Options, error) {
-	redisAddr := os.Getenv("REDIS_ADDR")
-	if redisAddr == "" {
-		return nil, fmt.Errorf("missing env var REDIS_ADDR")
-	}
-	redisPassword := os.Getenv("REDIS_PASSWORD")
-	if redisPassword == "" {
-		return nil, fmt.Errorf("missing env var REDIS_PASSWORD")
-	}
-	redisOptions := &redisv9.Options{
-		Addr:     redisAddr,
-		Password: redisPassword,
-	}
-	return redisOptions, nil
 }
 
 // NewServer creates a new Router API server instance
@@ -62,15 +43,8 @@ func NewServer(config *Config) (*Server, error) {
 		config.MaxConnsPerHost = 10 // Default 10 connections per host
 	}
 
-	// Initialize Redis client
-	redisOptions, err := makeRedisOptions()
-	if err != nil {
-		return nil, fmt.Errorf("make redis options failed: %w", err)
-	}
-	redisClient := redis.NewClient(redisOptions)
-
-	// Create session manager with redis client
-	sessionManager, err := NewSessionManager(redisClient)
+	// Create session manager with store client
+	sessionManager, err := NewSessionManager(store.Storage())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session manager: %w", err)
 	}
@@ -94,7 +68,7 @@ func NewServer(config *Config) (*Server, error) {
 	server := &Server{
 		config:         config,
 		sessionManager: sessionManager,
-		redisClient:    redisClient,
+		storeClient:    store.Storage(),
 		semaphore:      make(chan struct{}, config.MaxConcurrentRequests),
 		httpTransport:  httpTransport,
 	}

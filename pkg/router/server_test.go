@@ -85,9 +85,9 @@ func TestNewServer(t *testing.T) {
 					t.Error("Session manager was not created")
 				}
 
-				// Verify redis client was created
-				if server.redisClient == nil {
-					t.Error("Redis client was not created")
+				// Verify store client was created
+				if server.storeClient == nil {
+					t.Error("Store client was not created")
 				}
 
 				// Verify semaphore was created with correct capacity
@@ -365,8 +365,8 @@ func TestServer_RedisIntegration(t *testing.T) {
 		t.Fatalf("Failed to create server: %v", err)
 	}
 
-	// Verify Redis client was created
-	if server.redisClient == nil {
-		t.Error("Redis client was not created")
+	// Verify store client was created
+	if server.storeClient == nil {
+		t.Error("Store client was not created")
 	}
 }

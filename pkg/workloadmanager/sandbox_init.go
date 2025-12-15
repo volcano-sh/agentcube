@@ -16,14 +16,8 @@ type SandboxInitRequest struct {
 	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
-// SandboxInitResponse represents the response from sandbox initialization
-type SandboxInitResponse struct {
-	Status  string `json:"status"`
-	Message string `json:"message,omitempty"`
-}
-
 // InitCodeInterpreterSandbox initializes a code interpreter sandbox by calling its /init endpoint
-func (s *Server) InitCodeInterpreterSandbox(ctx context.Context, endpoint, sessionID, publicKey string, metadata map[string]string) error {
+func (s *Server) InitCodeInterpreterSandbox(ctx context.Context, endpoint, sessionID, publicKey string, metadata map[string]string, initTimeoutSeconds int) error {
 	// Generate JWT token for authentication
 	claims := map[string]interface{}{
 		"sessionId":          sessionID,
@@ -64,6 +58,9 @@ func (s *Server) InitCodeInterpreterSandbox(ctx context.Context, endpoint, sessi
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 	}
+	if initTimeoutSeconds > 0 {
+		client.Timeout = time.Duration(initTimeoutSeconds) * time.Second
+	}
 
 	// Send request
 	resp, err := client.Do(req)
@@ -81,13 +78,6 @@ func (s *Server) InitCodeInterpreterSandbox(ctx context.Context, endpoint, sessi
 	// Check HTTP status code
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("sandbox init failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Parse response
-	var initResponse SandboxInitResponse
-	if err := json.Unmarshal(body, &initResponse); err != nil {
-		// If we can't parse the response but got 200, consider it successful
-		return nil
 	}
 
 	return nil

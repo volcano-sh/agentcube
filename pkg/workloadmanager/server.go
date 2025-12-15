@@ -26,7 +26,6 @@ type Server struct {
 	informers         *Informers
 	redisClient       redis.Client
 	jwtManager        *JWTManager
-	enableAuth        bool
 }
 
 type Config struct {
@@ -40,6 +39,8 @@ type Config struct {
 	TLSCert string
 	// TLSKey is the path to the TLS private key file
 	TLSKey string
+	// EnableAuth enable auth by service account
+	EnableAuth bool
 }
 
 // makeRedisOptions make redis options by environment
@@ -115,23 +116,21 @@ func (s *Server) InitializeStore(ctx context.Context) error {
 func (s *Server) setupRoutes() {
 	s.router = gin.New()
 
-	// Apply middleware (logging first, then auth)
-	// Auth middleware excludes /health, logging middleware also excludes /health
-	s.router.Use(s.loggingMiddleware)
-	s.router.Use(s.authMiddleware)
-
 	// Health check (no authentication required)
 	s.router.GET("/health", s.handleHealth)
 
 	// API v1 routes
-	v1 := s.router.Group("/v1")
+	v1Group := s.router.Group("/v1")
+	// Apply middleware (logging first, then auth)
+	v1Group.Use(s.loggingMiddleware)
+	v1Group.Use(s.authMiddleware)
 
 	// agent runtime management endpoints
-	v1.POST("/agent-runtime", s.handleCreateSandbox)
-	v1.DELETE("/agent-runtime/sessions/:sessionId", s.handleDeleteSandbox)
+	v1Group.POST("/agent-runtime", s.handleCreateSandbox)
+	v1Group.DELETE("/agent-runtime/sessions/:sessionId", s.handleDeleteSandbox)
 	// code interpreter management endpoints
-	v1.POST("/code-interpreter", s.handleCreateSandbox)
-	v1.DELETE("/code-interpreter/sessions/:sessionId", s.handleDeleteSandbox)
+	v1Group.POST("/code-interpreter", s.handleCreateSandbox)
+	v1Group.DELETE("/code-interpreter/sessions/:sessionId", s.handleDeleteSandbox)
 }
 
 // Start starts the API server
@@ -204,12 +203,6 @@ func (s *Server) Start(ctx context.Context) error {
 
 // loggingMiddleware logs each request (except /health)
 func (s *Server) loggingMiddleware(c *gin.Context) {
-	// Skip logging for health check endpoint
-	if c.Request.URL.Path == "/health" {
-		c.Next()
-		return
-	}
-
 	start := time.Now()
 	log.Printf("%s %s %s", c.Request.Method, c.Request.RequestURI, c.ClientIP())
 	c.Next()

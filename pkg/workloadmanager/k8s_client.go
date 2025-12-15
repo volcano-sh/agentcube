@@ -51,9 +51,9 @@ type K8sClient struct {
 }
 
 type sandboxExternalInfo struct {
-	SandboxClaimName string
-	SessionID        string
-	Ports            []runtimev1alpha1.TargetPort
+	Kind      string
+	SessionID string
+	Ports     []runtimev1alpha1.TargetPort
 }
 
 // NewK8sClient creates a new Kubernetes client

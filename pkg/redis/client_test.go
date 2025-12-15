@@ -31,7 +31,7 @@ func newTestClient(t *testing.T) (*client, *miniredis.Miniredis) {
 func newTestSandbox(id string, sessionID string, expiresAt time.Time) *types.SandboxRedis {
 	return &types.SandboxRedis{
 		SandboxID:   id,
-		SandboxName: "test-sandbox-" + id,
+		Name:        "test-sandbox-" + id,
 		EntryPoints: nil,
 		SessionID:   sessionID,
 		CreatedAt:   time.Now().UTC(),
@@ -55,7 +55,7 @@ func TestClient_StoreSandbox(t *testing.T) {
 	sandboxRedis := &types.SandboxRedis{
 		SessionID:        "session-id-TestClient_StoreSandbox-01",
 		SandboxNamespace: "agent-cube",
-		SandboxName:      "fake-sandbox-01",
+		Name:             "fake-sandbox-01",
 		ExpiresAt:        time.Now(),
 	}
 	err := c.StoreSandbox(ctx, sandboxRedis, time.Hour)
@@ -72,7 +72,7 @@ func TestClient_UpdateSandbox(t *testing.T) {
 	sandboxRedis := &types.SandboxRedis{
 		SessionID:        "session-id-TestClient_StoreSandbox-02",
 		SandboxNamespace: "agent-cube",
-		SandboxName:      "fake-sandbox-01",
+		Name:             "fake-sandbox-01",
 		ExpiresAt:        time.Now(),
 	}
 	err := c.UpdateSandbox(ctx, sandboxRedis, time.Hour)

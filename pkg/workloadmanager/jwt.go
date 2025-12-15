@@ -25,6 +25,8 @@ const (
 	JWTPublicKeySecretName = "agentcube-jwt-public-key"
 	// JWTPublicKeyDataKey is the key in the secret data map
 	JWTPublicKeyDataKey = "public-key.pem"
+	// JWTPublicKeyVolumeName the name of JWT PublicKey volume
+	JWTPublicKeyVolumeName = "jwt-public-key"
 )
 
 // JWTPublicKeySecretNamespace is the namespace for the JWT public key secret
@@ -148,6 +150,7 @@ func (c *K8sClient) StoreJWTPublicKeyInSecret(ctx context.Context, publicKeyPEM 
 			if err != nil {
 				return fmt.Errorf("failed to create JWT public key secret: %w", err)
 			}
+			fmt.Printf("JWT public key secret %s/%s created", secret.Namespace, secret.Name)
 			return nil
 		}
 		return fmt.Errorf("failed to get JWT public key secret: %w", err)
@@ -163,6 +166,6 @@ func (c *K8sClient) StoreJWTPublicKeyInSecret(ctx context.Context, publicKeyPEM 
 	if err != nil {
 		return fmt.Errorf("failed to update JWT public key secret: %w", err)
 	}
-
+	fmt.Printf("JWT public key secret %s/%s updated", secret.Namespace, secret.Name)
 	return nil
 }

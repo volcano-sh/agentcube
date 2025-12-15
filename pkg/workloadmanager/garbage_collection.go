@@ -6,11 +6,11 @@ import (
 	"log"
 	"time"
 
+	"github.com/volcano-sh/agentcube/pkg/common/types"
+	"github.com/volcano-sh/agentcube/pkg/redis"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
-
-	"github.com/volcano-sh/agentcube/pkg/redis"
 )
 
 const (
@@ -21,13 +21,6 @@ type garbageCollector struct {
 	k8sClient   *K8sClient
 	interval    time.Duration
 	redisClient redis.Client
-}
-
-type garbageCollectorSandbox struct {
-	Kind      string // Sandbox or SandboxClaim
-	Name      string
-	Namespace string
-	SessionID string
 }
 
 func newGarbageCollector(k8sClient *K8sClient, redisClient redis.Client, interval time.Duration) *garbageCollector {
@@ -66,53 +59,27 @@ func (gc *garbageCollector) once() {
 	if err != nil {
 		log.Printf("garbage collector error listing expired sandboxes: %v", err)
 	}
-	gcSandboxes := make([]garbageCollectorSandbox, 0, len(inactiveSandboxes)+len(expiredSandboxes))
-	for _, inactive := range inactiveSandboxes {
-		gcSandboxObj := garbageCollectorSandbox{
-			Namespace: inactive.SandboxNamespace,
-			SessionID: inactive.SessionID,
-		}
-		if inactive.SandboxClaimName != "" {
-			gcSandboxObj.Kind = "SandboxClaim"
-			gcSandboxObj.Name = inactive.SandboxClaimName
-		} else {
-			gcSandboxObj.Kind = "Sandbox"
-			gcSandboxObj.Name = inactive.SandboxName
-		}
-		gcSandboxes = append(gcSandboxes, gcSandboxObj)
-	}
-	for _, expired := range expiredSandboxes {
-		gcSandboxObj := garbageCollectorSandbox{
-			Namespace: expired.SandboxNamespace,
-			SessionID: expired.SessionID,
-		}
-		if expired.SandboxClaimName != "" {
-			gcSandboxObj.Kind = "SandboxClaim"
-			gcSandboxObj.Name = expired.SandboxClaimName
-		} else {
-			gcSandboxObj.Kind = "Sandbox"
-			gcSandboxObj.Name = expired.SandboxName
-		}
-		gcSandboxes = append(gcSandboxes, gcSandboxObj)
-	}
+	gcSandboxes := make([]*types.SandboxRedis, 0, len(inactiveSandboxes)+len(expiredSandboxes))
+	gcSandboxes = append(gcSandboxes, inactiveSandboxes...)
+	gcSandboxes = append(gcSandboxes, expiredSandboxes...)
 
 	if len(gcSandboxes) > 0 {
-		log.Printf("garbage collector found %d sandboxes to be delete", len(gcSandboxes))
+		log.Printf("garbage collector found %d sandboxes to be deleted", len(gcSandboxes))
 	}
 
 	errs := make([]error, 0, len(gcSandboxes))
 	// delete sandboxes
 	for _, gcSandbox := range gcSandboxes {
-		if gcSandbox.Kind == "SandboxClaim" {
-			err = gc.deleteSandboxClaim(ctx, gcSandbox.Namespace, gcSandbox.Name)
+		if gcSandbox.Kind == types.SandboxClaimsKind {
+			err = gc.deleteSandboxClaim(ctx, gcSandbox.SandboxNamespace, gcSandbox.Name)
 		} else {
-			err = gc.deleteSandbox(ctx, gcSandbox.Namespace, gcSandbox.Name)
+			err = gc.deleteSandbox(ctx, gcSandbox.SandboxNamespace, gcSandbox.Name)
 		}
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		log.Printf("garbage collector %s %s/%s session %s deleted", gcSandbox.Kind, gcSandbox.Namespace, gcSandbox.Name, gcSandbox.SessionID)
+		log.Printf("garbage collector %s %s/%s session %s deleted", gcSandbox.Kind, gcSandbox.SandboxNamespace, gcSandbox.Name, gcSandbox.SessionID)
 		err = gc.redisClient.DeleteSandboxBySessionIDTx(ctx, gcSandbox.SessionID)
 		if err != nil {
 			errs = append(errs, err)

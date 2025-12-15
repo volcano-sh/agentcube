@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
+	"github.com/volcano-sh/agentcube/pkg/common/types"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -49,7 +50,7 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 	sandbox := &sandboxv1alpha1.Sandbox{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "agents.x-k8s.io/v1alpha1",
-			Kind:       "Sandbox",
+			Kind:       types.SandboxKind,
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      params.sandboxName,
@@ -87,7 +88,7 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 	sandboxClaim := &extensionsv1alpha1.SandboxClaim{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "extensions.agents.x-k8s.io/v1alpha1",
-			Kind:       "SandboxClaim",
+			Kind:       types.SandboxClaimsKind,
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      params.name,
@@ -149,6 +150,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	}
 	sandbox := buildSandboxObject(buildParams)
 	externalInfo := &sandboxExternalInfo{
+		Kind:      types.SandboxKind,
 		Ports:     agentRuntimeObj.Spec.Ports,
 		SessionID: sessionID,
 	}
@@ -180,15 +182,15 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	sessionID := uuid.New().String()
 	sandboxName := fmt.Sprintf("%s-%s", codeInterpreterName, RandString(8))
 	externalInfo := &sandboxExternalInfo{
+		Kind:      types.SandboxKind,
 		Ports:     codeInterpreterObj.Spec.Ports,
 		SessionID: sessionID,
 	}
 
 	if codeInterpreterObj.Spec.WarmPoolSize != nil && *codeInterpreterObj.Spec.WarmPoolSize > 0 {
-		sandboxClaimName := sandboxName
 		sandboxClaim := buildSandboxClaimObject(&buildSandboxClaimParams{
 			namespace:           namespace,
-			name:                sandboxClaimName,
+			name:                sandboxName,
 			sandboxTemplateName: codeInterpreterName,
 			sessionID:           sessionID,
 		})
@@ -196,9 +198,12 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: namespace,
 				Name:      sandboxName,
+				Labels: map[string]string{
+					SessionIdLabelKey: sessionID,
+				},
 			},
 		}
-		externalInfo.SandboxClaimName = sandboxClaimName
+		externalInfo.Kind = types.SandboxClaimsKind
 		return simpleSandbox, sandboxClaim, externalInfo, nil
 	}
 
@@ -208,6 +213,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 
 	podSpec := corev1.PodSpec{
 		ImagePullSecrets: codeInterpreterObj.Spec.Template.ImagePullSecrets,
+		RuntimeClassName: codeInterpreterObj.Spec.Template.RuntimeClassName,
 		Containers: []corev1.Container{
 			{
 				Name:            "code-interpreter",
@@ -217,28 +223,25 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				Command:         codeInterpreterObj.Spec.Template.Command,
 				Args:            codeInterpreterObj.Spec.Template.Args,
 				Resources:       codeInterpreterObj.Spec.Template.Resources,
+				VolumeMounts: []corev1.VolumeMount{
+					{
+						Name:      JWTPublicKeyVolumeName,
+						MountPath: "/etc/picod",
+						ReadOnly:  true,
+					},
+				},
 			},
 		},
-		RuntimeClassName: codeInterpreterObj.Spec.Template.RuntimeClassName,
-	}
-
-	// Inject bootstrap key volume and mount
-	bootstrapVolume := corev1.Volume{
-		Name: "jwt-public-key",
-		VolumeSource: corev1.VolumeSource{
-			Secret: &corev1.SecretVolumeSource{
-				SecretName: "agentcube-jwt-public-key",
+		Volumes: []corev1.Volume{
+			{
+				Name: JWTPublicKeyVolumeName,
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName: JWTPublicKeySecretName,
+					},
+				},
 			},
 		},
-	}
-	podSpec.Volumes = append(podSpec.Volumes, bootstrapVolume)
-
-	if len(podSpec.Containers) > 0 {
-		podSpec.Containers[0].VolumeMounts = append(podSpec.Containers[0].VolumeMounts, corev1.VolumeMount{
-			Name:      "jwt-public-key",
-			MountPath: "/etc/picod",
-			ReadOnly:  true,
-		})
 	}
 
 	buildParams := &buildSandboxParams{

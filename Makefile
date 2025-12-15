@@ -153,19 +153,19 @@ install: build
 	sudo cp bin/workloadmanager /usr/local/bin/
 
 # Docker image variables
-APISERVER_IMAGE ?= workloadmanager:latest
+WORKLOAD_MANAGER_IMAGE ?= workloadmanager:latest
 ROUTER_IMAGE ?= agentcube-router:latest
 IMAGE_REGISTRY ?= ""
 
 # Docker and Kubernetes targets
 docker-build:
 	@echo "Building Docker image..."
-	docker build -t $(APISERVER_IMAGE) .
+	docker build -t $(WORKLOAD_MANAGER_IMAGE) .
 
 # Multi-architecture build (supports amd64, arm64)
 docker-buildx:
 	@echo "Building multi-architecture Docker image..."
-	docker buildx build --platform linux/amd64,linux/arm64 -t $(APISERVER_IMAGE) .
+	docker buildx build --platform linux/amd64,linux/arm64 -t $(WORKLOAD_MANAGER_IMAGE) .
 
 # Multi-architecture build and push
 docker-buildx-push:
@@ -173,9 +173,9 @@ docker-buildx-push:
 		echo "Error: IMAGE_REGISTRY not set. Usage: make docker-buildx-push IMAGE_REGISTRY=your-registry.com"; \
 		exit 1; \
 	fi
-	@echo "Building and pushing multi-architecture Docker image to $(IMAGE_REGISTRY)/$(APISERVER_IMAGE)..."
+	@echo "Building and pushing multi-architecture Docker image to $(IMAGE_REGISTRY)/$(WORKLOAD_MANAGER_IMAGE)..."
 	docker buildx build --platform linux/amd64,linux/arm64 \
-		-t $(IMAGE_REGISTRY)/$(APISERVER_IMAGE) \
+		-t $(IMAGE_REGISTRY)/$(WORKLOAD_MANAGER_IMAGE) \
 		--push .
 
 docker-push: docker-build
@@ -183,9 +183,9 @@ docker-push: docker-build
 		echo "Error: IMAGE_REGISTRY not set. Usage: make docker-push IMAGE_REGISTRY=your-registry.com"; \
 		exit 1; \
 	fi
-	@echo "Tagging and pushing Docker image to $(IMAGE_REGISTRY)/$(APISERVER_IMAGE)..."
-	docker tag $(APISERVER_IMAGE) $(IMAGE_REGISTRY)/$(APISERVER_IMAGE)
-	docker push $(IMAGE_REGISTRY)/$(APISERVER_IMAGE)
+	@echo "Tagging and pushing Docker image to $(IMAGE_REGISTRY)/$(WORKLOAD_MANAGER_IMAGE)..."
+	docker tag $(WORKLOAD_MANAGER_IMAGE) $(IMAGE_REGISTRY)/$(WORKLOAD_MANAGER_IMAGE)
+	docker push $(IMAGE_REGISTRY)/$(WORKLOAD_MANAGER_IMAGE)
 
 k8s-deploy:
 	@echo "Deploying to Kubernetes..."
@@ -202,7 +202,7 @@ k8s-logs:
 # Load image to kind cluster
 kind-load:
 	@echo "Loading image to kind..."
-	kind load docker-image $(APISERVER_IMAGE)
+	kind load docker-image $(WORKLOAD_MANAGER_IMAGE)
 
 # Router Docker targets
 docker-build-router:

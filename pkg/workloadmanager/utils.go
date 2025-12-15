@@ -37,7 +37,7 @@ func RandString(n int) string {
 	letters := []byte("abcdefghijklmnopqrstuvwxyz0123456789")
 	b := make([]byte, n)
 	for i := range b {
-		b[i] = letters[rand.Int63()%int64(len(letters))]
+		b[i] = letters[rand.Intn(len(letters))]
 	}
 	return string(b)
 }

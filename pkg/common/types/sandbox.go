@@ -6,10 +6,9 @@ import (
 )
 
 type SandboxRedis struct {
+	Kind             string               `json:"kind"`
 	SandboxID        string               `json:"sandboxId"`
 	SandboxNamespace string               `json:"sandboxNamespace"`
-	SandboxName      string               `json:"sandboxName"`
-	SandboxClaimName string               `json:"sandboxClaimName"`
 	Name             string               `json:"name"`
 	EntryPoints      []SandboxEntryPoints `json:"entryPoints"`
 	SessionID        string               `json:"sessionId"`
@@ -27,12 +26,13 @@ type SandboxEntryPoints struct {
 }
 
 type CreateSandboxRequest struct {
-	Kind      string            `json:"kind"`
-	Name      string            `json:"name"`
-	Namespace string            `json:"namespace"`
-	Auth      Auth              `json:"auth"`
-	Metadata  map[string]string `json:"metadata"`
-	PublicKey string            `json:"publicKey,omitempty"`
+	Kind               string            `json:"kind"`
+	Name               string            `json:"name"`
+	Namespace          string            `json:"namespace"`
+	Auth               Auth              `json:"auth"`
+	Metadata           map[string]string `json:"metadata"`
+	PublicKey          string            `json:"publicKey,omitempty"`
+	InitTimeoutSeconds int               `json:"initTimeoutSeconds,omitempty"`
 }
 
 type Auth struct {

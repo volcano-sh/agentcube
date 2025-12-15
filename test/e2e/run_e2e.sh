@@ -5,7 +5,7 @@ set -e
 E2E_CLUSTER_NAME=${E2E_CLUSTER_NAME:-agentcube-e2e}
 AGENT_SANDBOX_REPO=${AGENT_SANDBOX_REPO:-https://github.com/kubernetes-sigs/agent-sandbox.git}
 AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION:-main}
-APISERVER_IMAGE=${APISERVER_IMAGE:-workloadmanager:latest}
+WORKLOAD_MANAGER_IMAGE=${WORKLOAD_MANAGER_IMAGE:-workloadmanager:latest}
 SANDBOX_IMAGE=${SANDBOX_IMAGE:-sandbox:latest}
 
 # Function to clean up
@@ -41,7 +41,7 @@ make docker-build
 make sandbox-build
 
 echo "4. Loading images into Kind..."
-kind load docker-image "${APISERVER_IMAGE}" --name "${E2E_CLUSTER_NAME}"
+kind load docker-image "${WORKLOAD_MANAGER_IMAGE}" --name "${E2E_CLUSTER_NAME}"
 kind load docker-image "${SANDBOX_IMAGE}" --name "${E2E_CLUSTER_NAME}"
 
 # echo "5. Deploying workloadmanager..."

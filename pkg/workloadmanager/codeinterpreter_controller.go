@@ -293,7 +293,7 @@ func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alph
 				Resources:       template.Resources,
 				VolumeMounts: []corev1.VolumeMount{
 					{
-						Name:      "jwt-public-key",
+						Name:      JWTPublicKeyVolumeName,
 						MountPath: "/etc/picod",
 						ReadOnly:  true,
 					},
@@ -303,10 +303,10 @@ func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alph
 		RuntimeClassName: template.RuntimeClassName,
 		Volumes: []corev1.Volume{
 			{
-				Name: "jwt-public-key",
+				Name: JWTPublicKeyVolumeName,
 				VolumeSource: corev1.VolumeSource{
 					Secret: &corev1.SecretVolumeSource{
-						SecretName: "agentcube-jwt-public-key",
+						SecretName: JWTPublicKeySecretName,
 					},
 				},
 			},

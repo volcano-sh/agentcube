@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -22,7 +23,7 @@ const (
 	// JWT token expiration time
 	jwtExpiration = 5 * time.Minute
 	// JWTPublicKeySecretName is the name of the secret storing JWT public key
-	JWTPublicKeySecretName = "agentcube-jwt-public-key"
+	JWTPublicKeySecretName = "agentcube-jwt-public-key" //nolint:gosec // This is a name reference, not a credential
 	// JWTPublicKeyDataKey is the key in the secret data map
 	JWTPublicKeyDataKey = "public-key.pem"
 	// JWTPublicKeyVolumeName the name of JWT PublicKey volume
@@ -90,22 +91,11 @@ func (jm *JWTManager) GetPublicKeyPEM() ([]byte, error) {
 	}
 
 	pubKeyPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PUBLIC KEY",
+		Type:  "PUBLIC KEY",
 		Bytes: pubKeyBytes,
 	})
 
 	return pubKeyPEM, nil
-}
-
-// GetPrivateKeyPEM returns the private key in PEM format (for debugging/backup purposes)
-func (jm *JWTManager) GetPrivateKeyPEM() ([]byte, error) {
-	privKeyBytes := x509.MarshalPKCS1PrivateKey(jm.privateKey)
-	privKeyPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: privKeyBytes,
-	})
-
-	return privKeyPEM, nil
 }
 
 // StoreJWTPublicKeyInSecret stores the JWT public key in a Kubernetes secret
@@ -133,7 +123,7 @@ func (c *K8sClient) StoreJWTPublicKeyInSecret(ctx context.Context, publicKeyPEM 
 	}
 
 	// Try to get existing secret
-	existingSecret, err := c.clientset.CoreV1().Secrets(JWTPublicKeySecretNamespace).Get(
+	_, err := c.clientset.CoreV1().Secrets(JWTPublicKeySecretNamespace).Get(
 		ctx,
 		JWTPublicKeySecretName,
 		metav1.GetOptions{},
@@ -148,24 +138,17 @@ func (c *K8sClient) StoreJWTPublicKeyInSecret(ctx context.Context, publicKeyPEM 
 				metav1.CreateOptions{},
 			)
 			if err != nil {
+				if apierrors.IsAlreadyExists(err) {
+					return nil
+				}
 				return fmt.Errorf("failed to create JWT public key secret: %w", err)
 			}
-			fmt.Printf("JWT public key secret %s/%s created", secret.Namespace, secret.Name)
+			log.Printf("JWT public key secret %s/%s created", secret.Namespace, secret.Name)
 			return nil
 		}
 		return fmt.Errorf("failed to get JWT public key secret: %w", err)
 	}
 
-	// Secret exists, update it
-	existingSecret.Data = secret.Data
-	_, err = c.clientset.CoreV1().Secrets(JWTPublicKeySecretNamespace).Update(
-		ctx,
-		existingSecret,
-		metav1.UpdateOptions{},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to update JWT public key secret: %w", err)
-	}
-	fmt.Printf("JWT public key secret %s/%s updated", secret.Namespace, secret.Name)
+	// Secret exists, do not update it
 	return nil
 }

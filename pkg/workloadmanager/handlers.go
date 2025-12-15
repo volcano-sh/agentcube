@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	redisv9 "github.com/redis/go-redis/v9"
+	"k8s.io/client-go/dynamic"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	"sigs.k8s.io/agent-sandbox/controllers"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
@@ -28,9 +29,27 @@ func (s *Server) handleHealth(c *gin.Context) {
 
 // handleCreateSandbox handles sandbox creation requests
 // nolint :gocyclo
+// extractUserK8sClient extracts user information from the context and creates a user-specific Kubernetes client.
+// It returns the dynamic client for the user and an error if authentication fails or client creation fails.
+func (s *Server) extractUserK8sClient(c *gin.Context) (dynamic.Interface, error) {
+	// Extract user information from context
+	userToken, userNamespace, _, serviceAccountName := extractUserInfo(c)
+	if userToken == "" || userNamespace == "" || serviceAccountName == "" {
+		return nil, errors.New("unable to extract user credentials")
+	}
+
+	// Create sandbox using user's K8s client
+	userClient, err := s.k8sClient.GetOrCreateUserK8sClient(userToken, userNamespace, serviceAccountName)
+	if err != nil {
+		log.Printf("create user client failed: %v", err)
+		return nil, fmt.Errorf("create user client failed: %w", err)
+	}
+	return userClient.dynamicClient, nil
+}
+
 func (s *Server) handleCreateSandbox(c *gin.Context) {
-	createAgentRequest := &types.CreateSandboxRequest{}
-	if err := c.ShouldBindJSON(createAgentRequest); err != nil {
+	sandboxReq := &types.CreateSandboxRequest{}
+	if err := c.ShouldBindJSON(sandboxReq); err != nil {
 		log.Printf("parse request body failed: %v", err)
 		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
 		return
@@ -39,13 +58,13 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	reqPath := c.Request.URL.Path
 	switch {
 	case strings.HasSuffix(reqPath, "/agent-runtime"):
-		createAgentRequest.Kind = types.AgentRuntimeKind
+		sandboxReq.Kind = types.AgentRuntimeKind
 	case strings.HasSuffix(reqPath, "/code-interpreter"):
-		createAgentRequest.Kind = types.CodeInterpreterKind
+		sandboxReq.Kind = types.CodeInterpreterKind
 	default:
 	}
 
-	if err := createAgentRequest.Validate(); err != nil {
+	if err := sandboxReq.Validate(); err != nil {
 		log.Printf("request body validation failed: %v", err)
 		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
@@ -55,14 +74,14 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	var sandboxClaim *extensionsv1alpha1.SandboxClaim
 	var externalInfo *sandboxExternalInfo
 	var err error
-	switch createAgentRequest.Kind {
+	switch sandboxReq.Kind {
 	case types.AgentRuntimeKind:
-		sandbox, externalInfo, err = buildSandboxByAgentRuntime(createAgentRequest.Namespace, createAgentRequest.Name, s.informers)
+		sandbox, externalInfo, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers)
 	case types.CodeInterpreterKind:
-		sandbox, sandboxClaim, externalInfo, err = buildSandboxByCodeInterpreter(createAgentRequest.Namespace, createAgentRequest.Name, s.informers)
+		sandbox, sandboxClaim, externalInfo, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers)
 	default:
-		log.Printf("invalid request kind: %v", createAgentRequest.Kind)
-		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("invalid request kind: %v", createAgentRequest.Kind))
+		log.Printf("invalid request kind: %v", sandboxReq.Kind)
+		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("invalid request kind: %v", sandboxReq.Kind))
 		return
 	}
 
@@ -78,22 +97,12 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 
 	dynamicClient := s.k8sClient.dynamicClient
 	if s.config.EnableAuth {
-		// Extract user information from context
-		userToken, userNamespace, _, serviceAccountName := extractUserInfo(c)
-		if userToken == "" || userNamespace == "" || serviceAccountName == "" {
-			respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Unable to extract user credentials")
-			return
-		}
-
-		// Create sandbox using user's K8s client
-		userClient, err := s.k8sClient.GetOrCreateUserK8sClient(userToken, userNamespace, serviceAccountName)
+		userDynamicClient, err := s.extractUserK8sClient(c)
 		if err != nil {
-			log.Printf("create user client failed: %v", err)
-			respondError(c, http.StatusInternalServerError, "CLIENT_CREATION_FAILED", err.Error())
+			respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", err.Error())
 			return
 		}
-
-		dynamicClient = userClient.dynamicClient
+		dynamicClient = userDynamicClient
 	}
 
 	// CRITICAL: Register watcher BEFORE creating sandbox
@@ -182,7 +191,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		EntryPoints: redisCacheInfo.EntryPoints,
 	}
 
-	if createAgentRequest.Kind != types.CodeInterpreterKind {
+	if sandboxReq.Kind != types.CodeInterpreterKind {
 		err = s.redisClient.UpdateSandbox(c.Request.Context(), redisCacheInfo, RedisNoExpiredTTL)
 		if err != nil {
 			log.Printf("update redis cache failed: %v", err)
@@ -196,9 +205,14 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	}
 
 	if len(redisCacheInfo.EntryPoints) == 0 {
-		respondError(c, http.StatusInternalServerError, "SANDBOX_INIT_FAILED",
-			"No access endpoint found for sandbox initialization")
-		return
+		// Fallback to default http://ip:8080
+		defaultEntryPoint := types.SandboxEntryPoints{
+			Path:     "/",
+			Protocol: "http",
+			Endpoint: fmt.Sprintf("%s:8080", podIP),
+		}
+		redisCacheInfo.EntryPoints = []types.SandboxEntryPoints{defaultEntryPoint}
+		response.EntryPoints = redisCacheInfo.EntryPoints
 	}
 
 	// Code Interpreter sandbox created, init code interpreter
@@ -221,10 +235,10 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	err = s.InitCodeInterpreterSandbox(
 		c.Request.Context(),
 		initEndpoint,
-		sandbox.Labels[SessionIdLabelKey],
-		createAgentRequest.PublicKey,
-		createAgentRequest.Metadata,
-		createAgentRequest.InitTimeoutSeconds,
+		externalInfo.SessionID,
+		sandboxReq.PublicKey,
+		sandboxReq.Metadata,
+		sandboxReq.InitTimeoutSeconds,
 	)
 
 	if err != nil {
@@ -265,22 +279,12 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 
 	dynamicClient := s.k8sClient.dynamicClient
 	if s.config.EnableAuth {
-		// Extract user information from context
-		userToken, userNamespace, _, serviceAccountName := extractUserInfo(c)
-
-		if userToken == "" || userNamespace == "" || serviceAccountName == "" {
-			respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Unable to extract user credentials")
+		userDynamicClient, err := s.extractUserK8sClient(c)
+		if err != nil {
+			respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", err.Error())
 			return
 		}
-
-		// Delete sandbox using user's K8s client
-		userClient, clientErr := s.k8sClient.GetOrCreateUserK8sClient(userToken, userNamespace, serviceAccountName)
-		if clientErr != nil {
-			respondError(c, http.StatusInternalServerError, "CLIENT_CREATION_FAILED", clientErr.Error())
-			return
-		}
-
-		dynamicClient = userClient.dynamicClient
+		dynamicClient = userDynamicClient
 	}
 
 	if sandbox.Kind == types.SandboxClaimsKind {

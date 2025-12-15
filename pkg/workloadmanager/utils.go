@@ -37,6 +37,7 @@ func RandString(n int) string {
 	letters := []byte("abcdefghijklmnopqrstuvwxyz0123456789")
 	b := make([]byte, n)
 	for i := range b {
+		//nolint:gosec // This is just for naming resources, not for security tokens
 		b[i] = letters[rand.Intn(len(letters))]
 	}
 	return string(b)

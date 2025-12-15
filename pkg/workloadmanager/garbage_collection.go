@@ -6,10 +6,11 @@ import (
 	"log"
 	"time"
 
-	"github.com/volcano-sh/agentcube/pkg/redis"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+
+	"github.com/volcano-sh/agentcube/pkg/redis"
 )
 
 const (

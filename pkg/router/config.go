@@ -1,0 +1,37 @@
+package router
+
+// LastActivityAnnotationKey is the annotation key for tracking last activity
+const LastActivityAnnotationKey = "agentcube.volcano.sh/last-activity"
+
+// Config contains configuration parameters for Router apiserver
+type Config struct {
+	// Port is the port the API server listens on
+	Port string
+
+	// SandboxEndpoints is the list of available sandbox endpoints
+	SandboxEndpoints []string
+
+	// Debug enables debug mode
+	Debug bool
+
+	// EnableTLS enables HTTPS
+	EnableTLS bool
+
+	// TLSCert is the path to the TLS certificate file
+	TLSCert string
+
+	// TLSKey is the path to the TLS private key file
+	TLSKey string
+
+	// MaxConcurrentRequests limits the number of concurrent requests (0 = unlimited)
+	MaxConcurrentRequests int
+
+	// RequestTimeout sets the timeout for individual requests
+	RequestTimeout int // seconds
+
+	// MaxIdleConns sets the maximum number of idle connections in the connection pool
+	MaxIdleConns int
+
+	// MaxConnsPerHost sets the maximum number of connections per host
+	MaxConnsPerHost int
+}

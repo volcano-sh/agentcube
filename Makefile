@@ -80,7 +80,11 @@ build-test-tunnel: ## Build test-tunnel tool
 	@echo "Building test-tunnel..."
 	go build -o bin/test-tunnel ./cmd/test-tunnel
 
-build-all: build build-agentd build-test-tunnel ## Build all binaries
+build-router: generate ## Build agentcube-router binary
+	@echo "Building agentcube-router..."
+	go build -o bin/agentcube-router ./cmd/router
+
+build-all: build build-agentd build-test-tunnel build-router ## Build all binaries
 
 # Run server (development mode)
 run:
@@ -99,11 +103,18 @@ run-local:
 		--ssh-username=sandbox \
 		--ssh-port=22
 
+# Run router (development mode)
+run-router:
+	@echo "Running agentcube-router..."
+	go run ./cmd/router/main.go \
+		--port=8080 \
+		--debug
+
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
 	rm -rf bin/
-	rm -f agentcube-apiserver agentd
+	rm -f agentcube-apiserver agentd agentcube-router
 
 # Install dependencies
 deps:
@@ -143,6 +154,7 @@ install: build
 
 # Docker image variables
 APISERVER_IMAGE ?= agentcube-apiserver:latest
+ROUTER_IMAGE ?= agentcube-router:latest
 IMAGE_REGISTRY ?= ""
 
 # Docker and Kubernetes targets
@@ -191,6 +203,54 @@ k8s-logs:
 kind-load:
 	@echo "Loading image to kind..."
 	kind load docker-image $(APISERVER_IMAGE)
+
+# Router Docker targets
+docker-build-router:
+	@echo "Building Router Docker image..."
+	docker build -f Dockerfile.router -t $(ROUTER_IMAGE) .
+
+# Multi-architecture build for router (supports amd64, arm64)
+docker-buildx-router:
+	@echo "Building multi-architecture Router Docker image..."
+	docker buildx build -f Dockerfile.router --platform linux/amd64,linux/arm64 -t $(ROUTER_IMAGE) .
+
+# Multi-architecture build and push for router
+docker-buildx-push-router:
+	@if [ -z "$(IMAGE_REGISTRY)" ]; then \
+		echo "Error: IMAGE_REGISTRY not set. Usage: make docker-buildx-push-router IMAGE_REGISTRY=your-registry.com"; \
+		exit 1; \
+	fi
+	@echo "Building and pushing multi-architecture Router Docker image to $(IMAGE_REGISTRY)/$(ROUTER_IMAGE)..."
+	docker buildx build -f Dockerfile.router --platform linux/amd64,linux/arm64 \
+		-t $(IMAGE_REGISTRY)/$(ROUTER_IMAGE) \
+		--push .
+
+docker-push-router: docker-build-router
+	@if [ -z "$(IMAGE_REGISTRY)" ]; then \
+		echo "Error: IMAGE_REGISTRY not set. Usage: make docker-push-router IMAGE_REGISTRY=your-registry.com"; \
+		exit 1; \
+	fi
+	@echo "Tagging and pushing Router Docker image to $(IMAGE_REGISTRY)/$(ROUTER_IMAGE)..."
+	docker tag $(ROUTER_IMAGE) $(IMAGE_REGISTRY)/$(ROUTER_IMAGE)
+	docker push $(IMAGE_REGISTRY)/$(ROUTER_IMAGE)
+
+# Load router image to kind cluster
+kind-load-router:
+	@echo "Loading router image to kind..."
+	kind load docker-image $(ROUTER_IMAGE)
+
+# Deploy router to Kubernetes
+k8s-deploy-router:
+	@echo "Deploying router to Kubernetes..."
+	kubectl apply -f k8s/agentcube-router.yaml
+
+k8s-delete-router:
+	@echo "Deleting router from Kubernetes..."
+	kubectl delete -f k8s/agentcube-router.yaml
+
+k8s-logs-router:
+	@echo "Showing router logs..."
+	kubectl logs -n agentcube -l app=agentcube-router -f
 
 # Sandbox image targets
 SANDBOX_IMAGE ?= sandbox:latest

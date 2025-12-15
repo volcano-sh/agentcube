@@ -5,6 +5,7 @@ go 1.24.4
 toolchain go1.24.9
 
 require (
+	github.com/agiledragon/gomonkey/v2 v2.13.0
 	github.com/alicebob/miniredis/v2 v2.35.0
 	github.com/gin-gonic/gin v1.10.0
 	github.com/golang-jwt/jwt/v5 v5.2.2
@@ -12,6 +13,7 @@ require (
 	github.com/pkg/sftp v1.13.10
 	github.com/redis/go-redis/v9 v9.17.1
 	github.com/stretchr/testify v1.11.1
+	github.com/valkey-io/valkey-go v1.0.69
 	golang.org/x/crypto v0.42.0
 	k8s.io/api v0.34.1
 	k8s.io/apimachinery v0.34.1

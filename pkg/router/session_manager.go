@@ -144,7 +144,7 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 	// Construct SandboxRedis from response
 	sandbox := &types.SandboxRedis{
 		SandboxID:   createResp.SandboxID,
-		SandboxName: createResp.SandboxName,
+		Name:        createResp.SandboxName,
 		SessionID:   createResp.SessionID,
 		EntryPoints: createResp.EntryPoints,
 	}

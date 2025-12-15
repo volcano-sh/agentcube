@@ -32,6 +32,7 @@ func TestMakeRedisOptions(t *testing.T) {
 
 	t.Run("all env vars exist", func(t *testing.T) {
 		expectedAddr := "127.0.0.1:6379"
+		// nolint:gosec
 		expectedPwd := "test_redis_pwd"
 		t.Setenv("REDIS_ADDR", expectedAddr)
 		t.Setenv("REDIS_PASSWORD", expectedPwd)

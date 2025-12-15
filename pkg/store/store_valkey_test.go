@@ -33,6 +33,7 @@ func TestMakeValkeyOptions(t *testing.T) {
 
 	t.Run("all basic env vars exist", func(t *testing.T) {
 		expectedAddr := "127.0.0.1:6379,127.0.0.1:6380"
+		// nolint:gosec
 		expectedPwd := "test_valkey_pwd"
 		t.Setenv("VALKEY_ADDR", expectedAddr)
 		t.Setenv("VALKEY_PASSWORD", expectedPwd)
@@ -247,6 +248,7 @@ func TestValkeyStore_ListExpiredSandboxes(t *testing.T) {
 	assert.Equal(t, "sess-1", sandboxes[0].SessionID)
 
 	sandboxes, err = c.ListExpiredSandboxes(ctx, now, 100)
+	assert.Nil(t, err)
 	assert.Len(t, sandboxes, 3)
 
 	sessionIDs := []string{

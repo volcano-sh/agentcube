@@ -14,8 +14,8 @@ const (
 )
 
 var (
-	initStoreOnce       = &sync.Once{}
-	provider      Store = nil
+	initStoreOnce = &sync.Once{}
+	provider      Store
 )
 
 // Storage get store singleton
@@ -32,7 +32,7 @@ func Storage() Store {
 	initStoreOnce.Do(func() {
 		err := initStore()
 		if err != nil {
-			log.Fatalf("init redis store failed: %v", err)
+			log.Fatalf("init store failed: %v", err)
 		}
 	})
 	return provider

@@ -85,7 +85,7 @@ func (rs *redisStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs 
 		}
 		var sandboxRedis types.SandboxRedis
 		if err := json.Unmarshal(data, &sandboxRedis); err != nil {
-			return nil, fmt.Errorf("loadSandboxesByIDs: unmarshal sandbox for session %s: %w", sessionIDs[i], err)
+			return nil, fmt.Errorf("loadSandboxesBySessionIDs: unmarshal sandbox for session %s: %w", sessionIDs[i], err)
 		}
 		result = append(result, &sandboxRedis)
 	}
@@ -162,7 +162,7 @@ func (rs *redisStore) StoreSandbox(ctx context.Context, sandboxRedis *types.Sand
 
 	for i, cmd := range cmder {
 		if err = cmd.Err(); err != nil {
-			return fmt.Errorf("StoreSandbox: SET failed: %w, cmder index: %v", err, i)
+			return fmt.Errorf("StoreSandbox: EXEC pipeline failed: %w, cmder index: %v", err, i)
 		}
 	}
 

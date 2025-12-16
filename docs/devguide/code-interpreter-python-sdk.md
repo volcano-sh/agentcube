@@ -33,7 +33,7 @@ from agentcube import CodeInterpreterClient
 
 # Initialize and start session
 client = CodeInterpreterClient(
-    name="my-agent-template",
+    name="my-agent",
     ttl=3600,
     verbose=True
 )

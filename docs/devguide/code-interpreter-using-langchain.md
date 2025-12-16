@@ -64,7 +64,8 @@ from langchain_core.messages import HumanMessage
 import os
 
 # 1. Setup Environment
-os.environ["OPENAI_API_KEY"] = "sk-..."
+# WARNING: Never hardcode API keys in source code. Load credentials from environment variables or secure configuration.
+os.environ["OPENAI_API_KEY"] = "your-api-key-here"  # Replace with your actual API key, preferably loaded securely
 
 # 2. Initialize LLM
 llm = init_chat_model("gpt-4o", model_provider="openai")

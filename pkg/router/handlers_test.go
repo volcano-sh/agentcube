@@ -20,11 +20,11 @@ func init() {
 
 // Mock SessionManager for testing
 type mockSessionManager struct {
-	sandbox *types.SandboxRedis
+	sandbox *types.SandboxStore
 	err     error
 }
 
-func (m *mockSessionManager) GetSandboxBySession(_ context.Context, _ string, _ string, _ string, _ string) (*types.SandboxRedis, error) {
+func (m *mockSessionManager) GetSandboxBySession(_ context.Context, _ string, _ string, _ string, _ string) (*types.SandboxStore, error) {
 	return m.sandbox, m.err
 }
 
@@ -212,7 +212,7 @@ func TestHandleInvoke_NoEntryPoints(t *testing.T) {
 
 	// Mock session manager that returns sandbox with no entry points
 	server.sessionManager = &mockSessionManager{
-		sandbox: &types.SandboxRedis{
+		sandbox: &types.SandboxStore{
 			SandboxID:   "test-sandbox",
 			SessionID:   "test-session",
 			EntryPoints: []types.SandboxEntryPoints{},
@@ -258,7 +258,7 @@ func TestHandleAgentInvoke(t *testing.T) {
 
 	// Mock session manager that returns sandbox with test server endpoint
 	server.sessionManager = &mockSessionManager{
-		sandbox: &types.SandboxRedis{
+		sandbox: &types.SandboxStore{
 			SandboxID: "test-sandbox",
 			SessionID: "test-session",
 			Name:      "test-sandbox",
@@ -328,7 +328,7 @@ func TestHandleCodeInterpreterInvoke(t *testing.T) {
 
 	// Mock session manager that returns sandbox with test server endpoint
 	server.sessionManager = &mockSessionManager{
-		sandbox: &types.SandboxRedis{
+		sandbox: &types.SandboxStore{
 			SandboxID: "test-sandbox",
 			SessionID: "test-session",
 			Name:      "test-sandbox",
@@ -387,7 +387,7 @@ func TestForwardToSandbox_InvalidEndpoint(t *testing.T) {
 
 	// Mock session manager that returns sandbox with invalid endpoint
 	server.sessionManager = &mockSessionManager{
-		sandbox: &types.SandboxRedis{
+		sandbox: &types.SandboxStore{
 			SandboxID: "test-sandbox",
 			SessionID: "test-session",
 			Name:      "test-sandbox",
@@ -440,7 +440,7 @@ func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 
 	// Mock session manager with slow response
 	server.sessionManager = &mockSessionManager{
-		sandbox: &types.SandboxRedis{
+		sandbox: &types.SandboxStore{
 			SandboxID: "test-sandbox",
 			SessionID: "test-session",
 			Name:      "test-sandbox",

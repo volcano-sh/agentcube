@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-type SandboxRedis struct {
+type SandboxStore struct {
 	Kind             string               `json:"kind"`
 	SandboxID        string               `json:"sandboxId"`
 	SandboxNamespace string               `json:"sandboxNamespace"`
@@ -15,7 +15,7 @@ type SandboxRedis struct {
 	CreatedAt        time.Time            `json:"createdAt"`
 	ExpiresAt        time.Time            `json:"expiresAt"`
 	// LastActivityAt is intentionally omitted from this type.
-	// Last activity is tracked in Redis via a sorted set index.
+	// Last activity is tracked in Store via a sorted set index.
 	Status string `json:"status"`
 }
 

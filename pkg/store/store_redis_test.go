@@ -57,8 +57,8 @@ func newTestRedisClient(t *testing.T) (*redisStore, *miniredis.Miniredis) {
 	return rs, mr
 }
 
-func newTestSandbox(id string, sessionID string, expiresAt time.Time) *types.SandboxRedis {
-	return &types.SandboxRedis{
+func newTestSandbox(id string, sessionID string, expiresAt time.Time) *types.SandboxStore {
+	return &types.SandboxStore{
 		SandboxID:   id,
 		Name:        "test-sandbox-" + id,
 		EntryPoints: nil,
@@ -81,7 +81,7 @@ func TestRedisStore_StoreSandbox(t *testing.T) {
 	ctx := context.Background()
 	c, _ := newTestRedisClient(t)
 
-	sandboxStoreStruct := &types.SandboxRedis{
+	sandboxStoreStruct := &types.SandboxStore{
 		SessionID:        "session-id-TestClient_StoreSandbox-01",
 		SandboxNamespace: "agent-cube",
 		Name:             "fake-sandbox-01",
@@ -98,7 +98,7 @@ func TestRedisStore_UpdateSandbox(t *testing.T) {
 	ctx := context.Background()
 	c, _ := newTestRedisClient(t)
 
-	sandboxStoreStruct := &types.SandboxRedis{
+	sandboxStoreStruct := &types.SandboxStore{
 		SessionID:        "session-id-TestClient_StoreSandbox-02",
 		SandboxNamespace: "agent-cube",
 		Name:             "fake-sandbox-01",

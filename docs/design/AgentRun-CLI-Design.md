@@ -149,7 +149,7 @@ In the same workspace, developers can use the following command to check the sta
 ```kubectl agentcube status```
 
 This command queries the provider (Kubernetes) for the current state of the agent associated with the workspace. The output includes:
-- **Agent ID** – Unique identifier (e.g., K8s deployment name)
+- **Agent ID** – Unique identifier (e.g., Kubernetes deployment name)
 - **Agent Name** – Human-readable name of the agent
 - **Agent Endpoint** – URL for invoking the agent
 - **Status** – Current status (e.g., deployed, ready, error)
@@ -319,8 +319,8 @@ requirements_file: requirements.txt
 |`region`|Deployment region|
 |`version`|Semantic version string for publishing|
 |`registry_url`|Target registry for pushing the image|
-|`readiness_probe_path`|HTTP path for K8s readiness probe|
-|`readiness_probe_port`|Port for K8s readiness probe|
+|`readiness_probe_path`|HTTP path for Kubernetes readiness probe|
+|`readiness_probe_port`|Port for Kubernetes readiness probe|
 |`router_url`|URL for the AgentCube Router (required for AgentCube provider)|
 |`workload_manager_url`|URL for the AgentCube Workload Manager (required for AgentCube provider)|
 |`image.repository_url`|Container registry where the agent image is stored|
@@ -515,8 +515,8 @@ kubectl agentcube publish -f <workspace_path> [OPTIONS]
 | `--region`         | `str`  | Deployment region                                              |
 | `--cloud-provider` | `str`  | Cloud provider name (e.g., `huawei`) if using cloud build mode |
 | `--provider`       | `str`  | Target provider: `agentcube` (default) or `k8s`                |
-| `--node-port`      | `int`  | Specific NodePort (30000-32767) for K8s deployment             |
-| `--replicas`       | `int`  | Number of replicas for K8s deployment (default: 1)             |
+| `--node-port`      | `int`  | Specific NodePort (30000-32767) for Kubernetes deployment             |
+| `--replicas`       | `int`  | Number of replicas for Kubernetes deployment (default: 1)             |
 | `--namespace`      | `str`  | Kubernetes namespace for deployment                            |
 | `--verbose`        | `bool` | Enable detailed logging output                                 |
 
@@ -544,7 +544,7 @@ kubectl agentcube publish -f <workspace_path> [OPTIONS]
 - Verifies image location and updates metadata configuration file
 
 **Agent Deployment Logic (AgentCube Provider)**
-- Initializes `AgentCubeProvider` with K8s config
+- Initializes `AgentCubeProvider` with Kubernetes config
 - Deploys or updates an `AgentRuntime` Custom Resource (CR) in the cluster
 - Sets `readinessProbe` using path and port from metadata
 - Injects environment variables for `ROUTER_URL` and `WORKLOADMANAGER_URL`
@@ -637,8 +637,8 @@ kubectl agentcube invoke [OPTIONS]
 
 **Step 2: Build HTTP Request**
 - **Resolve Endpoint**: 
-    - For `AgentRuntime` provider: Constructs URL path `/v1/namespaces/{namespace}/agent-runtimes/{name}/invocations/` appended to the base router URL.
-    - For `K8s` provider: Uses the service endpoint directly.
+    - For `agentcube` provider: Constructs URL path `/v1/namespaces/{namespace}/agent-runtimes/{name}/invocations/` appended to the base router URL.
+    - For `k8s` provider: Uses the service endpoint directly.
 - Include payload from CLI
 - Attach optional headers
 - **Session Management**: Automatically injects `X-Agentcube-Session-Id` header if a session ID is stored in metadata.

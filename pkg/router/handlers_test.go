@@ -49,14 +49,14 @@ func TestHandleHealth(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/health", nil)
+	req, _ := http.NewRequest("GET", "/health/live", nil)
 	server.engine.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status code %d, got %d", http.StatusOK, w.Code)
 	}
 
-	expectedBody := `{"status":"healthy"}`
+	expectedBody := `{"status":"alive"}`
 	if w.Body.String() != expectedBody {
 		t.Errorf("Expected body %s, got %s", expectedBody, w.Body.String())
 	}

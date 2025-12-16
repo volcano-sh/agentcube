@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
-	"github.com/volcano-sh/agentcube/pkg/redis"
+	"github.com/volcano-sh/agentcube/pkg/store"
 )
 
 // ---- fakes ----
 
-type fakeRedisClient struct {
+type fakeStoreClient struct {
 	sandbox        *types.SandboxRedis
 	err            error
 	called         bool
@@ -24,54 +24,54 @@ type fakeRedisClient struct {
 	lastContextNil bool
 }
 
-func (f *fakeRedisClient) GetSandboxBySessionID(ctx context.Context, sessionID string) (*types.SandboxRedis, error) {
+func (f *fakeStoreClient) GetSandboxBySessionID(ctx context.Context, sessionID string) (*types.SandboxRedis, error) {
 	f.called = true
 	f.lastSessionID = sessionID
 	f.lastContextNil = ctx == nil
 	return f.sandbox, f.err
 }
 
-func (f *fakeRedisClient) SetSessionLockIfAbsent(_ context.Context, _ string, _ time.Duration) (bool, error) {
+func (f *fakeStoreClient) SetSessionLockIfAbsent(_ context.Context, _ string, _ time.Duration) (bool, error) {
 	return false, nil
 }
 
-func (f *fakeRedisClient) BindSessionWithSandbox(_ context.Context, _ string, _ *types.SandboxRedis, _ time.Duration) error {
+func (f *fakeStoreClient) BindSessionWithSandbox(_ context.Context, _ string, _ *types.SandboxRedis, _ time.Duration) error {
 	return nil
 }
 
-func (f *fakeRedisClient) DeleteSessionBySandboxIDTx(_ context.Context, _ string) error {
+func (f *fakeStoreClient) DeleteSessionBySandboxID(_ context.Context, _ string) error {
 	return nil
 }
 
-func (f *fakeRedisClient) DeleteSandboxBySessionIDTx(_ context.Context, _ string) error {
+func (f *fakeStoreClient) DeleteSandboxBySessionID(_ context.Context, _ string) error {
 	return nil
 }
 
-func (f *fakeRedisClient) UpdateSandbox(_ context.Context, _ *types.SandboxRedis, _ time.Duration) error {
+func (f *fakeStoreClient) UpdateSandbox(_ context.Context, _ *types.SandboxRedis) error {
 	return nil
 }
 
-func (f *fakeRedisClient) UpdateSessionLastActivity(_ context.Context, _ string, _ time.Time) error {
+func (f *fakeStoreClient) UpdateSessionLastActivity(_ context.Context, _ string, _ time.Time) error {
 	return nil
 }
 
-func (f *fakeRedisClient) StoreSandbox(_ context.Context, _ *types.SandboxRedis, _ time.Duration) error {
+func (f *fakeStoreClient) StoreSandbox(_ context.Context, _ *types.SandboxRedis) error {
 	return nil
 }
 
-func (f *fakeRedisClient) Ping(_ context.Context) error {
+func (f *fakeStoreClient) Ping(_ context.Context) error {
 	return nil
 }
 
-func (f *fakeRedisClient) ListExpiredSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxRedis, error) {
+func (f *fakeStoreClient) ListExpiredSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxRedis, error) {
 	return nil, nil
 }
 
-func (f *fakeRedisClient) ListInactiveSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxRedis, error) {
+func (f *fakeStoreClient) ListInactiveSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxRedis, error) {
 	return nil, nil
 }
 
-func (f *fakeRedisClient) UpdateSandboxLastActivity(_ context.Context, _ string, _ time.Time) error {
+func (f *fakeStoreClient) UpdateSandboxLastActivity(_ context.Context, _ string, _ time.Time) error {
 	return nil
 }
 
@@ -88,11 +88,11 @@ func TestGetSandboxBySession_Success(t *testing.T) {
 		Status:    "running",
 	}
 
-	r := &fakeRedisClient{
+	r := &fakeStoreClient{
 		sandbox: sb,
 	}
 	m := &manager{
-		redisClient: r,
+		storeClient: r,
 	}
 
 	got, err := m.GetSandboxBySession(context.Background(), "sess-1", "default", "test", "AgentRuntime")
@@ -100,10 +100,10 @@ func TestGetSandboxBySession_Success(t *testing.T) {
 		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
 	}
 	if !r.called {
-		t.Fatalf("expected RedisClient to be called")
+		t.Fatalf("expected StoreClient to be called")
 	}
 	if r.lastSessionID != "sess-1" {
-		t.Fatalf("expected RedisClient to be called with sessionID 'sess-1', got %q", r.lastSessionID)
+		t.Fatalf("expected StoreClient to be called with sessionID 'sess-1', got %q", r.lastSessionID)
 	}
 	if got == nil {
 		t.Fatalf("expected non-nil sandbox")
@@ -114,12 +114,12 @@ func TestGetSandboxBySession_Success(t *testing.T) {
 }
 
 func TestGetSandboxBySession_NotFound(t *testing.T) {
-	r := &fakeRedisClient{
+	r := &fakeStoreClient{
 		sandbox: nil,
-		err:     redis.ErrNotFound,
+		err:     store.ErrNotFound,
 	}
 	m := &manager{
-		redisClient: r,
+		storeClient: r,
 	}
 
 	_, err := m.GetSandboxBySession(context.Background(), "sess-1", "default", "test", "AgentRuntime")
@@ -178,9 +178,9 @@ func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
 	}))
 	defer mockServer.Close()
 
-	r := &fakeRedisClient{}
+	r := &fakeStoreClient{}
 	m := &manager{
-		redisClient:     r,
+		storeClient:     r,
 		workloadMgrAddr: mockServer.URL,
 		httpClient:      &http.Client{},
 	}
@@ -248,9 +248,9 @@ func TestGetSandboxBySession_CreateSandbox_CodeInterpreter_Success(t *testing.T)
 	}))
 	defer mockServer.Close()
 
-	r := &fakeRedisClient{}
+	r := &fakeStoreClient{}
 	m := &manager{
-		redisClient:     r,
+		storeClient:     r,
 		workloadMgrAddr: mockServer.URL,
 		httpClient:      &http.Client{},
 	}
@@ -268,9 +268,9 @@ func TestGetSandboxBySession_CreateSandbox_CodeInterpreter_Success(t *testing.T)
 }
 
 func TestGetSandboxBySession_CreateSandbox_UnsupportedKind(t *testing.T) {
-	r := &fakeRedisClient{}
+	r := &fakeStoreClient{}
 	m := &manager{
-		redisClient:     r,
+		storeClient:     r,
 		workloadMgrAddr: "http://localhost:8080",
 		httpClient:      &http.Client{},
 	}
@@ -301,9 +301,9 @@ func TestGetSandboxBySession_CreateSandbox_WorkloadManagerUnavailable(t *testing
 	serverURL := mockServer.URL
 	mockServer.Close() // Close the server to make it unavailable
 
-	r := &fakeRedisClient{}
+	r := &fakeStoreClient{}
 	m := &manager{
-		redisClient:     r,
+		storeClient:     r,
 		workloadMgrAddr: serverURL,
 		httpClient:      &http.Client{},
 	}
@@ -325,9 +325,9 @@ func TestGetSandboxBySession_CreateSandbox_NonOKStatus(t *testing.T) {
 	}))
 	defer mockServer.Close()
 
-	r := &fakeRedisClient{}
+	r := &fakeStoreClient{}
 	m := &manager{
-		redisClient:     r,
+		storeClient:     r,
 		workloadMgrAddr: mockServer.URL,
 		httpClient:      &http.Client{},
 	}
@@ -350,9 +350,9 @@ func TestGetSandboxBySession_CreateSandbox_InvalidJSON(t *testing.T) {
 	}))
 	defer mockServer.Close()
 
-	r := &fakeRedisClient{}
+	r := &fakeStoreClient{}
 	m := &manager{
-		redisClient:     r,
+		storeClient:     r,
 		workloadMgrAddr: mockServer.URL,
 		httpClient:      &http.Client{},
 	}
@@ -383,9 +383,9 @@ func TestGetSandboxBySession_CreateSandbox_EmptySessionID(t *testing.T) {
 	}))
 	defer mockServer.Close()
 
-	r := &fakeRedisClient{}
+	r := &fakeStoreClient{}
 	m := &manager{
-		redisClient:     r,
+		storeClient:     r,
 		workloadMgrAddr: mockServer.URL,
 		httpClient:      &http.Client{},
 	}

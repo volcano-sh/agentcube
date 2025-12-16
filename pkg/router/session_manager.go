@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
-	"github.com/volcano-sh/agentcube/pkg/redis"
+	"github.com/volcano-sh/agentcube/pkg/store"
 )
 
 var (
-	// ErrSessionNotFound indicates that the session does not exist in redis.
+	// ErrSessionNotFound indicates that the session does not exist in store.
 	ErrSessionNotFound = errors.New("sessionmgr: session not found")
 
 	// ErrUpstreamUnavailable indicates that the workload manager is unavailable.
@@ -26,32 +26,32 @@ var (
 	ErrCreateSandboxFailed = errors.New("sessionmgr: create sandbox failed")
 )
 
-// SessionManager defines the session management behavior on top of Redis and the workload manager.
+// SessionManager defines the session management behavior on top of Store and the workload manager.
 type SessionManager interface {
 	// GetSandboxBySession returns the sandbox associated with the given sessionID.
 	// When sessionID is empty, it creates a new sandbox by calling the external API.
-	// When sessionID is not empty, it queries Redis for the sandbox.
+	// When sessionID is not empty, it queries store for the sandbox.
 	GetSandboxBySession(ctx context.Context, sessionID string, namespace string, name string, kind string) (*types.SandboxRedis, error)
 }
 
 // manager is the default implementation of the SessionManager interface.
 type manager struct {
-	redisClient     redis.Client
+	storeClient     store.Store
 	workloadMgrAddr string
 	httpClient      *http.Client
 }
 
 // NewSessionManager returns a SessionManager implementation.
-// redisClient is used to query sandbox information from Redis.
+// storeClient is used to query sandbox information from store
 // workloadMgrAddr is read from the environment variable WORKLOAD_MANAGER_ADDR.
-func NewSessionManager(redisClient redis.Client) (SessionManager, error) {
+func NewSessionManager(storeClient store.Store) (SessionManager, error) {
 	workloadMgrAddr := os.Getenv("WORKLOAD_MANAGER_ADDR")
 	if workloadMgrAddr == "" {
 		return nil, fmt.Errorf("WORKLOAD_MANAGER_ADDR environment variable is not set")
 	}
 
 	return &manager{
-		redisClient:     redisClient,
+		storeClient:     storeClient,
 		workloadMgrAddr: workloadMgrAddr,
 		httpClient: &http.Client{
 			Timeout: time.Minute, // 1-minute for createSandbox requests
@@ -61,20 +61,20 @@ func NewSessionManager(redisClient redis.Client) (SessionManager, error) {
 
 // GetSandboxBySession returns the sandbox associated with the given sessionID.
 // When sessionID is empty, it creates a new sandbox by calling the external API.
-// When sessionID is not empty, it queries Redis for the sandbox.
+// When sessionID is not empty, it queries store for the sandbox.
 func (m *manager) GetSandboxBySession(ctx context.Context, sessionID string, namespace string, name string, kind string) (*types.SandboxRedis, error) {
 	// When sessionID is empty, create a new sandbox
 	if sessionID == "" {
 		return m.createSandbox(ctx, namespace, name, kind)
 	}
 
-	// When sessionID is not empty, query Redis
-	sandbox, err := m.redisClient.GetSandboxBySessionID(ctx, sessionID)
+	// When sessionID is not empty, query store
+	sandbox, err := m.storeClient.GetSandboxBySessionID(ctx, sessionID)
 	if err != nil {
-		if errors.Is(err, redis.ErrNotFound) {
+		if errors.Is(err, store.ErrNotFound) {
 			return nil, ErrSessionNotFound
 		}
-		return nil, fmt.Errorf("failed to get sandbox from redis: %w", err)
+		return nil, fmt.Errorf("failed to get sandbox from store: %w", err)
 	}
 
 	return sandbox, nil

@@ -88,9 +88,9 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 
 	log.Printf("The selected entrypoint for session-id %s to sandbox is %s", sandbox.SessionID, endpoint)
 
-	// Update session activity in Redis when receiving request
+	// Update session activity in store when receiving request
 	if sandbox.SessionID != "" && sandbox.SandboxID != "" {
-		if err := s.redisClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
+		if err := s.storeClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
 			log.Printf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
 		}
 	}
@@ -98,7 +98,7 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	// Forward request to sandbox with session ID
 	s.forwardToSandbox(c, endpoint, path, sandbox.SessionID)
 
-	if err := s.redisClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
+	if err := s.storeClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
 		log.Printf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
 	}
 }

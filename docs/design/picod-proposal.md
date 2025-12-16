@@ -88,11 +88,11 @@ finally:
 
 **API Calls Flow**:
 
-1. **POST /tools/code-interpreter/files**: Upload requirements.txt via multipart/form-data or JSON base64
-2. **POST /tools/code-interpreter/execute**: Install dependencies via pip command
-3. **POST /tools/code-interpreter/files**: Upload training data CSV file
-4. **POST /tools/code-interpreter/execute**: Run Python training code that processes data and trains model
-5. **GET /tools/code-interpreter/files/{path}**: Download trained model
+1. **POST /api/files**: Upload requirements.txt via multipart/form-data or JSON base64
+2. **POST /api/execute**: Install dependencies via pip command
+3. **POST /api/files**: Upload training data CSV file
+4. **POST /api/execute**: Run Python training code that processes data and trains model
+5. **GET /api/files/{path}**: Download trained model
 
 All operations use standard HTTP requests with token authentication in Authorization header.
 
@@ -110,10 +110,11 @@ PicoD follows REST API best practices for simplicity and broad compatibility:
 
 ### Core API Endpoints
 
-1. **POST /tools/code-interpreter/execute** - Execute commands
-2. **POST /tools/code-interpreter/files** - Upload files
-3. **GET /tools/code-interpreter/files/{path}** - Download files
-4. **GET /tools/code-interpreter/health** - Health check endpoint
+1. **POST /api/execute** - Execute commands
+2. **POST /api/files** - Upload files
+3. **GET /api/files** - List files
+4. **GET /api/files/{path}** - Download files
+5. **GET /health** - Health check endpoint
 
 ## PicoD Architecture
 
@@ -130,17 +131,17 @@ graph TB
     
     subgraph PicoD["PicoD Daemon (Go)"]
         subgraph Server["HTTP Server Layer"]
-            HTTPServer[HTTP Server<br/>Port: 9527]
+            HTTPServer[HTTP Server<br/>Port: 8080]
             AuthMiddleware[Auth Middleware]
             LogMiddleware[Logging Middleware]
             ErrorMiddleware[Error Handler]
         end
         
         subgraph Handlers["HTTP Handlers"]
-            ExecuteHandler[POST /tools/code-interpreter/execute]
-            UploadHandler[POST /tools/code-interpreter/files]
-            DownloadHandler[GET /tools/code-interpreter/files/*]
-            HealthHandler[GET /tools/code-interpreter/health]
+            ExecuteHandler[POST /api/execute]
+            UploadHandler[POST /api/files]
+            DownloadHandler[GET /api/files/*]
+            HealthHandler[GET /health]
         end
         
         subgraph Logic["Business Logic"]
@@ -185,7 +186,7 @@ graph TB
 #### 1. HTTP Server Layer (Go Implementation)
 
 - **Framework**: Gin (lightweight HTTP web framework)
-- **Port**: Configurable (default: 9527)
+- **Port**: Configurable (default: 8080)
 - **Middleware Stack**:
     - Token authentication middleware
     - Request ID generation and logging
@@ -269,10 +270,9 @@ sequenceDiagram
     
     Note over Client, PicoD: Operation Phase (Authenticated Requests)
     Client->>Client: Generate Request JWT (signed by Session Private Key)
-    Note right of Client: JWT Claims:<br/>- body_sha256 (for POST)<br/>- iat, exp
+    Note right of Client: JWT Claims:<br/>- iat, exp
     Client->>PicoD: POST /api/execute (Authorization: Bearer <session_jwt>)
     PicoD->>PicoD: Verify JWT with Stored Session Public Key
-    PicoD->>PicoD: Validate body_sha256 matches request body
     PicoD->>PicoD: Execute Command
     PicoD-->>Client: Execution Result
     
@@ -365,7 +365,6 @@ All API requests (except `/init` and `/health`) require authentication via JWT s
 **Session JWT Claims** (signed by Session Private Key):
 ```json
 {
-  "body_sha256": "a3c5f1...",  // SHA256 hash of request body (for POST requests)
   "iat": 1732531800,
   "exp": 1732553400
 }
@@ -376,21 +375,20 @@ All API requests (except `/init` and `/health`) require authentication via JWT s
   2. Extract JWT from Authorization header
   3. Verify JWT signature using stored session public key
   4. Validate JWT expiration and issued-at time
-  5. For POST requests: verify `body_sha256` claim matches actual request body hash
-  6. Enforce maximum body size (32MB) to prevent memory exhaustion
+  5. Enforce maximum body size (32MB) to prevent memory exhaustion
 
 #### 4. Core Capabilities
 PicoD provides a lightweight REST API that replaces traditional SSH‑based operations with secure, stateless HTTP endpoints. The two primary capabilities are code execution and file transfer, exposed via JSON or multipart requests.
 
 ###### Code Execution
 
-- **Endpoint: POST /tools/code-interpreter/execute**
+- **Endpoint: POST /api/execute**
 - **Request Body (JSON):**
 
  ```json
  {
-  "command": "echo 'Hello World'",
-  "timeout": 30,
+  "command": ["echo", "Hello World"],
+  "timeout": "30s",
   "working_dir": "/workspace",
   "env": {
     "VAR1": "value1",
@@ -407,7 +405,9 @@ PicoD provides a lightweight REST API that replaces traditional SSH‑based oper
   "stdout": "Hello World\n",
   "stderr": "",
   "exit_code": 0,
-  "duration": 0.12
+  "duration": 0.12,
+  "start_time": "2025-11-18T10:30:00Z",
+  "end_time": "2025-11-18T10:30:00.12Z"
 }
 
 ```
@@ -428,11 +428,11 @@ PicoD provides a lightweight REST API that replaces traditional SSH‑based oper
 Provides endpoints for uploading and downloading files.
 **Upload File**:
 
-- **Endpoint**: `POST /tools/code-interpreter/files`
+- **Endpoint**: `POST /api/files`
 - **Option 1: Multipart Form Data** (recommended for binary files)
 
 ```http
-POST /tools/code-interpreter/files HTTP/1.1
+POST /api/files HTTP/1.1
 Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
 Authorization: Bearer <token>
 
@@ -473,11 +473,11 @@ Content-Disposition: form-data; name="mode"
 ```
 
 **Download File**:
-- **Endpoint**: `GET /tools/code-interpreter/files/{path}`
+- **Endpoint**: `GET /api/files/{path}`
 - **Request**:
 
 ```http
-GET /tools/code-interpreter/files/workspace/test.txt HTTP/1.1
+GET /api/files/workspace/test.txt HTTP/1.1
 Authorization: Bearer <token>
 ```
 

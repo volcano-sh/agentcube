@@ -24,7 +24,6 @@ import (
 const (
 	DefaultSandboxTTL         = 8 * time.Hour
 	DefaultSandboxIdleTimeout = 15 * time.Minute
-	RedisNoExpiredTTL         = 0
 )
 
 var (
@@ -32,11 +31,11 @@ var (
 	SessionIdLabelKey = "runtime.agentcube.io/session-id" // revive:disable-line:var-naming - keep label backward compatible
 	// WorkloadNameLabelKey labels key for workload name
 	WorkloadNameLabelKey = "runtime.agentcube.io/workload-name"
-	// Annotation key for last activity time
+	// LastActivityAnnotationKey Annotation key for last activity time
 	LastActivityAnnotationKey = "last-activity-time"
 	// IdleTimeoutAnnotationKey key for idle timeout
 	IdleTimeoutAnnotationKey = "runtime.agentcube.io/idle-timeout"
-	// Annotation key for creator service account
+	// CreatorServiceAccountAnnotationKey Annotation key for creator service account
 	CreatorServiceAccountAnnotationKey = "creator-service-account"
 )
 

@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	redisv9 "github.com/redis/go-redis/v9"
 
-	"github.com/volcano-sh/agentcube/pkg/redis"
+	"github.com/volcano-sh/agentcube/pkg/store"
 )
 
 // Server is the main structure for workload manager
@@ -24,7 +22,7 @@ type Server struct {
 	sandboxStore      *SandboxStore
 	tokenCache        *TokenCache
 	informers         *Informers
-	redisClient       redis.Client
+	storeClient       store.Store
 	jwtManager        *JWTManager
 }
 
@@ -43,23 +41,6 @@ type Config struct {
 	EnableAuth bool
 }
 
-// makeRedisOptions make redis options by environment
-func makeRedisOptions() (*redisv9.Options, error) {
-	redisAddr := os.Getenv("REDIS_ADDR")
-	if redisAddr == "" {
-		return nil, fmt.Errorf("missing env var REDIS_ADDR")
-	}
-	redisPassword := os.Getenv("REDIS_PASSWORD")
-	if redisPassword == "" {
-		return nil, fmt.Errorf("missing env var REDIS_PASSWORD")
-	}
-	redisOptions := &redisv9.Options{
-		Addr:     redisAddr,
-		Password: redisPassword,
-	}
-	return redisOptions, nil
-}
-
 // NewServer creates a new API server instance
 func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, error) {
 	if config == nil {
@@ -70,11 +51,6 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 	k8sClient, err := NewK8sClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
-	}
-
-	redisOptions, err := makeRedisOptions()
-	if err != nil {
-		return nil, fmt.Errorf("make redis options failed: %w", err)
 	}
 
 	// Create sandbox store
@@ -96,7 +72,7 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 		sandboxController: sandboxController,
 		tokenCache:        tokenCache,
 		informers:         NewInformers(k8sClient),
-		redisClient:       redis.NewClient(redisOptions),
+		storeClient:       store.Storage(),
 		jwtManager:        jwtManager,
 	}
 
@@ -157,10 +133,10 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to wait for caches to sync: %w", err)
 	}
 
-	if err := s.redisClient.Ping(ctx); err != nil {
-		return fmt.Errorf("failed to ping redis: %w", err)
+	if err := s.storeClient.Ping(ctx); err != nil {
+		return fmt.Errorf("failed to ping store: %w", err)
 	}
-	log.Println("redis Ping check successfully")
+	log.Println("kv store Ping check successfully")
 
 	addr := ":" + s.config.Port
 
@@ -187,7 +163,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	log.Printf("Server listening on %s", addr)
 
-	gc := newGarbageCollector(s.k8sClient, s.redisClient, 15*time.Second)
+	gc := newGarbageCollector(s.k8sClient, s.storeClient, 15*time.Second)
 	go gc.run(ctx.Done())
 
 	// Start HTTP or HTTPS server

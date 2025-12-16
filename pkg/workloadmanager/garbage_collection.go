@@ -6,11 +6,12 @@ import (
 	"log"
 	"time"
 
-	"github.com/volcano-sh/agentcube/pkg/common/types"
-	"github.com/volcano-sh/agentcube/pkg/redis"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+
+	"github.com/volcano-sh/agentcube/pkg/common/types"
+	"github.com/volcano-sh/agentcube/pkg/store"
 )
 
 const (
@@ -20,14 +21,14 @@ const (
 type garbageCollector struct {
 	k8sClient   *K8sClient
 	interval    time.Duration
-	redisClient redis.Client
+	storeClient store.Store
 }
 
-func newGarbageCollector(k8sClient *K8sClient, redisClient redis.Client, interval time.Duration) *garbageCollector {
+func newGarbageCollector(k8sClient *K8sClient, storeClient store.Store, interval time.Duration) *garbageCollector {
 	return &garbageCollector{
 		k8sClient:   k8sClient,
 		interval:    interval,
-		redisClient: redisClient,
+		storeClient: storeClient,
 	}
 }
 
@@ -50,12 +51,12 @@ func (gc *garbageCollector) once() {
 	ctx, cancel := context.WithTimeout(context.Background(), gcOnceTimeout)
 	defer cancel()
 	inactiveTime := time.Now().Add(-DefaultSandboxIdleTimeout)
-	inactiveSandboxes, err := gc.redisClient.ListInactiveSandboxes(ctx, inactiveTime, 16)
+	inactiveSandboxes, err := gc.storeClient.ListInactiveSandboxes(ctx, inactiveTime, 16)
 	if err != nil {
 		log.Printf("garbage collector error listing inactive sandboxes: %v", err)
 	}
 	// List sandboxes reach DDL
-	expiredSandboxes, err := gc.redisClient.ListExpiredSandboxes(ctx, time.Now(), 16)
+	expiredSandboxes, err := gc.storeClient.ListExpiredSandboxes(ctx, time.Now(), 16)
 	if err != nil {
 		log.Printf("garbage collector error listing expired sandboxes: %v", err)
 	}
@@ -80,7 +81,7 @@ func (gc *garbageCollector) once() {
 			continue
 		}
 		log.Printf("garbage collector %s %s/%s session %s deleted", gcSandbox.Kind, gcSandbox.SandboxNamespace, gcSandbox.Name, gcSandbox.SessionID)
-		err = gc.redisClient.DeleteSandboxBySessionIDTx(ctx, gcSandbox.SessionID)
+		err = gc.storeClient.DeleteSandboxBySessionID(ctx, gcSandbox.SessionID)
 		if err != nil {
 			errs = append(errs, err)
 		}

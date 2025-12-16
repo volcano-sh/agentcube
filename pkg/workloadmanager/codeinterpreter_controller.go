@@ -27,15 +27,6 @@ type CodeInterpreterReconciler struct {
 	mgr    ctrl.Manager
 }
 
-// NewCodeInterpreterReconciler creates a new CodeInterpreterReconciler.
-// The cache will be initialized when SetupWithManager is called.
-func NewCodeInterpreterReconciler(client client.Client, scheme *runtime.Scheme) *CodeInterpreterReconciler {
-	return &CodeInterpreterReconciler{
-		Client: client,
-		Scheme: scheme,
-	}
-}
-
 //+kubebuilder:rbac:groups=runtime.agentcube.volcano.sh,resources=codeinterpreters,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=runtime.agentcube.volcano.sh,resources=codeinterpreters/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=runtime.agentcube.volcano.sh,resources=codeinterpreters/finalizers,verbs=update
@@ -333,7 +324,6 @@ func (r *CodeInterpreterReconciler) podTemplateEqual(a, b sandboxv1alpha1.PodTem
 //
 // Example usage:
 //
-//	reconciler := NewCodeInterpreterReconciler(client, scheme)
 //	ci := reconciler.GetCodeInterpreter("my-codeinterpreter", "default")
 func (r *CodeInterpreterReconciler) GetCodeInterpreter(name, namespace string) *runtimev1alpha1.CodeInterpreter {
 	if r.mgr == nil {

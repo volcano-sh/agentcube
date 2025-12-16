@@ -10,14 +10,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	redisv9 "github.com/redis/go-redis/v9"
 	"k8s.io/client-go/dynamic"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	"sigs.k8s.io/agent-sandbox/controllers"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
-	"github.com/volcano-sh/agentcube/pkg/redis"
+	"github.com/volcano-sh/agentcube/pkg/store"
 )
 
 // handleHealth handles health check requests
@@ -110,9 +109,9 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	resultChan := s.sandboxController.WatchSandboxOnce(c.Request.Context(), namespace, sandboxName)
 
 	// Store placeholder before creating, make sandbox/sandboxClaim GarbageCollection possible
-	sandboxRedisPlaceHolder := buildSandboxRedisCachePlaceHolder(sandbox, externalInfo)
-	if err = s.redisClient.StoreSandbox(c.Request.Context(), sandboxRedisPlaceHolder, RedisNoExpiredTTL); err != nil {
-		errMessage := fmt.Sprintf("store sandbox place holder into redis failed: %v", err)
+	sandboxStorePlaceHolder := buildSandboxStoreCachePlaceHolder(sandbox, externalInfo)
+	if err = s.storeClient.StoreSandbox(c.Request.Context(), sandboxStorePlaceHolder); err != nil {
+		errMessage := fmt.Sprintf("store sandbox place holder into store failed: %v", err)
 		log.Println(errMessage)
 		respondError(c, http.StatusInternalServerError, "STORE_SANDBOX_FAILED", errMessage)
 		return
@@ -182,20 +181,20 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		return
 	}
 
-	redisCacheInfo := convertSandboxToRedisCache(createdSandbox, podIP, externalInfo)
+	storeCacheInfo := convertSandboxToStoreCache(createdSandbox, podIP, externalInfo)
 
 	response := &types.CreateSandboxResponse{
 		SessionID:   externalInfo.SessionID,
-		SandboxID:   redisCacheInfo.SandboxID,
+		SandboxID:   storeCacheInfo.SandboxID,
 		SandboxName: sandboxName,
-		EntryPoints: redisCacheInfo.EntryPoints,
+		EntryPoints: storeCacheInfo.EntryPoints,
 	}
 
 	if sandboxReq.Kind != types.CodeInterpreterKind {
-		err = s.redisClient.UpdateSandbox(c.Request.Context(), redisCacheInfo, RedisNoExpiredTTL)
+		err = s.storeClient.UpdateSandbox(c.Request.Context(), storeCacheInfo)
 		if err != nil {
-			log.Printf("update redis cache failed: %v", err)
-			respondError(c, http.StatusInternalServerError, "SANDBOX_UPDATE_REDIS_FAILED", err.Error())
+			log.Printf("update store cache failed: %v", err)
+			respondError(c, http.StatusInternalServerError, "SANDBOX_UPDATE_STORE_FAILED", err.Error())
 			return
 		}
 		needRollbackSandbox = false
@@ -204,21 +203,21 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		return
 	}
 
-	if len(redisCacheInfo.EntryPoints) == 0 {
+	if len(storeCacheInfo.EntryPoints) == 0 {
 		// Fallback to default http://ip:8080
 		defaultEntryPoint := types.SandboxEntryPoints{
 			Path:     "/",
 			Protocol: "http",
 			Endpoint: fmt.Sprintf("%s:8080", podIP),
 		}
-		redisCacheInfo.EntryPoints = []types.SandboxEntryPoints{defaultEntryPoint}
-		response.EntryPoints = redisCacheInfo.EntryPoints
+		storeCacheInfo.EntryPoints = []types.SandboxEntryPoints{defaultEntryPoint}
+		response.EntryPoints = storeCacheInfo.EntryPoints
 	}
 
 	// Code Interpreter sandbox created, init code interpreter
 	// Find the /init endpoint from entryPoints
 	var initEndpoint string
-	for _, access := range redisCacheInfo.EntryPoints {
+	for _, access := range storeCacheInfo.EntryPoints {
 		if access.Path == "/init" {
 			initEndpoint = fmt.Sprintf("%s://%s", access.Protocol, access.Endpoint)
 			break
@@ -227,8 +226,8 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 
 	// If no /init path found, use the first entryPoint endpoint fallback
 	if initEndpoint == "" {
-		initEndpoint = fmt.Sprintf("%s://%s", redisCacheInfo.EntryPoints[0].Protocol,
-			redisCacheInfo.EntryPoints[0].Endpoint)
+		initEndpoint = fmt.Sprintf("%s://%s", storeCacheInfo.EntryPoints[0].Protocol,
+			storeCacheInfo.EntryPoints[0].Endpoint)
 	}
 
 	// Call sandbox init endpoint with JWT-signed request
@@ -248,10 +247,10 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		return
 	}
 
-	err = s.redisClient.UpdateSandbox(c.Request.Context(), redisCacheInfo, RedisNoExpiredTTL)
+	err = s.storeClient.UpdateSandbox(c.Request.Context(), storeCacheInfo)
 	if err != nil {
-		log.Printf("update redis cache failed: %v", err)
-		respondError(c, http.StatusInternalServerError, "SANDBOX_UPDATE_REDIS_FAILED", err.Error())
+		log.Printf("update store cache failed: %v", err)
+		respondError(c, http.StatusInternalServerError, "SANDBOX_UPDATE_STORE_FAILED", err.Error())
 		return
 	}
 	// init successful, no need to rollback
@@ -264,15 +263,15 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 func (s *Server) handleDeleteSandbox(c *gin.Context) {
 	sessionID := c.Param("sessionId")
 
-	// Query sandbox from redis
-	sandbox, err := s.redisClient.GetSandboxBySessionID(c.Request.Context(), sessionID)
+	// Query sandbox from store
+	sandbox, err := s.storeClient.GetSandboxBySessionID(c.Request.Context(), sessionID)
 	if err != nil {
-		if errors.Is(err, redis.ErrNotFound) || errors.Is(err, redisv9.Nil) {
-			log.Printf("sessionID %s not found in redis", sessionID)
+		if errors.Is(err, store.ErrNotFound) {
+			log.Printf("sessionID %s not found in store", sessionID)
 			respondError(c, http.StatusNotFound, "SESSION_NOT_FOUND", "Sandbox not found")
 			return
 		}
-		log.Printf("get sandbox from redis by sessionID %s failed: %v", sessionID, err)
+		log.Printf("get sandbox from store by sessionID %s failed: %v", sessionID, err)
 		respondError(c, http.StatusInternalServerError, "FIND_SESSION_FAILED", err.Error())
 		return
 	}
@@ -305,10 +304,10 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 		}
 	}
 
-	// Delete sandbox from Redis
-	err = s.redisClient.DeleteSandboxBySessionIDTx(c.Request.Context(), sessionID)
+	// Delete sandbox from store
+	err = s.storeClient.DeleteSandboxBySessionID(c.Request.Context(), sessionID)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "REDIS_SANDBOX_DELETE_FAILED", err.Error())
+		respondError(c, http.StatusInternalServerError, "STORE_SANDBOX_DELETE_FAILED", err.Error())
 		return
 	}
 

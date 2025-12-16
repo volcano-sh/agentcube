@@ -424,7 +424,7 @@ kubectl agentcube build -f <workspace_path> [OPTIONS]
 | Option             | Type   | Description                                                          |
 | ------------------ | ------ | -------------------------------------------------------------------- |
 | `--proxy`, `-p`    | `str`  | Custom proxy URL for dependency resolution (applies to pip or Maven) |
-| `--cloud-provider` | `str`  | Cloud provider name (e.g., `huawei`) if using cloud build mode       |
+| `--cloud-provider` | `str`  | Cloud provider name (e.g., `huaweicloud`) if using cloud build mode       |
 | `--output`         | `str`  | Path to save the built image or build logs (optional)                |
 | `--verbose`        | `bool` | Enable detailed logging output                                       |
 
@@ -513,7 +513,7 @@ kubectl agentcube publish -f <workspace_path> [OPTIONS]
 | `--image-password` | `str`  | Password for image registry (required in local build mode)   |
 | `--description`    | `str`  | Agent description                                              |
 | `--region`         | `str`  | Deployment region                                              |
-| `--cloud-provider` | `str`  | Cloud provider name (e.g., `huawei`) if using cloud build mode |
+| `--cloud-provider` | `str`  | Cloud provider name (e.g., `huaweicloud`) if using cloud build mode |
 | `--provider`       | `str`  | Target provider: `agentcube` (default) or `k8s`                |
 | `--node-port`      | `int`  | Specific NodePort (30000-32767) for Kubernetes deployment             |
 | `--replicas`       | `int`  | Number of replicas for Kubernetes deployment (default: 1)             |
@@ -605,7 +605,7 @@ kubectl agentcube status -f <workspace_path> [OPTIONS]
 
 **Behavior Overview**
 - The CLI reads the metadata configuration file to retrieve endpoint, region, version, and authentication details.
-- It constructs an HTTP POST request using the provided payload and optional headers.
+- It constructs an HTTP/HTTPS POST request using the provided payload and optional headers.
 - The request is sent to AgentCube, which routes it to the correct agent instance.
 - The agent processes the payload and returns a response.
 - The CLI displays the result to the developer in the terminal.

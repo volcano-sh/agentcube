@@ -57,6 +57,11 @@ type CodeInterpreterSpec struct {
 	// latency for new sessions at the cost of additional resource usage.
 	// +optional
 	WarmPoolSize *int32 `json:"warmPoolSize,omitempty"`
+
+	// NeedInitialization specifies if CodeInterpreter need initialization
+	// default true if NeedInitialization is nil
+	// +optional
+	NeedInitialization *bool `json:"needInitialization,omitempty"`
 }
 
 // CodeInterpreterStatus represents the observed state of a CodeInterpreter.

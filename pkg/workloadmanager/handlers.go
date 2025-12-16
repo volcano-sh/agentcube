@@ -214,37 +214,39 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		response.EntryPoints = storeCacheInfo.EntryPoints
 	}
 
-	// Code Interpreter sandbox created, init code interpreter
-	// Find the /init endpoint from entryPoints
-	var initEndpoint string
-	for _, access := range storeCacheInfo.EntryPoints {
-		if access.Path == "/init" {
-			initEndpoint = fmt.Sprintf("%s://%s", access.Protocol, access.Endpoint)
-			break
+	if externalInfo.NeedInitialization == true {
+		// Code Interpreter sandbox created, init code interpreter
+		// Find the /init endpoint from entryPoints
+		var initEndpoint string
+		for _, access := range storeCacheInfo.EntryPoints {
+			if access.Path == "/init" {
+				initEndpoint = fmt.Sprintf("%s://%s", access.Protocol, access.Endpoint)
+				break
+			}
 		}
-	}
 
-	// If no /init path found, use the first entryPoint endpoint fallback
-	if initEndpoint == "" {
-		initEndpoint = fmt.Sprintf("%s://%s", storeCacheInfo.EntryPoints[0].Protocol,
-			storeCacheInfo.EntryPoints[0].Endpoint)
-	}
+		// If no /init path found, use the first entryPoint endpoint fallback
+		if initEndpoint == "" {
+			initEndpoint = fmt.Sprintf("%s://%s", storeCacheInfo.EntryPoints[0].Protocol,
+				storeCacheInfo.EntryPoints[0].Endpoint)
+		}
 
-	// Call sandbox init endpoint with JWT-signed request
-	err = s.InitCodeInterpreterSandbox(
-		c.Request.Context(),
-		initEndpoint,
-		externalInfo.SessionID,
-		sandboxReq.PublicKey,
-		sandboxReq.Metadata,
-		sandboxReq.InitTimeoutSeconds,
-	)
+		// Call sandbox init endpoint with JWT-signed request
+		err = s.InitCodeInterpreterSandbox(
+			c.Request.Context(),
+			initEndpoint,
+			externalInfo.SessionID,
+			sandboxReq.PublicKey,
+			sandboxReq.Metadata,
+			sandboxReq.InitTimeoutSeconds,
+		)
 
-	if err != nil {
-		log.Printf("init sandbox %s/%s failed: %v", createdSandbox.Namespace, createdSandbox.Name, err)
-		respondError(c, http.StatusInternalServerError, "SANDBOX_INIT_FAILED",
-			fmt.Sprintf("Failed to initialize code interpreter: %v", err))
-		return
+		if err != nil {
+			log.Printf("init sandbox %s/%s failed: %v", createdSandbox.Namespace, createdSandbox.Name, err)
+			respondError(c, http.StatusInternalServerError, "SANDBOX_INIT_FAILED",
+				fmt.Sprintf("Failed to initialize code interpreter: %v", err))
+			return
+		}
 	}
 
 	err = s.storeClient.UpdateSandbox(c.Request.Context(), storeCacheInfo)

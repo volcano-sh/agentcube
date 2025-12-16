@@ -150,9 +150,10 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	}
 	sandbox := buildSandboxObject(buildParams)
 	externalInfo := &sandboxExternalInfo{
-		Kind:      types.SandboxKind,
-		Ports:     agentRuntimeObj.Spec.Ports,
-		SessionID: sessionID,
+		Kind:               types.SandboxKind,
+		Ports:              agentRuntimeObj.Spec.Ports,
+		SessionID:          sessionID,
+		NeedInitialization: false,
 	}
 	return sandbox, externalInfo, nil
 }
@@ -182,9 +183,14 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	sessionID := uuid.New().String()
 	sandboxName := fmt.Sprintf("%s-%s", codeInterpreterName, RandString(8))
 	externalInfo := &sandboxExternalInfo{
-		Kind:      types.SandboxKind,
-		Ports:     codeInterpreterObj.Spec.Ports,
-		SessionID: sessionID,
+		Kind:               types.SandboxKind,
+		Ports:              codeInterpreterObj.Spec.Ports,
+		SessionID:          sessionID,
+		NeedInitialization: true,
+	}
+
+	if codeInterpreterObj.Spec.NeedInitialization != nil {
+		externalInfo.NeedInitialization = *codeInterpreterObj.Spec.NeedInitialization
 	}
 
 	if codeInterpreterObj.Spec.WarmPoolSize != nil && *codeInterpreterObj.Spec.WarmPoolSize > 0 {

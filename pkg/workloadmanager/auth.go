@@ -49,7 +49,7 @@ import (
 //   - Users can only establish tunnels to sandboxes they created
 //   - Access is checked via checkSandboxAccess() function
 //
-// GET /health (HealthCheck):
+// GET /health (health check):
 //   - No authentication required (public endpoint)
 
 type contextKey string

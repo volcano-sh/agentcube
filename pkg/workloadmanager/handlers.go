@@ -27,7 +27,6 @@ func (s *Server) handleHealth(c *gin.Context) {
 }
 
 // handleCreateSandbox handles sandbox creation requests
-// nolint :gocyclo
 // extractUserK8sClient extracts user information from the context and creates a user-specific Kubernetes client.
 // It returns the dynamic client for the user and an error if authentication fails or client creation fails.
 func (s *Server) extractUserK8sClient(c *gin.Context) (dynamic.Interface, error) {
@@ -46,6 +45,56 @@ func (s *Server) extractUserK8sClient(c *gin.Context) (dynamic.Interface, error)
 	return userClient.dynamicClient, nil
 }
 
+func (s *Server) codeInterpreterInitialization(ctx context.Context, sandboxReq *types.CreateSandboxRequest, sandboxResp *types.CreateSandboxResponse, storeCacheInfo *types.SandboxStore, externalInfo *sandboxExternalInfo, podIP string) error {
+	// Check if CodeInterpreter need initialization
+	if externalInfo.NeedInitialization == false {
+		log.Printf("skipping initialization for sandbox %s/%s", sandboxReq.Namespace, sandboxReq.Name)
+		return nil
+	}
+
+	if len(storeCacheInfo.EntryPoints) == 0 {
+		// Fallback to default http://ip:8080
+		log.Printf("sandbox %s/%s entryPoints is empty, fallback with default", sandboxReq.Namespace, sandboxReq.Name)
+		defaultEntryPoint := types.SandboxEntryPoints{
+			Path:     "/",
+			Protocol: "http",
+			Endpoint: fmt.Sprintf("%s:8080", podIP),
+		}
+		storeCacheInfo.EntryPoints = []types.SandboxEntryPoints{defaultEntryPoint}
+		sandboxResp.EntryPoints = storeCacheInfo.EntryPoints
+	}
+
+	// Code Interpreter sandbox created, init code interpreter
+	// Find the /init endpoint from entryPoints
+	var initEndpoint string
+	for _, access := range storeCacheInfo.EntryPoints {
+		if access.Path == "/init" {
+			initEndpoint = fmt.Sprintf("%s://%s", access.Protocol, access.Endpoint)
+			break
+		}
+	}
+
+	// If no /init path found, use the first entryPoint endpoint fallback
+	if initEndpoint == "" {
+		initEndpoint = fmt.Sprintf("%s://%s", storeCacheInfo.EntryPoints[0].Protocol,
+			storeCacheInfo.EntryPoints[0].Endpoint)
+	}
+
+	// Call sandbox init endpoint with JWT-signed request
+	err := s.InitCodeInterpreterSandbox(
+		ctx,
+		initEndpoint,
+		externalInfo.SessionID,
+		sandboxReq.PublicKey,
+		sandboxReq.Metadata,
+		sandboxReq.InitTimeoutSeconds,
+	)
+
+	return err
+}
+
+// handleCreateSandbox do create sandbox
+// nolint: gocyclo
 func (s *Server) handleCreateSandbox(c *gin.Context) {
 	sandboxReq := &types.CreateSandboxRequest{}
 	if err := c.ShouldBindJSON(sandboxReq); err != nil {
@@ -96,9 +145,10 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 
 	dynamicClient := s.k8sClient.dynamicClient
 	if s.config.EnableAuth {
-		userDynamicClient, err := s.extractUserK8sClient(c)
-		if err != nil {
-			respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", err.Error())
+		userDynamicClient, errExtractClient := s.extractUserK8sClient(c)
+		if errExtractClient != nil {
+			log.Printf("extract user k8s client failed: %v", errExtractClient)
+			respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", errExtractClient.Error())
 			return
 		}
 		dynamicClient = userDynamicClient
@@ -150,24 +200,21 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	}
 
 	needRollbackSandbox := true
-	sandboxRollbackFunc := func() error {
+	sandboxRollbackFunc := func() {
 		ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		err := deleteSandbox(ctxTimeout, dynamicClient, namespace, sandboxName)
 		if err != nil {
-			return fmt.Errorf("failed to create sandbox: %v", err)
+			log.Printf("sandbox %s/%s rollback failed: %v", namespace, sandboxName, err)
+			return
 		}
-		return nil
+		log.Printf("sandbox %s/%s rollback succeeded", namespace, sandboxName)
 	}
 	defer func() {
 		if needRollbackSandbox == false {
 			return
 		}
-		if err := sandboxRollbackFunc(); err != nil {
-			log.Printf("sandbox rollback failed: %v", err)
-		} else {
-			log.Printf("sandbox %s/%s rollback succeeded", createdSandbox.Namespace, createdSandbox.Name)
-		}
+		sandboxRollbackFunc()
 	}()
 
 	sandboxPodName := ""
@@ -190,63 +237,12 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		EntryPoints: storeCacheInfo.EntryPoints,
 	}
 
-	if sandboxReq.Kind != types.CodeInterpreterKind {
-		err = s.storeClient.UpdateSandbox(c.Request.Context(), storeCacheInfo)
-		if err != nil {
-			log.Printf("update store cache failed: %v", err)
-			respondError(c, http.StatusInternalServerError, "SANDBOX_UPDATE_STORE_FAILED", err.Error())
-			return
-		}
-		needRollbackSandbox = false
-		log.Printf("create sandbox %s/%s successfully, sesssionID: %s", createdSandbox.Namespace, createdSandbox.Name, externalInfo.SessionID)
-		respondJSON(c, http.StatusOK, response)
+	err = s.codeInterpreterInitialization(c.Request.Context(), sandboxReq, response, storeCacheInfo, externalInfo, podIP)
+	if err != nil {
+		log.Printf("init sandbox %s/%s failed: %v", createdSandbox.Namespace, createdSandbox.Name, err)
+		respondError(c, http.StatusInternalServerError, "SANDBOX_INIT_FAILED",
+			fmt.Sprintf("Failed to initialize code interpreter: %v", err))
 		return
-	}
-
-	if len(storeCacheInfo.EntryPoints) == 0 {
-		// Fallback to default http://ip:8080
-		defaultEntryPoint := types.SandboxEntryPoints{
-			Path:     "/",
-			Protocol: "http",
-			Endpoint: fmt.Sprintf("%s:8080", podIP),
-		}
-		storeCacheInfo.EntryPoints = []types.SandboxEntryPoints{defaultEntryPoint}
-		response.EntryPoints = storeCacheInfo.EntryPoints
-	}
-
-	if externalInfo.NeedInitialization == true {
-		// Code Interpreter sandbox created, init code interpreter
-		// Find the /init endpoint from entryPoints
-		var initEndpoint string
-		for _, access := range storeCacheInfo.EntryPoints {
-			if access.Path == "/init" {
-				initEndpoint = fmt.Sprintf("%s://%s", access.Protocol, access.Endpoint)
-				break
-			}
-		}
-
-		// If no /init path found, use the first entryPoint endpoint fallback
-		if initEndpoint == "" {
-			initEndpoint = fmt.Sprintf("%s://%s", storeCacheInfo.EntryPoints[0].Protocol,
-				storeCacheInfo.EntryPoints[0].Endpoint)
-		}
-
-		// Call sandbox init endpoint with JWT-signed request
-		err = s.InitCodeInterpreterSandbox(
-			c.Request.Context(),
-			initEndpoint,
-			externalInfo.SessionID,
-			sandboxReq.PublicKey,
-			sandboxReq.Metadata,
-			sandboxReq.InitTimeoutSeconds,
-		)
-
-		if err != nil {
-			log.Printf("init sandbox %s/%s failed: %v", createdSandbox.Namespace, createdSandbox.Name, err)
-			respondError(c, http.StatusInternalServerError, "SANDBOX_INIT_FAILED",
-				fmt.Sprintf("Failed to initialize code interpreter: %v", err))
-			return
-		}
 	}
 
 	err = s.storeClient.UpdateSandbox(c.Request.Context(), storeCacheInfo)
@@ -257,7 +253,8 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	}
 	// init successful, no need to rollback
 	needRollbackSandbox = false
-	log.Printf("init sandbox %s/%s successfully, sessionID: %s", createdSandbox.Namespace, createdSandbox.Name, externalInfo.SessionID)
+	log.Printf("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
+		createdSandbox.Name, createdSandbox.Kind, externalInfo.SessionID)
 	respondJSON(c, http.StatusOK, response)
 }
 

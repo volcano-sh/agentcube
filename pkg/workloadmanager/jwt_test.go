@@ -125,3 +125,19 @@ func TestVerifyTokenWithDifferentKey(t *testing.T) {
 		assert.False(t, token.Valid)
 	}
 }
+
+func TestJWTManager_GetPublicKeyPEM(t *testing.T) {
+	jm, err := NewJWTManager()
+	assert.NoError(t, err)
+
+	publicKeyPEM, err := jm.GetPublicKeyPEM()
+	assert.NoError(t, err)
+	assert.NotEmpty(t, publicKeyPEM)
+
+	privateKeyPEM := jm.GetPrivateKeyPEM()
+	assert.NotEmpty(t, privateKeyPEM)
+
+	jm2, err := NewJWTManagerWithPEM(publicKeyPEM, privateKeyPEM)
+	assert.NoError(t, err)
+	assert.NotNil(t, jm2)
+}

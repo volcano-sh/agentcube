@@ -111,17 +111,8 @@ func (s *Server) setupRoutes() {
 
 // Start starts the API server
 func (s *Server) Start(ctx context.Context) error {
-	// Store JWT public key in Kubernetes secret
-	publicKeyPEM, err := s.jwtManager.GetPublicKeyPEM()
-	if err != nil {
-		return fmt.Errorf("failed to get JWT public key: %w", err)
-	}
-
-	if err := s.k8sClient.StoreJWTPublicKeyInSecret(ctx, publicKeyPEM); err != nil {
-		log.Printf("Warning: failed to store JWT public key in secret: %v", err)
-		// Don't fail startup if secret storage fails, just log warning
-	} else {
-		log.Println("JWT public key stored in Kubernetes secret successfully")
+	if err := s.TryStoreOrLoadJWTKeySecret(ctx); err != nil {
+		return fmt.Errorf("failed to store or load JWT key: %w", err)
 	}
 
 	// Initialize store with informer before starting server

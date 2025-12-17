@@ -105,7 +105,7 @@ func (rs *redisStore) Ping(ctx context.Context) error {
 }
 
 // GetSandboxBySessionID looks up the sandbox bound to the given session ID.
-// Underlying Redis: GET session:{sessionID} -> SandboxStore(JSON).
+// Underlying Redis: GET session:{sessionID} -> Sandbox Info(JSON).
 func (rs *redisStore) GetSandboxBySessionID(ctx context.Context, sessionID string) (*types.SandboxStore, error) {
 	key := rs.sessionKey(sessionID)
 

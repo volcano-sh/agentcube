@@ -141,7 +141,7 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 		return nil, fmt.Errorf("%w: response with empty session id from workload manager", ErrCreateSandboxFailed)
 	}
 
-	// Construct SandboxStore from response
+	// Construct Sandbox Info from response
 	sandbox := &types.SandboxStore{
 		SandboxID:   createResp.SandboxID,
 		Name:        createResp.SandboxName,

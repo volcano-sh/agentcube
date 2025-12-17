@@ -100,7 +100,7 @@ func (s *Server) authMiddleware(c *gin.Context) {
 		return
 	}
 
-	klog.V(2).Infof("Authenticated request from service account: %s", serviceAccount)
+	klog.Infof("Authenticated request from service account: %s", serviceAccount)
 
 	// Extract namespace from service account username
 	// Format: system:serviceaccount:<namespace>:<serviceaccount-name>

@@ -151,7 +151,7 @@ func (am *AuthManager) savePublicKeyLocked(publicKeyStr string) error {
 			klog.Info("Key file successfully set to immutable (chattr +i)")
 		}
 	} else {
-		klog.V(4).Infof("Note: chattr command is Linux-specific. Current OS: %s. File permissions set to read-only.", runtime.GOOS)
+		klog.Infof("Note: chattr command is Linux-specific. Current OS: %s. File permissions set to read-only.", runtime.GOOS)
 	}
 
 	am.publicKey = rsaPub

@@ -172,7 +172,7 @@ func (s *Server) Start(ctx context.Context) error {
 // loggingMiddleware logs each request (except /health)
 func (s *Server) loggingMiddleware(c *gin.Context) {
 	start := time.Now()
-	klog.V(4).Infof("%s %s %s", c.Request.Method, c.Request.RequestURI, c.ClientIP())
+	klog.Infof("%s %s %s", c.Request.Method, c.Request.RequestURI, c.ClientIP())
 	c.Next()
-	klog.V(4).Infof("%s %s - completed in %v", c.Request.Method, c.Request.RequestURI, time.Since(start))
+	klog.Infof("%s %s - completed in %v", c.Request.Method, c.Request.RequestURI, time.Since(start))
 }

@@ -68,7 +68,7 @@ func NewServer(config Config) *Server {
 	// Load existing public key if available
 	if err := s.authManager.LoadPublicKey(); err != nil {
 		// Log that server is not initialized, but don't fail startup
-		klog.V(4).Infof("Server not initialized: %v", err)
+		klog.Infof("Server not initialized: %v", err)
 	}
 
 	// API route group (Authenticated)

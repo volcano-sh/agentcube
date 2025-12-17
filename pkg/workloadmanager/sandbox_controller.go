@@ -36,15 +36,15 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// Check for pending requests with proper locking
 	if status == "running" {
-		klog.V(2).Infof("Sandbox %s/%s is running, sending notification", sandbox.Namespace, sandbox.Name)
+		klog.Infof("Sandbox %s/%s is running, sending notification", sandbox.Namespace, sandbox.Name)
 		r.mu.Lock()
 		resultChan, exists := r.pendingRequests[req.NamespacedName]
 		if exists {
-			klog.V(3).Infof("Found %d pending requests for sandbox %s/%s", len(r.pendingRequests), sandbox.Namespace, sandbox.Name)
+			klog.Infof("Found %d pending requests for sandbox %s/%s", len(r.pendingRequests), sandbox.Namespace, sandbox.Name)
 			// Remove from map before sending to avoid memory leak
 			delete(r.pendingRequests, req.NamespacedName)
 		} else {
-			klog.V(5).Infof("No pending requests found for sandbox %s/%s", sandbox.Namespace, sandbox.Name)
+			klog.Infof("No pending requests found for sandbox %s/%s", sandbox.Namespace, sandbox.Name)
 		}
 		r.mu.Unlock()
 
@@ -52,7 +52,7 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			// Send notification outside the lock to avoid deadlock
 			select {
 			case resultChan <- SandboxStatusUpdate{Sandbox: sandbox}:
-				klog.V(2).Infof("Notified waiter about sandbox %s/%s reaching Running state", sandbox.Namespace, sandbox.Name)
+				klog.Infof("Notified waiter about sandbox %s/%s reaching Running state", sandbox.Namespace, sandbox.Name)
 			default:
 				klog.Warningf("resultChan is full for sandbox %s/%s", sandbox.Namespace, sandbox.Name)
 			}

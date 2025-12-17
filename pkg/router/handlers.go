@@ -39,7 +39,7 @@ func (s *Server) handleHealthReady(c *gin.Context) {
 
 // handleInvoke is a private helper function that handles invocation requests for both agents and code interpreters
 func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string) {
-	klog.V(3).Infof("%s invoke request: namespace=%s, name=%s, path=%s", kind, namespace, name, path)
+	klog.Infof("%s invoke request: namespace=%s, name=%s, path=%s", kind, namespace, name, path)
 
 	// Extract session ID from header
 	sessionID := c.GetHeader("x-agentcube-session-id")
@@ -87,7 +87,7 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 		}
 	}
 
-	klog.V(2).Infof("The selected entrypoint for session-id %s to sandbox is %s", sandbox.SessionID, endpoint)
+	klog.Infof("The selected entrypoint for session-id %s to sandbox is %s", sandbox.SessionID, endpoint)
 
 	// Update session activity in store when receiving request
 	if sandbox.SessionID != "" && sandbox.SandboxID != "" {
@@ -168,7 +168,7 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 		}
 		req.Header.Set("X-Forwarded-For", clientIP)
 
-		klog.V(5).Infof("Forwarding request to: %s%s", targetURL.String(), path)
+		klog.Infof("Forwarding request to: %s%s", targetURL.String(), path)
 	}
 
 	// Customize error handler

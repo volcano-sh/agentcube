@@ -62,7 +62,7 @@ func makeValkeyOptions() (*valkey.ClientOption, error) {
 		disableCache, err := strconv.ParseBool(valkeyDisableCache)
 		if err == nil && disableCache == true {
 			valkeyClientOptions.DisableCache = true
-			klog.V(2).Info("valkeyClientOptions DisableCache is set to true")
+			klog.Info("valkeyClientOptions DisableCache is set to true")
 		}
 	}
 	valkeyForceSingle := os.Getenv("VALKEY_FORCE_SINGLE")
@@ -70,7 +70,7 @@ func makeValkeyOptions() (*valkey.ClientOption, error) {
 		forceSingleCache, err := strconv.ParseBool(valkeyForceSingle)
 		if err == nil && forceSingleCache == true {
 			valkeyClientOptions.ForceSingleClient = true
-			klog.V(2).Info("valkeyClientOptions ForceSingleClient is set to true")
+			klog.Info("valkeyClientOptions ForceSingleClient is set to true")
 		}
 	}
 	return valkeyClientOptions, nil

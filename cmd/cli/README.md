@@ -1,6 +1,6 @@
-# AgentRun CLI
+# AgentCube CLI
 
-AgentRun CLI is a developer tool that streamlines the development, packaging, building, and deployment of AI agents to AgentCube. It provides a unified interface for managing the complete agent lifecycle from local development to cloud deployment.
+AgentCube CLI is a developer tool that streamlines the development, packaging, building, and deployment of AI agents to AgentCube. It provides a unified interface for managing the complete agent lifecycle from local development to cloud deployment.
 
 ## Quick Start
 
@@ -15,7 +15,7 @@ AgentRun CLI is a developer tool that streamlines the development, packaging, bu
 ```bash
 # Clone the repository
 git clone https://github.com/volcano-sh/agentcube.git
-cd agentcube/cmd/agentrun
+cd agentcube/cmd/cli
 
 # Create virtual environment
 python3 -m venv venv
@@ -29,29 +29,29 @@ pip install -e .
 
 1. **Package an existing agent:**
    ```bash
-   kubectl agentrun pack -f examples/hello-agent --agent-name "my-agent"
+   kubectl agentcube pack -f examples/hello-agent --agent-name "my-agent"
    ```
 
 2. **Build the container image:**
    ```bash
-   kubectl agentrun build -f examples/hello-agent
+   kubectl agentcube build -f examples/hello-agent
    ```
 
 3. **Publish to AgentCube:**
    ```bash
-   kubectl agentrun publish \
+   kubectl agentcube publish \
       -f examples/hello-agent \
       --image-url "docker.io/username/my-agent" \
    ```
 
 4. **Invoke your agent:**
    ```bash
-   kubectl agentrun invoke -f examples/hello-agent --payload '{"prompt": "Hello World!"}'
+   kubectl agentcube invoke -f examples/hello-agent --payload '{"prompt": "Hello World!"}'
    ```
 
 5. **Check status:**
    ```bash
-   kubectl agentrun status -f examples/hello-agent
+   kubectl agentcube status -f examples/hello-agent
    ```
 
 ## Features
@@ -69,25 +69,25 @@ pip install -e .
 ### From PyPI (Recommended)
 
 ```bash
-pip install agentrun
+pip install agentcube
 ```
 
 ### From Source
 
 ```bash
 git clone https://github.com/volcano-sh/agentcube.git
-cd agentcube/cmd/agentrun
+cd agentcube/cmd/cli
 pip install -e .
 ```
 
 ## Documentation
 
-- [Design](AgentRun-CLI-Design.md)
+- [Design](AgentCube-CLI-Design.md)
 - [Examples](examples/)
 
 ## Configuration
 
-AgentRun uses a `agent_metadata.yaml` file to configure your agent:
+AgentCube uses a `agent_metadata.yaml` file to configure your agent:
 
 ```yaml
 agent_name: my-agent
@@ -101,7 +101,7 @@ requirements_file: requirements.txt
 
 ## Architecture
 
-AgentRun CLI follows a modular four-layer architecture:
+AgentCube CLI follows a modular four-layer architecture:
 
 1. **CLI Layer**: Typer-based command interface
 2. **Runtime Layer**: Business logic and Python SDK
@@ -110,14 +110,14 @@ AgentRun CLI follows a modular four-layer architecture:
 
 ## Deployment Providers
 
-AgentRun supports two deployment providers:
+AgentCube supports two deployment providers:
 
 ### AgentCube Provider (Default)
 
 Deploys agents using AgentCube's custom AgentRuntime CRDs, providing enhanced agent lifecycle management and integration with the AgentCube ecosystem.
 
 ```bash
-kubectl agentrun publish -f examples/hello-agent --provider agentcube
+kubectl agentcube publish -f examples/hello-agent --provider agentcube
 ```
 
 ### Standard Kubernetes Provider
@@ -125,18 +125,18 @@ kubectl agentrun publish -f examples/hello-agent --provider agentcube
 Deploys agents as standard Kubernetes Deployments and Services, suitable for environments without AgentCube CRDs installed.
 
 ```bash
-kubectl agentrun publish -f examples/hello-agent --provider k8s \
+kubectl agentcube publish -f examples/hello-agent --provider k8s \
   --node-port 30080 \
   --replicas 3
 ```
 
 ## Command Reference
 
-### `kubectl agentrun pack`
+### `kubectl agentcube pack`
 Package the agent application into a standardized workspace.
 
 ```bash
-kubectl agentrun pack [OPTIONS]
+kubectl agentcube pack [OPTIONS]
 
 Options:
   -f, --workspace TEXT    Path to the agent workspace directory [default: .]
@@ -150,11 +150,11 @@ Options:
   --verbose               Enable detailed logging
 ```
 
-### `kubectl agentrun build`
+### `kubectl agentcube build`
 Build the agent image based on the packaged workspace.
 
 ```bash
-kubectl agentrun build [OPTIONS]
+kubectl agentcube build [OPTIONS]
 
 Options:
   -f, --workspace TEXT    Path to the agent workspace directory [default: .]
@@ -164,11 +164,11 @@ Options:
   --verbose               Enable detailed logging
 ```
 
-### `kubectl agentrun publish`
+### `kubectl agentcube publish`
 Publish the agent to AgentCube
 
 ```bash
-kubectl agentrun publish [OPTIONS]
+kubectl agentcube publish [OPTIONS]
 
 Options:
   -f, --workspace TEXT    Path to the agent workspace directory [default: .]
@@ -187,11 +187,11 @@ Options:
   --verbose               Enable detailed logging
 ```
 
-### `kubectl agentrun invoke`
+### `kubectl agentcube invoke`
 Invoke a published agent via AgentCube or Kubernetes.
 
 ```bash
-kubectl agentrun invoke [OPTIONS]
+kubectl agentcube invoke [OPTIONS]
 
 Options:
   -f, --workspace TEXT    Path to the agent workspace directory [default: .]
@@ -201,11 +201,11 @@ Options:
   --verbose               Enable detailed logging
 ```
 
-### `kubectl agentrun status`
+### `kubectl agentcube status`
 Check the status of a published agent.
 
 ```bash
-kubectl agentrun status [OPTIONS]
+kubectl agentcube status [OPTIONS]
 
 Options:
   -f, --workspace TEXT    Path to the agent workspace directory [default: .]
@@ -215,7 +215,7 @@ Options:
 
 ## Agent Structure
 
-An AgentRun workspace typically contains:
+An AgentCube workspace typically contains:
 
 ```
 my-agent/
@@ -267,11 +267,11 @@ Supported with Maven-based builds and OpenJDK runtime.
    - Use `--build-mode cloud` for cloud builds
 
 2. **"Metadata file not found"**
-   - Run `kubectl agentrun pack` first to generate metadata
+   - Run `kubectl agentcube pack` first to generate metadata
    - Ensure you're in the correct workspace directory
 
 3. **"Agent not published yet"**
-   - Run `kubectl agentrun publish` before trying to invoke
+   - Run `kubectl agentcube publish` before trying to invoke
    - Check that the build completed successfully
 
 4. **"Provider not found"**
@@ -282,14 +282,14 @@ Supported with Maven-based builds and OpenJDK runtime.
 
 ```bash
 # General help
-kubectl agentrun --help
+kubectl agentcube --help
 
 # Command-specific help
-kubectl agentrun pack --help
-kubectl agentrun build --help
-kubectl agentrun publish --help
-kubectl agentrun invoke --help
-kubectl agentrun status --help
+kubectl agentcube pack --help
+kubectl agentcube build --help
+kubectl agentcube publish --help
+kubectl agentcube invoke --help
+kubectl agentcube status --help
 ```
 
 ## License

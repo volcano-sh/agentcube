@@ -1,5 +1,5 @@
 """
-AgentRun CLI - A developer tool for packaging, building, and deploying AI agents to AgentCube.
+AgentCube CLI - A developer tool for packaging, building, and deploying AI agents to AgentCube.
 """
 
 __version__ = "0.1.0"

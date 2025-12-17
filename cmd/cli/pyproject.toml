@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agentrun"
+name = "agentcube"
 version = "0.1.0"
-description = "AgentRun CLI - A developer tool for packaging, building, and deploying AI agents to AgentCube"
+description = "AgentCube CLI - A developer tool for packaging, building, and deploying AI agents to AgentCube"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 keywords = ["ai", "agent", "kubernetes", "volcano", "agentcube", "cli"]
@@ -63,14 +63,14 @@ test = [
 [project.urls]
 Homepage = "https://github.com/volcano-sh/agentcube"
 Documentation = "https://agentcube.readthedocs.io/"
-Repository = "https://github.com/volcano-sh/agentcube/tree/main/cmd/agentrun"
+Repository = "https://github.com/volcano-sh/agentcube/tree/main/cmd/cli"
 Issues = "https://github.com/volcano-sh/agentcube/issues"
 
 [project.scripts]
-kubectl-agentrun = "agentrun.cli.main:app"
+kubectl-agentcube = "agentcube.cli.main:app"
 
 [tool.setuptools]
-packages = ["agentrun", "agentrun.cli", "agentrun.runtime", "agentrun.operations", "agentrun.services"]
+packages = ["agentcube", "agentcube.cli", "agentcube.runtime", "agentcube.operations", "agentcube.services"]
 
 [tool.black]
 line-length = 88
@@ -94,7 +94,7 @@ extend-exclude = '''
 profile = "black"
 multi_line_output = 3
 line_length = 88
-known_first_party = ["agentrun"]
+known_first_party = ["agentcube"]
 
 [tool.mypy]
 python_version = "3.8"

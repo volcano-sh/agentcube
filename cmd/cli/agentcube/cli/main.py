@@ -1,5 +1,5 @@
 """
-Main CLI entry point for AgentRun.
+Main CLI entry point for AgentCube.
 
 This module defines the command-line interface using Typer, providing
 a rich and developer-friendly experience for managing AI agents.
@@ -14,12 +14,12 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
-from agentrun.models.pack_models import MetadataOptions
-from agentrun.runtime.build_runtime import BuildRuntime
-from agentrun.runtime.invoke_runtime import InvokeRuntime
-from agentrun.runtime.pack_runtime import PackRuntime
-from agentrun.runtime.publish_runtime import PublishRuntime
-from agentrun.runtime.status_runtime import StatusRuntime
+from agentcube.models.pack_models import MetadataOptions
+from agentcube.runtime.build_runtime import BuildRuntime
+from agentcube.runtime.invoke_runtime import InvokeRuntime
+from agentcube.runtime.pack_runtime import PackRuntime
+from agentcube.runtime.publish_runtime import PublishRuntime
+from agentcube.runtime.status_runtime import StatusRuntime
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -28,8 +28,8 @@ console = Console()
 
 # Create the main Typer application
 app = typer.Typer(
-    name="agentrun",
-    help="AgentRun CLI - A developer tool for packaging, building, and deploying AI agents to AgentCube",
+    name="agentcube",
+    help="AgentCube CLI - A developer tool for packaging, building, and deploying AI agents to AgentCube",
     no_args_is_help=True,
     rich_markup_mode="rich",
     add_completion=False,
@@ -39,8 +39,8 @@ app = typer.Typer(
 def version_callback(value: bool) -> None:
     """Show version information and exit."""
     if value:
-        from agentrun import __version__
-        console.print(f"AgentRun CLI (kubectl agentrun) version: [bold green]{__version__}[/bold green]")
+        from agentcube import __version__
+        console.print(f"AgentCube CLI (kubectl agentcube) version: [bold green]{__version__}[/bold green]")
         raise typer.Exit()
 
 # Error handling  
@@ -67,7 +67,7 @@ def main(
         help="Enable verbose output",
     ),
 ) -> None:
-    """AgentRun CLI - A developer tool for AI agent lifecycle management."""
+    """AgentCube CLI - A developer tool for AI agent lifecycle management."""
     # Set global verbosity level
     if verbose:
         import logging

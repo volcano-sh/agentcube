@@ -1,5 +1,5 @@
 """
-Pack runtime for AgentRun.
+Pack runtime for AgentCube.
 
 This module implements the pack command functionality, handling
 the packaging of agent applications into standardized workspaces.
@@ -13,8 +13,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from agentrun.models.pack_models import MetadataOptions
-from agentrun.services.metadata_service import AgentMetadata, MetadataService
+from agentcube.models.pack_models import MetadataOptions
+from agentcube.services.metadata_service import AgentMetadata, MetadataService
 
 logger = logging.getLogger(__name__)
 

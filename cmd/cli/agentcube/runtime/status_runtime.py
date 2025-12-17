@@ -1,5 +1,5 @@
 """
-Status runtime for AgentRun.
+Status runtime for AgentCube.
 
 This module implements the status command functionality, handling
 the status checking of published agents via AgentCube or Kubernetes.
@@ -9,9 +9,9 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from agentrun.services.metadata_service import MetadataService
-from agentrun.services.k8s_provider import KubernetesProvider
-from agentrun.services.agentcube_provider import AgentCubeProvider
+from agentcube.services.metadata_service import MetadataService
+from agentcube.services.k8s_provider import KubernetesProvider
+from agentcube.services.agentcube_provider import AgentCubeProvider
 
 logger = logging.getLogger(__name__)
 

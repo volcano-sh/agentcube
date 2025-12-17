@@ -1,5 +1,5 @@
 """
-Runtime module for AgentRun.
+Runtime module for AgentCube.
 
 This module contains the business logic for each CLI subcommand,
 exposed as both CLI commands and Python SDK functions.

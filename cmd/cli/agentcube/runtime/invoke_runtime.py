@@ -1,5 +1,5 @@
 """
-Invoke runtime for AgentRun.
+Invoke runtime for AgentCube.
 
 This module implements the invoke command functionality, handling
 the invocation of published agents via AgentCube.
@@ -10,9 +10,9 @@ import logging
 from pathlib import Path
 from typing import Tuple, Any, Dict, Optional
 
-from agentrun.services.metadata_service import MetadataService
-from agentrun.services.k8s_provider import KubernetesProvider
-from agentrun.services.agentcube_provider import AgentCubeProvider
+from agentcube.services.metadata_service import MetadataService
+from agentcube.services.k8s_provider import KubernetesProvider
+from agentcube.services.agentcube_provider import AgentCubeProvider
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ class InvokeRuntime:
         agent_id = metadata.agent_id
         if not agent_id:
             raise ValueError(
-                "Agent is not published yet. Run 'agentrun publish' first."
+                "Agent is not published yet. Run 'agentcube publish' first."
             )
 
         endpoint = metadata.agent_endpoint
@@ -164,7 +164,15 @@ class InvokeRuntime:
             request_headers.update(headers)
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            # Increase timeout for long-running agent tasks
+            timeout = httpx.Timeout(
+                connect=10.0,      # 10 seconds to connect
+                read=300.0,        # 5 minutes to read response (agent processing)
+                write=10.0,        # 10 seconds to write request
+                pool=10.0          # 10 seconds to acquire connection from pool
+            )
+            
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 if self.verbose:
                     logger.info(f"Making HTTP POST request to {endpoint}")
 
@@ -191,10 +199,20 @@ class InvokeRuntime:
                         "headers": dict(response.headers)
                     }
 
+        except httpx.TimeoutException as e:
+            if self.verbose:
+                logger.error(f"Request to {endpoint} timed out: {e}")
+            raise RuntimeError(f"Agent request timed out: {e}")
+
         except httpx.ConnectError as e:
             if self.verbose:
                 logger.error(f"Could not connect to {endpoint}. Please check if the agent is running and the endpoint is correct.")
             raise RuntimeError(f"Could not connect to agent at {endpoint}: {e}")
+
+        except httpx.HTTPStatusError as e:
+            if self.verbose:
+                logger.error(f"HTTP error from {endpoint}: {e.response.status_code}")
+            raise RuntimeError(f"Agent returned error {e.response.status_code}: {e.response.text}")
 
         except Exception as e:
             raise RuntimeError(f"HTTP invocation failed: {str(e)}")

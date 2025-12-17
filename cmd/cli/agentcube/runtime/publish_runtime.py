@@ -1,5 +1,5 @@
 """
-Publish runtime for AgentRun.
+Publish runtime for AgentCube.
 
 This module implements the publish command functionality, handling
 the publishing of agent images to AgentCube.
@@ -9,10 +9,10 @@ import logging
 from pathlib import Path
 from typing import Any, Dict
 
-from agentrun.services.docker_service import DockerService
-from agentrun.services.metadata_service import MetadataService
-from agentrun.services.k8s_provider import KubernetesProvider
-from agentrun.services.agentcube_provider import AgentCubeProvider
+from agentcube.services.docker_service import DockerService
+from agentcube.services.metadata_service import MetadataService
+from agentcube.services.k8s_provider import KubernetesProvider
+from agentcube.services.agentcube_provider import AgentCubeProvider
 
 logger = logging.getLogger(__name__)
 

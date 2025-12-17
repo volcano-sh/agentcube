@@ -1,5 +1,5 @@
 """
-Build runtime for AgentRun.
+Build runtime for AgentCube.
 
 This module implements the build command functionality, handling
 the building of agent images from packaged workspaces.
@@ -9,8 +9,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict
 
-from agentrun.services.docker_service import DockerService
-from agentrun.services.metadata_service import MetadataService
+from agentcube.services.docker_service import DockerService
+from agentcube.services.metadata_service import MetadataService
 
 logger = logging.getLogger(__name__)
 
@@ -50,19 +50,31 @@ class BuildRuntime:
 
         # Step 2: Load metadata
         metadata = self.metadata_service.load_metadata(workspace_path)
+        original_version = metadata.version
 
-        # Step 3: Auto-increment version
-        metadata = self._increment_version(workspace_path, metadata)
+        try:
+            # Step 3: Auto-increment version
+            metadata = self._increment_version(workspace_path, metadata)
 
-        # Step 4: Determine build mode
-        build_mode = options.get('build_mode', metadata.build_mode)
+            # Step 4: Determine build mode
+            build_mode = options.get('build_mode', metadata.build_mode)
 
-        if build_mode == 'local':
-            return self._build_local(workspace_path, metadata, options)
-        elif build_mode == 'cloud':
-            return self._build_cloud(workspace_path, metadata, options)
-        else:
-            raise ValueError(f"Unsupported build mode: {build_mode}")
+            if build_mode == 'local':
+                return self._build_local(workspace_path, metadata, options)
+            elif build_mode == 'cloud':
+                return self._build_cloud(workspace_path, metadata, options)
+            else:
+                raise ValueError(f"Unsupported build mode: {build_mode}")
+        except Exception as e:
+            if self.verbose:
+                logger.warning(f"Build failed: {e}. Reverting version update.")
+
+            # Revert version
+            updates = {"version": original_version}
+            self.metadata_service.update_metadata(workspace_path, updates)
+
+            # Re-raise the exception to the caller
+            raise
 
     def _increment_version(self, workspace_path: Path, metadata) -> Any:
         """

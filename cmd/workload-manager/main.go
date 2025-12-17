@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -13,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/klog/v2"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -43,6 +43,9 @@ func main() {
 		tlsKey           = flag.String("tls-key", "", "Path to TLS key file")
 		enableAuth       = flag.Bool("enable-auth", false, "Enable Authentication")
 	)
+
+	// Initialize klog flags
+	klog.InitFlags(nil)
 
 	// Parse command line flags
 	flag.Parse()
@@ -90,7 +93,7 @@ func main() {
 	// Create and initialize API server
 	server, err := workloadmanager.NewServer(config, sandboxReconciler)
 	if err != nil {
-		log.Fatalf("Failed to create API server: %v", err)
+		klog.Fatalf("Failed to create API server: %v", err)
 	}
 
 	// Setup signal handling
@@ -102,16 +105,16 @@ func main() {
 
 	// Start controller manager in goroutine
 	go func() {
-		log.Println("Starting controller manager...")
+		klog.Info("Starting controller manager...")
 		if err := mgr.Start(ctx); err != nil {
-			log.Fatalf("Controller manager error: %v", err)
+			klog.Fatalf("Controller manager error: %v", err)
 		}
 	}()
 
 	// Start API server in goroutine
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("Starting workloadmanager on port %s", *port)
+		klog.Infof("Starting workloadmanager on port %s", *port)
 		if err := server.Start(ctx); err != nil {
 			errCh <- err
 		}
@@ -120,14 +123,14 @@ func main() {
 	// Wait for signal or error
 	select {
 	case <-sigCh:
-		log.Println("Received shutdown signal, shutting down gracefully...")
+		klog.Info("Received shutdown signal, shutting down gracefully...")
 		cancel()
 		time.Sleep(2 * time.Second) // Give server time to shutdown gracefully
 	case err := <-errCh:
-		log.Fatalf("Server error: %v", err)
+		klog.Fatalf("Server error: %v", err)
 	}
 
-	log.Println("Server stopped")
+	klog.Info("Server stopped")
 }
 
 func setupControllers(mgr ctrl.Manager, sandboxReconciler *workloadmanager.SandboxReconciler, codeInterpreterReconciler *workloadmanager.CodeInterpreterReconciler) error {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/klog/v2"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	"sigs.k8s.io/agent-sandbox/controllers"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
@@ -98,7 +99,7 @@ func (s *Server) codeInterpreterInitialization(ctx context.Context, sandboxReq *
 func (s *Server) handleCreateSandbox(c *gin.Context) {
 	sandboxReq := &types.CreateSandboxRequest{}
 	if err := c.ShouldBindJSON(sandboxReq); err != nil {
-		log.Printf("parse request body failed: %v", err)
+		klog.Errorf("parse request body failed: %v", err)
 		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
 		return
 	}
@@ -113,7 +114,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	}
 
 	if err := sandboxReq.Validate(); err != nil {
-		log.Printf("request body validation failed: %v", err)
+		klog.Errorf("request body validation failed: %v", err)
 		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
@@ -128,13 +129,13 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	case types.CodeInterpreterKind:
 		sandbox, sandboxClaim, externalInfo, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers)
 	default:
-		log.Printf("invalid request kind: %v", sandboxReq.Kind)
+		klog.Errorf("invalid request kind: %v", sandboxReq.Kind)
 		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("invalid request kind: %v", sandboxReq.Kind))
 		return
 	}
 
 	if err != nil {
-		log.Printf("build sandbox failed: %v", err)
+		klog.Errorf("build sandbox failed: %v", err)
 		respondError(c, http.StatusBadRequest, "SANDBOX_BUILD_FAILED", err.Error())
 		return
 	}
@@ -162,7 +163,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	sandboxStorePlaceHolder := buildSandboxStoreCachePlaceHolder(sandbox, externalInfo)
 	if err = s.storeClient.StoreSandbox(c.Request.Context(), sandboxStorePlaceHolder); err != nil {
 		errMessage := fmt.Sprintf("store sandbox place holder into store failed: %v", err)
-		log.Println(errMessage)
+		klog.Error(errMessage)
 		respondError(c, http.StatusInternalServerError, "STORE_SANDBOX_FAILED", errMessage)
 		return
 	}
@@ -170,7 +171,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	if sandboxClaim != nil {
 		err = createSandboxClaim(c.Request.Context(), dynamicClient, sandboxClaim)
 		if err != nil {
-			log.Printf("create sandbox claim %s/%s failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err)
+			klog.Errorf("create sandbox claim %s/%s failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err)
 			respondError(c, http.StatusForbidden, "SANDBOX_CLAIM_CREATE_FAILED",
 				fmt.Sprintf("Failed to create sandbox claim: %v", err))
 			return
@@ -178,7 +179,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	} else {
 		_, err = createSandbox(c.Request.Context(), dynamicClient, sandbox)
 		if err != nil {
-			log.Printf("create sandbox %s/%s failed: %v", sandbox.Namespace, sandbox.Name, err)
+			klog.Errorf("create sandbox %s/%s failed: %v", sandbox.Namespace, sandbox.Name, err)
 			respondError(c, http.StatusForbidden, "SANDBOX_CREATE_FAILED",
 				fmt.Sprintf("Failed to create sandbox: %v", err))
 			return
@@ -190,11 +191,11 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	case result := <-resultChan:
 		// TODO: pendingRequests should remove manual if not receive result
 		createdSandbox = result.Sandbox
-		log.Printf("sandbox %s/%s running", createdSandbox.Namespace, createdSandbox.Name)
+		klog.Infof("sandbox %s/%s running", createdSandbox.Namespace, createdSandbox.Name)
 	case <-time.After(3 * time.Minute):
 		// timeout, Sandbox/SandboxClaim maybe create successfully later,
 		// it will be deleted in GarbageCollection
-		log.Printf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
+		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
 		respondError(c, http.StatusInternalServerError, "SANDBOX_TIMEOUT", "Sandbox creation timed out")
 		return
 	}
@@ -223,7 +224,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	}
 	podIP, err := s.k8sClient.GetSandboxPodIP(c.Request.Context(), namespace, sandboxName, sandboxPodName)
 	if err != nil {
-		log.Printf("failed to get sandbox %s/%s pod IP: %v", namespace, sandboxName, err)
+		klog.Errorf("failed to get sandbox %s/%s pod IP: %v", namespace, sandboxName, err)
 		respondError(c, http.StatusInternalServerError, "SANDBOX_BUILD_FAILED", err.Error())
 		return
 	}
@@ -239,7 +240,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 
 	err = s.codeInterpreterInitialization(c.Request.Context(), sandboxReq, response, storeCacheInfo, externalInfo, podIP)
 	if err != nil {
-		log.Printf("init sandbox %s/%s failed: %v", createdSandbox.Namespace, createdSandbox.Name, err)
+		klog.Infof("init sandbox %s/%s failed: %v", createdSandbox.Namespace, createdSandbox.Name, err)
 		respondError(c, http.StatusInternalServerError, "SANDBOX_INIT_FAILED",
 			fmt.Sprintf("Failed to initialize code interpreter: %v", err))
 		return

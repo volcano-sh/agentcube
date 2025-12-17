@@ -2,10 +2,11 @@ package store
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"sync"
+
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -32,7 +33,7 @@ func Storage() Store {
 	initStoreOnce.Do(func() {
 		err := initStore()
 		if err != nil {
-			log.Fatalf("init store failed: %v", err)
+			klog.Fatalf("init store failed: %v", err)
 		}
 	})
 	return provider
@@ -54,14 +55,14 @@ func initStore() error {
 			return fmt.Errorf("init redis store failed: %w", err)
 		}
 		provider = redisProvider
-		log.Println("init redis store successfully")
+		klog.Info("init redis store successfully")
 	case valkeyStoreType:
 		valkeyProvider, err := initValkeyStore()
 		if err != nil {
 			return fmt.Errorf("init valkey store failed: %w", err)
 		}
 		provider = valkeyProvider
-		log.Println("init valkey store successfully")
+		klog.Info("init valkey store successfully")
 	default:
 		return fmt.Errorf("unsupported provider type: %v", providerType)
 	}

@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"flag"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/router"
 )
@@ -24,6 +25,9 @@ func main() {
 		maxConnsPerHost       = flag.Int("max-conns-per-host", 10, "Maximum number of connections per host")
 	)
 
+	// Initialize klog flags
+	klog.InitFlags(nil)
+	
 	// Parse command line flags
 	flag.Parse()
 
@@ -43,7 +47,7 @@ func main() {
 	// Create Router API server
 	server, err := router.NewServer(config)
 	if err != nil {
-		log.Fatalf("Failed to create Router API server: %v", err)
+		klog.Fatalf("Failed to create Router API server: %v", err)
 	}
 
 	// Setup signal handling with context cancellation
@@ -53,7 +57,7 @@ func main() {
 	// Start Router API server in goroutine
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("Starting agentcube Router server on port %s", *port)
+		klog.Infof("Starting agentcube Router server on port %s", *port)
 		if err := server.Start(ctx); err != nil {
 			errCh <- err
 		}
@@ -63,14 +67,14 @@ func main() {
 	// Wait for signal or error
 	select {
 	case <-ctx.Done():
-		log.Println("Received shutdown signal, shutting down gracefully...")
+		klog.Info("Received shutdown signal, shutting down gracefully...")
 		// Cancel the context to trigger server shutdown
 		cancel()
 		// Wait for server goroutine to exit after graceful shutdown is complete
 		<-errCh
 	case err := <-errCh:
-		log.Fatalf("Server error: %v", err)
+		klog.Fatalf("Server error: %v", err)
 	}
 
-	log.Println("Router server stopped")
+	klog.Info("Router server stopped")
 }

@@ -2,12 +2,12 @@ package picod
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"k8s.io/klog/v2"
 )
 
 // Config defines server configuration
@@ -41,7 +41,7 @@ func NewServer(config Config) *Server {
 		// Default to current working directory if not specified
 		cwd, err := os.Getwd()
 		if err != nil {
-			log.Fatalf("Failed to get current working directory: %v", err)
+			klog.Fatalf("Failed to get current working directory: %v", err)
 		}
 		s.setWorkspace(cwd)
 	}
@@ -57,18 +57,18 @@ func NewServer(config Config) *Server {
 
 	// Load bootstrap key (Required)
 	if len(config.BootstrapKey) == 0 {
-		log.Fatal("Bootstrap key is missing. Please ensure the bootstrap public key file is correctly mounted or provided.")
+		klog.Fatal("Bootstrap key is missing. Please ensure the bootstrap public key file is correctly mounted or provided.")
 	}
 
 	if err := s.authManager.LoadBootstrapKey(config.BootstrapKey); err != nil {
-		log.Fatalf("Failed to load bootstrap key: %v", err)
+		klog.Fatalf("Failed to load bootstrap key: %v", err)
 	}
-	log.Printf("Bootstrap key loaded successfully")
+	klog.Info("Bootstrap key loaded successfully")
 
 	// Load existing public key if available
 	if err := s.authManager.LoadPublicKey(); err != nil {
 		// Log that server is not initialized, but don't fail startup
-		log.Printf("Server not initialized: %v", err)
+		klog.V(4).Infof("Server not initialized: %v", err)
 	}
 
 	// API route group (Authenticated)
@@ -93,7 +93,7 @@ func NewServer(config Config) *Server {
 // Run starts the server
 func (s *Server) Run() error {
 	addr := fmt.Sprintf(":%d", s.config.Port)
-	log.Printf("PicoD server starting on %s", addr)
+	klog.Infof("PicoD server starting on %s", addr)
 
 	server := &http.Server{
 		Addr:              addr,

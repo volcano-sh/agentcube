@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"log"
 	"mime"
 	"net/http"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -333,7 +333,7 @@ func (s *Server) ListFilesHandler(c *gin.Context) {
 	for _, entry := range entries {
 		info, err := entry.Info()
 		if err != nil {
-			log.Printf("Warning: Failed to get info for entry '%s': %v", entry.Name(), err)
+			klog.Warningf("Failed to get info for entry '%s': %v", entry.Name(), err)
 			continue // Skip files with errors
 		}
 		files = append(files, FileEntry{
@@ -357,11 +357,11 @@ func parseFileMode(modeStr string) os.FileMode {
 	}
 	mode, err := strconv.ParseUint(modeStr, 8, 32)
 	if err != nil {
-		log.Printf("Warning: Invalid file mode '%s': %v, using default 0644", modeStr, err)
+		klog.Warningf("Invalid file mode '%s': %v, using default 0644", modeStr, err)
 		return 0644
 	}
 	if mode > maxFileMode {
-		log.Printf("Warning: Invalid file mode '%s': exceeds 0777, using default 0644", modeStr)
+		klog.Warningf("Invalid file mode '%s': exceeds 0777, using default 0644", modeStr)
 		return 0644
 	}
 	return os.FileMode(mode)
@@ -371,7 +371,7 @@ func parseFileMode(modeStr string) os.FileMode {
 func (s *Server) setWorkspace(dir string) {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
-		log.Printf("Warning: Failed to resolve absolute path for workspace '%s': %v", dir, err)
+		klog.Warningf("Failed to resolve absolute path for workspace '%s': %v", dir, err)
 		s.workspaceDir = dir // Fallback to provided path
 	} else {
 		s.workspaceDir = absDir

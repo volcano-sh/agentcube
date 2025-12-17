@@ -366,7 +366,7 @@ def invoke(
         "--payload",
         help="JSON-formatted input passed to the agent",
     ),
-    header: Optional[List[str]] = typer.Option(
+    header_list: Optional[List[str]] = typer.Option(
         None,
         "--header",
         help="Custom HTTP headers (e.g., 'Authorization: Bearer token'). Can be specified multiple times.",
@@ -409,11 +409,17 @@ def invoke(
 
             # Parse headers
             headers = {}
-            if header:
-                for h in header:
-                    if ':' in h:
-                        key, value = h.split(':', 1)
-                        headers[key.strip()] = value.strip()
+            if header_list:
+                for h in header_list:
+                    parts = h.split(':', 1)
+                    if len(parts) != 2:
+                        console.print(f"Invalid header format: [red]{h}[/red]. Expected 'key:value'.")
+                        raise typer.Exit(1)
+                    key, value = parts
+                    if not key.strip():
+                        console.print(f"Invalid header key in [red]{h}[/red]. Header key cannot be empty.")
+                        raise typer.Exit(1)
+                    headers[key.strip()] = value.strip()
 
             result = runtime.invoke(workspace_path, payload_data, headers)
 

@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-type SandboxStore struct {
+type SandboxInfo struct {
 	Kind             string               `json:"kind"`
 	SandboxID        string               `json:"sandboxId"`
 	SandboxNamespace string               `json:"sandboxNamespace"`

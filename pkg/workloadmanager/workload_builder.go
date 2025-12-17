@@ -231,7 +231,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				Resources:       codeInterpreterObj.Spec.Template.Resources,
 				VolumeMounts: []corev1.VolumeMount{
 					{
-						Name:      JWTPublicKeyVolumeName,
+						Name:      JWTKeyVolumeName,
 						MountPath: "/etc/picod",
 						ReadOnly:  true,
 					},
@@ -240,10 +240,10 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		},
 		Volumes: []corev1.Volume{
 			{
-				Name: JWTPublicKeyVolumeName,
+				Name: JWTKeyVolumeName,
 				VolumeSource: corev1.VolumeSource{
 					Secret: &corev1.SecretVolumeSource{
-						SecretName: JWTPublicKeySecretName,
+						SecretName: JWTKeySecretName,
 					},
 				},
 			},

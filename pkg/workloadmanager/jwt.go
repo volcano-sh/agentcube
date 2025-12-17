@@ -22,22 +22,22 @@ const (
 	rsaKeySize = 2048
 	// JWT token expiration time
 	jwtExpiration = 5 * time.Minute
-	// JWTPublicKeySecretName is the name of the secret storing JWT public key
-	JWTPublicKeySecretName = "agentcube-jwt-public-key" //nolint:gosec // This is a name reference, not a credential
+	// JWTKeySecretName is the name of the secret storing JWT key
+	JWTKeySecretName = "agentcube-jwt-key" //nolint:gosec // This is a name reference, not a credential
 	// JWTPublicKeyDataKey is the key in the secret data map
 	JWTPublicKeyDataKey = "public-key.pem"
 	// JWTPrivateKeyDataKey is the key in the secret data map for private key
 	JWTPrivateKeyDataKey = "private-key.pem"
-	// JWTPublicKeyVolumeName the name of JWT PublicKey volume
-	JWTPublicKeyVolumeName = "jwt-public-key"
+	// JWTKeyVolumeName the name of JWT key volume
+	JWTKeyVolumeName = "jwt-key"
 )
 
-// JWTPublicKeySecretNamespace is the namespace for the JWT public key secret
-var JWTPublicKeySecretNamespace = "default"
+// JWTKeySecretNamespace is the namespace for the JWT key secret
+var JWTKeySecretNamespace = "default"
 
 func init() {
-	if ns := os.Getenv("JWT_PUBLIC_KEY_SECRET_NAMESPACE"); ns != "" {
-		JWTPublicKeySecretNamespace = ns
+	if ns := os.Getenv("JWT_KEY_SECRET_NAMESPACE"); ns != "" {
+		JWTKeySecretNamespace = ns
 	}
 }
 
@@ -149,13 +149,13 @@ func (jm *JWTManager) GetPrivateKeyPEM() []byte {
 // reset JWTManager if secret already exists
 //
 // Currently, the JWT key secret is stored in a single namespace (default
-// or from JWT_PUBLIC_KEY_SECRET_NAMESPACE). This causes a multi-tenancy issue
+// or from JWT_KEY_SECRET_NAMESPACE). This causes a multi-tenancy issue
 // because CodeInterpreter sandboxes can be created in any namespace by users,
 // but they expect the secret to be mounted from their own namespace. This will
 // be addressed in a future update to ensure the key is available in all
 // necessary namespaces.
 func (s *Server) TryStoreOrLoadJWTKeySecret(ctx context.Context) error {
-	// Store JWT public key in Kubernetes secret
+	// Store JWT key in Kubernetes secret
 	publicKeyPEM, err := s.jwtManager.GetPublicKeyPEM()
 	if err != nil {
 		return fmt.Errorf("failed to get JWT public key: %w", err)
@@ -164,8 +164,8 @@ func (s *Server) TryStoreOrLoadJWTKeySecret(ctx context.Context) error {
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      JWTPublicKeySecretName,
-			Namespace: JWTPublicKeySecretNamespace,
+			Name:      JWTKeySecretName,
+			Namespace: JWTKeySecretNamespace,
 			Labels: map[string]string{
 				"app":       "agentcube",
 				"component": "workload-manager",
@@ -179,7 +179,7 @@ func (s *Server) TryStoreOrLoadJWTKeySecret(ctx context.Context) error {
 	}
 
 	// Try to create secret
-	_, err = s.k8sClient.clientset.CoreV1().Secrets(JWTPublicKeySecretNamespace).Create(
+	_, err = s.k8sClient.clientset.CoreV1().Secrets(JWTKeySecretNamespace).Create(
 		ctx,
 		secret,
 		metav1.CreateOptions{},
@@ -196,9 +196,9 @@ func (s *Server) TryStoreOrLoadJWTKeySecret(ctx context.Context) error {
 	}
 
 	// secret already exists, get and reset JWTManager by keys in secret
-	jwtKeySecret, err := s.k8sClient.clientset.CoreV1().Secrets(JWTPublicKeySecretNamespace).Get(
+	jwtKeySecret, err := s.k8sClient.clientset.CoreV1().Secrets(JWTKeySecretNamespace).Get(
 		ctx,
-		JWTPublicKeySecretName,
+		JWTKeySecretName,
 		metav1.GetOptions{},
 	)
 	if err != nil {

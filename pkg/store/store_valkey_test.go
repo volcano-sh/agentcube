@@ -145,7 +145,7 @@ func TestValkeyStore_GetSandboxBySessionID(t *testing.T) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 
-	sandboxStoreStruct := &types.SandboxStore{
+	sandboxStoreStruct := &types.SandboxInfo{
 		SessionID:        "TestValkeyStore_GetSandboxBySessionID-SID-01",
 		SandboxNamespace: "agent-cube",
 		Name:             "TestValkeyStore_GetSandboxBySessionID-NAME-01",
@@ -162,7 +162,7 @@ func TestValkeyStore_GetSandboxBySessionID(t *testing.T) {
 	assert.Equal(t, sandboxStoreStruct.SessionID, sandboxGot.SessionID)
 	assert.Equal(t, sandboxStoreStruct.Name, sandboxGot.Name)
 
-	sandboxStoreStruct = &types.SandboxStore{
+	sandboxStoreStruct = &types.SandboxInfo{
 		SessionID:        "TestValkeyStore_GetSandboxBySessionID-SID-01",
 		SandboxNamespace: "agent-cube",
 		Name:             "TestValkeyStore_GetSandboxBySessionID-NAME-02",
@@ -198,7 +198,7 @@ func TestValkeyStore_UpdateSandbox(t *testing.T) {
 	ctx := context.Background()
 	c, _ := newValkeyTestClient(t)
 
-	sandboxStoreStruct := &types.SandboxStore{
+	sandboxStoreStruct := &types.SandboxInfo{
 		SessionID:        "TestValkeyStore_UpdateSandbox-SID-02",
 		SandboxNamespace: "agent-cube",
 		Name:             "TestValkeyStore_UpdateSandbox-Name",

@@ -60,7 +60,7 @@ func (gc *garbageCollector) once() {
 	if err != nil {
 		log.Printf("garbage collector error listing expired sandboxes: %v", err)
 	}
-	gcSandboxes := make([]*types.SandboxStore, 0, len(inactiveSandboxes)+len(expiredSandboxes))
+	gcSandboxes := make([]*types.SandboxInfo, 0, len(inactiveSandboxes)+len(expiredSandboxes))
 	gcSandboxes = append(gcSandboxes, inactiveSandboxes...)
 	gcSandboxes = append(gcSandboxes, expiredSandboxes...)
 

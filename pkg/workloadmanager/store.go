@@ -274,8 +274,8 @@ func convertTypedSandboxToSandbox(sandboxCRD *sandboxv1alpha1.Sandbox) (*Sandbox
 	return sandbox, nil
 }
 
-func buildSandboxStoreCachePlaceHolder(sandboxCRD *sandboxv1alpha1.Sandbox, externalInfo *sandboxExternalInfo) *types.SandboxStore {
-	sandboxStore := &types.SandboxStore{
+func buildSandboxStoreCachePlaceHolder(sandboxCRD *sandboxv1alpha1.Sandbox, externalInfo *sandboxExternalInfo) *types.SandboxInfo {
+	sandboxStore := &types.SandboxInfo{
 		Kind:             externalInfo.Kind,
 		SessionID:        externalInfo.SessionID,
 		SandboxNamespace: sandboxCRD.GetNamespace(),
@@ -286,7 +286,7 @@ func buildSandboxStoreCachePlaceHolder(sandboxCRD *sandboxv1alpha1.Sandbox, exte
 	return sandboxStore
 }
 
-func convertSandboxToStoreCache(sandboxCRD *sandboxv1alpha1.Sandbox, podIP string, externalInfo *sandboxExternalInfo) *types.SandboxStore {
+func convertSandboxToStoreCache(sandboxCRD *sandboxv1alpha1.Sandbox, podIP string, externalInfo *sandboxExternalInfo) *types.SandboxInfo {
 	createdAt := sandboxCRD.GetCreationTimestamp().Time
 	expiresAt := createdAt.Add(DefaultSandboxTTL)
 	if sandboxCRD.Spec.ShutdownTime != nil {
@@ -300,7 +300,7 @@ func convertSandboxToStoreCache(sandboxCRD *sandboxv1alpha1.Sandbox, podIP strin
 			Endpoint: net.JoinHostPort(podIP, strconv.Itoa(int(port.Port))),
 		})
 	}
-	sandboxStore := &types.SandboxStore{
+	sandboxStore := &types.SandboxInfo{
 		Kind:             externalInfo.Kind,
 		SandboxID:        string(sandboxCRD.GetUID()),
 		Name:             sandboxCRD.GetName(),

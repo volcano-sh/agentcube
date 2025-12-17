@@ -17,14 +17,14 @@ import (
 // ---- fakes ----
 
 type fakeStoreClient struct {
-	sandbox        *types.SandboxStore
+	sandbox        *types.SandboxInfo
 	err            error
 	called         bool
 	lastSessionID  string
 	lastContextNil bool
 }
 
-func (f *fakeStoreClient) GetSandboxBySessionID(ctx context.Context, sessionID string) (*types.SandboxStore, error) {
+func (f *fakeStoreClient) GetSandboxBySessionID(ctx context.Context, sessionID string) (*types.SandboxInfo, error) {
 	f.called = true
 	f.lastSessionID = sessionID
 	f.lastContextNil = ctx == nil
@@ -35,7 +35,7 @@ func (f *fakeStoreClient) SetSessionLockIfAbsent(_ context.Context, _ string, _ 
 	return false, nil
 }
 
-func (f *fakeStoreClient) BindSessionWithSandbox(_ context.Context, _ string, _ *types.SandboxStore, _ time.Duration) error {
+func (f *fakeStoreClient) BindSessionWithSandbox(_ context.Context, _ string, _ *types.SandboxInfo, _ time.Duration) error {
 	return nil
 }
 
@@ -47,7 +47,7 @@ func (f *fakeStoreClient) DeleteSandboxBySessionID(_ context.Context, _ string) 
 	return nil
 }
 
-func (f *fakeStoreClient) UpdateSandbox(_ context.Context, _ *types.SandboxStore) error {
+func (f *fakeStoreClient) UpdateSandbox(_ context.Context, _ *types.SandboxInfo) error {
 	return nil
 }
 
@@ -55,7 +55,7 @@ func (f *fakeStoreClient) UpdateSessionLastActivity(_ context.Context, _ string,
 	return nil
 }
 
-func (f *fakeStoreClient) StoreSandbox(_ context.Context, _ *types.SandboxStore) error {
+func (f *fakeStoreClient) StoreSandbox(_ context.Context, _ *types.SandboxInfo) error {
 	return nil
 }
 
@@ -63,11 +63,11 @@ func (f *fakeStoreClient) Ping(_ context.Context) error {
 	return nil
 }
 
-func (f *fakeStoreClient) ListExpiredSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxStore, error) {
+func (f *fakeStoreClient) ListExpiredSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxInfo, error) {
 	return nil, nil
 }
 
-func (f *fakeStoreClient) ListInactiveSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxStore, error) {
+func (f *fakeStoreClient) ListInactiveSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxInfo, error) {
 	return nil, nil
 }
 
@@ -78,7 +78,7 @@ func (f *fakeStoreClient) UpdateSandboxLastActivity(_ context.Context, _ string,
 // ---- tests: GetSandboxBySession ----
 
 func TestGetSandboxBySession_Success(t *testing.T) {
-	sb := &types.SandboxStore{
+	sb := &types.SandboxInfo{
 		SandboxID: "sandbox-1",
 		Name:      "sandbox-1",
 		EntryPoints: []types.SandboxEntryPoints{

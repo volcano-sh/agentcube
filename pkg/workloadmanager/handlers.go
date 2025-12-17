@@ -45,7 +45,7 @@ func (s *Server) extractUserK8sClient(c *gin.Context) (dynamic.Interface, error)
 	return userClient.dynamicClient, nil
 }
 
-func (s *Server) codeInterpreterInitialization(ctx context.Context, sandboxReq *types.CreateSandboxRequest, sandboxResp *types.CreateSandboxResponse, storeCacheInfo *types.SandboxStore, externalInfo *sandboxExternalInfo, podIP string) error {
+func (s *Server) codeInterpreterInitialization(ctx context.Context, sandboxReq *types.CreateSandboxRequest, sandboxResp *types.CreateSandboxResponse, storeCacheInfo *types.SandboxInfo, externalInfo *sandboxExternalInfo, podIP string) error {
 	// Check if CodeInterpreter need initialization
 	if externalInfo.NeedInitialization == false {
 		log.Printf("skipping initialization for sandbox %s/%s", sandboxReq.Namespace, sandboxReq.Name)

@@ -274,22 +274,19 @@ func convertTypedSandboxToSandbox(sandboxCRD *sandboxv1alpha1.Sandbox) (*Sandbox
 	return sandbox, nil
 }
 
-func buildSandboxRedisCachePlaceHolder(sandboxCRD *sandboxv1alpha1.Sandbox, externalInfo *sandboxExternalInfo) *types.SandboxRedis {
-	sandboxRedis := &types.SandboxRedis{
+func buildSandboxStoreCachePlaceHolder(sandboxCRD *sandboxv1alpha1.Sandbox, externalInfo *sandboxExternalInfo) *types.SandboxInfo {
+	sandboxStore := &types.SandboxInfo{
+		Kind:             externalInfo.Kind,
 		SessionID:        externalInfo.SessionID,
 		SandboxNamespace: sandboxCRD.GetNamespace(),
+		Name:             sandboxCRD.GetName(),
 		ExpiresAt:        time.Now().Add(DefaultSandboxTTL),
 		Status:           "creating",
 	}
-	if externalInfo.SandboxClaimName != "" {
-		sandboxRedis.SandboxClaimName = externalInfo.SandboxClaimName
-	} else {
-		sandboxRedis.SandboxName = sandboxCRD.GetName()
-	}
-	return sandboxRedis
+	return sandboxStore
 }
 
-func convertSandboxToRedisCache(sandboxCRD *sandboxv1alpha1.Sandbox, podIP string, externalInfo *sandboxExternalInfo) *types.SandboxRedis {
+func convertSandboxToStoreCache(sandboxCRD *sandboxv1alpha1.Sandbox, podIP string, externalInfo *sandboxExternalInfo) *types.SandboxInfo {
 	createdAt := sandboxCRD.GetCreationTimestamp().Time
 	expiresAt := createdAt.Add(DefaultSandboxTTL)
 	if sandboxCRD.Spec.ShutdownTime != nil {
@@ -303,9 +300,10 @@ func convertSandboxToRedisCache(sandboxCRD *sandboxv1alpha1.Sandbox, podIP strin
 			Endpoint: net.JoinHostPort(podIP, strconv.Itoa(int(port.Port))),
 		})
 	}
-	sandboxRedis := &types.SandboxRedis{
+	sandboxStore := &types.SandboxInfo{
+		Kind:             externalInfo.Kind,
 		SandboxID:        string(sandboxCRD.GetUID()),
-		SandboxName:      sandboxCRD.GetName(),
+		Name:             sandboxCRD.GetName(),
 		SandboxNamespace: sandboxCRD.GetNamespace(),
 		EntryPoints:      accesses,
 		SessionID:        externalInfo.SessionID,
@@ -313,10 +311,7 @@ func convertSandboxToRedisCache(sandboxCRD *sandboxv1alpha1.Sandbox, podIP strin
 		ExpiresAt:        expiresAt,
 		Status:           getSandboxStatus(sandboxCRD),
 	}
-	if externalInfo.SandboxClaimName != "" {
-		sandboxRedis.SandboxClaimName = externalInfo.SandboxClaimName
-	}
-	return sandboxRedis
+	return sandboxStore
 }
 
 // getSandboxStatus extracts status from Sandbox CRD conditions

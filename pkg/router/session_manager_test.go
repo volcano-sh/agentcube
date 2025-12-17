@@ -17,14 +17,14 @@ import (
 // ---- fakes ----
 
 type fakeStoreClient struct {
-	sandbox        *types.SandboxRedis
+	sandbox        *types.SandboxInfo
 	err            error
 	called         bool
 	lastSessionID  string
 	lastContextNil bool
 }
 
-func (f *fakeStoreClient) GetSandboxBySessionID(ctx context.Context, sessionID string) (*types.SandboxRedis, error) {
+func (f *fakeStoreClient) GetSandboxBySessionID(ctx context.Context, sessionID string) (*types.SandboxInfo, error) {
 	f.called = true
 	f.lastSessionID = sessionID
 	f.lastContextNil = ctx == nil
@@ -35,7 +35,7 @@ func (f *fakeStoreClient) SetSessionLockIfAbsent(_ context.Context, _ string, _ 
 	return false, nil
 }
 
-func (f *fakeStoreClient) BindSessionWithSandbox(_ context.Context, _ string, _ *types.SandboxRedis, _ time.Duration) error {
+func (f *fakeStoreClient) BindSessionWithSandbox(_ context.Context, _ string, _ *types.SandboxInfo, _ time.Duration) error {
 	return nil
 }
 
@@ -47,7 +47,7 @@ func (f *fakeStoreClient) DeleteSandboxBySessionID(_ context.Context, _ string) 
 	return nil
 }
 
-func (f *fakeStoreClient) UpdateSandbox(_ context.Context, _ *types.SandboxRedis) error {
+func (f *fakeStoreClient) UpdateSandbox(_ context.Context, _ *types.SandboxInfo) error {
 	return nil
 }
 
@@ -55,7 +55,7 @@ func (f *fakeStoreClient) UpdateSessionLastActivity(_ context.Context, _ string,
 	return nil
 }
 
-func (f *fakeStoreClient) StoreSandbox(_ context.Context, _ *types.SandboxRedis) error {
+func (f *fakeStoreClient) StoreSandbox(_ context.Context, _ *types.SandboxInfo) error {
 	return nil
 }
 
@@ -63,11 +63,11 @@ func (f *fakeStoreClient) Ping(_ context.Context) error {
 	return nil
 }
 
-func (f *fakeStoreClient) ListExpiredSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxRedis, error) {
+func (f *fakeStoreClient) ListExpiredSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxInfo, error) {
 	return nil, nil
 }
 
-func (f *fakeStoreClient) ListInactiveSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxRedis, error) {
+func (f *fakeStoreClient) ListInactiveSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxInfo, error) {
 	return nil, nil
 }
 
@@ -78,9 +78,9 @@ func (f *fakeStoreClient) UpdateSandboxLastActivity(_ context.Context, _ string,
 // ---- tests: GetSandboxBySession ----
 
 func TestGetSandboxBySession_Success(t *testing.T) {
-	sb := &types.SandboxRedis{
-		SandboxID:   "sandbox-1",
-		SandboxName: "sandbox-1",
+	sb := &types.SandboxInfo{
+		SandboxID: "sandbox-1",
+		Name:      "sandbox-1",
 		EntryPoints: []types.SandboxEntryPoints{
 			{Endpoint: "10.0.0.1:9000"},
 		},
@@ -198,8 +198,8 @@ func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
 	if sandbox.SandboxID != "sandbox-456" {
 		t.Errorf("expected SandboxID sandbox-456, got %s", sandbox.SandboxID)
 	}
-	if sandbox.SandboxName != "sandbox-test" {
-		t.Errorf("expected SandboxName sandbox-test, got %s", sandbox.SandboxName)
+	if sandbox.Name != "sandbox-test" {
+		t.Errorf("expected Name sandbox-test, got %s", sandbox.Name)
 	}
 	if len(sandbox.EntryPoints) != 1 {
 		t.Fatalf("expected 1 entry point, got %d", len(sandbox.EntryPoints))

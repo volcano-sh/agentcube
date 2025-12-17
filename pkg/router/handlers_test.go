@@ -20,11 +20,11 @@ func init() {
 
 // Mock SessionManager for testing
 type mockSessionManager struct {
-	sandbox *types.SandboxRedis
+	sandbox *types.SandboxInfo
 	err     error
 }
 
-func (m *mockSessionManager) GetSandboxBySession(_ context.Context, _ string, _ string, _ string, _ string) (*types.SandboxRedis, error) {
+func (m *mockSessionManager) GetSandboxBySession(_ context.Context, _ string, _ string, _ string, _ string) (*types.SandboxInfo, error) {
 	return m.sandbox, m.err
 }
 
@@ -212,7 +212,7 @@ func TestHandleInvoke_NoEntryPoints(t *testing.T) {
 
 	// Mock session manager that returns sandbox with no entry points
 	server.sessionManager = &mockSessionManager{
-		sandbox: &types.SandboxRedis{
+		sandbox: &types.SandboxInfo{
 			SandboxID:   "test-sandbox",
 			SessionID:   "test-session",
 			EntryPoints: []types.SandboxEntryPoints{},
@@ -258,10 +258,10 @@ func TestHandleAgentInvoke(t *testing.T) {
 
 	// Mock session manager that returns sandbox with test server endpoint
 	server.sessionManager = &mockSessionManager{
-		sandbox: &types.SandboxRedis{
-			SandboxID:   "test-sandbox",
-			SessionID:   "test-session",
-			SandboxName: "test-sandbox",
+		sandbox: &types.SandboxInfo{
+			SandboxID: "test-sandbox",
+			SessionID: "test-session",
+			Name:      "test-sandbox",
 			EntryPoints: []types.SandboxEntryPoints{
 				{
 					Endpoint: testServer.URL,
@@ -328,10 +328,10 @@ func TestHandleCodeInterpreterInvoke(t *testing.T) {
 
 	// Mock session manager that returns sandbox with test server endpoint
 	server.sessionManager = &mockSessionManager{
-		sandbox: &types.SandboxRedis{
-			SandboxID:   "test-sandbox",
-			SessionID:   "test-session",
-			SandboxName: "test-sandbox",
+		sandbox: &types.SandboxInfo{
+			SandboxID: "test-sandbox",
+			SessionID: "test-session",
+			Name:      "test-sandbox",
 			EntryPoints: []types.SandboxEntryPoints{
 				{
 					Endpoint: testServer.URL,
@@ -387,10 +387,10 @@ func TestForwardToSandbox_InvalidEndpoint(t *testing.T) {
 
 	// Mock session manager that returns sandbox with invalid endpoint
 	server.sessionManager = &mockSessionManager{
-		sandbox: &types.SandboxRedis{
-			SandboxID:   "test-sandbox",
-			SessionID:   "test-session",
-			SandboxName: "test-sandbox",
+		sandbox: &types.SandboxInfo{
+			SandboxID: "test-sandbox",
+			SessionID: "test-session",
+			Name:      "test-sandbox",
 			EntryPoints: []types.SandboxEntryPoints{
 				{
 					Endpoint: "://invalid-url",
@@ -440,10 +440,10 @@ func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 
 	// Mock session manager with slow response
 	server.sessionManager = &mockSessionManager{
-		sandbox: &types.SandboxRedis{
-			SandboxID:   "test-sandbox",
-			SessionID:   "test-session",
-			SandboxName: "test-sandbox",
+		sandbox: &types.SandboxInfo{
+			SandboxID: "test-sandbox",
+			SessionID: "test-session",
+			Name:      "test-sandbox",
 			EntryPoints: []types.SandboxEntryPoints{
 				{
 					Endpoint: slowServer.URL,

@@ -49,7 +49,7 @@ import (
 //   - Users can only establish tunnels to sandboxes they created
 //   - Access is checked via checkSandboxAccess() function
 //
-// GET /health (HealthCheck):
+// GET /health (health check):
 //   - No authentication required (public endpoint)
 
 type contextKey string
@@ -63,8 +63,7 @@ const (
 
 // authMiddleware provides service account token authentication middleware
 func (s *Server) authMiddleware(c *gin.Context) {
-	// Skip authentication for health check endpoint
-	if c.Request.URL.Path == "/health" {
+	if !s.config.EnableAuth {
 		c.Next()
 		return
 	}

@@ -122,7 +122,7 @@ func (c *ClientCache) Set(key, token string, client *UserK8sClient) {
 		return
 	}
 
-	// Remove oldest entry if cache is full
+	// Remove the oldest entry if cache is full
 	if len(c.cache) >= c.maxSize {
 		c.evictOldest()
 	}
@@ -245,7 +245,7 @@ func (c *TokenCache) Set(token string, authenticated bool, username string) {
 		return
 	}
 
-	// Remove oldest entry if cache is full
+	// Remove the oldest entry if cache is full
 	if len(c.cache) >= c.maxSize {
 		c.evictOldest()
 	}

@@ -3,6 +3,7 @@ package workloadmanager
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
@@ -23,7 +24,6 @@ import (
 const (
 	DefaultSandboxTTL         = 8 * time.Hour
 	DefaultSandboxIdleTimeout = 15 * time.Minute
-	RedisNoExpiredTTL         = 0
 )
 
 var (
@@ -31,11 +31,11 @@ var (
 	SessionIdLabelKey = "runtime.agentcube.io/session-id" // revive:disable-line:var-naming - keep label backward compatible
 	// WorkloadNameLabelKey labels key for workload name
 	WorkloadNameLabelKey = "runtime.agentcube.io/workload-name"
-	// Annotation key for last activity time
+	// LastActivityAnnotationKey Annotation key for last activity time
 	LastActivityAnnotationKey = "last-activity-time"
 	// IdleTimeoutAnnotationKey key for idle timeout
 	IdleTimeoutAnnotationKey = "runtime.agentcube.io/idle-timeout"
-	// Annotation key for creator service account
+	// CreatorServiceAccountAnnotationKey Annotation key for creator service account
 	CreatorServiceAccountAnnotationKey = "creator-service-account"
 )
 
@@ -50,9 +50,10 @@ type K8sClient struct {
 }
 
 type sandboxExternalInfo struct {
-	SandboxClaimName string
-	SessionID        string
-	Ports            []runtimev1alpha1.TargetPort
+	Kind               string
+	SessionID          string
+	Ports              []runtimev1alpha1.TargetPort
+	NeedInitialization bool
 }
 
 // NewK8sClient creates a new Kubernetes client
@@ -254,7 +255,15 @@ func (u *UserK8sClient) DeleteSandboxClaim(ctx context.Context, namespace, sandb
 }
 
 // GetSandboxPodIP gets the IP address of the pod corresponding to the Sandbox
-func (c *K8sClient) GetSandboxPodIP(ctx context.Context, namespace, sandboxName string) (string, error) {
+func (c *K8sClient) GetSandboxPodIP(ctx context.Context, namespace, sandboxName, podName string) (string, error) {
+	if podName != "" {
+		pod, err := c.clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+		if err == nil && pod != nil {
+			return validateAndGetPodIP(pod)
+		}
+		log.Printf("failed to get sandbox pod %s/%s: %v, try get pod by sandbox-name label", namespace, podName, err)
+	}
+
 	// Find pod through label selector (sandbox-name label we set)
 	labelSelector := fmt.Sprintf("sandbox-name=%s", sandboxName)
 	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
@@ -263,6 +272,7 @@ func (c *K8sClient) GetSandboxPodIP(ctx context.Context, namespace, sandboxName 
 	if err == nil && pods != nil && len(pods.Items) > 0 {
 		return validateAndGetPodIP(&pods.Items[0])
 	}
+
 	return "", fmt.Errorf("no pod found for sandbox %s", sandboxName)
 }
 

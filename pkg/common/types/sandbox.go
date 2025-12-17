@@ -5,18 +5,17 @@ import (
 	"time"
 )
 
-type SandboxRedis struct {
+type SandboxInfo struct {
+	Kind             string               `json:"kind"`
 	SandboxID        string               `json:"sandboxId"`
 	SandboxNamespace string               `json:"sandboxNamespace"`
-	SandboxName      string               `json:"sandboxName"`
-	SandboxClaimName string               `json:"sandboxClaimName"`
 	Name             string               `json:"name"`
 	EntryPoints      []SandboxEntryPoints `json:"entryPoints"`
 	SessionID        string               `json:"sessionId"`
 	CreatedAt        time.Time            `json:"createdAt"`
 	ExpiresAt        time.Time            `json:"expiresAt"`
 	// LastActivityAt is intentionally omitted from this type.
-	// Last activity is tracked in Redis via a sorted set index.
+	// Last activity is tracked in Store via a sorted set index.
 	Status string `json:"status"`
 }
 
@@ -27,11 +26,13 @@ type SandboxEntryPoints struct {
 }
 
 type CreateSandboxRequest struct {
-	Kind      string            `json:"kind"`
-	Name      string            `json:"name"`
-	Namespace string            `json:"namespace"`
-	Auth      Auth              `json:"auth"`
-	Metadata  map[string]string `json:"metadata"`
+	Kind               string            `json:"kind"`
+	Name               string            `json:"name"`
+	Namespace          string            `json:"namespace"`
+	Auth               Auth              `json:"auth"`
+	Metadata           map[string]string `json:"metadata"`
+	PublicKey          string            `json:"publicKey,omitempty"`
+	InitTimeoutSeconds int               `json:"initTimeoutSeconds,omitempty"`
 }
 
 type Auth struct {

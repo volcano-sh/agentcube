@@ -27,15 +27,6 @@ type CodeInterpreterReconciler struct {
 	mgr    ctrl.Manager
 }
 
-// NewCodeInterpreterReconciler creates a new CodeInterpreterReconciler.
-// The cache will be initialized when SetupWithManager is called.
-func NewCodeInterpreterReconciler(client client.Client, scheme *runtime.Scheme) *CodeInterpreterReconciler {
-	return &CodeInterpreterReconciler{
-		Client: client,
-		Scheme: scheme,
-	}
-}
-
 //+kubebuilder:rbac:groups=runtime.agentcube.volcano.sh,resources=codeinterpreters,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=runtime.agentcube.volcano.sh,resources=codeinterpreters/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=runtime.agentcube.volcano.sh,resources=codeinterpreters/finalizers,verbs=update
@@ -281,17 +272,19 @@ func (r *CodeInterpreterReconciler) deleteSandboxTemplate(ctx context.Context, c
 func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alpha1.CodeInterpreterSandboxTemplate, _ *runtimev1alpha1.CodeInterpreter) sandboxv1alpha1.PodTemplate {
 	// Build pod spec
 	podSpec := corev1.PodSpec{
+		ImagePullSecrets: template.ImagePullSecrets,
 		Containers: []corev1.Container{
 			{
-				Name:      "codeinterpreter",
-				Image:     template.Image,
-				Command:   template.Command,
-				Args:      template.Args,
-				Env:       template.Environment,
-				Resources: template.Resources,
+				Name:            "codeinterpreter",
+				Image:           template.Image,
+				ImagePullPolicy: template.ImagePullPolicy,
+				Command:         template.Command,
+				Args:            template.Args,
+				Env:             template.Environment,
+				Resources:       template.Resources,
 				VolumeMounts: []corev1.VolumeMount{
 					{
-						Name:      "jwt-public-key",
+						Name:      JWTKeyVolumeName,
 						MountPath: "/etc/picod",
 						ReadOnly:  true,
 					},
@@ -301,10 +294,10 @@ func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alph
 		RuntimeClassName: template.RuntimeClassName,
 		Volumes: []corev1.Volume{
 			{
-				Name: "jwt-public-key",
+				Name: JWTKeyVolumeName,
 				VolumeSource: corev1.VolumeSource{
 					Secret: &corev1.SecretVolumeSource{
-						SecretName: "agentcube-jwt-public-key",
+						SecretName: JWTKeySecretName,
 					},
 				},
 			},
@@ -331,7 +324,6 @@ func (r *CodeInterpreterReconciler) podTemplateEqual(a, b sandboxv1alpha1.PodTem
 //
 // Example usage:
 //
-//	reconciler := NewCodeInterpreterReconciler(client, scheme)
 //	ci := reconciler.GetCodeInterpreter("my-codeinterpreter", "default")
 func (r *CodeInterpreterReconciler) GetCodeInterpreter(name, namespace string) *runtimev1alpha1.CodeInterpreter {
 	if r.mgr == nil {

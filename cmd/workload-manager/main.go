@@ -41,6 +41,7 @@ func main() {
 		enableTLS        = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
 		tlsCert          = flag.String("tls-cert", "", "Path to TLS certificate file")
 		tlsKey           = flag.String("tls-key", "", "Path to TLS key file")
+		enableAuth       = flag.Bool("enable-auth", false, "Enable Authentication")
 	)
 
 	// Parse command line flags
@@ -83,6 +84,7 @@ func main() {
 		EnableTLS:        *enableTLS,
 		TLSCert:          *tlsCert,
 		TLSKey:           *tlsKey,
+		EnableAuth:       *enableAuth,
 	}
 
 	// Create and initialize API server
@@ -109,7 +111,7 @@ func main() {
 	// Start API server in goroutine
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("Starting agentcube-apiserver on port %s", *port)
+		log.Printf("Starting workloadmanager on port %s", *port)
 		if err := server.Start(ctx); err != nil {
 			errCh <- err
 		}

@@ -58,7 +58,7 @@ func (rs *redisStore) sessionKey(sessionID string) string {
 }
 
 // loadSandboxesBySessionIDs loads sandbox objects for the given session IDs.
-func (rs *redisStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs []string) ([]*types.SandboxRedis, error) {
+func (rs *redisStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs []string) ([]*types.SandboxInfo, error) {
 	if len(sessionIDs) == 0 {
 		return nil, nil
 	}
@@ -74,7 +74,7 @@ func (rs *redisStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs 
 		return nil, fmt.Errorf("redis pipeline exec failed: %w", pipeErr)
 	}
 
-	result := make([]*types.SandboxRedis, 0, len(sessionIDs))
+	result := make([]*types.SandboxInfo, 0, len(sessionIDs))
 	for i, cmd := range sandboxCommands {
 		data, err := cmd.Bytes()
 		if errors.Is(err, redisv9.Nil) {
@@ -83,7 +83,7 @@ func (rs *redisStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs 
 		if err != nil {
 			return nil, fmt.Errorf("loadSandboxesBySessionIDs: get sandbox JSON for session %s: %w", sessionIDs[i], err)
 		}
-		var sandboxRedis types.SandboxRedis
+		var sandboxRedis types.SandboxInfo
 		if err := json.Unmarshal(data, &sandboxRedis); err != nil {
 			return nil, fmt.Errorf("loadSandboxesBySessionIDs: unmarshal sandbox for session %s: %w", sessionIDs[i], err)
 		}
@@ -105,8 +105,8 @@ func (rs *redisStore) Ping(ctx context.Context) error {
 }
 
 // GetSandboxBySessionID looks up the sandbox bound to the given session ID.
-// Underlying Redis: GET session:{sessionID} -> SandboxRedis(JSON).
-func (rs *redisStore) GetSandboxBySessionID(ctx context.Context, sessionID string) (*types.SandboxRedis, error) {
+// Underlying Redis: GET session:{sessionID} -> Sandbox Info(JSON).
+func (rs *redisStore) GetSandboxBySessionID(ctx context.Context, sessionID string) (*types.SandboxInfo, error) {
 	key := rs.sessionKey(sessionID)
 
 	b, err := rs.cli.Get(ctx, key).Bytes()
@@ -117,14 +117,14 @@ func (rs *redisStore) GetSandboxBySessionID(ctx context.Context, sessionID strin
 		return nil, fmt.Errorf("GetSandboxBySessionID: redis GET %s failed: %w", key, err)
 	}
 
-	var sandboxRedis types.SandboxRedis
+	var sandboxRedis types.SandboxInfo
 	if err := json.Unmarshal(b, &sandboxRedis); err != nil {
 		return nil, fmt.Errorf("GetSandboxBySessionID: unmarshal sandbox failed: %w", err)
 	}
 	return &sandboxRedis, nil
 }
 
-func (rs *redisStore) StoreSandbox(ctx context.Context, sandboxRedis *types.SandboxRedis) error {
+func (rs *redisStore) StoreSandbox(ctx context.Context, sandboxRedis *types.SandboxInfo) error {
 	if sandboxRedis == nil {
 		return errors.New("StoreSandbox: sandbox is nil")
 	}
@@ -171,7 +171,7 @@ func (rs *redisStore) StoreSandbox(ctx context.Context, sandboxRedis *types.Sand
 
 // UpdateSandbox update sandbox obj in redis
 // update sandbox object only, do not update expiry and lastActivity ZSet
-func (rs *redisStore) UpdateSandbox(ctx context.Context, sandboxRedis *types.SandboxRedis) error {
+func (rs *redisStore) UpdateSandbox(ctx context.Context, sandboxRedis *types.SandboxInfo) error {
 	if sandboxRedis == nil {
 		return errors.New("UpdateSandbox: sandbox is nil")
 	}
@@ -210,7 +210,7 @@ func (rs *redisStore) DeleteSandboxBySessionID(ctx context.Context, sessionID st
 
 // ListExpiredSandboxes returns up to limit sandboxes whose ExpiresAt is before.
 // It uses a sorted-set index and is linear in the number of results.
-func (rs *redisStore) ListExpiredSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxRedis, error) {
+func (rs *redisStore) ListExpiredSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
@@ -231,7 +231,7 @@ func (rs *redisStore) ListExpiredSandboxes(ctx context.Context, before time.Time
 
 // ListInactiveSandboxes returns up to limit sandboxes whose last activity
 // time is before, using the last-activity sorted-set index.
-func (rs *redisStore) ListInactiveSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxRedis, error) {
+func (rs *redisStore) ListInactiveSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error) {
 	if limit <= 0 {
 		return nil, nil
 	}

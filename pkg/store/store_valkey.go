@@ -81,7 +81,7 @@ func (vs *valkeyStore) sessionKey(sessionID string) string {
 }
 
 // loadSandboxesBySessionIDs loads sandbox objects for the given session IDs.
-func (vs *valkeyStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs []string) ([]*types.SandboxRedis, error) {
+func (vs *valkeyStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs []string) ([]*types.SandboxInfo, error) {
 	if len(sessionIDs) == 0 {
 		return nil, nil
 	}
@@ -100,13 +100,13 @@ func (vs *valkeyStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs
 		return nil, fmt.Errorf("unexpected MGet result size: %d, param size: %d", len(stingSliceResults), len(sessionIDKeys))
 	}
 
-	sandboxResults := make([]*types.SandboxRedis, 0, len(stingSliceResults))
+	sandboxResults := make([]*types.SandboxInfo, 0, len(stingSliceResults))
 	for i, sandboxObjString := range stingSliceResults {
 		if len(sandboxObjString) == 0 {
 			// sandboxObjString is empty while sessionKey not exist, ignore
 			continue
 		}
-		var sandboxRedis types.SandboxRedis
+		var sandboxRedis types.SandboxInfo
 		if err = json.Unmarshal([]byte(sandboxObjString), &sandboxRedis); err != nil {
 			return nil, fmt.Errorf("unmarshal sandbox failed: %w, index: %v, sessionID: %v", err, i, sessionIDs[i])
 		}
@@ -129,7 +129,7 @@ func (vs *valkeyStore) Ping(ctx context.Context) error {
 }
 
 // GetSandboxBySessionID get the sandbox by session ID
-func (vs *valkeyStore) GetSandboxBySessionID(ctx context.Context, sessionID string) (*types.SandboxRedis, error) {
+func (vs *valkeyStore) GetSandboxBySessionID(ctx context.Context, sessionID string) (*types.SandboxInfo, error) {
 	key := vs.sessionKey(sessionID)
 
 	b, err := vs.cli.Do(ctx, vs.cli.B().Get().Key(key).Build()).AsBytes()
@@ -141,7 +141,7 @@ func (vs *valkeyStore) GetSandboxBySessionID(ctx context.Context, sessionID stri
 		return nil, fmt.Errorf("GetSandboxBySessionID: valkey GET %s: %w", key, err)
 	}
 
-	var sandboxRedis types.SandboxRedis
+	var sandboxRedis types.SandboxInfo
 	if err := json.Unmarshal(b, &sandboxRedis); err != nil {
 		return nil, fmt.Errorf("GetSandboxBySessionID: unmarshal sandbox failed: %w", err)
 	}
@@ -149,7 +149,7 @@ func (vs *valkeyStore) GetSandboxBySessionID(ctx context.Context, sessionID stri
 }
 
 // StoreSandbox store sandbox into storage
-func (vs *valkeyStore) StoreSandbox(ctx context.Context, sandboxStore *types.SandboxRedis) error {
+func (vs *valkeyStore) StoreSandbox(ctx context.Context, sandboxStore *types.SandboxInfo) error {
 	if sandboxStore == nil {
 		return errors.New("StoreSandbox: sandbox is nil")
 	}
@@ -182,7 +182,7 @@ func (vs *valkeyStore) StoreSandbox(ctx context.Context, sandboxStore *types.San
 
 // UpdateSandbox update sandbox obj in valkey
 // update sandbox object only, do not update expiry and lastActivity ZSet
-func (vs *valkeyStore) UpdateSandbox(ctx context.Context, sandboxStore *types.SandboxRedis) error {
+func (vs *valkeyStore) UpdateSandbox(ctx context.Context, sandboxStore *types.SandboxInfo) error {
 	if sandboxStore == nil {
 		return errors.New("UpdateSandbox: sandbox is nil")
 	}
@@ -222,7 +222,7 @@ func (vs *valkeyStore) DeleteSandboxBySessionID(ctx context.Context, sessionID s
 }
 
 // ListExpiredSandboxes returns up to limit sandboxes with ExpiresAt before the given time
-func (vs *valkeyStore) ListExpiredSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxRedis, error) {
+func (vs *valkeyStore) ListExpiredSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
@@ -238,7 +238,7 @@ func (vs *valkeyStore) ListExpiredSandboxes(ctx context.Context, before time.Tim
 }
 
 // ListInactiveSandboxes returns up to limit sandboxes with last-activity time before the given time
-func (vs *valkeyStore) ListInactiveSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxRedis, error) {
+func (vs *valkeyStore) ListInactiveSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error) {
 	if limit <= 0 {
 		return nil, nil
 	}

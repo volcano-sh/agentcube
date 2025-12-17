@@ -246,6 +246,11 @@ type CodeInterpreterSpec struct {
     // latency for new sessions at the cost of additional resource usage.
     // +optional
     WarmPoolSize *int32 `json:"warmPoolSize,omitempty" protobuf:"varint,5,opt,name=warmPoolSize"`
+
+    // NeedInitialization specifies if CodeInterpreter need initialization
+    // default true if NeedInitialization is nil
+    // +optional
+    NeedInitialization *bool `json:"needInitialization,omitempty"`
 }
 
 // CodeInterpreterSandboxTemplate mirrors SandboxTemplate but is kept separate in case

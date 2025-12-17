@@ -1,0 +1,11 @@
+# Hello Agent Dependencies
+# This is a simple agent with minimal dependencies
+
+# HTTP server (built-in, no additional dependencies needed)
+# JSON handling (built-in, no additional dependencies needed)
+
+# Optional: For enhanced functionality
+# requests>=2.28.0  # For making HTTP requests to external services
+# pydantic>=2.0.0   # For data validation
+# click>=8.0.0      # For command-line interface
+agentcube_sdk

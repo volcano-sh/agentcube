@@ -3,8 +3,9 @@ package workloadmanager
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
+
+	"k8s.io/klog/v2"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -261,7 +262,7 @@ func (c *K8sClient) GetSandboxPodIP(ctx context.Context, namespace, sandboxName,
 		if err == nil && pod != nil {
 			return validateAndGetPodIP(pod)
 		}
-		log.Printf("failed to get sandbox pod %s/%s: %v, try get pod by sandbox-name label", namespace, podName, err)
+		klog.Infof("failed to get sandbox pod %s/%s: %v, try get pod by sandbox-name label", namespace, podName, err)
 	}
 
 	// Find pod through label selector (sandbox-name label we set)

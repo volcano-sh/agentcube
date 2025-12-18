@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -40,7 +39,7 @@ func (s *Server) extractUserK8sClient(c *gin.Context) (dynamic.Interface, error)
 	// Create sandbox using user's K8s client
 	userClient, err := s.k8sClient.GetOrCreateUserK8sClient(userToken, userNamespace, serviceAccountName)
 	if err != nil {
-		log.Printf("create user client failed: %v", err)
+		klog.Infof("create user client failed: %v", err)
 		return nil, fmt.Errorf("create user client failed: %w", err)
 	}
 	return userClient.dynamicClient, nil
@@ -49,13 +48,13 @@ func (s *Server) extractUserK8sClient(c *gin.Context) (dynamic.Interface, error)
 func (s *Server) codeInterpreterInitialization(ctx context.Context, sandboxReq *types.CreateSandboxRequest, sandboxResp *types.CreateSandboxResponse, storeCacheInfo *types.SandboxInfo, externalInfo *sandboxExternalInfo, podIP string) error {
 	// Check if CodeInterpreter need initialization
 	if externalInfo.NeedInitialization == false {
-		log.Printf("skipping initialization for sandbox %s/%s", sandboxReq.Namespace, sandboxReq.Name)
+		klog.Infof("skipping initialization for sandbox %s/%s", sandboxReq.Namespace, sandboxReq.Name)
 		return nil
 	}
 
 	if len(storeCacheInfo.EntryPoints) == 0 {
 		// Fallback to default http://ip:8080
-		log.Printf("sandbox %s/%s entryPoints is empty, fallback with default", sandboxReq.Namespace, sandboxReq.Name)
+		klog.Infof("sandbox %s/%s entryPoints is empty, fallback with default", sandboxReq.Namespace, sandboxReq.Name)
 		defaultEntryPoint := types.SandboxEntryPoints{
 			Path:     "/",
 			Protocol: "http",
@@ -148,7 +147,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	if s.config.EnableAuth {
 		userDynamicClient, errExtractClient := s.extractUserK8sClient(c)
 		if errExtractClient != nil {
-			log.Printf("extract user k8s client failed: %v", errExtractClient)
+			klog.Infof("extract user k8s client failed: %v", errExtractClient)
 			respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", errExtractClient.Error())
 			return
 		}
@@ -206,10 +205,10 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		defer cancel()
 		err := deleteSandbox(ctxTimeout, dynamicClient, namespace, sandboxName)
 		if err != nil {
-			log.Printf("sandbox %s/%s rollback failed: %v", namespace, sandboxName, err)
+			klog.Infof("sandbox %s/%s rollback failed: %v", namespace, sandboxName, err)
 			return
 		}
-		log.Printf("sandbox %s/%s rollback succeeded", namespace, sandboxName)
+		klog.Infof("sandbox %s/%s rollback succeeded", namespace, sandboxName)
 	}
 	defer func() {
 		if needRollbackSandbox == false {
@@ -248,13 +247,13 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 
 	err = s.storeClient.UpdateSandbox(c.Request.Context(), storeCacheInfo)
 	if err != nil {
-		log.Printf("update store cache failed: %v", err)
+		klog.Infof("update store cache failed: %v", err)
 		respondError(c, http.StatusInternalServerError, "SANDBOX_UPDATE_STORE_FAILED", err.Error())
 		return
 	}
 	// init successful, no need to rollback
 	needRollbackSandbox = false
-	log.Printf("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
+	klog.Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
 		createdSandbox.Name, createdSandbox.Kind, externalInfo.SessionID)
 	respondJSON(c, http.StatusOK, response)
 }
@@ -267,11 +266,11 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 	sandbox, err := s.storeClient.GetSandboxBySessionID(c.Request.Context(), sessionID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			log.Printf("sessionID %s not found in store", sessionID)
+			klog.Infof("sessionID %s not found in store", sessionID)
 			respondError(c, http.StatusNotFound, "SESSION_NOT_FOUND", "Sandbox not found")
 			return
 		}
-		log.Printf("get sandbox from store by sessionID %s failed: %v", sessionID, err)
+		klog.Infof("get sandbox from store by sessionID %s failed: %v", sessionID, err)
 		respondError(c, http.StatusInternalServerError, "FIND_SESSION_FAILED", err.Error())
 		return
 	}
@@ -289,7 +288,7 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 	if sandbox.Kind == types.SandboxClaimsKind {
 		err = deleteSandboxClaim(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
 		if err != nil {
-			log.Printf("failed to delete sandbox claim %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
+			klog.Infof("failed to delete sandbox claim %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
 			respondError(c, http.StatusForbidden, "SANDBOX_CLAIM_DELETE_FAILED",
 				fmt.Sprintf("Failed to delete sandbox claim (namespace: %s): %v", sandbox.SandboxNamespace, err))
 			return
@@ -297,7 +296,7 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 	} else {
 		err = deleteSandbox(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
 		if err != nil {
-			log.Printf("failed to delete sandbox %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
+			klog.Infof("failed to delete sandbox %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
 			respondError(c, http.StatusForbidden, "SANDBOX_DELETE_FAILED",
 				fmt.Sprintf("Failed to delete sandbox (namespace: %s): %v", sandbox.SandboxNamespace, err))
 			return
@@ -311,7 +310,7 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 		return
 	}
 
-	log.Printf("delete %s %s/%s successfully, sessionID: %v ", sandbox.Kind, sandbox.SandboxNamespace, sandbox.Name, sandbox.SessionID)
+	klog.Infof("delete %s %s/%s successfully, sessionID: %v ", sandbox.Kind, sandbox.SandboxNamespace, sandbox.Name, sandbox.SessionID)
 	respondJSON(c, http.StatusOK, map[string]string{
 		"message": "Sandbox deleted successfully",
 	})

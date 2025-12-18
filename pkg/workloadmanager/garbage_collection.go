@@ -3,7 +3,6 @@ package workloadmanager
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -66,7 +65,7 @@ func (gc *garbageCollector) once() {
 	gcSandboxes = append(gcSandboxes, expiredSandboxes...)
 
 	if len(gcSandboxes) > 0 {
-		log.Printf("garbage collector found %d sandboxes to be deleted", len(gcSandboxes))
+		klog.Infof("garbage collector found %d sandboxes to be deleted", len(gcSandboxes))
 	}
 
 	errs := make([]error, 0, len(gcSandboxes))

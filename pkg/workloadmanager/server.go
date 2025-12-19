@@ -3,11 +3,11 @@ package workloadmanager
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/store"
 )
@@ -127,7 +127,8 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := s.storeClient.Ping(ctx); err != nil {
 		return fmt.Errorf("failed to ping store: %w", err)
 	}
-	log.Println("kv store Ping check successfully")
+
+	klog.Info("kv store Ping check successfully")
 
 	addr := ":" + s.config.Port
 
@@ -142,17 +143,17 @@ func (s *Server) Start(ctx context.Context) error {
 	// Listen for shutdown signal in goroutine
 	go func() {
 		<-ctx.Done()
-		log.Println("Shutting down server...")
+		klog.Info("Shutting down server...")
 		// Stop the sandbox store informer
 		s.sandboxStore.Stop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
-			log.Printf("Server shutdown error: %v", err)
+			klog.Errorf("Server shutdown error: %v", err)
 		}
 	}()
 
-	log.Printf("Server listening on %s", addr)
+	klog.Infof("Server listening on %s", addr)
 
 	gc := newGarbageCollector(s.k8sClient, s.storeClient, 15*time.Second)
 	go gc.run(ctx.Done())
@@ -171,7 +172,7 @@ func (s *Server) Start(ctx context.Context) error {
 // loggingMiddleware logs each request (except /health)
 func (s *Server) loggingMiddleware(c *gin.Context) {
 	start := time.Now()
-	log.Printf("%s %s %s", c.Request.Method, c.Request.RequestURI, c.ClientIP())
+	klog.Infof("%s %s %s", c.Request.Method, c.Request.RequestURI, c.ClientIP())
 	c.Next()
-	log.Printf("%s %s - completed in %v", c.Request.Method, c.Request.RequestURI, time.Since(start))
+	klog.Infof("%s %s - completed in %v", c.Request.Method, c.Request.RequestURI, time.Since(start))
 }

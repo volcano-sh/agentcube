@@ -3,11 +3,11 @@ package workloadmanager
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -36,15 +36,15 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// Check for pending requests with proper locking
 	if status == "running" {
-		log.Printf("Sandbox %s/%s is running, sending notification\n", sandbox.Namespace, sandbox.Name)
+		klog.Infof("Sandbox %s/%s is running, sending notification", sandbox.Namespace, sandbox.Name)
 		r.mu.Lock()
 		resultChan, exists := r.pendingRequests[req.NamespacedName]
 		if exists {
-			log.Printf("Found %d pending requests for sandbox %s/%s", len(r.pendingRequests), sandbox.Namespace, sandbox.Name)
+			klog.Infof("Found %d pending requests for sandbox %s/%s", len(r.pendingRequests), sandbox.Namespace, sandbox.Name)
 			// Remove from map before sending to avoid memory leak
 			delete(r.pendingRequests, req.NamespacedName)
 		} else {
-			log.Printf("No pending requests found for sandbox %s/%s, pendingRequests: %v", sandbox.Namespace, sandbox.Name, r.pendingRequests)
+			klog.Infof("No pending requests found for sandbox %s/%s", sandbox.Namespace, sandbox.Name)
 		}
 		r.mu.Unlock()
 
@@ -52,9 +52,9 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			// Send notification outside the lock to avoid deadlock
 			select {
 			case resultChan <- SandboxStatusUpdate{Sandbox: sandbox}:
-				log.Printf("Notified waiter about sandbox %s/%s reaching Running state", sandbox.Namespace, sandbox.Name)
+				klog.Infof("Notified waiter about sandbox %s/%s reaching Running state", sandbox.Namespace, sandbox.Name)
 			default:
-				log.Printf("Warning: resultChan is full for sandbox %s/%s", sandbox.Namespace, sandbox.Name)
+				klog.Warningf("resultChan is full for sandbox %s/%s", sandbox.Namespace, sandbox.Name)
 			}
 		}
 	}

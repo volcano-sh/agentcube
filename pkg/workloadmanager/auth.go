@@ -3,11 +3,11 @@ package workloadmanager
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"k8s.io/klog/v2"
 
 	authv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -88,7 +88,7 @@ func (s *Server) authMiddleware(c *gin.Context) {
 	// Validate token using Kubernetes TokenReview API
 	authenticated, serviceAccount, err := s.validateServiceAccountToken(c.Request.Context(), token)
 	if err != nil {
-		log.Printf("Token validation error: %v", err)
+		klog.Errorf("Token validation error: %v", err)
 		respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Token validation failed")
 		c.Abort()
 		return
@@ -100,7 +100,7 @@ func (s *Server) authMiddleware(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Authenticated request from service account: %s", serviceAccount)
+	klog.Infof("Authenticated request from service account: %s", serviceAccount)
 
 	// Extract namespace from service account username
 	// Format: system:serviceaccount:<namespace>:<serviceaccount-name>

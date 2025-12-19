@@ -3,11 +3,11 @@ package router
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/store"
 )
@@ -140,15 +140,15 @@ func (s *Server) Start(ctx context.Context) error {
 	// Listen for shutdown signal in goroutine
 	go func() {
 		<-ctx.Done()
-		log.Println("Shutting down Router server...")
+		klog.Info("Shutting down Router server...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
-			log.Printf("Server shutdown error: %v", err)
+			klog.Errorf("Server shutdown error: %v", err)
 		}
 	}()
 
-	log.Printf("Router server listening on %s", addr)
+	klog.Infof("Router server listening on %s", addr)
 
 	// Start HTTP or HTTPS server
 	if s.config.EnableTLS {

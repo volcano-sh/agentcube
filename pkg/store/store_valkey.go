@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"k8s.io/klog/v2"
 
 	"github.com/valkey-io/valkey-go"
 
@@ -61,7 +62,7 @@ func makeValkeyOptions() (*valkey.ClientOption, error) {
 		disableCache, err := strconv.ParseBool(valkeyDisableCache)
 		if err == nil && disableCache == true {
 			valkeyClientOptions.DisableCache = true
-			log.Printf("valkeyClientOptions DisableCache is set to true")
+			klog.Info("valkeyClientOptions DisableCache is set to true")
 		}
 	}
 	valkeyForceSingle := os.Getenv("VALKEY_FORCE_SINGLE")
@@ -69,7 +70,7 @@ func makeValkeyOptions() (*valkey.ClientOption, error) {
 		forceSingleCache, err := strconv.ParseBool(valkeyForceSingle)
 		if err == nil && forceSingleCache == true {
 			valkeyClientOptions.ForceSingleClient = true
-			log.Printf("valkeyClientOptions ForceSingleClient is set to true")
+			klog.Info("valkeyClientOptions ForceSingleClient is set to true")
 		}
 	}
 	return valkeyClientOptions, nil

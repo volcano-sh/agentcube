@@ -7,9 +7,10 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"log"
 	"os"
 	"time"
+
+	"k8s.io/klog/v2"
 
 	"github.com/golang-jwt/jwt/v5"
 	corev1 "k8s.io/api/core/v1"
@@ -186,7 +187,7 @@ func (s *Server) TryStoreOrLoadJWTKeySecret(ctx context.Context) error {
 	)
 	if err == nil {
 		// create successfully and return
-		log.Printf("Successfully create JWT key secret %s/%s", secret.Namespace, secret.Name)
+		klog.Infof("Successfully create JWT key secret %s/%s", secret.Namespace, secret.Name)
 		return nil
 	}
 
@@ -221,6 +222,6 @@ func (s *Server) TryStoreOrLoadJWTKeySecret(ctx context.Context) error {
 	}
 
 	s.jwtManager = jwtManager
-	log.Printf("Reset JWT manager by secret %s/%s successfully", secret.Namespace, secret.Name)
+	klog.Infof("Reset JWT manager by secret %s/%s successfully", secret.Namespace, secret.Name)
 	return nil
 }

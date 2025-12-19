@@ -2,7 +2,6 @@ package router
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -10,6 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"k8s.io/klog/v2"
+
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 )
 
@@ -38,7 +39,7 @@ func (s *Server) handleHealthReady(c *gin.Context) {
 
 // handleInvoke is a private helper function that handles invocation requests for both agents and code interpreters
 func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string) {
-	log.Printf("%s invoke request: namespace=%s, name=%s, path=%s", kind, namespace, name, path)
+	klog.Infof("%s invoke request: namespace=%s, name=%s, path=%s", kind, namespace, name, path)
 
 	// Extract session ID from header
 	sessionID := c.GetHeader("x-agentcube-session-id")
@@ -46,7 +47,7 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	// Get sandbox info from session manager
 	sandbox, err := s.sessionManager.GetSandboxBySession(c.Request.Context(), sessionID, namespace, name, kind)
 	if err != nil {
-		log.Printf("Failed to get sandbox info: %v, session id %s", err, sessionID)
+		klog.Errorf("Failed to get sandbox info: %v, session id %s", err, sessionID)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": fmt.Sprintf("Invalid session id %s", sessionID),
 			"code":  "BadRequest",
@@ -71,7 +72,7 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	// If no matching endpoint found, use the first one as fallback
 	if endpoint == "" {
 		if len(sandbox.EntryPoints) == 0 {
-			log.Printf("No entry points found for sandbox: %s", sandbox.SandboxID)
+			klog.Warningf("No entry points found for sandbox: %s", sandbox.SandboxID)
 			c.JSON(http.StatusNotFound, gin.H{
 				"error": "no entry points found for sandbox",
 				"code":  "Service not found",
@@ -86,12 +87,12 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 		}
 	}
 
-	log.Printf("The selected entrypoint for session-id %s to sandbox is %s", sandbox.SessionID, endpoint)
+	klog.Infof("The selected entrypoint for session-id %s to sandbox is %s", sandbox.SessionID, endpoint)
 
 	// Update session activity in store when receiving request
 	if sandbox.SessionID != "" && sandbox.SandboxID != "" {
 		if err := s.storeClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
-			log.Printf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
+			klog.Warningf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
 		}
 	}
 
@@ -99,7 +100,7 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	s.forwardToSandbox(c, endpoint, path, sandbox.SessionID)
 
 	if err := s.storeClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
-		log.Printf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
+		klog.Warningf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
 	}
 }
 
@@ -124,7 +125,7 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 	// Parse the target URL
 	targetURL, err := url.Parse(endpoint)
 	if err != nil {
-		log.Printf("Invalid sandbox endpoint: %s, error: %v", endpoint, err)
+		klog.Errorf("Invalid sandbox endpoint: %s, error: %v", endpoint, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "internal server error",
 			"code":  "INTERNAL_ERROR",
@@ -167,12 +168,12 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 		}
 		req.Header.Set("X-Forwarded-For", clientIP)
 
-		log.Printf("Forwarding request to: %s%s", targetURL.String(), path)
+		klog.Infof("Forwarding request to: %s%s", targetURL.String(), path)
 	}
 
 	// Customize error handler
 	proxy.ErrorHandler = func(_ http.ResponseWriter, _ *http.Request, err error) {
-		log.Printf("Proxy error: %v", err)
+		klog.Errorf("Proxy error: %v", err)
 
 		// Determine error type and return appropriate response
 		switch {

@@ -3,12 +3,12 @@ package workloadmanager
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	"github.com/volcano-sh/agentcube/pkg/store"
@@ -38,7 +38,7 @@ func (gc *garbageCollector) run(stopCh <-chan struct{}) {
 		select {
 		case <-stopCh:
 			ticker.Stop()
-			log.Println("garbage collector stopped")
+			klog.Info("garbage collector stopped")
 			return
 		case <-ticker.C:
 			gc.once()
@@ -53,19 +53,19 @@ func (gc *garbageCollector) once() {
 	inactiveTime := time.Now().Add(-DefaultSandboxIdleTimeout)
 	inactiveSandboxes, err := gc.storeClient.ListInactiveSandboxes(ctx, inactiveTime, 16)
 	if err != nil {
-		log.Printf("garbage collector error listing inactive sandboxes: %v", err)
+		klog.Errorf("garbage collector error listing inactive sandboxes: %v", err)
 	}
 	// List sandboxes reach DDL
 	expiredSandboxes, err := gc.storeClient.ListExpiredSandboxes(ctx, time.Now(), 16)
 	if err != nil {
-		log.Printf("garbage collector error listing expired sandboxes: %v", err)
+		klog.Errorf("garbage collector error listing expired sandboxes: %v", err)
 	}
 	gcSandboxes := make([]*types.SandboxInfo, 0, len(inactiveSandboxes)+len(expiredSandboxes))
 	gcSandboxes = append(gcSandboxes, inactiveSandboxes...)
 	gcSandboxes = append(gcSandboxes, expiredSandboxes...)
 
 	if len(gcSandboxes) > 0 {
-		log.Printf("garbage collector found %d sandboxes to be deleted", len(gcSandboxes))
+		klog.Infof("garbage collector found %d sandboxes to be deleted", len(gcSandboxes))
 	}
 
 	errs := make([]error, 0, len(gcSandboxes))
@@ -80,7 +80,7 @@ func (gc *garbageCollector) once() {
 			errs = append(errs, err)
 			continue
 		}
-		log.Printf("garbage collector %s %s/%s session %s deleted", gcSandbox.Kind, gcSandbox.SandboxNamespace, gcSandbox.Name, gcSandbox.SessionID)
+		klog.Infof("garbage collector %s %s/%s session %s deleted", gcSandbox.Kind, gcSandbox.SandboxNamespace, gcSandbox.Name, gcSandbox.SessionID)
 		err = gc.storeClient.DeleteSandboxBySessionID(ctx, gcSandbox.SessionID)
 		if err != nil {
 			errs = append(errs, err)
@@ -88,7 +88,7 @@ func (gc *garbageCollector) once() {
 	}
 	err = utilerrors.NewAggregate(errs)
 	if err != nil {
-		log.Printf("garbage collector failed with error: %v", err)
+		klog.Errorf("garbage collector failed with error: %v", err)
 	}
 }
 

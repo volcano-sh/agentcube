@@ -2,7 +2,6 @@ package workloadmanager
 
 import (
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
@@ -120,7 +120,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 
 	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
 	if !ok {
-		log.Printf("agent runtime %s type asserting unstructured.Unstructured failed", agentRuntimeKey)
+		klog.Errorf("agent runtime %s type asserting unstructured.Unstructured failed", agentRuntimeKey)
 		return nil, nil, fmt.Errorf("agent runtime type asserting failed")
 	}
 
@@ -171,7 +171,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 
 	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
 	if !ok {
-		log.Printf("code interpreter %s type asserting unstructured.Unstructured failed", codeInterpreterKey)
+		klog.Errorf("code interpreter %s type asserting unstructured.Unstructured failed", codeInterpreterKey)
 		return nil, nil, nil, fmt.Errorf("code interpreter type asserting failed")
 	}
 

@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -146,12 +146,12 @@ func (am *AuthManager) savePublicKeyLocked(publicKeyStr string) error {
 	if runtime.GOOS == "linux" {
 		cmd := exec.Command("chattr", "+i", am.keyFile) //nolint:gosec // keyFile is internally managed
 		if err := cmd.Run(); err != nil {
-			log.Printf("Warning: failed to make key file immutable: %v. File permissions still set to read-only.", err)
+			klog.Warningf("failed to make key file immutable: %v. File permissions still set to read-only.", err)
 		} else {
-			log.Printf("Key file successfully set to immutable (chattr +i)")
+			klog.Info("Key file successfully set to immutable (chattr +i)")
 		}
 	} else {
-		log.Printf("Note: chattr command is Linux-specific. Current OS: %s. File permissions set to read-only.", runtime.GOOS)
+		klog.Infof("Note: chattr command is Linux-specific. Current OS: %s. File permissions set to read-only.", runtime.GOOS)
 	}
 
 	am.publicKey = rsaPub

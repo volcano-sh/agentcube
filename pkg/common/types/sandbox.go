@@ -33,6 +33,35 @@ type CreateSandboxRequest struct {
 	Metadata           map[string]string `json:"metadata"`
 	PublicKey          string            `json:"publicKey,omitempty"`
 	InitTimeoutSeconds int               `json:"initTimeoutSeconds,omitempty"`
+	ReadinessProbe     *ReadinessProbe   `json:"readinessProbe,omitempty"`
+}
+
+type ReadinessProbe struct {
+	InitialDelaySeconds int32            `json:"initialDelaySeconds,omitempty"`
+	PeriodSeconds       int32            `json:"periodSeconds,omitempty"`
+	SuccessThreshold    int32            `json:"successThreshold,omitempty"`
+	FailureThreshold    int32            `json:"failureThreshold,omitempty"`
+	TimeoutSeconds      int32            `json:"timeoutSeconds,omitempty"`
+	TCPSocket           *TCPSocketAction `json:"tcpSocket,omitempty"`
+	HTTPGet             *HTTPGetAction   `json:"httpGet,omitempty"`
+	Exec                *ExecAction      `json:"exec,omitempty"`
+}
+
+type TCPSocketAction struct {
+	Port int    `json:"port"`
+	Host string `json:"host,omitempty"`
+}
+
+type HTTPGetAction struct {
+	Path        string            `json:"path,omitempty"`
+	Port        int               `json:"port"`
+	Host        string            `json:"host,omitempty"`
+	Scheme      string            `json:"scheme,omitempty"`
+	HTTPHeaders map[string]string `json:"httpHeaders,omitempty"`
+}
+
+type ExecAction struct {
+	Command []string `json:"command,omitempty"`
 }
 
 type Auth struct {

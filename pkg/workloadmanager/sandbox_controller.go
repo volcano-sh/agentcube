@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
@@ -29,6 +30,15 @@ type SandboxStatusUpdate struct {
 func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	sandbox := &sandboxv1alpha1.Sandbox{}
 	if err := r.Get(ctx, req.NamespacedName, sandbox); err != nil {
+		// If resource is deleted (NotFound), clean up any pending requests to prevent memory leak
+		if apierrors.IsNotFound(err) {
+			r.mu.Lock()
+			if _, exists := r.pendingRequests[req.NamespacedName]; exists {
+				klog.Infof("Cleaning up pending request for deleted sandbox %s/%s", req.Namespace, req.Name)
+				delete(r.pendingRequests, req.NamespacedName)
+			}
+			r.mu.Unlock()
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
@@ -62,7 +72,7 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	return ctrl.Result{}, nil
 }
 
-func (r *SandboxReconciler) WatchSandboxOnce(_ context.Context, namespace, name string) <-chan SandboxStatusUpdate {
+func (r *SandboxReconciler) WatchSandboxOnce(_ context.Context, namespace, name string) (<-chan SandboxStatusUpdate, func()) {
 	resultChan := make(chan SandboxStatusUpdate, 1)
 	key := types.NamespacedName{Namespace: namespace, Name: name}
 
@@ -75,5 +85,15 @@ func (r *SandboxReconciler) WatchSandboxOnce(_ context.Context, namespace, name 
 	fmt.Printf("Registered for future notification for sandbox %s/%s\n", key.Namespace, key.Name)
 	r.mu.Unlock()
 
-	return resultChan
+	// Return cleanup function that removes the entry from pendingRequests
+	cleanup := func() {
+		r.mu.Lock()
+		if _, exists := r.pendingRequests[key]; exists {
+			klog.Infof("Cleaning up pending request for sandbox %s/%s", key.Namespace, key.Name)
+			delete(r.pendingRequests, key)
+		}
+		r.mu.Unlock()
+	}
+
+	return resultChan, cleanup
 }

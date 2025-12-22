@@ -6,7 +6,7 @@ E2E_CLUSTER_NAME=${E2E_CLUSTER_NAME:-agentcube-e2e}
 AGENT_SANDBOX_REPO=${AGENT_SANDBOX_REPO:-https://github.com/kubernetes-sigs/agent-sandbox.git}
 AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION:-main}
 WORKLOAD_MANAGER_IMAGE=${WORKLOAD_MANAGER_IMAGE:-workloadmanager:latest}
-SANDBOX_IMAGE=${SANDBOX_IMAGE:-sandbox:latest}
+# Note: SANDBOX_IMAGE removed as images/sandbox directory has been deprecated
 
 # Function to clean up
 cleanup() {
@@ -38,11 +38,11 @@ kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/downl
 echo "3. Building images..."
 # We assume we are in the project root
 make docker-build
-make sandbox-build
+# Note: sandbox-build removed as images/sandbox directory has been deprecated
 
 echo "4. Loading images into Kind..."
 kind load docker-image "${WORKLOAD_MANAGER_IMAGE}" --name "${E2E_CLUSTER_NAME}"
-kind load docker-image "${SANDBOX_IMAGE}" --name "${E2E_CLUSTER_NAME}"
+# Note: sandbox image loading removed as images/sandbox directory has been deprecated
 
 # echo "5. Deploying workloadmanager..."
 # kubectl apply -f k8s/workloadmanager.yaml

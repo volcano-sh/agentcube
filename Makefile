@@ -160,12 +160,12 @@ IMAGE_REGISTRY ?= ""
 # Docker and Kubernetes targets
 docker-build:
 	@echo "Building Docker image..."
-	docker build -t $(WORKLOAD_MANAGER_IMAGE) .
+	docker build -f docker/Dockerfile -t $(WORKLOAD_MANAGER_IMAGE) .
 
 # Multi-architecture build (supports amd64, arm64)
 docker-buildx:
 	@echo "Building multi-architecture Docker image..."
-	docker buildx build --platform linux/amd64,linux/arm64 -t $(WORKLOAD_MANAGER_IMAGE) .
+	docker buildx build -f docker/Dockerfile --platform linux/amd64,linux/arm64 -t $(WORKLOAD_MANAGER_IMAGE) .
 
 # Multi-architecture build and push
 docker-buildx-push:
@@ -174,7 +174,7 @@ docker-buildx-push:
 		exit 1; \
 	fi
 	@echo "Building and pushing multi-architecture Docker image to $(IMAGE_REGISTRY)/$(WORKLOAD_MANAGER_IMAGE)..."
-	docker buildx build --platform linux/amd64,linux/arm64 \
+	docker buildx build -f docker/Dockerfile --platform linux/amd64,linux/arm64 \
 		-t $(IMAGE_REGISTRY)/$(WORKLOAD_MANAGER_IMAGE) \
 		--push .
 
@@ -207,12 +207,12 @@ kind-load:
 # Router Docker targets
 docker-build-router:
 	@echo "Building Router Docker image..."
-	docker build -f Dockerfile.router -t $(ROUTER_IMAGE) .
+	docker build -f docker/Dockerfile.router -t $(ROUTER_IMAGE) .
 
 # Multi-architecture build for router (supports amd64, arm64)
 docker-buildx-router:
 	@echo "Building multi-architecture Router Docker image..."
-	docker buildx build -f Dockerfile.router --platform linux/amd64,linux/arm64 -t $(ROUTER_IMAGE) .
+	docker buildx build -f docker/Dockerfile.router --platform linux/amd64,linux/arm64 -t $(ROUTER_IMAGE) .
 
 # Multi-architecture build and push for router
 docker-buildx-push-router:
@@ -221,7 +221,7 @@ docker-buildx-push-router:
 		exit 1; \
 	fi
 	@echo "Building and pushing multi-architecture Router Docker image to $(IMAGE_REGISTRY)/$(ROUTER_IMAGE)..."
-	docker buildx build -f Dockerfile.router --platform linux/amd64,linux/arm64 \
+	docker buildx build -f docker/Dockerfile.router --platform linux/amd64,linux/arm64 \
 		-t $(IMAGE_REGISTRY)/$(ROUTER_IMAGE) \
 		--push .
 
@@ -251,54 +251,6 @@ k8s-delete-router:
 k8s-logs-router:
 	@echo "Showing router logs..."
 	kubectl logs -n agentcube -l app=agentcube-router -f
-
-# Sandbox image targets
-SANDBOX_IMAGE ?= sandbox:latest
-
-sandbox-build:
-	@echo "Building sandbox image..."
-	docker build -t $(SANDBOX_IMAGE) images/sandbox/
-
-sandbox-push: sandbox-build
-	@if [ -z "$(IMAGE_REGISTRY)" ]; then \
-		echo "Error: IMAGE_REGISTRY not set. Usage: make sandbox-push IMAGE_REGISTRY=your-registry.com"; \
-		exit 1; \
-	fi
-	@echo "Tagging and pushing sandbox image to $(IMAGE_REGISTRY)/$(SANDBOX_IMAGE)..."
-	docker tag $(SANDBOX_IMAGE) $(IMAGE_REGISTRY)/$(SANDBOX_IMAGE)
-	docker push $(IMAGE_REGISTRY)/$(SANDBOX_IMAGE)
-
-# Multi-architecture build for sandbox (supports amd64, arm64)
-sandbox-buildx:
-	@echo "Building multi-architecture sandbox image..."
-	docker buildx build --platform linux/amd64,linux/arm64 -t $(SANDBOX_IMAGE) images/sandbox/
-
-# Multi-architecture build and push for sandbox
-sandbox-buildx-push:
-	@if [ -z "$(IMAGE_REGISTRY)" ]; then \
-		echo "Error: IMAGE_REGISTRY not set. Usage: make sandbox-buildx-push IMAGE_REGISTRY=your-registry.com"; \
-		exit 1; \
-	fi
-	@echo "Building and pushing multi-architecture sandbox image to $(IMAGE_REGISTRY)/$(SANDBOX_IMAGE)..."
-	docker buildx build --platform linux/amd64,linux/arm64 \
-		-t $(IMAGE_REGISTRY)/$(SANDBOX_IMAGE) \
-		--push images/sandbox/
-
-sandbox-test:
-	@echo "Testing sandbox image locally..."
-	docker run -d -p 2222:22 --name sandbox-test $(SANDBOX_IMAGE)
-	@echo "Sandbox running on port 2222. Test with: ssh -p 2222 sandbox@localhost"
-	@echo "Password: sandbox"
-	@echo "Stop with: make sandbox-test-stop"
-
-sandbox-test-stop:
-	@echo "Stopping and removing sandbox test container..."
-	docker stop sandbox-test || true
-	docker rm sandbox-test || true
-
-sandbox-kind-load:
-	@echo "Loading sandbox image to kind..."
-	kind load docker-image $(SANDBOX_IMAGE)
 
 # Test targets
 test-tunnel:

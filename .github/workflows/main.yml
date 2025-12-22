@@ -23,5 +23,4 @@ jobs:
     - name: Build Agentcube API Server Docker image
       run: make docker-build
 
-    - name: Build sandbox image
-      run: make sandbox-build
+

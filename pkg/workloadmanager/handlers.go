@@ -112,7 +112,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	case strings.HasSuffix(reqPath, "/code-interpreter"):
 		sandboxReq.Kind = types.CodeInterpreterKind
 	default:
-	}    
+	}
 
 	if err := sandboxReq.Validate(); err != nil {
 		klog.Errorf("request body validation failed: %v", err)
@@ -126,9 +126,9 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	var err error
 	switch sandboxReq.Kind {
 	case types.AgentRuntimeKind:
-		sandbox, externalInfo, err = buildSandboxByAgentRuntime(createAgentRequest.Namespace, createAgentRequest.Name, s.informers, createAgentRequest.ReadinessProbe)
+		sandbox, externalInfo, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers, sandboxReq.ReadinessProbe)
 	case types.CodeInterpreterKind:
-		sandbox, sandboxClaim, externalInfo, err = buildSandboxByCodeInterpreter(createAgentRequest.Namespace, createAgentRequest.Name, s.informers, createAgentRequest.ReadinessProbe)
+		sandbox, sandboxClaim, externalInfo, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers, sandboxReq.ReadinessProbe)
 	default:
 		klog.Errorf("invalid request kind: %v", sandboxReq.Kind)
 		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("invalid request kind: %v", sandboxReq.Kind))
@@ -202,7 +202,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	}
 
 	if err := s.k8sClient.WaitForSandboxDependenciesReady(c.Request.Context(), namespace, sandboxName, sandboxReadinessTimeout); err != nil {
-		log.Printf("sandbox %s/%s dependencies not ready: %v", namespace, sandboxName, err)
+		klog.Errorf("sandbox %s/%s dependencies not ready: %v", namespace, sandboxName, err)
 		respondError(c, http.StatusInternalServerError, "SANDBOX_NOT_READY", err.Error())
 		return
 	}

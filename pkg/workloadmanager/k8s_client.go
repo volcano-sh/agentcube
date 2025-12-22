@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/klog/v2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,6 +19,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog/v2"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 
@@ -299,6 +299,8 @@ func (c *K8sClient) GetSandboxPodIP(_ context.Context, namespace, sandboxName, p
 	}
 
 	return "", fmt.Errorf("no pod found for sandbox %s", sandboxName)
+
+}
 
 // validateAndGetPodIP validates pod status and returns IP
 func validateAndGetPodIP(pod *corev1.Pod) (string, error) {

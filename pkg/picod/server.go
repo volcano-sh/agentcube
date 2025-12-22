@@ -10,11 +10,18 @@ import (
 	"k8s.io/klog/v2"
 )
 
+const (
+	AuthModeDynamic = "dynamic"
+	AuthModeStatic  = "static"
+)
+
 // Config defines server configuration
 type Config struct {
-	Port         int    `json:"port"`
-	BootstrapKey []byte `json:"bootstrap_key"`
-	Workspace    string `json:"workspace"`
+	Port                int    `json:"port"`
+	BootstrapKey        []byte `json:"bootstrap_key"`
+	Workspace           string `json:"workspace"`
+	AuthMode            string `json:"auth_mode"`
+	StaticPublicKeyFile string `json:"static_public_key_file"`
 }
 
 // Server defines the PicoD HTTP server
@@ -64,6 +71,21 @@ func NewServer(config Config) *Server {
 		klog.Fatalf("Failed to load bootstrap key: %v", err)
 	}
 	klog.Info("Bootstrap key loaded successfully")
+
+	// Static Key Mode initialization
+	if config.AuthMode == AuthModeStatic {
+		klog.Info("Static Key Mode is enabled")
+		s.authManager.SetAuthMode(AuthModeStatic)
+
+		if config.StaticPublicKeyFile == "" {
+			klog.Fatal("StaticPublicKeyFile is required when AuthMode is static")
+		}
+
+		if err := s.authManager.LoadStaticPublicKey(config.StaticPublicKeyFile); err != nil {
+			klog.Fatalf("Failed to load static public key: %v", err)
+		}
+		klog.Info("Static public key loaded successfully")
+	}
 
 	// Load existing public key if available
 	if err := s.authManager.LoadPublicKey(); err != nil {

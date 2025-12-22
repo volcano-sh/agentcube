@@ -21,6 +21,7 @@ type Server struct {
 	storeClient    store.Store
 	semaphore      chan struct{}   // For limiting concurrent requests
 	httpTransport  *http.Transport // Reusable HTTP transport for connection pooling
+	requestSigner  *RequestSigner
 }
 
 // NewServer creates a new Router API server instance
@@ -71,6 +72,18 @@ func NewServer(config *Config) (*Server, error) {
 		storeClient:    store.Storage(),
 		semaphore:      make(chan struct{}, config.MaxConcurrentRequests),
 		httpTransport:  httpTransport,
+	}
+
+	// Initialize request signer if static key mode is enabled
+	if config.AuthMode == AuthModeStatic {
+		if config.StaticPrivateKeyFile == "" {
+			return nil, fmt.Errorf("StaticPrivateKeyFile is required when AuthMode is static")
+		}
+		signer, err := NewRequestSigner(config.StaticPrivateKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request signer: %w", err)
+		}
+		server.requestSigner = signer
 	}
 
 	// Setup routes

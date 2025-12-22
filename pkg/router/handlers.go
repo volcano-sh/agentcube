@@ -1,7 +1,9 @@
 package router
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -133,6 +135,23 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 		return
 	}
 
+	// Read body for signing if signer is available
+	var bodyBytes []byte
+	if s.requestSigner != nil && c.Request.Body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(c.Request.Body)
+		if err != nil {
+			klog.Errorf("Failed to read request body: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "internal server error",
+				"code":  "INTERNAL_ERROR",
+			})
+			return
+		}
+		// Restore body for proxy
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+	}
+
 	// Create reverse proxy with reusable transport
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 
@@ -167,6 +186,16 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 			clientIP = strings.Join(prior, ", ") + ", " + clientIP
 		}
 		req.Header.Set("X-Forwarded-For", clientIP)
+
+		// Sign request if signer is available
+		if s.requestSigner != nil {
+			if err := s.requestSigner.SignRequest(req, bodyBytes); err != nil {
+				klog.Errorf("Failed to sign request: %v", err)
+				// We can't easily abort the request here, but the downstream will reject it
+			} else {
+				klog.V(4).Infof("Signed request for session %s", sessionID)
+			}
+		}
 
 		klog.Infof("Forwarding request to: %s%s", targetURL.String(), path)
 	}

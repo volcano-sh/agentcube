@@ -13,6 +13,8 @@ func main() {
 	port := flag.Int("port", 8080, "Port for the PicoD server to listen on")
 	bootstrapKeyFile := flag.String("bootstrap-key", "/etc/picod/public-key.pem", "Path to the bootstrap public key file")
 	workspace := flag.String("workspace", "", "Root directory for file operations (default: current working directory)")
+	authMode := flag.String("auth-mode", "dynamic", "Authentication mode: dynamic (default) or static")
+	staticPublicKeyFile := flag.String("static-public-key-file", "", "Path to the static public key file (required if auth-mode is static)")
 
 	// Initialize klog flags
 	klog.InitFlags(nil)
@@ -27,9 +29,11 @@ func main() {
 	}
 
 	config := picod.Config{
-		Port:         *port,
-		BootstrapKey: bootstrapKey,
-		Workspace:    *workspace,
+		Port:                *port,
+		BootstrapKey:        bootstrapKey,
+		Workspace:           *workspace,
+		AuthMode:            *authMode,
+		StaticPublicKeyFile: *staticPublicKeyFile,
 	}
 
 	// Create and start server

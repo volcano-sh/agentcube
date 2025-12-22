@@ -31,6 +31,7 @@ type AuthManager struct {
 	mutex        sync.RWMutex
 	keyFile      string
 	initialized  bool
+	authMode     string
 }
 
 // InitRequest represents initialization request with public key
@@ -48,7 +49,43 @@ func NewAuthManager() *AuthManager {
 	return &AuthManager{
 		keyFile:     keyFile,
 		initialized: false,
+		authMode:    AuthModeDynamic,
 	}
+}
+
+// SetAuthMode sets the authentication mode
+func (am *AuthManager) SetAuthMode(mode string) {
+	am.authMode = mode
+}
+
+// LoadStaticPublicKey loads the static public key from a file
+func (am *AuthManager) LoadStaticPublicKey(path string) error {
+	am.mutex.Lock()
+	defer am.mutex.Unlock()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to read static public key file: %v", err)
+	}
+
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return fmt.Errorf("failed to decode PEM block from static key file")
+	}
+
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse static public key: %v", err)
+	}
+
+	rsaPub, ok := pub.(*rsa.PublicKey)
+	if !ok {
+		return fmt.Errorf("static key is not an RSA public key")
+	}
+
+	am.publicKey = rsaPub
+	am.initialized = true
+	return nil
 }
 
 // LoadBootstrapKey loads the bootstrap public key from bytes
@@ -170,6 +207,16 @@ func (am *AuthManager) IsInitialized() bool {
 func (am *AuthManager) InitHandler(c *gin.Context) {
 	am.mutex.Lock()
 	defer am.mutex.Unlock()
+
+	// Block init if in static key mode
+	if am.authMode == AuthModeStatic {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":  "Static key mode enabled",
+			"code":   http.StatusForbidden,
+			"detail": "Dynamic initialization is disabled in static key mode",
+		})
+		return
+	}
 
 	// Check if already initialized
 	if am.initialized {

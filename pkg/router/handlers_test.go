@@ -2,14 +2,22 @@ package router
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 )
 
@@ -482,4 +490,100 @@ func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 
 	// Wait for first request to complete
 	<-done
+}
+
+// Helper to generate RSA key pair (duplicated for test independence)
+func generateRSAKeys(t *testing.T) (*rsa.PrivateKey, string) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	privASN1 := x509.MarshalPKCS1PrivateKey(privateKey)
+	privPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: privASN1,
+	})
+
+	return privateKey, string(privPEM)
+}
+
+func TestRouter_StaticKeySigning(t *testing.T) {
+	// Set required environment variables
+	os.Setenv("REDIS_ADDR", "localhost:6379")
+	os.Setenv("REDIS_PASSWORD", "test-password")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
+	defer func() {
+		os.Unsetenv("REDIS_ADDR")
+		os.Unsetenv("REDIS_PASSWORD")
+		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
+	}()
+
+	// 1. Setup Keys
+	privKey, privKeyPEM := generateRSAKeys(t)
+
+	// 2. Write Private Key to temp file
+	tmpDir, err := os.MkdirTemp("", "router_static_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	keyFile := filepath.Join(tmpDir, "static_private.pem")
+	err = os.WriteFile(keyFile, []byte(privKeyPEM), 0600)
+	require.NoError(t, err)
+
+	// 3. Mock Backend (Sandbox)
+	backendReceivedToken := ""
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendReceivedToken = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	// 4. Setup Router
+	config := &Config{
+		Port:                 "0",
+		AuthMode:             AuthModeStatic,
+		StaticPrivateKeyFile: keyFile,
+		RequestTimeout:       10,
+	}
+
+	server, err := NewServer(config)
+	require.NoError(t, err)
+
+	// Mock Session Manager
+	server.sessionManager = &mockSessionManager{
+		sandbox: &types.SandboxInfo{
+			SandboxID: "test-sandbox",
+			SessionID: "test-session",
+			EntryPoints: []types.SandboxEntryPoints{
+				{Endpoint: backend.URL, Path: "/"},
+			},
+		},
+	}
+
+	ts := httptest.NewServer(server.engine)
+	defer ts.Close()
+
+	// 5. Make Request to Router
+	client := ts.Client()
+	req, _ := http.NewRequest("POST", ts.URL+"/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
+	// Add session header
+	req.Header.Set("x-agentcube-session-id", "test-session")
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// 6. Verify Backend Received valid JWT
+	require.NotEmpty(t, backendReceivedToken)
+	assert.Contains(t, backendReceivedToken, "Bearer ")
+	tokenString := backendReceivedToken[7:]
+
+	// Verify Token
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		return &privKey.PublicKey, nil
+	})
+	require.NoError(t, err)
+	assert.True(t, token.Valid)
+
+	claims := token.Claims.(jwt.MapClaims)
+	assert.Equal(t, "router", claims["iss"])
 }

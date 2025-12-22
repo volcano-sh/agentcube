@@ -22,7 +22,7 @@ class DataPlaneClient:
     def __init__(
         self,
         session_id: str,
-        private_key: rsa.RSAPrivateKey,
+        private_key: Optional[rsa.RSAPrivateKey] = None,
         router_url: Optional[str] = None,
         namespace: Optional[str] = None,
         cr_name: Optional[str] = None,
@@ -33,7 +33,7 @@ class DataPlaneClient:
 
         Args:
             session_id: Session ID (for x-agentcube-session-id header).
-            private_key: RSA Private Key for signing JWTs.
+            private_key: RSA Private Key for signing JWTs (optional in Static Key Mode).
             router_url: Base URL of the Router service (optional if base_url is provided).
             namespace: Kubernetes namespace (optional if base_url is provided).
             cr_name: Code Interpreter resource name (optional if base_url is provided).
@@ -88,8 +88,9 @@ class DataPlaneClient:
         if body:
             headers["Content-Type"] = "application/json"
 
-        token = self._create_jwt()
-        headers["Authorization"] = f"Bearer {token}"
+        if self.private_key:
+            token = self._create_jwt()
+            headers["Authorization"] = f"Bearer {token}"
         
         # Merge headers
         req_headers = self.session.headers.copy()
@@ -214,11 +215,12 @@ class DataPlaneClient:
             # Easier to just do specific logic here.
             
             url = urljoin(self.base_url, "api/files")
-            token = self._create_jwt() # No body hash
             headers = {
-                "Authorization": f"Bearer {token}",
                 "x-agentcube-session-id": self.session_id
             }
+            if self.private_key:
+                token = self._create_jwt() # No body hash
+                headers["Authorization"] = f"Bearer {token}"
             
             self.logger.debug(f"Uploading file {local_path} to {remote_path}")
             resp = self.session.post(url, files=files, data=data, headers=headers, timeout=self.timeout)

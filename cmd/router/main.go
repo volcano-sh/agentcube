@@ -23,11 +23,13 @@ func main() {
 		requestTimeout        = flag.Int("request-timeout", 30, "Request timeout in seconds")
 		maxIdleConns          = flag.Int("max-idle-conns", 100, "Maximum number of idle connections")
 		maxConnsPerHost       = flag.Int("max-conns-per-host", 10, "Maximum number of connections per host")
+		authMode              = flag.String("auth-mode", "dynamic", "Authentication mode: dynamic (default) or static")
+		staticPrivateKeyFile  = flag.String("static-private-key-file", "", "Path to the static private key file (required if auth-mode is static)")
 	)
 
 	// Initialize klog flags
 	klog.InitFlags(nil)
-	
+
 	// Parse command line flags
 	flag.Parse()
 
@@ -42,6 +44,8 @@ func main() {
 		RequestTimeout:        *requestTimeout,
 		MaxIdleConns:          *maxIdleConns,
 		MaxConnsPerHost:       *maxConnsPerHost,
+		AuthMode:              *authMode,
+		StaticPrivateKeyFile:  *staticPrivateKeyFile,
 	}
 
 	// Create Router API server

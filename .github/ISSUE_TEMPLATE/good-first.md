@@ -16,7 +16,7 @@ labels: good first issue
 
 The good first issue is intended for `first-time contributors` to get started on his/her contributor journey.
 
-After a contributor has successfully completed 1-2 good first issue's,
+After a contributor has successfully completed 1-2 good first issues,
 they should be ready to move on to `help wanted` items, saving the remaining `good first issue` for other new contributors.
 
 **How to join or take the task**:

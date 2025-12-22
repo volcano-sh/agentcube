@@ -19,4 +19,4 @@ Please make sure you have read the FAQ and searched the issue list.
 
 - agentCube version:
 - Kubernetes version:
-- Others components version:
+- Other components version:

@@ -1,7 +1,7 @@
 ---
 name: Bug Report
 about: Report a bug encountered
-tile: ''
+title: ''
 labels: kind/bug
 assignees: ''
 
@@ -22,4 +22,4 @@ assignees: ''
 
 - AgentCube version:
 - Kubernetes version:
-- Others components version:
+- Other components version:

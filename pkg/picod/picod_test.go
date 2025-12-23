@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -453,4 +454,147 @@ func TestPicoD_SetWorkspace(t *testing.T) {
 	// Here we compare the paths directly because we expect the symlink path to be stored as is (absolute),
 	// but we still resolve /var aliasing for the parent directory part.
 	assert.Equal(t, resolve(absLinkPath), resolve(server.workspaceDir))
+}
+
+// TestParseFileMode tests filesystem utility for file mode parsing
+func TestParseFileMode(t *testing.T) {
+	tests := []struct {
+		name     string
+		modeStr  string
+		expected os.FileMode
+		desc     string
+	}{
+		{
+			name:     "Valid octal mode",
+			modeStr:  "0644",
+			expected: 0644,
+			desc:     "Should parse valid octal mode",
+		},
+		{
+			name:     "Empty mode defaults to 0644",
+			modeStr:  "",
+			expected: 0644,
+			desc:     "Should default to 0644",
+		},
+		{
+			name:     "Invalid mode defaults to 0644",
+			modeStr:  "invalid",
+			expected: 0644,
+			desc:     "Should default on invalid input",
+		},
+		{
+			name:     "Mode exceeding max defaults to 0644",
+			modeStr:  "10000",
+			expected: 0644,
+			desc:     "Should default when exceeding 0777",
+		},
+		{
+			name:     "Valid executable mode",
+			modeStr:  "0755",
+			expected: 0755,
+			desc:     "Should parse executable mode",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseFileMode(tt.modeStr)
+			assert.Equal(t, tt.expected, result, tt.desc)
+		})
+	}
+}
+
+// TestLoadBootstrapKey tests auth helper error paths
+func TestLoadBootstrapKey(t *testing.T) {
+	tests := []struct {
+		name      string
+		keyData   []byte
+		expectErr bool
+		desc      string
+	}{
+		{
+			name:      "Empty key data",
+			keyData:   []byte{},
+			expectErr: true,
+			desc:      "Should reject empty key",
+		},
+		{
+			name:      "Invalid PEM format",
+			keyData:   []byte("not a pem"),
+			expectErr: true,
+			desc:      "Should reject invalid PEM",
+		},
+		{
+			name:      "Valid RSA public key",
+			keyData:   func() []byte { _, pub := generateRSAKeys(t); return []byte(pub) }(),
+			expectErr: false,
+			desc:      "Should accept valid RSA key",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			am := NewAuthManager()
+			err := am.LoadBootstrapKey(tt.keyData)
+			if tt.expectErr {
+				assert.Error(t, err, tt.desc)
+			} else {
+				assert.NoError(t, err, tt.desc)
+			}
+		})
+	}
+}
+
+// TestExecuteHandler_ErrorPaths tests execution pipeline error paths
+func TestExecuteHandler_ErrorPaths(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "picod_execute_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	_, bootstrapPubStr := generateRSAKeys(t)
+	server := NewServer(Config{
+		BootstrapKey: []byte(bootstrapPubStr),
+		Workspace:    tmpDir,
+	})
+
+	tests := []struct {
+		name       string
+		request    string
+		statusCode int
+		desc       string
+	}{
+		{
+			name:       "Empty command",
+			request:    `{"command": []}`,
+			statusCode: http.StatusBadRequest,
+			desc:       "Should reject empty command",
+		},
+		{
+			name:       "Invalid JSON",
+			request:    `{"command": invalid}`,
+			statusCode: http.StatusBadRequest,
+			desc:       "Should reject invalid JSON",
+		},
+		{
+			name:       "Invalid timeout format",
+			request:    `{"command": ["echo", "test"], "timeout": "invalid"}`,
+			statusCode: http.StatusBadRequest,
+			desc:       "Should reject invalid timeout",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest("POST", "/api/execute", bytes.NewBufferString(tt.request))
+			req.Header.Set("Content-Type", "application/json")
+
+			ctx, _ := gin.CreateTestContext(w)
+			ctx.Request = req
+
+			server.ExecuteHandler(ctx)
+
+			assert.Equal(t, tt.statusCode, w.Code, tt.desc)
+		})
+	}
 }

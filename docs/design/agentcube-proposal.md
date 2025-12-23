@@ -1,5 +1,19 @@
+---
+title: AgentCube Design Proposal
+authors:
+- @kevin-wangzefeng
+- @VanderChen
+- @tjucoder
+- @YaoZengzeng 
+- @hzxuzhonghu
+reviewers:
+- TBD
+approvers:
+- TBD
+creation-date: 2025-12-18
+---
 
-# AgentCube Runtime Design Proposal
+# AgentCube Design Proposal
 
 ## Motivation
 
@@ -110,7 +124,7 @@ Refer to API Definition for AgentRuntime and CodeInterpreterRuntime: [API Defini
 
 After `AgentRuntime` is created, user/client can invoke the agent through Agentcube Router with the URL below:
 
-```yaml
+```
 https://<agentcube-router-addr>:<port>/v1/namespaces/{agentNamespace}/agent-runtimes/{agentName}/invocations/<agent custom path>
 ```
 
@@ -122,7 +136,7 @@ Next time, the client can invoke the same agent instance by taking `x-agentcube-
 
 CodeInterpreter invocations share the same single entrypoint. When the session header is absent, Agentcube Router contacts the Workload Manager to allocate or warm a sandbox and returns the newly created session ID in the response.
 
-```yaml
+```
 https://<agentcube-router-addr>:<port>/v1/namespaces/{namespace}/code-interpreters/{name}/invocations/<custom path>
 ```
 
@@ -171,10 +185,8 @@ stateDiagram-v2
 
 1. **Agent Runtime Invocation**
 
-```yaml
-
+```
 POST /v1/namespaces/{namespace}/agent-runtimes/{name}/invocations/*path
-
 ```
 
 - Headers: `x-agentcube-session-id` (optional, creates new session if empty)
@@ -185,10 +197,8 @@ POST /v1/namespaces/{namespace}/agent-runtimes/{name}/invocations/*path
 
 2. **Code Interpreter Invocation**
 
-```yaml
-
+```
 POST /v1/namespaces/{namespace}/code-interpreters/{name}/invocations/*path
-
 ```
 
 - Headers: `x-agentcube-session-id` (optional, creates new session if empty)
@@ -261,7 +271,7 @@ Invocation Request Processing:
 
 1. **Create AgentRuntime**
 
-```yaml
+```
 POST /v1/agent-runtime
 {
   "namespace": "string", // agentruntime CR namespace, required
@@ -287,14 +297,14 @@ Response:
 ```
 2. **Delete AgentRuntime**
 
-```yaml
+```
 DELETE /v1/agent-runtime/sessions/{sessionid}
 ```
 
 
 3. **Create CodeInterpreter**
 
-```yaml
+```
 POST /v1/code-interpreter
 
 {
@@ -321,7 +331,7 @@ Response body:
 
 4. **Delete CodeInterpreter**
 
-```yaml
+```
 DELETE /v1/code-interpreter/sessions/{sessionid}
 ```
 
@@ -335,13 +345,13 @@ This component creates corresponding Sandboxes, generates and binds SessionIDs b
 
 For creation requests of the CodeInterpreter type, the Sandbox API Server also performs the corresponding initialization actions.
 
-Specifically, if the `WarmpoolSize` configured for the CodeInterpreter you specified is greater than 0, the Sandbox API Server will create a SandboxClaim instead of a Sandbox.
+Specifically, if the `WarmpoolSize` configured for the CodeInterpreter is greater than 0, the Sandbox API Server will create a `SandboxClaim` instead of a `Sandbox` directly.
 
 When creation fails, the Sandbox API Server automatically reclaims the underlying sandbox resources to prevent resource leakage. If the sandbox reclamation operation also fails, the garbage collection module will continue to delete sandboxes until all of them are removed.
 
 #### Runtime Controller
 
-The Runtime Controller watches `AgentRuntime` and `CodeInterpreter` resources. It includes two sub-controllers: the AgentRuntime Controller and the CodeInterpreter Controller.
+The Runtime Controller watches `AgentRuntime`, `CodeInterpreter`, `Sandbox` resources. It allows the Sandbox APIServer to obtain the status of a Sandbox as soon as possible. When the SandboxController detects that a Sandbox resource has transitioned to the `Running` state, it immediately sends a notification to the Sandbox APIServer.
 
 The CodeInterpreter Controller is responsible for automatically managing SandboxTemplate and SandboxWarmPool resources based on WarmPoolSize configuration to enable fast sandbox allocation for code interpreter sessions:
 
@@ -427,50 +437,50 @@ Health Check
   - Response: JSON with status and uptime
   - Authentication: None (public endpoint)
 
-### 5.2 PicoD Workflow
+### 5.2 Picod Workflow
 
 ```mermaid
 sequenceDiagram
     participant Client as SDK Client
     participant WorkloadMgr as Workload Manager
     participant K8s as Kubernetes API
-    participant PicoD as PicoD Daemon
+    participant Picod as Picod Daemon
     
 
-    Note over WorkloadMgr, PicoD: Bootstrap Phase (Sandbox Creation)
+    Note over WorkloadMgr, Picod: Bootstrap Phase (Sandbox Creation)
     WorkloadMgr->>WorkloadMgr: Generate Bootstrap Key Pair
     WorkloadMgr->>K8s: Create Sandbox Pod with Bootstrap Public Key
-    K8s->>PicoD: Start PicoD with Bootstrap Public Key
-    PicoD->>PicoD: Load Bootstrap Public Key
+    K8s->>Picod: Start Picod with Bootstrap Public Key
+    Picod->>Picod: Load Bootstrap Public Key
     
-    Note over Client, PicoD: Initialization Phase (Sandbox Allocation)
+    Note over Client, Picod: Initialization Phase (Sandbox Allocation)
     Client->>Client: Generate Session Key Pair
     Client->>WorkloadMgr: POST /v1/sandboxes (create sandbox request)
     WorkloadMgr->>WorkloadMgr: Allocate Sandbox to Client
     WorkloadMgr->>WorkloadMgr: Generate Init JWT (signed by Bootstrap Private Key)
     Note right of WorkloadMgr: JWT Claims:<br/>- session_public_key (base64)<br/>- iat, exp
-    WorkloadMgr->>PicoD: POST /init (Authorization: Bearer <init_jwt>)
-    PicoD->>PicoD: Verify JWT with Bootstrap Public Key
-    PicoD->>PicoD: Extract & Store Session Public Key
-    PicoD->>PicoD: Mark as Initialized (one-time only)
-    PicoD-->>WorkloadMgr: 200 OK (init successful)
+    WorkloadMgr->>Picod: POST /init (Authorization: Bearer <init_jwt>)
+    Picod->>Picod: Verify JWT with Bootstrap Public Key
+    Picod->>Picod: Extract & Store Session Public Key
+    Picod->>Picod: Mark as Initialized (one-time only)
+    Picod-->>WorkloadMgr: 200 OK (init successful)
     WorkloadMgr-->>Client: Return Sandbox Info (session_id, endpoints)
     
-    Note over Client, PicoD: Operation Phase (Authenticated Requests)
+    Note over Client, Picod: Operation Phase (Authenticated Requests)
     Client->>Client: Generate Request JWT (signed by Session Private Key)
     Note right of Client: JWT Claims:<br/>- iat, exp
-    Client->>PicoD: POST /api/execute (Authorization: Bearer <session_jwt>)
-    PicoD->>PicoD: Verify JWT with Stored Session Public Key
-    PicoD->>PicoD: Execute Command
-    PicoD-->>Client: Execution Result
+    Client->>Picod: POST /api/execute (Authorization: Bearer <session_jwt>)
+    Picod->>Picod: Verify JWT with Stored Session Public Key
+    Picod->>Picod: Execute Command
+    Picod-->>Client: Execution Result
     
-    Client->>PicoD: POST /api/files (Authorization: Bearer <session_jwt>)
-    PicoD->>PicoD: Verify JWT with Session Public Key
-    PicoD->>PicoD: Process File Upload
-    PicoD-->>Client: File Operation Result
+    Client->>Picod: POST /api/files (Authorization: Bearer <session_jwt>)
+    Picod->>Picod: Verify JWT with Session Public Key
+    Picod->>Picod: Process File Upload
+    Picod-->>Client: File Operation Result
     
-    Client->>PicoD: GET /api/files/{path} (Authorization: Bearer <session_jwt>)
-    PicoD->>PicoD: Verify JWT with Session Public Key
-    PicoD->>PicoD: Read & Return File
-    PicoD-->>Client: File Content
+    Client->>Picod: GET /api/files/{path} (Authorization: Bearer <session_jwt>)
+    Picod->>Picod: Verify JWT with Session Public Key
+    Picod->>Picod: Read & Return File
+    Picod-->>Client: File Content
 ```

@@ -37,17 +37,10 @@ kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/downl
 echo "3. Building images..."
 # We assume we are in the project root
 make docker-build
-<<<<<<< HEAD
-# Note: sandbox-build removed as images/sandbox directory has been deprecated
 
 echo "4. Loading images into Kind..."
 kind load docker-image "${WORKLOAD_MANAGER_IMAGE}" --name "${E2E_CLUSTER_NAME}"
-# Note: sandbox image loading removed as images/sandbox directory has been deprecated
-=======
 
-echo "4. Loading images into Kind..."
-kind load docker-image "${WORKLOAD_MANAGER_IMAGE}" --name "${E2E_CLUSTER_NAME}"
->>>>>>> 55cc821 (fix ci failure)
 
 # echo "5. Deploying workloadmanager..."
 # kubectl apply -f k8s/workloadmanager.yaml

@@ -31,6 +31,7 @@ type AuthManager struct {
 	mutex        sync.RWMutex
 	keyFile      string
 	initialized  bool
+	onActivity   func() // Callback to update activity timestamp
 }
 
 // InitRequest represents initialization request with public key
@@ -44,10 +45,11 @@ type InitResponse struct {
 }
 
 // NewAuthManager creates a new auth manager
-func NewAuthManager() *AuthManager {
+func NewAuthManager(onActivity func()) *AuthManager {
 	return &AuthManager{
 		keyFile:     keyFile,
 		initialized: false,
+		onActivity:  onActivity,
 	}
 }
 
@@ -318,6 +320,11 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 
 		// Enforce maximum body size to prevent memory exhaustion
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxBodySize)
+
+		// Update activity timestamp on successful authentication
+		if am.onActivity != nil {
+			am.onActivity()
+		}
 
 		c.Next()
 	}

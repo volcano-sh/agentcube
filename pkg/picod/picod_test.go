@@ -79,6 +79,19 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		resp, err := client.Get(ts.URL + "/health")
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var healthResp HealthResponse
+		err = json.NewDecoder(resp.Body).Decode(&healthResp)
+		require.NoError(t, err)
+
+		// Verify response structure
+		assert.Equal(t, "ok", healthResp.Status)
+		assert.Equal(t, "PicoD", healthResp.Service)
+		assert.False(t, healthResp.Initialized) // Not initialized yet
+		assert.NotEmpty(t, healthResp.Uptime)
+		assert.NotEmpty(t, healthResp.LastActivityAt)
+		assert.Equal(t, int64(900), healthResp.TTL) // Default 15 minutes
+		assert.GreaterOrEqual(t, healthResp.RemainingSeconds, int64(0))
 	})
 
 	t.Run("Unauthenticated Access", func(t *testing.T) {
@@ -453,4 +466,92 @@ func TestPicoD_SetWorkspace(t *testing.T) {
 	// Here we compare the paths directly because we expect the symlink path to be stored as is (absolute),
 	// but we still resolve /var aliasing for the parent directory part.
 	assert.Equal(t, resolve(absLinkPath), resolve(server.workspaceDir))
+}
+
+func TestPicoD_HealthTTL(t *testing.T) {
+	// Setup keys
+	_, bootstrapPubStr := generateRSAKeys(t)
+
+	tmpDir, err := os.MkdirTemp("", "picod_health_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	err = os.Chdir(tmpDir)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.Chdir(originalWd)) }()
+
+	t.Run("Health Expiry Returns 503", func(t *testing.T) {
+		// Set very short TTL via environment variable
+		t.Setenv("PICOD_DEFAULT_TTL", "1") // 1 second - will expire quickly
+
+		config := Config{
+			Port:         0,
+			BootstrapKey: []byte(bootstrapPubStr),
+			Workspace:    tmpDir,
+		}
+
+		server := NewServer(config)
+		ts := httptest.NewServer(server.engine)
+		defer ts.Close()
+		client := ts.Client()
+
+		// Wait for TTL to expire
+		time.Sleep(1500 * time.Millisecond)
+
+		// Health check should return 503 when expired
+		resp, err := client.Get(ts.URL + "/health")
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+
+		var healthResp HealthResponse
+		err = json.NewDecoder(resp.Body).Decode(&healthResp)
+		require.NoError(t, err)
+		assert.Equal(t, "expired", healthResp.Status)
+		assert.LessOrEqual(t, healthResp.RemainingSeconds, int64(0))
+	})
+
+	t.Run("Activity Update Refreshes TTL", func(t *testing.T) {
+		// Set 2 second TTL via environment variable
+		t.Setenv("PICOD_DEFAULT_TTL", "2")
+
+		config := Config{
+			Port:         0,
+			BootstrapKey: []byte(bootstrapPubStr),
+			Workspace:    tmpDir,
+		}
+
+		server := NewServer(config)
+		ts := httptest.NewServer(server.engine)
+		defer ts.Close()
+		client := ts.Client()
+
+		// Initial health check - should be ok
+		resp, err := client.Get(ts.URL + "/health")
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var healthResp HealthResponse
+		err = json.NewDecoder(resp.Body).Decode(&healthResp)
+		require.NoError(t, err)
+		initialRemaining := healthResp.RemainingSeconds
+
+		// Wait 1 second
+		time.Sleep(1 * time.Second)
+
+		// Simulate activity update
+		server.UpdateLastActivity()
+
+		// Health check again - should be refreshed
+		resp, err = client.Get(ts.URL + "/health")
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		err = json.NewDecoder(resp.Body).Decode(&healthResp)
+		require.NoError(t, err)
+
+		// Remaining should be close to full idle timeout again
+		assert.Greater(t, healthResp.RemainingSeconds, initialRemaining-1)
+	})
 }

@@ -88,13 +88,17 @@ class DataPlaneClient:
         headers = {}
         jwt_extra_claims = {}
         
-        if body:
-            headers["Content-Type"] = "application/json"
-            # Compute body hash for request integrity validation
-            body_hash = hashlib.sha256(body).hexdigest()
+        # For modifying HTTP methods, always compute body hash (even for empty body)
+        # This matches server-side validation which requires body_sha256 for POST/PUT/PATCH
+        if method.upper() in ("POST", "PUT", "PATCH"):
+            # Use body if provided, otherwise empty bytes
+            body_to_hash = body if body is not None else b''
+            body_hash = hashlib.sha256(body_to_hash).hexdigest()
             jwt_extra_claims["body_sha256"] = body_hash
+            if body:
+                headers["Content-Type"] = "application/json"
 
-        token = self._create_jwt(payload_extra=jwt_extra_claims if jwt_extra_claims else None)
+        token = self._create_jwt(payload_extra=jwt_extra_claims)
         headers["Authorization"] = f"Bearer {token}"
         
         # Merge headers

@@ -359,16 +359,19 @@ func TestPicoD_EndToEnd(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
+		defer resp.Body.Close()
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
 		// 2. Body Tampering Detection
 		// Create a valid token with body_sha256 for one command, but send different body
 		originalBody := ExecuteRequest{Command: []string{"echo", "original"}}
-		originalBytes, _ := json.Marshal(originalBody)
+		originalBytes, err := json.Marshal(originalBody)
+		require.NoError(t, err)
 		originalHash := sha256.Sum256(originalBytes)
 
 		tamperedBody := ExecuteRequest{Command: []string{"rm", "-rf", "/"}}
-		tamperedBytes, _ := json.Marshal(tamperedBody)
+		tamperedBytes, err := json.Marshal(tamperedBody)
+		require.NoError(t, err)
 
 		tamperClaims := jwt.MapClaims{
 			"body_sha256": fmt.Sprintf("%x", originalHash), // Hash of original body
@@ -384,6 +387,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 
 		resp, err = client.Do(req)
 		require.NoError(t, err)
+		defer resp.Body.Close()
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "Tampered body should be rejected")
 
 		// Verify error message
@@ -400,12 +404,20 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		}
 		noHashToken := createToken(t, sessionPriv, noClaims)
 
-		req, _ = http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(realBody))
+		// Define a fresh request body for this test case to avoid dependence on earlier state
+		missingBody := map[string]interface{}{
+			"query": "SELECT 1",
+		}
+		missingBodyBytes, err := json.Marshal(missingBody)
+		require.NoError(t, err)
+		req, err = http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(missingBodyBytes))
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+noHashToken)
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err = client.Do(req)
 		require.NoError(t, err)
+		defer resp.Body.Close()
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "Missing body_sha256 should be rejected")
 
 		// Verify error message

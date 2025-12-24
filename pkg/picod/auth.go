@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -272,8 +273,6 @@ func extractBearerToken(authHeader string) (string, error) {
 }
 
 // validateBodyHash validates that the request body matches the body_sha256 claim in the token.
-// Returns the body bytes if valid, or an error if validation fails.
-// Also restores the request body for downstream handlers.
 func validateBodyHash(c *gin.Context, claims jwt.MapClaims) error {
 	expectedHash, ok := claims["body_sha256"].(string)
 	if !ok || expectedHash == "" {
@@ -289,8 +288,8 @@ func validateBodyHash(c *gin.Context, claims jwt.MapClaims) error {
 	// Compute actual hash
 	actualHash := fmt.Sprintf("%x", sha256.Sum256(bodyBytes))
 
-	// Compare hashes
-	if actualHash != expectedHash {
+	// Compare hashes using constant-time comparison to prevent timing attacks
+	if subtle.ConstantTimeCompare([]byte(actualHash), []byte(expectedHash)) != 1 {
 		return fmt.Errorf("body hash mismatch")
 	}
 

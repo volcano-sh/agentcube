@@ -344,6 +344,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		// Sign with bootstrap key instead of session key for execution
 		claims := jwt.MapClaims{
 			"iat": time.Now().Unix(),
+			"exp": time.Now().Add(time.Hour * 6).Unix(),
 		}
 		// Wrong key for this endpoint/phase (middleware uses session key after init)
 		// If we sign with `bootstrapPriv`, verification against `sessionPub` should fail.
@@ -359,6 +360,58 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+		// 2. Body Tampering Detection
+		// Create a valid token with body_sha256 for one command, but send different body
+		originalBody := ExecuteRequest{Command: []string{"echo", "original"}}
+		originalBytes, _ := json.Marshal(originalBody)
+		originalHash := sha256.Sum256(originalBytes)
+
+		tamperedBody := ExecuteRequest{Command: []string{"rm", "-rf", "/"}}
+		tamperedBytes, _ := json.Marshal(tamperedBody)
+
+		tamperClaims := jwt.MapClaims{
+			"body_sha256": fmt.Sprintf("%x", originalHash), // Hash of original body
+			"iat":         time.Now().Unix(),
+			"exp":         time.Now().Add(time.Hour * 6).Unix(),
+		}
+		tamperToken := createToken(t, sessionPriv, tamperClaims)
+
+		// Send tampered body with token that has hash of original body
+		req, _ = http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(tamperedBytes))
+		req.Header.Set("Authorization", "Bearer "+tamperToken)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err = client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "Tampered body should be rejected")
+
+		// Verify error message
+		var errResp map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&errResp)
+		require.NoError(t, err)
+		assert.Equal(t, "body hash mismatch", errResp["error"])
+
+		// 3. Missing body_sha256 Claim
+		// Create token without body_sha256 claim for POST request
+		noClaims := jwt.MapClaims{
+			"iat": time.Now().Unix(),
+			"exp": time.Now().Add(time.Hour * 6).Unix(),
+		}
+		noHashToken := createToken(t, sessionPriv, noClaims)
+
+		req, _ = http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(realBody))
+		req.Header.Set("Authorization", "Bearer "+noHashToken)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err = client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "Missing body_sha256 should be rejected")
+
+		// Verify error message
+		err = json.NewDecoder(resp.Body).Decode(&errResp)
+		require.NoError(t, err)
+		assert.Equal(t, "missing body_sha256 claim", errResp["error"])
 	})
 }
 

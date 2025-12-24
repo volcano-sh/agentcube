@@ -1,11 +1,14 @@
 package picod
 
 import (
+	"bytes"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -253,10 +256,59 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 	})
 }
 
+// extractBearerToken extracts the token string from Authorization header.
+// Returns the token string or an error message if invalid.
+func extractBearerToken(authHeader string) (string, error) {
+	if authHeader == "" {
+		return "", fmt.Errorf("missing Authorization header")
+	}
+
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		return "", fmt.Errorf("invalid Authorization header format, use Bearer <token>")
+	}
+
+	return parts[1], nil
+}
+
+// validateBodyHash validates that the request body matches the body_sha256 claim in the token.
+// Returns the body bytes if valid, or an error if validation fails.
+// Also restores the request body for downstream handlers.
+func validateBodyHash(c *gin.Context, claims jwt.MapClaims) error {
+	expectedHash, ok := claims["body_sha256"].(string)
+	if !ok || expectedHash == "" {
+		return fmt.Errorf("missing body_sha256 claim")
+	}
+
+	// Read the body
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read request body: %w", err)
+	}
+
+	// Compute actual hash
+	actualHash := fmt.Sprintf("%x", sha256.Sum256(bodyBytes))
+
+	// Compare hashes
+	if actualHash != expectedHash {
+		return fmt.Errorf("body hash mismatch")
+	}
+
+	// Restore the body for downstream handlers
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+	return nil
+}
+
+// requiresBodyValidation checks if the request method and content type require body hash validation.
+func requiresBodyValidation(method, contentType string) bool {
+	isModifyingMethod := method == "POST" || method == "PUT" || method == "PATCH"
+	isMultipart := strings.HasPrefix(contentType, "multipart/")
+	return isModifyingMethod && !isMultipart
+}
+
 // AuthMiddleware creates authentication middleware with JWT verification
 func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-
 		// Check if server is initialized
 		if !am.IsInitialized() {
 			c.JSON(http.StatusForbidden, gin.H{
@@ -268,39 +320,22 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
+		tokenString, err := extractBearerToken(c.GetHeader("Authorization"))
+		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":  "Missing Authorization header",
+				"error":  "Invalid Authorization",
 				"code":   http.StatusUnauthorized,
-				"detail": "Request requires JWT authentication",
+				"detail": err.Error(),
 			})
 			c.Abort()
 			return
 		}
-
-		parts := strings.Split(authHeader, " ")
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":  "Invalid Authorization header format",
-				"code":   http.StatusUnauthorized,
-				"detail": "Use Bearer <token>",
-			})
-			c.Abort()
-			return
-		}
-
-		tokenString := parts[1]
 
 		// Parse and validate JWT using Session Public Key
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
-			// Use the session public key for verification
-			// Lock is handled by IsInitialized check above, but safe to read pointer here
-			// strictly speaking we should lock to read am.publicKey if it can change,
-			// but it's set once at init.
 			am.mutex.RLock()
 			defer am.mutex.RUnlock()
 			return am.publicKey, nil
@@ -318,6 +353,30 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 
 		// Enforce maximum body size to prevent memory exhaustion
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxBodySize)
+
+		// Validate body_sha256 for non-multipart POST/PUT/PATCH requests
+		if requiresBodyValidation(c.Request.Method, c.GetHeader("Content-Type")) {
+			claims, ok := token.Claims.(jwt.MapClaims)
+			if !ok {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error":  "Invalid token claims",
+					"code":   http.StatusUnauthorized,
+					"detail": "Unable to parse JWT claims",
+				})
+				c.Abort()
+				return
+			}
+
+			if err := validateBodyHash(c, claims); err != nil {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error":  err.Error(),
+					"code":   http.StatusUnauthorized,
+					"detail": "Request body hash validation failed",
+				})
+				c.Abort()
+				return
+			}
+		}
 
 		c.Next()
 	}

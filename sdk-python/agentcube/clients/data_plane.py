@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import time
 import os
@@ -85,10 +86,15 @@ class DataPlaneClient:
         url = urljoin(self.base_url, endpoint)
         
         headers = {}
+        jwt_extra_claims = {}
+        
         if body:
             headers["Content-Type"] = "application/json"
+            # Compute body hash for request integrity validation
+            body_hash = hashlib.sha256(body).hexdigest()
+            jwt_extra_claims["body_sha256"] = body_hash
 
-        token = self._create_jwt()
+        token = self._create_jwt(payload_extra=jwt_extra_claims if jwt_extra_claims else None)
         headers["Authorization"] = f"Bearer {token}"
         
         # Merge headers

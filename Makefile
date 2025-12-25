@@ -151,6 +151,7 @@ install: build
 # Docker image variables
 WORKLOAD_MANAGER_IMAGE ?= workloadmanager:latest
 ROUTER_IMAGE ?= agentcube-router:latest
+PICOD_IMAGE ?= picod:latest
 IMAGE_REGISTRY ?= ""
 
 # Docker and Kubernetes targets
@@ -247,6 +248,37 @@ k8s-delete-router:
 k8s-logs-router:
 	@echo "Showing router logs..."
 	kubectl logs -n agentcube -l app=agentcube-router -f
+
+# Picod Docker targets
+docker-build-picod:
+	@echo "Building Picod Docker image..."
+	docker build -f docker/Dockerfile.picod -t $(PICOD_IMAGE) .
+
+# Multi-architecture build for picod (supports amd64, arm64)
+docker-buildx-picod:
+	@echo "Building multi-architecture Picod Docker image..."
+	docker buildx build -f docker/Dockerfile.picod --platform linux/amd64,linux/arm64 -t $(PICOD_IMAGE) .
+
+# Multi-architecture build and push for picod
+docker-buildx-push-picod:
+	@if [ -z "$(IMAGE_REGISTRY)" ]; then \
+		echo "Error: IMAGE_REGISTRY not set. Usage: make docker-buildx-push-picod IMAGE_REGISTRY=your-registry.com"; \
+		exit 1; \
+	fi
+	@echo "Building and pushing multi-architecture Picod Docker image to $(IMAGE_REGISTRY)/$(PICOD_IMAGE)..."
+	docker buildx build -f docker/Dockerfile.picod --platform linux/amd64,linux/arm64 \
+		-t $(IMAGE_REGISTRY)/$(PICOD_IMAGE) \
+		--push .
+
+docker-push-picod: docker-build-picod
+	@if [ -z "$(IMAGE_REGISTRY)" ]; then \
+		echo "Error: IMAGE_REGISTRY not set. Usage: make docker-push-picod IMAGE_REGISTRY=your-registry.com"; \
+		exit 1; \
+	fi
+	@echo "Tagging and pushing Picod Docker image to $(IMAGE_REGISTRY)/$(PICOD_IMAGE)..."
+	docker tag $(PICOD_IMAGE) $(IMAGE_REGISTRY)/$(PICOD_IMAGE)
+	docker push $(IMAGE_REGISTRY)/$(PICOD_IMAGE)
+
 
 ##@ Dependencies
 

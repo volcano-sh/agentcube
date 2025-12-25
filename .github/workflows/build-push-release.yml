@@ -46,4 +46,4 @@ jobs:
         run: |
           make docker-buildx-push IMAGE_REGISTRY=$IMAGE_REGISTRY WORKLOAD_MANAGER_IMAGE=workloadmanager:${{ env.TAG }}
           make docker-buildx-push-router IMAGE_REGISTRY=$IMAGE_REGISTRY ROUTER_IMAGE=agentcube-router:${{ env.TAG }}
-          make sandbox-buildx-push IMAGE_REGISTRY=$IMAGE_REGISTRY SANDBOX_IMAGE=sandbox:${{ env.TAG }}
+          make docker-buildx-push-picod IMAGE_REGISTRY=$IMAGE_REGISTRY PICOD_IMAGE=picod:${{ env.TAG }}

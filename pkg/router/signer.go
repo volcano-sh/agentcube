@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -51,16 +53,14 @@ func NewRequestSigner(keyFile string) (*RequestSigner, error) {
 
 // SignRequest adds a signed JWT Authorization header to the request
 func (rs *RequestSigner) SignRequest(req *http.Request, body []byte) error {
-	claims := jwt.MapClaims{
-		"iss": "router",
-		"iat": time.Now().Unix(),
-		"exp": time.Now().Add(5 * time.Minute).Unix(),
-	}
+	// Build canonical request hash for anti-tampering
+	canonicalRequestHash := buildCanonicalRequestHash(req, body)
 
-	// Calculate body hash if body is present
-	if len(body) > 0 {
-		hash := sha256.Sum256(body)
-		claims["body_sha256"] = fmt.Sprintf("%x", hash)
+	claims := jwt.MapClaims{
+		"iss":                      "router",
+		"iat":                      time.Now().Unix(),
+		"exp":                      time.Now().Add(5 * time.Minute).Unix(),
+		"canonical_request_sha256": canonicalRequestHash,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
@@ -71,4 +71,101 @@ func (rs *RequestSigner) SignRequest(req *http.Request, body []byte) error {
 
 	req.Header.Set("Authorization", "Bearer "+tokenString)
 	return nil
+}
+
+// buildCanonicalRequestHash builds a canonical request string and returns its SHA256 hash
+// Format: HTTPMethod + \n + URI + \n + QueryString + \n + CanonicalHeaders + \n + SignedHeaders + \n + BodyHash
+func buildCanonicalRequestHash(r *http.Request, body []byte) string {
+	// 1. HTTP Method
+	method := strings.ToUpper(r.Method)
+
+	// 2. Canonical URI (path only)
+	uri := r.URL.Path
+	if uri == "" {
+		uri = "/"
+	}
+
+	// 3. Canonical Query String (sorted)
+	queryString := buildCanonicalQueryString(r)
+
+	// 4. Canonical Headers (sorted, lowercase)
+	canonicalHeaders, signedHeaders := buildCanonicalHeaders(r)
+
+	// 5. Body hash
+	bodyHash := fmt.Sprintf("%x", sha256.Sum256(body))
+
+	// Build canonical request
+	canonicalRequest := strings.Join([]string{
+		method,
+		uri,
+		queryString,
+		canonicalHeaders,
+		signedHeaders,
+		bodyHash,
+	}, "\n")
+
+	// Return SHA256 of canonical request
+	hash := sha256.Sum256([]byte(canonicalRequest))
+	return fmt.Sprintf("%x", hash)
+}
+
+// buildCanonicalQueryString builds a sorted query string
+func buildCanonicalQueryString(r *http.Request) string {
+	query := r.URL.Query()
+	if len(query) == 0 {
+		return ""
+	}
+
+	keys := make([]string, 0, len(query))
+	for k := range query {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var pairs []string
+	for _, k := range keys {
+		values := query[k]
+		sort.Strings(values)
+		for _, v := range values {
+			pairs = append(pairs, k+"="+v)
+		}
+	}
+
+	return strings.Join(pairs, "&")
+}
+
+// buildCanonicalHeaders builds canonical headers string and returns signedHeaders list
+func buildCanonicalHeaders(r *http.Request) (canonicalHeaders string, signedHeaders string) {
+	// Only include specific headers that are important for request integrity
+	headersToInclude := []string{"content-type", "host"}
+
+	headerMap := make(map[string]string)
+	for _, h := range headersToInclude {
+		if v := r.Header.Get(h); v != "" {
+			headerMap[strings.ToLower(h)] = strings.TrimSpace(v)
+		}
+	}
+
+	// Add host if not in headers
+	if _, ok := headerMap["host"]; !ok && r.Host != "" {
+		headerMap["host"] = r.Host
+	}
+
+	// Sort header names
+	keys := make([]string, 0, len(headerMap))
+	for k := range headerMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// Build canonical headers and signed headers
+	var headerLines []string
+	for _, k := range keys {
+		headerLines = append(headerLines, k+":"+headerMap[k])
+	}
+
+	canonicalHeaders = strings.Join(headerLines, "\n") + "\n"
+	signedHeaders = strings.Join(keys, ";")
+
+	return canonicalHeaders, signedHeaders
 }

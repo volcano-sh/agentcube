@@ -1,11 +1,12 @@
 import base64
+import hashlib
 import json
 import time
 import os
 import ast
 import shlex
 from typing import Dict, Optional, Any, List, Union
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 import jwt
@@ -84,12 +85,28 @@ class DataPlaneClient:
         """Make an authenticated request to the Data Plane."""
         url = urljoin(self.base_url, endpoint)
         
+        # Build full URL with params for signature calculation
+        params = kwargs.get("params")
+        if params:
+            from urllib.parse import urlencode
+            query_string = urlencode(params, doseq=True)
+            url_with_params = f"{url}?{query_string}"
+        else:
+            url_with_params = url
+        
         headers = {}
         if body:
             headers["Content-Type"] = "application/json"
 
         if self.private_key:
-            token = self._create_jwt()
+            # Build canonical request hash for anti-tampering
+            canonical_request_hash = self._build_canonical_request_hash(
+                method=method.upper(),
+                url=url_with_params,  # Use URL with params for signature
+                headers=headers,
+                body=body or b""
+            )
+            token = self._create_jwt({"canonical_request_sha256": canonical_request_hash})
             headers["Authorization"] = f"Bearer {token}"
         
         # Merge headers
@@ -107,6 +124,85 @@ class DataPlaneClient:
             headers=req_headers,
             **kwargs
         )
+
+    def _build_canonical_request_hash(self, method: str, url: str, headers: Dict[str, str], body: bytes) -> str:
+        """Build canonical request string and return its SHA256 hash.
+        
+        Format matches server-side buildCanonicalRequestHash:
+        HTTPMethod + \n + URI + \n + QueryString + \n + CanonicalHeaders + \n + SignedHeaders + \n + BodyHash
+        """
+        parsed = urlparse(url)
+        
+        # 1. HTTP Method
+        http_method = method.upper()
+        
+        # 2. Canonical URI (path only)
+        uri = parsed.path or "/"
+        
+        # 3. Canonical Query String (sorted)
+        query_string = self._build_canonical_query_string(parsed.query)
+        
+        # 4. Canonical Headers (sorted, lowercase)
+        canonical_headers, signed_headers = self._build_canonical_headers(headers, parsed.netloc)
+        
+        # 5. Body hash
+        body_hash = hashlib.sha256(body).hexdigest()
+        
+        # Build canonical request
+        canonical_request = "\n".join([
+            http_method,
+            uri,
+            query_string,
+            canonical_headers,
+            signed_headers,
+            body_hash
+        ])
+        
+        # Return SHA256 of canonical request
+        return hashlib.sha256(canonical_request.encode('utf-8')).hexdigest()
+    
+    def _build_canonical_query_string(self, query: str) -> str:
+        """Build sorted canonical query string."""
+        if not query:
+            return ""
+        
+        pairs = []
+        for part in query.split('&'):
+            if '=' in part:
+                k, v = part.split('=', 1)
+                pairs.append((k, v))
+            else:
+                pairs.append((part, ""))
+        
+        pairs.sort(key=lambda x: (x[0], x[1]))
+        return "&".join(f"{k}={v}" for k, v in pairs)
+    
+    def _build_canonical_headers(self, headers: Dict[str, str], host: str) -> tuple:
+        """Build canonical headers string and signed headers list."""
+        # Include specific headers that are important for request integrity
+        header_map = {}
+        
+        for h in ["content-type", "host"]:
+            if h in headers:
+                header_map[h.lower()] = headers[h].strip()
+            elif h.lower() in (k.lower() for k in headers):
+                for k, v in headers.items():
+                    if k.lower() == h:
+                        header_map[h.lower()] = v.strip()
+        
+        # Add host if not in headers
+        if "host" not in header_map and host:
+            header_map["host"] = host
+        
+        # Sort header names
+        sorted_keys = sorted(header_map.keys())
+        
+        # Build canonical headers and signed headers
+        header_lines = [f"{k}:{header_map[k]}" for k in sorted_keys]
+        canonical_headers = "\n".join(header_lines) + "\n"
+        signed_headers = ";".join(sorted_keys)
+        
+        return canonical_headers, signed_headers
 
     def execute_command(self, command: Union[str, List[str]], timeout: Optional[float] = None) -> str:
         """Execute a shell command.

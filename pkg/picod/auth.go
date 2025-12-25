@@ -1,15 +1,19 @@
 package picod
 
 import (
+	"bytes"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +60,18 @@ func NewAuthManager() *AuthManager {
 // SetAuthMode sets the authentication mode
 func (am *AuthManager) SetAuthMode(mode string) {
 	am.authMode = mode
+}
+
+// SetInitialized sets the initialization state
+func (am *AuthManager) SetInitialized(initialized bool) {
+	am.mutex.Lock()
+	defer am.mutex.Unlock()
+	am.initialized = initialized
+}
+
+// GetAuthMode returns the current authentication mode
+func (am *AuthManager) GetAuthMode() string {
+	return am.authMode
 }
 
 // LoadStaticPublicKey loads the static public key from a file
@@ -363,9 +379,141 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// Read body for canonical request verification
+		var bodyBytes []byte
+		if c.Request.Body != nil {
+			bodyBytes, _ = io.ReadAll(c.Request.Body)
+			// Restore body for downstream handlers
+			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		}
+
+		// Verify canonical_request_sha256 claim to prevent request tampering
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error":  "Invalid token claims",
+				"code":   http.StatusUnauthorized,
+				"detail": "Token claims format is invalid",
+			})
+			c.Abort()
+			return
+		}
+
+		claimedHash, hasHash := claims["canonical_request_sha256"].(string)
+		if hasHash && claimedHash != "" {
+			// Build canonical request and verify
+			actualHash := buildCanonicalRequestHash(c.Request, bodyBytes)
+			if claimedHash != actualHash {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error":  "Request integrity check failed",
+					"code":   http.StatusUnauthorized,
+					"detail": "canonical_request_sha256 mismatch - request may have been tampered",
+				})
+				c.Abort()
+				return
+			}
+		}
+
 		// Enforce maximum body size to prevent memory exhaustion
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxBodySize)
 
 		c.Next()
 	}
+}
+
+// buildCanonicalRequestHash builds a canonical request string and returns its SHA256 hash
+// Format: HTTPMethod + \n + URI + \n + QueryString + \n + CanonicalHeaders + \n + SignedHeaders + \n + BodyHash
+func buildCanonicalRequestHash(r *http.Request, body []byte) string {
+	// 1. HTTP Method
+	method := strings.ToUpper(r.Method)
+
+	// 2. Canonical URI (path only)
+	uri := r.URL.Path
+	if uri == "" {
+		uri = "/"
+	}
+
+	// 3. Canonical Query String (sorted)
+	queryString := buildCanonicalQueryString(r)
+
+	// 4. Canonical Headers (sorted, lowercase)
+	canonicalHeaders, signedHeaders := buildCanonicalHeaders(r)
+
+	// 5. Body hash
+	bodyHash := fmt.Sprintf("%x", sha256.Sum256(body))
+
+	// Build canonical request
+	canonicalRequest := strings.Join([]string{
+		method,
+		uri,
+		queryString,
+		canonicalHeaders,
+		signedHeaders,
+		bodyHash,
+	}, "\n")
+
+	// Return SHA256 of canonical request
+	hash := sha256.Sum256([]byte(canonicalRequest))
+	return fmt.Sprintf("%x", hash)
+}
+
+// buildCanonicalQueryString builds a sorted query string
+func buildCanonicalQueryString(r *http.Request) string {
+	query := r.URL.Query()
+	if len(query) == 0 {
+		return ""
+	}
+
+	keys := make([]string, 0, len(query))
+	for k := range query {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var pairs []string
+	for _, k := range keys {
+		values := query[k]
+		sort.Strings(values)
+		for _, v := range values {
+			pairs = append(pairs, k+"="+v)
+		}
+	}
+
+	return strings.Join(pairs, "&")
+}
+
+// buildCanonicalHeaders builds canonical headers string and returns signedHeaders list
+func buildCanonicalHeaders(r *http.Request) (canonicalHeaders string, signedHeaders string) {
+	// Only include specific headers that are important for request integrity
+	headersToInclude := []string{"content-type", "host"}
+
+	headerMap := make(map[string]string)
+	for _, h := range headersToInclude {
+		if v := r.Header.Get(h); v != "" {
+			headerMap[strings.ToLower(h)] = strings.TrimSpace(v)
+		}
+	}
+
+	// Add host if not in headers
+	if _, ok := headerMap["host"]; !ok && r.Host != "" {
+		headerMap["host"] = r.Host
+	}
+
+	// Sort header names
+	keys := make([]string, 0, len(headerMap))
+	for k := range headerMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// Build canonical headers and signed headers
+	var headerLines []string
+	for _, k := range keys {
+		headerLines = append(headerLines, k+":"+headerMap[k])
+	}
+
+	canonicalHeaders = strings.Join(headerLines, "\n") + "\n"
+	signedHeaders = strings.Join(keys, ";")
+
+	return canonicalHeaders, signedHeaders
 }

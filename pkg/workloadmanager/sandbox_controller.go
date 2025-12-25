@@ -2,7 +2,6 @@ package workloadmanager
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -68,12 +67,22 @@ func (r *SandboxReconciler) WatchSandboxOnce(_ context.Context, namespace, name 
 
 	// Not running yet, register for future notification
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.pendingRequests == nil {
 		r.pendingRequests = make(map[types.NamespacedName]chan SandboxStatusUpdate)
 	}
 	r.pendingRequests[key] = resultChan
-	fmt.Printf("Registered for future notification for sandbox %s/%s\n", key.Namespace, key.Name)
-	r.mu.Unlock()
+	klog.Infof("Registered for future notification for sandbox %s/%s", key.Namespace, key.Name)
 
 	return resultChan
+}
+
+func (r *SandboxReconciler) UnWatchSandbox(namespace, name string) {
+	key := types.NamespacedName{Namespace: namespace, Name: name}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.pendingRequests[key]; exists {
+		klog.Infof("Cleaning up pending request for sandbox %s/%s", key.Namespace, key.Name)
+		delete(r.pendingRequests, key)
+	}
 }

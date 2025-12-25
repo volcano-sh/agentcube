@@ -157,6 +157,8 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	// CRITICAL: Register watcher BEFORE creating sandbox
 	// This ensures we don't miss the Running state notification
 	resultChan := s.sandboxController.WatchSandboxOnce(c.Request.Context(), namespace, sandboxName)
+	// Ensure cleanup is called when function returns to prevent memory leak
+	defer s.sandboxController.UnWatchSandbox(namespace, sandboxName)
 
 	// Store placeholder before creating, make sandbox/sandboxClaim GarbageCollection possible
 	sandboxStorePlaceHolder := buildSandboxStoreCachePlaceHolder(sandbox, externalInfo)
@@ -188,12 +190,12 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	var createdSandbox *sandboxv1alpha1.Sandbox
 	select {
 	case result := <-resultChan:
-		// TODO: pendingRequests should remove manual if not receive result
+		// Successfully received notification, cleanup will be handled by defer
 		createdSandbox = result.Sandbox
 		klog.Infof("sandbox %s/%s running", createdSandbox.Namespace, createdSandbox.Name)
 	case <-time.After(3 * time.Minute):
 		// timeout, Sandbox/SandboxClaim maybe create successfully later,
-		// it will be deleted in GarbageCollection
+		// UnWatchSandbox will be called by defer to prevent memory leak
 		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
 		respondError(c, http.StatusInternalServerError, "SANDBOX_TIMEOUT", "Sandbox creation timed out")
 		return

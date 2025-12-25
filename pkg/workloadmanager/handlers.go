@@ -19,6 +19,8 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/store"
 )
 
+const sandboxReadinessTimeout = 30 * time.Second
+
 // handleHealth handles health check requests
 func (s *Server) handleHealth(c *gin.Context) {
 	respondJSON(c, http.StatusOK, map[string]string{
@@ -124,9 +126,9 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	var err error
 	switch sandboxReq.Kind {
 	case types.AgentRuntimeKind:
-		sandbox, externalInfo, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers)
+		sandbox, externalInfo, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers, sandboxReq.ReadinessProbe)
 	case types.CodeInterpreterKind:
-		sandbox, sandboxClaim, externalInfo, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers)
+		sandbox, sandboxClaim, externalInfo, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers, sandboxReq.ReadinessProbe)
 	default:
 		klog.Errorf("invalid request kind: %v", sandboxReq.Kind)
 		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("invalid request kind: %v", sandboxReq.Kind))
@@ -198,6 +200,12 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		// UnWatchSandbox will be called by defer to prevent memory leak
 		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
 		respondError(c, http.StatusInternalServerError, "SANDBOX_TIMEOUT", "Sandbox creation timed out")
+		return
+	}
+
+	if err := s.k8sClient.WaitForSandboxDependenciesReady(c.Request.Context(), namespace, sandboxName, sandboxReadinessTimeout); err != nil {
+		klog.Errorf("sandbox %s/%s dependencies not ready: %v", namespace, sandboxName, err)
+		respondError(c, http.StatusInternalServerError, "SANDBOX_NOT_READY", err.Error())
 		return
 	}
 

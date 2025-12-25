@@ -46,6 +46,7 @@ func TestReconciler_Reconcile_WithLastActivity(t *testing.T) {
 						{
 							Type:   string(sandboxv1alpha1.SandboxConditionReady),
 							Status: metav1.ConditionTrue,
+							Reason: "DependenciesReady",
 						},
 					},
 				},
@@ -69,6 +70,7 @@ func TestReconciler_Reconcile_WithLastActivity(t *testing.T) {
 						{
 							Type:   string(sandboxv1alpha1.SandboxConditionReady),
 							Status: metav1.ConditionTrue,
+							Reason: "DependenciesReady",
 						},
 					},
 				},

@@ -33,6 +33,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
+	if !workloadmanager.IsSandboxReady(sandbox) {
+		return ctrl.Result{}, nil
+	}
+
 	lastActivityStr, exists := sandbox.Annotations[workloadmanager.LastActivityAnnotationKey]
 	var lastActivity time.Time
 	if exists && lastActivityStr != "" {

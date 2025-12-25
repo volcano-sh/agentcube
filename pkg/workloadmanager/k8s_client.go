@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/klog/v2"
-
-	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
@@ -21,8 +19,11 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog/v2"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
+
+	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 )
 
 const (
@@ -298,6 +299,7 @@ func (c *K8sClient) GetSandboxPodIP(_ context.Context, namespace, sandboxName, p
 	}
 
 	return "", fmt.Errorf("no pod found for sandbox %s", sandboxName)
+
 }
 
 // validateAndGetPodIP validates pod status and returns IP
@@ -313,6 +315,90 @@ func validateAndGetPodIP(pod *corev1.Pod) (string, error) {
 	}
 
 	return pod.Status.PodIP, nil
+}
+
+// IsPodReady returns true if the pod Ready condition is true.
+func IsPodReady(pod *corev1.Pod) bool {
+	if pod == nil {
+		return false
+	}
+	return isPodReadyConditionTrue(pod.Status)
+}
+
+func isPodReadyConditionTrue(status corev1.PodStatus) bool {
+	for _, condition := range status.Conditions {
+		if condition.Type == corev1.PodReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+func (c *K8sClient) getSandboxPod(ctx context.Context, namespace, sandboxName string) (*corev1.Pod, error) {
+	labelSelector := fmt.Sprintf("sandbox-name=%s", sandboxName)
+	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(pods.Items) == 0 {
+		return nil, nil
+	}
+	pod := pods.Items[0]
+	return &pod, nil
+}
+
+func (c *K8sClient) getSandboxService(ctx context.Context, namespace, sandboxName string) (*corev1.Service, error) {
+	svc, err := c.clientset.CoreV1().Services(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return svc, nil
+}
+
+func (c *K8sClient) sandboxDependenciesReady(ctx context.Context, namespace, sandboxName string) (bool, error) {
+	pod, err := c.getSandboxPod(ctx, namespace, sandboxName)
+	if err != nil {
+		return false, err
+	}
+	podReady := IsPodReady(pod)
+
+	svc, err := c.getSandboxService(ctx, namespace, sandboxName)
+	if err != nil {
+		return false, err
+	}
+	svcReady := svc != nil
+
+	return podReady && svcReady, nil
+}
+
+// WaitForSandboxDependenciesReady waits until both the sandbox pod and service are ready.
+func (c *K8sClient) WaitForSandboxDependenciesReady(ctx context.Context, namespace, sandboxName string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		ready, err := c.sandboxDependenciesReady(ctx, namespace, sandboxName)
+		if err != nil {
+			return err
+		}
+		if ready {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for sandbox dependencies to become ready")
+		case <-ticker.C:
+		}
+	}
 }
 
 // WaitForSandboxReady waits for the Sandbox to be ready

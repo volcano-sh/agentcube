@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1597 1133" text-rendering="geometricPrecision" shape-rendering="geometricPrecision" fill="#191919">
+  <rect fill="#ffffff" x="1" width="1597.8706" height="1129.8272"/>
+  <g id="page1" transform="translate(5.5, 5.5)">
+    <rect fill="none" width="1587" height="1123"/>
+    <path id="shape1" fill="none" stroke="#191919" transform="translate(305, 129)" d="M0,0L0,812"/>
+    <g id="group2" transform="translate(112, 69)">
+      <path id="shape3" fill="none" stroke="#101843" transform="translate(0, 17.6)" d="M16,0L16,21.2L0,42.4M16,21.2L32,42.4M0,8.5L32,8.5"/>
+      <path id="shape4" fill="#ffffff" stroke="#101843" transform="translate(7.2, 0)" d="M0,8.8C0,3.9,3.9,0,8.8,0C13.7,0,17.6,3.9,17.6,8.8C17.6,13.7,13.7,17.6,8.8,17.6C3.9,17.6,0,13.7,0,8.8z"/>
+      <text xml:space="preserve" font-size="10pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="1" y="76.8">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Client</tspan></text>
+    </g>
+    <path id="shape5" fill="none" stroke="#191919" transform="translate(128, 129)" d="M0,0L0,790"/>
+    <g id="shape6" transform="translate(245, 69)">
+      <path fill="#ffffff" stroke="#101843" d="M0,0L120,0L120,60L0,60L0,0z"/>
+      <text xml:space="preserve" font-size="10pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="29" y="33.2">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">APIServer</tspan></text>
+    </g>
+    <g id="shape7" transform="translate(245, 941)">
+      <path fill="#ffffff" stroke="#101843" d="M0,0L120,0L120,60L0,60L0,0z"/>
+      <text xml:space="preserve" font-size="10pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="29" y="33.2">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">APIServer</tspan></text>
+    </g>
+    <g id="group8" transform="translate(112, 919)">
+      <path id="shape9" fill="none" stroke="#101843" transform="translate(0, 17.6)" d="M16,0L16,21.2L0,42.4M16,21.2L32,42.4M0,8.5L32,8.5"/>
+      <path id="shape10" fill="#ffffff" stroke="#101843" transform="translate(7.2, 0)" d="M0,8.8C0,3.9,3.9,0,8.8,0C13.7,0,17.6,3.9,17.6,8.8C17.6,13.7,13.7,17.6,8.8,17.6C3.9,17.6,0,13.7,0,8.8z"/>
+      <text xml:space="preserve" font-size="10pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="1" y="76.8">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Client</tspan></text>
+    </g>
+    <g id="shape11" transform="translate(128, 169.085)">
+      <path fill="none" stroke="#191919" d="M0,0L161.4,-0.9"/>
+      <path fill="#191919" stroke="#191919" stroke-linecap="round" d="M177,-1L161.4,-4.8L161.4,3L177,-1"/>
+      <rect fill="#ffffff" x="69.6" y="-8.8" width="28.7" height="13.3"/>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="69.6" y="1.9">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Create</tspan></text>
+    </g>
+    <g id="shape12" transform="translate(438, 69)">
+      <path fill="#ffffff" stroke="#101843" d="M0,0L120,0L120,60L0,60L0,0z"/>
+      <text xml:space="preserve" font-size="10pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="29" y="33.2">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">KV-Cache</tspan></text>
+    </g>
+    <path id="shape13" fill="none" stroke="#191919" transform="translate(498, 129)" d="M0,0L0,812"/>
+    <g id="shape14" transform="translate(438, 941)">
+      <path fill="#ffffff" stroke="#101843" d="M0,0L120,0L120,60L0,60L0,0z"/>
+      <text xml:space="preserve" font-size="10pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="29" y="33.2">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">KV-Cache</tspan></text>
+    </g>
+    <g id="shape15" transform="translate(305, 304.855)">
+      <path fill="none" stroke="#191919" d="M0,0L177.4,0"/>
+      <path fill="#191919" stroke="#191919" stroke-linecap="round" d="M193,0L177.4,-3.9L177.4,3.9L193,0"/>
+      <rect fill="#ffffff" x="13" y="-8.3" width="155.3" height="13.3"/>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="13" y="2.3">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Store SessionID Sandbox Mapping</tspan></text>
+    </g>
+    <g id="shape16" transform="translate(305, 182.998)">
+      <path fill="none" stroke="#191919" d="M0,0L47.5,0L47.5,38L15.6,38"/>
+      <path fill="#191919" stroke="#191919" stroke-linecap="round" d="M0,38L15.6,41.9L15.6,34.1L0,38"/>
+      <rect fill="#ffffff" x="16.5" y="9.4" width="64" height="13.3"/>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="16.5" y="20">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Gen SessionID</tspan></text>
+    </g>
+    <g id="shape17" transform="translate(663, 69)">
+      <path fill="#ffffff" stroke="#101843" d="M0,0L120,0L120,60L0,60L0,0z"/>
+      <text xml:space="preserve" font-size="10pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="13" y="33.2">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">AgentSandbox</tspan></text>
+    </g>
+    <path id="shape18" fill="none" stroke="#191919" transform="translate(723, 129)" d="M0,0L0,812"/>
+    <g id="shape19" transform="translate(663, 941)">
+      <path fill="#ffffff" stroke="#101843" d="M0,0L120,0L120,60L0,60L0,0z"/>
+      <text xml:space="preserve" font-size="10pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="13" y="33.2">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">AgentSandbox</tspan></text>
+    </g>
+    <g id="shape20" transform="translate(305, 341.525)">
+      <path fill="none" stroke="#191919" d="M0,0L402.4,0"/>
+      <path fill="#191919" stroke="#191919" stroke-linecap="round" d="M418,0L402.4,-3.9L402.4,3.9L418,0"/>
+      <rect fill="#ffffff" x="156.1" y="-8.3" width="70.7" height="13.3"/>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="156.1" y="2.3">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Create Sandbox</tspan></text>
+    </g>
+    <g id="group21" transform="translate(260, 236)">
+      <g id="shape22">
+        <path fill="#ffffff" d="M0,0L96,0L96,12.5L83.5,25L0,25L0,0z"/>
+        <path fill="none" stroke="#101843" d="M0,0L959,0L959,257L0,257L0,0zM0,0L96,0L96,12.5L83.5,25L0,25L0,0z"/>
+      </g>
+      <path id="shape23" fill="none" stroke="#101843" stroke-dasharray="11 5" d="M0,151.7L959,151.7"/>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="2.7" y="14.8">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Alternative</tspan></text>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="2.7" y="42.3">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">AgentRuntime or CodeInterpreter without warmpool</tspan></text>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="2.7" y="169">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑"> CodeInterpreter with warmpool</tspan></text>
+    </g>
+    <g id="shape24" transform="translate(865, 69)">
+      <path fill="#ffffff" stroke="#101843" d="M0,0L120,0L120,60L0,60L0,0z"/>
+      <text xml:space="preserve" font-size="10pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="12.7" y="33.2">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">KubeAPIServer</tspan></text>
+    </g>
+    <path id="shape25" fill="none" stroke="#191919" transform="translate(925, 129)" d="M0,0L0,812"/>
+    <g id="shape26" transform="translate(865, 941)">
+      <path fill="#ffffff" stroke="#101843" d="M0,0L120,0L120,60L0,60L0,0z"/>
+      <text xml:space="preserve" font-size="10pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="12.7" y="33.2">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">KubeAPIServer</tspan></text>
+    </g>
+    <g id="shape27" transform="translate(305, 422.847)">
+      <path fill="none" stroke="#191919" d="M0,0L604.4,0"/>
+      <path fill="#191919" stroke="#191919" stroke-linecap="round" d="M620,0L604.4,-3.9L604.4,3.9L620,0"/>
+      <rect fill="#ffffff" x="228.1" y="-8.3" width="110.7" height="13.3"/>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="228.1" y="2.3">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Create SandboxClaim CR</tspan></text>
+    </g>
+    <g id="shape28" transform="translate(723, 457.251)">
+      <path fill="none" stroke="#191919" d="M0,0L186.4,0"/>
+      <path fill="#191919" stroke="#191919" stroke-linecap="round" d="M202,0L186.4,-3.9L186.4,3.9L202,0"/>
+      <rect fill="#ffffff" x="25" y="-15.3" width="130.7" height="13.3"/>
+      <rect fill="#ffffff" x="25.4" y="-2" width="130" height="13.3"/>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="25" y="-4.7">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Watched Creation and create</tspan><tspan x="25.4" y="8.7">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Sandbox with Pre-Warm Pod</tspan></text>
+    </g>
+    <g id="shape29" transform="translate(723, 360.858)">
+      <path fill="none" stroke="#191919" d="M0,0L186.4,0"/>
+      <path fill="#191919" stroke="#191919" stroke-linecap="round" d="M202,0L186.4,-3.9L186.4,3.9L202,0"/>
+      <rect fill="#ffffff" x="36.7" y="-8.3" width="111.3" height="13.3"/>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="36.7" y="2.3">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Create Sandbox and Pod</tspan></text>
+    </g>
+    <g id="shape30" transform="translate(305, 520.181)">
+      <path fill="none" stroke="#191919" d="M0,0L604.4,0"/>
+      <path fill="#191919" stroke="#191919" stroke-linecap="round" d="M620,0L604.4,-3.9L604.4,3.9L620,0"/>
+      <rect fill="#ffffff" x="223.1" y="-15.3" width="120.7" height="13.3"/>
+      <rect fill="#ffffff" x="234.1" y="-2" width="98.7" height="13.3"/>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="223.1" y="-4.7">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Watch Sandbox Ready and</tspan><tspan x="234.1" y="8.7">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Get Sandbox pod info</tspan></text>
+    </g>
+    <g id="group31" transform="translate(260, 557)">
+      <g id="shape32">
+        <path fill="#ffffff" d="M0,0L96,0L96,12.5L83.5,25L0,25L0,0z"/>
+        <path fill="none" stroke="#101843" d="M0,0L959,0L959,332L0,332L0,0zM0,0L96,0L96,12.5L83.5,25L0,25L0,0z"/>
+      </g>
+      <path id="shape33" fill="none" stroke="#101843" stroke-dasharray="11 5" d="M0,145.3L959,145.3"/>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="2.7" y="14.8">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Alternative</tspan></text>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="2.7" y="42.3">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">AgentRuntime</tspan></text>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="2.7" y="162.6">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">CodeInterpreter</tspan></text>
+    </g>
+    <g id="shape34" transform="translate(305, 628.518)">
+      <path fill="none" stroke="#191919" d="M0,0L177.4,0"/>
+      <path fill="#191919" stroke="#191919" stroke-linecap="round" d="M193,0L177.4,-3.9L177.4,3.9L193,0"/>
+      <rect fill="#ffffff" x="29.9" y="-15.3" width="118" height="13.3"/>
+      <rect fill="#ffffff" x="38.9" y="-2" width="100" height="13.3"/>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="29.9" y="-4.7">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Refresh Sandbox Info with</tspan><tspan x="38.9" y="8.7">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Entrypoint, UID, Status</tspan></text>
+    </g>
+    <g id="shape35" transform="translate(305, 657.929)">
+      <path fill="none" stroke="#191919" d="M0,0L-161.4,0"/>
+      <path fill="#191919" stroke="#191919" stroke-linecap="round" d="M-177,0L-161.4,3.9L-161.4,-3.9L-177,0"/>
+      <rect fill="#ffffff" x="-144.6" y="-15.3" width="130" height="13.3"/>
+      <rect fill="#ffffff" x="-113" y="-2" width="66.7" height="13.3"/>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="-144.6" y="-4.7">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Sandbox with bound Session</tspan><tspan x="-113" y="8.7">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">and Entrypoint</tspan></text>
+    </g>
+    <g id="shape36" transform="translate(1091, 69)">
+      <path fill="#ffffff" stroke="#101843" d="M0,0L120,0L120,60L0,60L0,0z"/>
+      <text xml:space="preserve" font-size="10pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="42.3" y="33.2">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Picod</tspan></text>
+    </g>
+    <path id="shape37" fill="none" stroke="#191919" transform="translate(1151, 129)" d="M0,0L0,812"/>
+    <g id="shape38" transform="translate(1091, 941)">
+      <path fill="#ffffff" stroke="#101843" d="M0,0L120,0L120,60L0,60L0,0z"/>
+      <text xml:space="preserve" font-size="10pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="42.3" y="33.2">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Picod</tspan></text>
+    </g>
+    <g id="shape39" transform="translate(305, 742.182)">
+      <path fill="none" stroke="#191919" d="M0,0L830.4,0"/>
+      <path fill="#191919" stroke="#191919" stroke-linecap="round" d="M846,0L830.4,-3.9L830.4,3.9L846,0"/>
+      <rect fill="#ffffff" x="360.4" y="-8.3" width="88" height="13.3"/>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="360.4" y="2.3">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">init CodeInterpreter</tspan></text>
+    </g>
+    <g id="shape40" transform="translate(1151, 791.259)">
+      <path fill="none" stroke="#191919" stroke-dasharray="11 5" d="M0,0L-830.4,0"/>
+      <path fill="#191919" stroke="#191919" stroke-linecap="round" d="M-846,0L-830.4,3.9L-830.4,-3.9L-846,0"/>
+      <rect fill="#ffffff" x="-445" y="-8.3" width="13.3" height="13.3"/>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="-445" y="2.3">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">OK</tspan></text>
+    </g>
+    <g id="shape41" transform="translate(305, 822.188)">
+      <path fill="none" stroke="#191919" d="M0,0L177.4,0"/>
+      <path fill="#191919" stroke="#191919" stroke-linecap="round" d="M193,0L177.4,-3.9L177.4,3.9L193,0"/>
+      <rect fill="#ffffff" x="29.9" y="-15.3" width="118" height="13.3"/>
+      <rect fill="#ffffff" x="38.9" y="-2" width="100" height="13.3"/>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="29.9" y="-4.7">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Refresh Sandbox Info with</tspan><tspan x="38.9" y="8.7">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Entrypoint, UID, Status</tspan></text>
+    </g>
+    <g id="shape42" transform="translate(305, 854.262)">
+      <path fill="none" stroke="#191919" d="M0,0L-161.4,0"/>
+      <path fill="#191919" stroke="#191919" stroke-linecap="round" d="M-177,0L-161.4,3.9L-161.4,-3.9L-177,0"/>
+      <rect fill="#ffffff" x="-144.6" y="-15.3" width="130" height="13.3"/>
+      <rect fill="#ffffff" x="-113" y="-2" width="66.7" height="13.3"/>
+      <text xml:space="preserve" font-size="7pt" data-gn-el-type="text" style="white-space:pre"><tspan fill="#191919" font-family="微软雅黑"> </tspan><tspan x="-144.6" y="-4.7">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">Sandbox with bound Session</tspan><tspan x="-113" y="8.7">&#x200B;</tspan><tspan fill="#191919" font-family="微软雅黑">and Entrypoint</tspan></text>
+    </g>
+  </g>
+</svg>

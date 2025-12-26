@@ -74,19 +74,26 @@ func (am *AuthManager) GetAuthMode() string {
 	return am.authMode
 }
 
-// LoadStaticPublicKey loads the static public key from a file
-func (am *AuthManager) LoadStaticPublicKey(path string) error {
+// LoadStaticPublicKey loads the static public key from PICOD_PUBLIC_KEY environment variable
+// The key must be base64 encoded PEM format
+func (am *AuthManager) LoadStaticPublicKey() error {
 	am.mutex.Lock()
 	defer am.mutex.Unlock()
 
-	data, err := os.ReadFile(path)
+	keyB64 := os.Getenv("PICOD_PUBLIC_KEY")
+	if keyB64 == "" {
+		return fmt.Errorf("PICOD_PUBLIC_KEY environment variable is not set")
+	}
+
+	// Decode base64
+	data, err := base64.StdEncoding.DecodeString(keyB64)
 	if err != nil {
-		return fmt.Errorf("failed to read static public key file: %v", err)
+		return fmt.Errorf("failed to decode base64 PICOD_PUBLIC_KEY: %v", err)
 	}
 
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return fmt.Errorf("failed to decode PEM block from static key file")
+		return fmt.Errorf("failed to decode PEM block from PICOD_PUBLIC_KEY")
 	}
 
 	pub, err := x509.ParsePKIXPublicKey(block.Bytes)

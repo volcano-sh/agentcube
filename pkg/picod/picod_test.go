@@ -472,16 +472,16 @@ func TestPicoD_StaticKeyMode(t *testing.T) {
 	defer func() { require.NoError(t, os.Chdir(originalWd)) }()
 
 	// Write static public key to file
-	staticKeyPath := filepath.Join(tmpDir, "static_public.pem")
-	err = os.WriteFile(staticKeyPath, []byte(staticPubStr), 0644)
-	require.NoError(t, err)
+	// Set PICOD_PUBLIC_KEY env var for static mode (base64 encoded)
+	staticKeyB64 := base64.StdEncoding.EncodeToString([]byte(staticPubStr))
+	os.Setenv("PICOD_PUBLIC_KEY", staticKeyB64)
+	defer os.Unsetenv("PICOD_PUBLIC_KEY")
 
 	config := Config{
-		Port:                0,
-		BootstrapKey:        []byte(bootstrapPubStr),
-		Workspace:           tmpDir,
-		AuthMode:            AuthModeStatic,
-		StaticPublicKeyFile: staticKeyPath,
+		Port:         0,
+		BootstrapKey: []byte(bootstrapPubStr),
+		Workspace:    tmpDir,
+		AuthMode:     AuthModeStatic,
 	}
 
 	server := NewServer(config)

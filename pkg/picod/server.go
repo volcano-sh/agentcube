@@ -17,11 +17,11 @@ const (
 
 // Config defines server configuration
 type Config struct {
-	Port                int    `json:"port"`
-	BootstrapKey        []byte `json:"bootstrap_key"`
-	Workspace           string `json:"workspace"`
-	AuthMode            string `json:"auth_mode"`
-	StaticPublicKeyFile string `json:"static_public_key_file"`
+	Port         int    `json:"port"`
+	BootstrapKey []byte `json:"bootstrap_key"`
+	Workspace    string `json:"workspace"`
+	AuthMode     string `json:"auth_mode"`
+	// Static mode uses PICOD_PUBLIC_KEY env var (base64 encoded PEM)
 }
 
 // Server defines the PicoD HTTP server
@@ -77,14 +77,10 @@ func NewServer(config Config) *Server {
 		klog.Info("Static Key Mode is enabled")
 		s.authManager.SetAuthMode(AuthModeStatic)
 
-		if config.StaticPublicKeyFile == "" {
-			klog.Fatal("StaticPublicKeyFile is required when AuthMode is static")
+		if err := s.authManager.LoadStaticPublicKey(); err != nil {
+			klog.Fatalf("Failed to load static public key from PICOD_PUBLIC_KEY: %v", err)
 		}
-
-		if err := s.authManager.LoadStaticPublicKey(config.StaticPublicKeyFile); err != nil {
-			klog.Fatalf("Failed to load static public key: %v", err)
-		}
-		klog.Info("Static public key loaded successfully")
+		klog.Info("Static public key loaded successfully from PICOD_PUBLIC_KEY")
 	}
 
 	// Load existing public key if available

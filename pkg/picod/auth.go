@@ -36,6 +36,7 @@ type AuthManager struct {
 	keyFile      string
 	initialized  bool
 	authMode     string
+	onActivity   func() // Callback to update activity timestamp
 }
 
 // InitRequest represents initialization request with public key
@@ -49,11 +50,12 @@ type InitResponse struct {
 }
 
 // NewAuthManager creates a new auth manager
-func NewAuthManager() *AuthManager {
+func NewAuthManager(onActivity func()) *AuthManager {
 	return &AuthManager{
 		keyFile:     keyFile,
 		initialized: false,
 		authMode:    AuthModeDynamic,
+		onActivity:  onActivity,
 	}
 }
 
@@ -423,6 +425,11 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 
 		// Enforce maximum body size to prevent memory exhaustion
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxBodySize)
+
+		// Update activity timestamp on successful authentication
+		if am.onActivity != nil {
+			am.onActivity()
+		}
 
 		c.Next()
 	}

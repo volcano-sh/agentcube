@@ -42,7 +42,7 @@ func generateRSAKeys(t *testing.T) (*rsa.PrivateKey, string) {
 
 // Helper to create signed JWT
 func createToken(t *testing.T, key *rsa.PrivateKey, claims jwt.MapClaims) string {
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token := jwt.NewWithClaims(jwt.SigningMethodPS256, claims)
 	tokenString, err := token.SignedString(key)
 	require.NoError(t, err)
 	return tokenString

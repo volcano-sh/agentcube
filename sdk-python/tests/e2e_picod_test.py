@@ -129,7 +129,7 @@ def perform_init_handshake(bootstrap_priv_key, session_pub_pem):
     token = jwt.encode(
         payload=claims,
         key=bootstrap_priv_key,
-        algorithm="RS256"
+        algorithm="PS256"
     )
     
     url = f"http://localhost:{HOST_PORT}/init"

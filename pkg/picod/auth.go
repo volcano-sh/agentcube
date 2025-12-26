@@ -268,8 +268,8 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 
 	// Parse and validate JWT
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		if _, ok := token.Method.(*jwt.SigningMethodRSAPSS); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v, expected PS256", token.Header["alg"])
 		}
 		return am.bootstrapKey, nil
 	}, jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithLeeway(time.Minute))
@@ -357,8 +357,8 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 
 		// Parse and validate JWT using Session Public Key
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			if _, ok := token.Method.(*jwt.SigningMethodRSAPSS); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v, expected PS256", token.Header["alg"])
 			}
 			// Use the session public key for verification
 			// Lock is handled by IsInitialized check above, but safe to read pointer here

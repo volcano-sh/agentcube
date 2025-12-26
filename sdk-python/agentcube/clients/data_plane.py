@@ -78,7 +78,7 @@ class DataPlaneClient:
         return jwt.encode(
             payload=claims,
             key=self.private_key,
-            algorithm="RS256"
+            algorithm="PS256"
         )
 
     def _request(self, method: str, endpoint: str, body: bytes = None, **kwargs) -> requests.Response:

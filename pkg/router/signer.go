@@ -63,7 +63,7 @@ func (rs *RequestSigner) SignRequest(req *http.Request, body []byte) error {
 		"canonical_request_sha256": canonicalRequestHash,
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token := jwt.NewWithClaims(jwt.SigningMethodPS256, claims)
 	tokenString, err := token.SignedString(rs.privateKey)
 	if err != nil {
 		return fmt.Errorf("failed to sign token: %v", err)

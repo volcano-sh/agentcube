@@ -25,7 +25,7 @@ spec:
           imagePullPolicy: {{ .Values.router.image.pullPolicy }}
           ports:
             - name: http
-              containerPort: {{ .Values.router.service.port }}
+              containerPort: {{ .Values.router.service.targetPort }}
               protocol: TCP
           env:
             - name: REDIS_ADDR
@@ -35,20 +35,20 @@ spec:
             - name: WORKLOAD_MANAGER_ADDR
               value: "http://workloadmanager.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.workloadmanager.service.port }}"
           args:
-            - --port={{ .Values.router.service.port }}
+            - --port={{ .Values.router.service.targetPort }}
             - --debug
           resources:
             {{- toYaml .Values.router.resources | nindent 12 }}
           livenessProbe:
             httpGet:
               path: /health
-              port: {{ .Values.router.service.port }}
+              port: {{ .Values.router.service.targetPort }}
             initialDelaySeconds: 10
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /health
-              port: {{ .Values.router.service.port }}
+              port: {{ .Values.router.service.targetPort }}
             initialDelaySeconds: 5
             periodSeconds: 5
 
@@ -64,7 +64,7 @@ spec:
   type: {{ .Values.router.service.type }}
   ports:
     - port: {{ .Values.router.service.port }}
-      targetPort: {{ .Values.router.service.port }}
+      targetPort: {{ .Values.router.service.targetPort }}
       protocol: TCP
       name: http
   selector:

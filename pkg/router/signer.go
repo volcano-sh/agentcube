@@ -136,19 +136,11 @@ func buildCanonicalQueryString(r *http.Request) string {
 
 // buildCanonicalHeaders builds canonical headers string and returns signedHeaders list
 func buildCanonicalHeaders(r *http.Request) (canonicalHeaders string, signedHeaders string) {
-	// Only include specific headers that are important for request integrity
-	headersToInclude := []string{"content-type", "host"}
-
+	// Only include content-type for request integrity
 	headerMap := make(map[string]string)
-	for _, h := range headersToInclude {
-		if v := r.Header.Get(h); v != "" {
-			headerMap[strings.ToLower(h)] = strings.TrimSpace(v)
-		}
-	}
 
-	// Add host if not in headers
-	if _, ok := headerMap["host"]; !ok && r.Host != "" {
-		headerMap["host"] = r.Host
+	if v := r.Header.Get("Content-Type"); v != "" {
+		headerMap["content-type"] = strings.TrimSpace(v)
 	}
 
 	// Sort header names
@@ -164,7 +156,11 @@ func buildCanonicalHeaders(r *http.Request) (canonicalHeaders string, signedHead
 		headerLines = append(headerLines, k+":"+headerMap[k])
 	}
 
-	canonicalHeaders = strings.Join(headerLines, "\n") + "\n"
+	if len(headerLines) > 0 {
+		canonicalHeaders = strings.Join(headerLines, "\n") + "\n"
+	} else {
+		canonicalHeaders = "\n"
+	}
 	signedHeaders = strings.Join(keys, ";")
 
 	return canonicalHeaders, signedHeaders

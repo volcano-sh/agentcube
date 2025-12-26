@@ -179,27 +179,23 @@ class DataPlaneClient:
     
     def _build_canonical_headers(self, headers: Dict[str, str], host: str) -> tuple:
         """Build canonical headers string and signed headers list."""
-        # Include specific headers that are important for request integrity
+        # Only include content-type for request integrity
         header_map = {}
         
-        for h in ["content-type", "host"]:
-            if h in headers:
-                header_map[h.lower()] = headers[h].strip()
-            elif h.lower() in (k.lower() for k in headers):
-                for k, v in headers.items():
-                    if k.lower() == h:
-                        header_map[h.lower()] = v.strip()
-        
-        # Add host if not in headers
-        if "host" not in header_map and host:
-            header_map["host"] = host
+        if "Content-Type" in headers:
+            header_map["content-type"] = headers["Content-Type"].strip()
+        elif "content-type" in headers:
+            header_map["content-type"] = headers["content-type"].strip()
         
         # Sort header names
         sorted_keys = sorted(header_map.keys())
         
         # Build canonical headers and signed headers
-        header_lines = [f"{k}:{header_map[k]}" for k in sorted_keys]
-        canonical_headers = "\n".join(header_lines) + "\n"
+        if sorted_keys:
+            header_lines = [f"{k}:{header_map[k]}" for k in sorted_keys]
+            canonical_headers = "\n".join(header_lines) + "\n"
+        else:
+            canonical_headers = "\n"
         signed_headers = ";".join(sorted_keys)
         
         return canonical_headers, signed_headers

@@ -26,7 +26,8 @@ class CodeInterpreterClient:
         workload_manager_url: Optional[str] = None,
         router_url: Optional[str] = None,
         auth_token: Optional[str] = None,
-        verbose: bool = False
+        verbose: bool = False,
+        auth_mode: str = "dynamic"
     ):
         """
         Initialize the Code Interpreter Client.
@@ -39,11 +40,13 @@ class CodeInterpreterClient:
             router_url: URL of Router (Data Plane).
             auth_token: Auth token for Kubernetes/WorkloadManager.
             verbose: Enable debug logging.
+            auth_mode: Authentication mode. "dynamic" (default) or "static".
         """
         self.name = name
         self.namespace = namespace
         self.ttl = ttl
         self.verbose = verbose
+        self.auth_mode = auth_mode
         
         # Configure Logger
         level = logging.DEBUG if verbose else logging.INFO
@@ -70,10 +73,16 @@ class CodeInterpreterClient:
             return
 
         self.logger.info("Generating keys...")
-        self._generate_keys()
-
-        # Picod expects the public key to be passed as a base64-encoded PEM string, with padding characters removed.
-        public_key_b64 = base64.b64encode(self.public_key_pem.encode('utf-8')).decode('utf-8').rstrip('=')
+        
+        public_key_b64 = None
+        if self.auth_mode == "dynamic":
+            self._generate_keys()
+            # Picod expects the public key to be passed as a base64-encoded PEM string, with padding characters removed.
+            public_key_b64 = base64.b64encode(self.public_key_pem.encode('utf-8')).decode('utf-8').rstrip('=')
+        elif self.auth_mode == "static":
+             self.logger.info("Using Static Key Mode (skipping key generation)")
+        else:
+             self.logger.warning(f"Unknown auth_mode '{self.auth_mode}', defaulting to skipping key generation (behaving like static)")
 
         self.session_id = self.cp_client.create_session(
             name=self.name,

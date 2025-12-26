@@ -1,15 +1,19 @@
 package picod
 
 import (
+	"bytes"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +35,8 @@ type AuthManager struct {
 	mutex        sync.RWMutex
 	keyFile      string
 	initialized  bool
+	authMode     string
+	onActivity   func() // Callback to update activity timestamp
 }
 
 // InitRequest represents initialization request with public key
@@ -44,11 +50,67 @@ type InitResponse struct {
 }
 
 // NewAuthManager creates a new auth manager
-func NewAuthManager() *AuthManager {
+func NewAuthManager(onActivity func()) *AuthManager {
 	return &AuthManager{
 		keyFile:     keyFile,
 		initialized: false,
+		authMode:    AuthModeDynamic,
+		onActivity:  onActivity,
 	}
+}
+
+// SetAuthMode sets the authentication mode
+func (am *AuthManager) SetAuthMode(mode string) {
+	am.authMode = mode
+}
+
+// SetInitialized sets the initialization state
+func (am *AuthManager) SetInitialized(initialized bool) {
+	am.mutex.Lock()
+	defer am.mutex.Unlock()
+	am.initialized = initialized
+}
+
+// GetAuthMode returns the current authentication mode
+func (am *AuthManager) GetAuthMode() string {
+	return am.authMode
+}
+
+// LoadStaticPublicKey loads the static public key from PICOD_PUBLIC_KEY environment variable
+// The key must be base64 encoded PEM format
+func (am *AuthManager) LoadStaticPublicKey() error {
+	am.mutex.Lock()
+	defer am.mutex.Unlock()
+
+	keyB64 := os.Getenv("PICOD_PUBLIC_KEY")
+	if keyB64 == "" {
+		return fmt.Errorf("PICOD_PUBLIC_KEY environment variable is not set")
+	}
+
+	// Decode base64
+	data, err := base64.StdEncoding.DecodeString(keyB64)
+	if err != nil {
+		return fmt.Errorf("failed to decode base64 PICOD_PUBLIC_KEY: %v", err)
+	}
+
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return fmt.Errorf("failed to decode PEM block from PICOD_PUBLIC_KEY")
+	}
+
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse static public key: %v", err)
+	}
+
+	rsaPub, ok := pub.(*rsa.PublicKey)
+	if !ok {
+		return fmt.Errorf("static key is not an RSA public key")
+	}
+
+	am.publicKey = rsaPub
+	am.initialized = true
+	return nil
 }
 
 // LoadBootstrapKey loads the bootstrap public key from bytes
@@ -171,6 +233,16 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 	am.mutex.Lock()
 	defer am.mutex.Unlock()
 
+	// Block init if in static key mode
+	if am.authMode == AuthModeStatic {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":  "Static key mode enabled",
+			"code":   http.StatusForbidden,
+			"detail": "Dynamic initialization is disabled in static key mode",
+		})
+		return
+	}
+
 	// Check if already initialized
 	if am.initialized {
 		c.JSON(http.StatusForbidden, gin.H{
@@ -205,8 +277,8 @@ func (am *AuthManager) InitHandler(c *gin.Context) {
 
 	// Parse and validate JWT
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		if _, ok := token.Method.(*jwt.SigningMethodRSAPSS); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v, expected PS256", token.Header["alg"])
 		}
 		return am.bootstrapKey, nil
 	}, jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithLeeway(time.Minute))
@@ -294,8 +366,8 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 
 		// Parse and validate JWT using Session Public Key
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			if _, ok := token.Method.(*jwt.SigningMethodRSAPSS); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v, expected PS256", token.Header["alg"])
 			}
 			// Use the session public key for verification
 			// Lock is handled by IsInitialized check above, but safe to read pointer here
@@ -316,9 +388,142 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// Read body for canonical request verification
+		var bodyBytes []byte
+		if c.Request.Body != nil {
+			bodyBytes, _ = io.ReadAll(c.Request.Body)
+			// Restore body for downstream handlers
+			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		}
+
+		// Verify canonical_request_sha256 claim to prevent request tampering
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error":  "Invalid token claims",
+				"code":   http.StatusUnauthorized,
+				"detail": "Token claims format is invalid",
+			})
+			c.Abort()
+			return
+		}
+
+		claimedHash, hasHash := claims["canonical_request_sha256"].(string)
+		if hasHash && claimedHash != "" {
+			// Build canonical request and verify
+			actualHash := buildCanonicalRequestHash(c.Request, bodyBytes)
+			if claimedHash != actualHash {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error":  "Request integrity check failed",
+					"code":   http.StatusUnauthorized,
+					"detail": "canonical_request_sha256 mismatch - request may have been tampered",
+				})
+				c.Abort()
+				return
+			}
+		}
+
 		// Enforce maximum body size to prevent memory exhaustion
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxBodySize)
 
+		// Update activity timestamp on successful authentication
+		if am.onActivity != nil {
+			am.onActivity()
+		}
+
 		c.Next()
 	}
+}
+
+// buildCanonicalRequestHash builds a canonical request string and returns its SHA256 hash
+// Format: HTTPMethod + \n + URI + \n + QueryString + \n + CanonicalHeaders + \n + SignedHeaders + \n + BodyHash
+func buildCanonicalRequestHash(r *http.Request, body []byte) string {
+	// 1. HTTP Method
+	method := strings.ToUpper(r.Method)
+
+	// 2. Canonical URI (path only)
+	uri := r.URL.Path
+	if uri == "" {
+		uri = "/"
+	}
+
+	// 3. Canonical Query String (sorted)
+	queryString := buildCanonicalQueryString(r)
+
+	// 4. Canonical Headers (sorted, lowercase)
+	canonicalHeaders, signedHeaders := buildCanonicalHeaders(r)
+
+	// 5. Body hash
+	bodyHash := fmt.Sprintf("%x", sha256.Sum256(body))
+
+	// Build canonical request
+	canonicalRequest := strings.Join([]string{
+		method,
+		uri,
+		queryString,
+		canonicalHeaders,
+		signedHeaders,
+		bodyHash,
+	}, "\n")
+
+	// Return SHA256 of canonical request
+	hash := sha256.Sum256([]byte(canonicalRequest))
+	return fmt.Sprintf("%x", hash)
+}
+
+// buildCanonicalQueryString builds a sorted query string
+func buildCanonicalQueryString(r *http.Request) string {
+	query := r.URL.Query()
+	if len(query) == 0 {
+		return ""
+	}
+
+	keys := make([]string, 0, len(query))
+	for k := range query {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var pairs []string
+	for _, k := range keys {
+		values := query[k]
+		sort.Strings(values)
+		for _, v := range values {
+			pairs = append(pairs, k+"="+v)
+		}
+	}
+
+	return strings.Join(pairs, "&")
+}
+
+// buildCanonicalHeaders builds canonical headers string and returns signedHeaders list
+func buildCanonicalHeaders(r *http.Request) (canonicalHeaders string, signedHeaders string) {
+	// Only include content-type for request integrity
+	headerMap := make(map[string]string)
+
+	if v := r.Header.Get("Content-Type"); v != "" {
+		headerMap["content-type"] = strings.TrimSpace(v)
+	}
+
+	// Sort header names
+	keys := make([]string, 0, len(headerMap))
+	for k := range headerMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// Build canonical headers and signed headers
+	var headerLines []string
+	for _, k := range keys {
+		headerLines = append(headerLines, k+":"+headerMap[k])
+	}
+
+	if len(headerLines) > 0 {
+		canonicalHeaders = strings.Join(headerLines, "\n") + "\n"
+	} else {
+		canonicalHeaders = "\n"
+	}
+	signedHeaders = strings.Join(keys, ";")
+
+	return canonicalHeaders, signedHeaders
 }

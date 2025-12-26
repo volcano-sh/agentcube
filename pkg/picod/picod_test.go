@@ -42,7 +42,7 @@ func generateRSAKeys(t *testing.T) (*rsa.PrivateKey, string) {
 
 // Helper to create signed JWT
 func createToken(t *testing.T, key *rsa.PrivateKey, claims jwt.MapClaims) string {
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token := jwt.NewWithClaims(jwt.SigningMethodPS256, claims)
 	tokenString, err := token.SignedString(key)
 	require.NoError(t, err)
 	return tokenString
@@ -453,4 +453,80 @@ func TestPicoD_SetWorkspace(t *testing.T) {
 	// Here we compare the paths directly because we expect the symlink path to be stored as is (absolute),
 	// but we still resolve /var aliasing for the parent directory part.
 	assert.Equal(t, resolve(absLinkPath), resolve(server.workspaceDir))
+}
+
+func TestPicoD_StaticKeyMode(t *testing.T) {
+	// 1. Setup Keys
+	_, bootstrapPubStr := generateRSAKeys(t)
+	staticPriv, staticPubStr := generateRSAKeys(t)
+
+	// 2. Setup Server Environment
+	tmpDir, err := os.MkdirTemp("", "picod_static_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	err = os.Chdir(tmpDir)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.Chdir(originalWd)) }()
+
+	// Write static public key to file
+	// Set PICOD_PUBLIC_KEY env var for static mode (base64 encoded)
+	staticKeyB64 := base64.StdEncoding.EncodeToString([]byte(staticPubStr))
+	os.Setenv("PICOD_PUBLIC_KEY", staticKeyB64)
+	defer os.Unsetenv("PICOD_PUBLIC_KEY")
+
+	config := Config{
+		Port:         0,
+		BootstrapKey: []byte(bootstrapPubStr),
+		Workspace:    tmpDir,
+		AuthMode:     AuthModeStatic,
+	}
+
+	server := NewServer(config)
+	ts := httptest.NewServer(server.engine)
+	defer ts.Close()
+
+	client := ts.Client()
+
+	t.Run("Init Forbidden", func(t *testing.T) {
+		req, _ := http.NewRequest("POST", ts.URL+"/init", nil)
+		// Try to auth with bootstrap key
+		claims := jwt.MapClaims{"iat": time.Now().Unix()}
+		token := createToken(t, staticPriv, claims) // Wrong key, but endpoint should be blocked anyway or irrelevant
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
+
+	t.Run("Execute with Static Key", func(t *testing.T) {
+		cmd := []string{"echo", "static_mode"}
+		reqBody := ExecuteRequest{Command: cmd}
+		bodyBytes, _ := json.Marshal(reqBody)
+		hash := sha256.Sum256(bodyBytes)
+
+		claims := jwt.MapClaims{
+			"body_sha256": fmt.Sprintf("%x", hash),
+			"iat":         time.Now().Unix(),
+			"exp":         time.Now().Add(time.Hour).Unix(),
+		}
+		// Sign with static private key
+		token := createToken(t, staticPriv, claims)
+
+		req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(bodyBytes))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var execResp ExecuteResponse
+		err = json.NewDecoder(resp.Body).Decode(&execResp)
+		require.NoError(t, err)
+		assert.Equal(t, "static_mode\n", execResp.Stdout)
+	})
 }

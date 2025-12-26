@@ -34,4 +34,15 @@ type Config struct {
 
 	// MaxConnsPerHost sets the maximum number of connections per host
 	MaxConnsPerHost int
+
+	// AuthMode sets the authentication mode (dynamic or static)
+	AuthMode string
+
+	// StaticPrivateKeyFile is the path to the static private key file
+	StaticPrivateKeyFile string
 }
+
+const (
+	AuthModeDynamic = "dynamic"
+	AuthModeStatic  = "static"
+)

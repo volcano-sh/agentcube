@@ -17,8 +17,18 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -a -installsuff
 # Run stage
 FROM ubuntu:24.04
 
-# Install Python3 to support code execution tasks (Code Interpreter)
-RUN apt-get update && apt-get install -y python3
+# Install Python3, pip, and Jupyter Server for code execution tasks (Code Interpreter)
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Jupyter Server and IPython kernel
+RUN pip3 install --no-cache-dir --break-system-packages \
+    jupyter-server \
+    ipykernel \
+    && python3 -m ipykernel install --user
 
 # Use /root/ as the working directory
 # We run as root to allow 'chattr +i' on the public key file (see pkg/picod/auth.go)

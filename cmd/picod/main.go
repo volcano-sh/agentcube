@@ -18,6 +18,12 @@ func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
 
+	// Get auth mode from environment variable, default to "dynamic"
+	authMode := os.Getenv("PICOD_AUTH_MODE")
+	if authMode == "" {
+		authMode = "dynamic"
+	}
+
 	// Read bootstrap key from file
 	var bootstrapKey []byte
 	if data, err := os.ReadFile(*bootstrapKeyFile); err == nil {
@@ -30,6 +36,7 @@ func main() {
 		Port:         *port,
 		BootstrapKey: bootstrapKey,
 		Workspace:    *workspace,
+		AuthMode:     authMode,
 	}
 
 	// Create and start server

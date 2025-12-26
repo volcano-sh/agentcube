@@ -108,7 +108,7 @@ func (jm *JWTManager) GenerateToken(claims map[string]interface{}) (string, erro
 	}
 
 	// Create token
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwtClaims)
+	token := jwt.NewWithClaims(jwt.SigningMethodPS256, jwtClaims)
 
 	// Sign token with private key
 	tokenString, err := token.SignedString(jm.privateKey)

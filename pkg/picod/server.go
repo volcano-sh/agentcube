@@ -1,11 +1,14 @@
 package picod
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -33,6 +36,7 @@ type Server struct {
 	engine         *gin.Engine
 	config         Config
 	authManager    *AuthManager
+	jupyterManager *JupyterManager
 	startTime      time.Time
 	workspaceDir   string
 	mu             sync.RWMutex // Protects lastActivityAt and ttl
@@ -72,6 +76,13 @@ func NewServer(config Config) *Server {
 		}
 		s.setWorkspace(cwd)
 	}
+
+	// Initialize Jupyter Manager (Requirement 1: startup initialization)
+	jupyterMgr, err := NewJupyterManager(s.workspaceDir)
+	if err != nil {
+		klog.Fatalf("Failed to initialize Jupyter Manager: %v", err)
+	}
+	s.jupyterManager = jupyterMgr
 
 	// Disable Gin debug output in production mode
 	gin.SetMode(gin.ReleaseMode)
@@ -117,6 +128,7 @@ func NewServer(config Config) *Server {
 		api.POST("/files", s.UploadFileHandler)
 		api.GET("/files", s.ListFilesHandler)
 		api.GET("/files/*path", s.DownloadFileHandler)
+		api.POST("/run_python", s.RunPythonHandler)
 		api.PUT("/ttl", s.SetTTLHandler)
 	}
 
@@ -139,6 +151,24 @@ func (s *Server) Run() error {
 		Handler:           s.engine,
 		ReadHeaderTimeout: 10 * time.Second, // Prevent Slowloris attacks
 	}
+
+	// Setup graceful shutdown
+	go func() {
+		sigint := make(chan os.Signal, 1)
+		signal.Notify(sigint, os.Interrupt, syscall.SIGTERM)
+		<-sigint
+
+		klog.Info("Shutting down Jupyter Manager...")
+		if err := s.jupyterManager.Shutdown(); err != nil {
+			klog.Errorf("Error shutting down Jupyter: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(ctx); err != nil {
+			klog.Errorf("Server shutdown error: %v", err)
+		}
+	}()
 
 	return server.ListenAndServe()
 }

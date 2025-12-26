@@ -1,0 +1,37 @@
+name: Copyright Check
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - '**.svg'
+      - '**.png'
+      - 'docs/**'
+      - '.github/**'
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'docs/**'
+      - '.github/**'
+
+jobs:
+
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: install sponge
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y moreutils
+      - name: generate copyright
+        shell: bash
+        run: |
+          make gen-copyright
+      - name: check diff
+        shell: bash
+        run: |
+          git diff --exit-code

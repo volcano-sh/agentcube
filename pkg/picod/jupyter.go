@@ -74,6 +74,7 @@ func (jm *JupyterManager) startJupyterServer() error {
 		"--no-browser",
 		"--ip=127.0.0.1",
 		"--port=8888",
+		"--allow-root", // Required for running in container as root
 		fmt.Sprintf("--ServerApp.token=%s", jm.token),
 		fmt.Sprintf("--ServerApp.root_dir=%s", jm.workspaceDir),
 		"--ServerApp.allow_origin=*",

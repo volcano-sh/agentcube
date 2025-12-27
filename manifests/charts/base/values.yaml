@@ -52,6 +52,7 @@ workloadmanager:
 # Volcano Agent Scheduler
 volcano:
   scheduler:
+    enabled: false
     replicas: 1
     image:
       repository: ghcr.io/volcano-sh/vc-agent-scheduler

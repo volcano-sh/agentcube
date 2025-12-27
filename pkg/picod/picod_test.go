@@ -634,7 +634,7 @@ func TestLoadPublicKey(t *testing.T) {
 	}{
 		{
 			name: "FileNotExists",
-			setup: func(t *testing.T, tmpDir string) *AuthManager {
+			setup: func(_ *testing.T, tmpDir string) *AuthManager {
 				am := NewAuthManager()
 				am.keyFile = filepath.Join(tmpDir, "test_key.pem")
 				return am
@@ -647,7 +647,7 @@ func TestLoadPublicKey(t *testing.T) {
 			setup: func(t *testing.T, tmpDir string) *AuthManager {
 				am := NewAuthManager()
 				am.keyFile = filepath.Join(tmpDir, "test_key.pem")
-				err := os.WriteFile(am.keyFile, []byte("not a pem"), 0644)
+				err := os.WriteFile(am.keyFile, []byte("not a pem"), 0600)
 				require.NoError(t, err)
 				return am
 			},
@@ -660,7 +660,7 @@ func TestLoadPublicKey(t *testing.T) {
 				am := NewAuthManager()
 				am.keyFile = filepath.Join(tmpDir, "test_key.pem")
 				_, pubStr := generateRSAKeys(t)
-				err := os.WriteFile(am.keyFile, []byte(pubStr), 0644)
+				err := os.WriteFile(am.keyFile, []byte(pubStr), 0600)
 				require.NoError(t, err)
 				return am
 			},
@@ -797,7 +797,7 @@ func TestAuthMiddleware_ErrorPaths(t *testing.T) {
 				am := NewAuthManager()
 				_, pubStr := generateRSAKeys(t)
 				am.keyFile = filepath.Join(tmpDir, "key.pem")
-				err = os.WriteFile(am.keyFile, []byte(pubStr), 0644)
+				err = os.WriteFile(am.keyFile, []byte(pubStr), 0600)
 				require.NoError(t, err)
 				err = am.LoadPublicKey()
 				require.NoError(t, err)
@@ -818,7 +818,7 @@ func TestAuthMiddleware_ErrorPaths(t *testing.T) {
 				am := NewAuthManager()
 				_, pubStr := generateRSAKeys(t)
 				am.keyFile = filepath.Join(tmpDir, "key.pem")
-				err = os.WriteFile(am.keyFile, []byte(pubStr), 0644)
+				err = os.WriteFile(am.keyFile, []byte(pubStr), 0600)
 				require.NoError(t, err)
 				err = am.LoadPublicKey()
 				require.NoError(t, err)

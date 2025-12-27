@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workloadmanager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: workloadmanager
+spec:
+  replicas: {{ .Values.workloadmanager.replicas }}
+  selector:
+    matchLabels:
+      app: workloadmanager
+  template:
+    metadata:
+      labels:
+        app: workloadmanager
+    spec:
+      serviceAccountName: workloadmanager
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: workloadmanager
+          image: "{{ .Values.workloadmanager.image.repository }}:{{ .Values.workloadmanager.image.tag }}"
+          imagePullPolicy: {{ .Values.workloadmanager.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.workloadmanager.service.port }}
+              protocol: TCP
+          env:
+            - name: REDIS_ADDR
+              value: {{ .Values.redis.addr | quote }}
+            - name: REDIS_PASSWORD
+              value: {{ .Values.redis.password | quote }}
+          args:
+            - --port={{ .Values.workloadmanager.service.port }}
+            - --runtime-class-name=
+          resources:
+            {{- toYaml .Values.workloadmanager.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.workloadmanager.service.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.workloadmanager.service.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workloadmanager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: workloadmanager
+spec:
+  type: {{ .Values.workloadmanager.service.type }}
+  ports:
+    - port: {{ .Values.workloadmanager.service.port }}
+      targetPort: {{ .Values.workloadmanager.service.port }}
+      protocol: TCP
+      name: http
+  selector:
+    app: workloadmanager

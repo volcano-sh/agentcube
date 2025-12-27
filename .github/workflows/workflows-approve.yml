@@ -33,11 +33,13 @@ jobs:
               owner,
               repo,
               state: 'all',
+              creator: contributor,
               per_page: 100
             });
 
-            const isFirstTime = prs.filter(pr => pr.user.login === contributor).length <= 1;
-            core.setOutput('is_first_time', isFirstTime);
+            const isFirstTime = prs.length <= 1;
+            const fs = require('fs');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `is_first_time=${isFirstTime}\n`);
 
       - name: Execute workflows if not first-time contributor or has ok-to-test label
         if: steps.check_first_time.outputs.is_first_time == 'false' || contains(github.event.pull_request.labels.*.name, 'ok-to-test')

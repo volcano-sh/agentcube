@@ -545,7 +545,7 @@ func TestLoadBootstrapKey(t *testing.T) {
 	}
 }
 
-// TestExecuteHandler_ErrorPaths tests execution pipeline error paths
+// TestExecuteHandler_ErrorPaths tests execution pipeline error paths and normal command execution
 func TestExecuteHandler_ErrorPaths(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "picod_execute_test")
 	require.NoError(t, err)
@@ -562,6 +562,7 @@ func TestExecuteHandler_ErrorPaths(t *testing.T) {
 		request    string
 		statusCode int
 		desc       string
+		validate   func(*testing.T, *httptest.ResponseRecorder)
 	}{
 		{
 			name:       "Empty command",
@@ -581,6 +582,22 @@ func TestExecuteHandler_ErrorPaths(t *testing.T) {
 			statusCode: http.StatusBadRequest,
 			desc:       "Should reject invalid timeout",
 		},
+		{
+			name:       "Normal command execution",
+			request:    `{"command": ["echo", "hello"]}`,
+			statusCode: http.StatusOK,
+			desc:       "Should execute normal command successfully",
+			validate: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp ExecuteResponse
+				err := json.Unmarshal(w.Body.Bytes(), &resp)
+				require.NoError(t, err)
+				assert.Equal(t, "hello\n", resp.Stdout)
+				assert.Equal(t, 0, resp.ExitCode)
+				assert.False(t, resp.StartTime.IsZero())
+				assert.False(t, resp.EndTime.IsZero())
+				assert.Greater(t, resp.Duration, 0.0)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -594,6 +611,327 @@ func TestExecuteHandler_ErrorPaths(t *testing.T) {
 
 			server.ExecuteHandler(ctx)
 
+			assert.Equal(t, tt.statusCode, w.Code, tt.desc)
+			if tt.validate != nil {
+				tt.validate(t, w)
+			}
+		})
+	}
+}
+
+// TestLoadPublicKey tests loading public key from file
+func TestLoadPublicKey(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "picod_load_public_key_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	tests := []struct {
+		name        string
+		setup       func(*testing.T, string) *AuthManager
+		expectErr   bool
+		errContains string
+		validate    func(*testing.T, *AuthManager)
+	}{
+		{
+			name: "FileNotExists",
+			setup: func(t *testing.T, tmpDir string) *AuthManager {
+				am := NewAuthManager()
+				am.keyFile = filepath.Join(tmpDir, "test_key.pem")
+				return am
+			},
+			expectErr:   true,
+			errContains: "no public key file found",
+		},
+		{
+			name: "InvalidPEM",
+			setup: func(t *testing.T, tmpDir string) *AuthManager {
+				am := NewAuthManager()
+				am.keyFile = filepath.Join(tmpDir, "test_key.pem")
+				err := os.WriteFile(am.keyFile, []byte("not a pem"), 0644)
+				require.NoError(t, err)
+				return am
+			},
+			expectErr:   true,
+			errContains: "failed to decode PEM block",
+		},
+		{
+			name: "ValidKey",
+			setup: func(t *testing.T, tmpDir string) *AuthManager {
+				am := NewAuthManager()
+				am.keyFile = filepath.Join(tmpDir, "test_key.pem")
+				_, pubStr := generateRSAKeys(t)
+				err := os.WriteFile(am.keyFile, []byte(pubStr), 0644)
+				require.NoError(t, err)
+				return am
+			},
+			expectErr: false,
+			validate: func(t *testing.T, am *AuthManager) {
+				assert.True(t, am.IsInitialized())
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			am := tt.setup(t, tmpDir)
+			err := am.LoadPublicKey()
+			if tt.expectErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+			} else {
+				assert.NoError(t, err)
+				if tt.validate != nil {
+					tt.validate(t, am)
+				}
+			}
+		})
+	}
+}
+
+// TestInitHandler_ErrorPaths tests InitHandler error paths
+func TestInitHandler_ErrorPaths(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "picod_init_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	bootstrapPriv, bootstrapPubStr := generateRSAKeys(t)
+
+	tests := []struct {
+		name       string
+		setup      func(*testing.T) (*AuthManager, *http.Request)
+		statusCode int
+		desc       string
+	}{
+		{
+			name: "MissingAuthHeader",
+			setup: func(t *testing.T) (*AuthManager, *http.Request) {
+				am := NewAuthManager()
+				am.keyFile = filepath.Join(tmpDir, "picod_public_key.pem")
+				err := am.LoadBootstrapKey([]byte(bootstrapPubStr))
+				require.NoError(t, err)
+				req := httptest.NewRequest("POST", "/init", nil)
+				return am, req
+			},
+			statusCode: http.StatusUnauthorized,
+			desc:       "Should reject missing authorization header",
+		},
+		{
+			name: "InvalidAuthHeaderFormat",
+			setup: func(t *testing.T) (*AuthManager, *http.Request) {
+				am := NewAuthManager()
+				am.keyFile = filepath.Join(tmpDir, "picod_public_key.pem")
+				err := am.LoadBootstrapKey([]byte(bootstrapPubStr))
+				require.NoError(t, err)
+				req := httptest.NewRequest("POST", "/init", nil)
+				req.Header.Set("Authorization", "InvalidFormat token")
+				return am, req
+			},
+			statusCode: http.StatusUnauthorized,
+			desc:       "Should reject invalid authorization header format",
+		},
+		{
+			name: "InvalidToken",
+			setup: func(t *testing.T) (*AuthManager, *http.Request) {
+				am := NewAuthManager()
+				am.keyFile = filepath.Join(tmpDir, "picod_public_key.pem")
+				err := am.LoadBootstrapKey([]byte(bootstrapPubStr))
+				require.NoError(t, err)
+				req := httptest.NewRequest("POST", "/init", nil)
+				req.Header.Set("Authorization", "Bearer invalid-token")
+				return am, req
+			},
+			statusCode: http.StatusUnauthorized,
+			desc:       "Should reject invalid token",
+		},
+		{
+			name: "MissingSessionPublicKey",
+			setup: func(t *testing.T) (*AuthManager, *http.Request) {
+				am := NewAuthManager()
+				am.keyFile = filepath.Join(tmpDir, "picod_public_key.pem")
+				err := am.LoadBootstrapKey([]byte(bootstrapPubStr))
+				require.NoError(t, err)
+				claims := jwt.MapClaims{
+					"iat": time.Now().Unix(),
+					"exp": time.Now().Add(time.Hour).Unix(),
+				}
+				token := createToken(t, bootstrapPriv, claims)
+				req := httptest.NewRequest("POST", "/init", nil)
+				req.Header.Set("Authorization", "Bearer "+token)
+				return am, req
+			},
+			statusCode: http.StatusBadRequest,
+			desc:       "Should reject missing session public key",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			am, req := tt.setup(t)
+			w := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(w)
+			ctx.Request = req
+
+			am.InitHandler(ctx)
+			assert.Equal(t, tt.statusCode, w.Code, tt.desc)
+		})
+	}
+}
+
+// TestAuthMiddleware_ErrorPaths tests AuthMiddleware error paths
+func TestAuthMiddleware_ErrorPaths(t *testing.T) {
+	tests := []struct {
+		name       string
+		setup      func(*testing.T) (*AuthManager, *http.Request)
+		statusCode int
+		desc       string
+	}{
+		{
+			name: "MissingAuthHeader",
+			setup: func(t *testing.T) (*AuthManager, *http.Request) {
+				tmpDir, err := os.MkdirTemp("", "picod_auth_test")
+				require.NoError(t, err)
+				t.Cleanup(func() { os.RemoveAll(tmpDir) })
+
+				am := NewAuthManager()
+				_, pubStr := generateRSAKeys(t)
+				am.keyFile = filepath.Join(tmpDir, "key.pem")
+				err = os.WriteFile(am.keyFile, []byte(pubStr), 0644)
+				require.NoError(t, err)
+				err = am.LoadPublicKey()
+				require.NoError(t, err)
+
+				req := httptest.NewRequest("POST", "/api/execute", nil)
+				return am, req
+			},
+			statusCode: http.StatusUnauthorized,
+			desc:       "Should reject missing authorization header",
+		},
+		{
+			name: "InvalidAuthHeaderFormat",
+			setup: func(t *testing.T) (*AuthManager, *http.Request) {
+				tmpDir, err := os.MkdirTemp("", "picod_auth_test")
+				require.NoError(t, err)
+				t.Cleanup(func() { os.RemoveAll(tmpDir) })
+
+				am := NewAuthManager()
+				_, pubStr := generateRSAKeys(t)
+				am.keyFile = filepath.Join(tmpDir, "key.pem")
+				err = os.WriteFile(am.keyFile, []byte(pubStr), 0644)
+				require.NoError(t, err)
+				err = am.LoadPublicKey()
+				require.NoError(t, err)
+
+				req := httptest.NewRequest("POST", "/api/execute", nil)
+				req.Header.Set("Authorization", "InvalidFormat token")
+				return am, req
+			},
+			statusCode: http.StatusUnauthorized,
+			desc:       "Should reject invalid authorization header format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			am, req := tt.setup(t)
+			w := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(w)
+			ctx.Request = req
+
+			handler := am.AuthMiddleware()
+			handler(ctx)
+
+			assert.True(t, ctx.IsAborted())
+			assert.Equal(t, tt.statusCode, w.Code, tt.desc)
+		})
+	}
+}
+
+// TestDownloadFileHandler_ErrorPaths tests DownloadFileHandler error paths
+func TestDownloadFileHandler_ErrorPaths(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "picod_download_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	_, bootstrapPubStr := generateRSAKeys(t)
+	server := NewServer(Config{
+		BootstrapKey: []byte(bootstrapPubStr),
+		Workspace:    tmpDir,
+	})
+
+	tests := []struct {
+		name       string
+		path       string
+		statusCode int
+		desc       string
+	}{
+		{
+			name:       "FileNotFound",
+			path:       "/nonexistent.txt",
+			statusCode: http.StatusNotFound,
+			desc:       "Should return not found for non-existent file",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/api/files"+tt.path, nil)
+			ctx, _ := gin.CreateTestContext(w)
+			ctx.Request = req
+			ctx.Params = gin.Params{gin.Param{Key: "path", Value: tt.path}}
+
+			server.DownloadFileHandler(ctx)
+			assert.Equal(t, tt.statusCode, w.Code, tt.desc)
+		})
+	}
+}
+
+// TestListFilesHandler_ErrorPaths tests ListFilesHandler error paths
+func TestListFilesHandler_ErrorPaths(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "picod_list_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	_, bootstrapPubStr := generateRSAKeys(t)
+	server := NewServer(Config{
+		BootstrapKey: []byte(bootstrapPubStr),
+		Workspace:    tmpDir,
+	})
+
+	tests := []struct {
+		name       string
+		path       string
+		statusCode int
+		desc       string
+	}{
+		{
+			name:       "MissingPathParameter",
+			path:       "",
+			statusCode: http.StatusBadRequest,
+			desc:       "Should reject missing path parameter",
+		},
+		{
+			name:       "DirectoryNotFound",
+			path:       "nonexistent",
+			statusCode: http.StatusNotFound,
+			desc:       "Should return not found for non-existent directory",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			url := "/api/files"
+			if tt.path != "" {
+				url += "?path=" + tt.path
+			}
+			req := httptest.NewRequest("GET", url, nil)
+			ctx, _ := gin.CreateTestContext(w)
+			ctx.Request = req
+
+			server.ListFilesHandler(ctx)
 			assert.Equal(t, tt.statusCode, w.Code, tt.desc)
 		})
 	}

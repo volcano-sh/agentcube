@@ -6,7 +6,7 @@ metadata:
   labels:
     app: agentcube-router
 spec:
-  replicas: {{ .Values.router.replicaCount }}
+  replicas: {{ .Values.router.replicas }}
   selector:
     matchLabels:
       app: agentcube-router

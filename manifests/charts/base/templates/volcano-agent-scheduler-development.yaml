@@ -1,11 +1,11 @@
-# Source: volcano/templates/agent_scheduler.yaml
+# Source: volcano-sh/volcano/installer/volcano-agent-scheduler-development.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: volcano-agent-scheduler
   namespace: {{ .Release.Namespace }}
 ---
-# Source: volcano/templates/agent_scheduler.yaml
+# Source: volcano-sh/volcano/installer/volcano-agent-scheduler-development.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -19,7 +19,7 @@ data:
       - name: predicates
       - name: nodeorder
 ---
-# Source: volcano/templates/agent_scheduler.yaml
+# Source: volcano-sh/volcano/installer/volcano-agent-scheduler-development.yaml
 kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
@@ -89,7 +89,7 @@ rules:
     resources: ["nodeshards"]
     verbs: ["list", "watch", "get", "update"]
 ---
-# Source: volcano/templates/agent_scheduler.yaml
+# Source: volcano-sh/volcano/installer/volcano-agent-scheduler-development.yaml
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
@@ -103,7 +103,7 @@ roleRef:
   name: volcano-agent-scheduler
   apiGroup: rbac.authorization.k8s.io
 ---
-# Source: volcano/templates/agent_scheduler.yaml
+# Source: volcano-sh/volcano/installer/volcano-agent-scheduler-development.yaml
 apiVersion: v1
 kind: Service
 metadata:
@@ -125,7 +125,7 @@ spec:
     app: agent-scheduler
   type: ClusterIP
 ---
-# Source: volcano/templates/agent_scheduler.yaml
+# Source: volcano-sh/volcano/installer/volcano-agent-scheduler-development.yaml
 kind: Deployment
 apiVersion: apps/v1
 metadata:
@@ -134,7 +134,7 @@ metadata:
   labels:
     app: agent-scheduler
 spec:
-  replicas: {{ .Values.volcano.scheduler.replicaCount }}
+  replicas: {{ .Values.volcano.scheduler.replicas }}
   selector:
     matchLabels:
       app: agent-scheduler
@@ -150,10 +150,6 @@ spec:
           type: RuntimeDefault
       serviceAccount: volcano-agent-scheduler
       priorityClassName: system-cluster-critical
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
       containers:
         - name: volcano-agent-scheduler
           image: "{{ .Values.volcano.scheduler.image.repository }}:{{ .Values.volcano.scheduler.image.tag }}"
@@ -166,7 +162,6 @@ spec:
             - --leader-elect=false
             - --kube-api-qps=2000
             - --kube-api-burst=2000
-            - --schedule-period=1s
             - --node-worker-threads=20
             - --worker-count=1
             - -v=3

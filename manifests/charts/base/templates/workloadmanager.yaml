@@ -6,7 +6,7 @@ metadata:
   labels:
     app: workloadmanager
 spec:
-  replicas: {{ .Values.workloadmanager.replicaCount }}
+  replicas: {{ .Values.workloadmanager.replicas }}
   selector:
     matchLabels:
       app: workloadmanager

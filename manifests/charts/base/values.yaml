@@ -13,7 +13,7 @@ redis:
 
 # AgentCube Router
 router:
-  replicaCount: 1
+  replicas: 1
   image:
     repository: ghcr.io/volcano-sh/agentcube-router
     pullPolicy: IfNotPresent
@@ -33,7 +33,7 @@ router:
 
 # AgentCube Workload Manager
 workloadmanager:
-  replicaCount: 1
+  replicas: 1
   image:
     repository: ghcr.io/volcano-sh/workloadmanager
     pullPolicy: IfNotPresent
@@ -52,7 +52,7 @@ workloadmanager:
 # Volcano Agent Scheduler
 volcano:
   scheduler:
-    replicaCount: 1
+    replicas: 1
     image:
       repository: ghcr.io/volcano-sh/vc-agent-scheduler
       pullPolicy: IfNotPresent

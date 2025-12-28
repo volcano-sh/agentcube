@@ -16,8 +16,6 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 )
 
-/* ---------- 1. CONFIG PARSING ---------- */
-
 func TestConfig_Defaults(t *testing.T) {
 	t.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
 	t.Setenv("REDIS_ADDR", "dummy:6379")
@@ -46,8 +44,6 @@ func TestConfig_TLSValidation(t *testing.T) {
 
 	t.Log("Note: TLS file validation occurs in server.Start(), not NewServer")
 }
-
-/* ---------- 2. SESSION MANAGER ---------- */
 
 type stubStore struct {
 	sandbox *types.SandboxInfo
@@ -127,8 +123,6 @@ func TestSessionManager_GetExistingSession(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
-/* ---------- 3. HTTP HANDLERS ---------- */
-
 func TestHandleHealthLive_Unit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	s := &Server{engine: gin.New()}
@@ -165,7 +159,7 @@ func TestHandleInvoke_Forward(t *testing.T) {
 		assert.Equal(t, "sess-xyz", r.Header.Get("x-agentcube-session-id"))
 		w.Header().Set("x-agentcube-session-id", "sess-xyz")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"result":"ok"}`))
+		_, _ = w.Write([]byte(`{"result":"ok"}`)) // silence errcheck
 	}))
 	defer upstream.Close()
 
@@ -180,7 +174,6 @@ func TestHandleInvoke_Forward(t *testing.T) {
 	}
 	mgr := &mockSM{sandbox: mockSandbox}
 
-	// ✅ Critical: server must have non-nil storeClient and httpTransport
 	storeClient := &stubStore{} // no-op
 	httpTransport := &http.Transport{
 		MaxIdleConns:        10,
@@ -248,8 +241,6 @@ func TestConcurrencyLimitMiddleware(t *testing.T) {
 
 	<-done
 }
-
-/* ---------- Helpers ---------- */
 
 type mockSM struct {
 	sandbox *types.SandboxInfo

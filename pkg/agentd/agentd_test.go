@@ -84,12 +84,9 @@ func TestReconciler_Reconcile_WithLastActivity(t *testing.T) {
 			expectDeletion: true,
 			expectRequeue:  false,
 		},
-	    {
-			name: "Non-running sandbox should not be processed",
-			sandbox: func() *sandboxv1alpha1.Sandbox {
-				t.Skip("pending requirement decision – skipped to avoid false negative")
-				return nil
-			}(),
+		{
+			name:           "Non-running sandbox should not be processed",
+			sandbox:        nil, // handled by t.Skip inside the test loop
 			expectDeletion: false,
 			expectRequeue:  false,
 		},
@@ -97,6 +94,10 @@ func TestReconciler_Reconcile_WithLastActivity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.sandbox == nil {
+				t.Skip("pending requirement decision – skipped to avoid false negative")
+				return
+			}
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(testScheme).
 				WithObjects(tt.sandbox).
@@ -142,7 +143,7 @@ func TestReconciler_Reconcile_WithLastActivity(t *testing.T) {
 
 func TestReconciler_MalformedTimestamp_Requeues30s(t *testing.T) {
 	r := newFakeReconciler(
-		sandboxWithAnnotation("bad-ts", "default", workloadmanager.LastActivityAnnotationKey, "not-a-rfc3339"),
+		sandboxWithAnnotation("bad-ts", workloadmanager.LastActivityAnnotationKey, "not-a-rfc3339"),
 	)
 	res, err := r.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: "bad-ts", Namespace: "default"},
@@ -154,7 +155,7 @@ func TestReconciler_MalformedTimestamp_Requeues30s(t *testing.T) {
 
 func TestReconciler_EmptyAnnotation_Ignored(t *testing.T) {
 	r := newFakeReconciler(
-		sandboxWithAnnotation("empty", "default", workloadmanager.LastActivityAnnotationKey, ""),
+		sandboxWithAnnotation("empty", workloadmanager.LastActivityAnnotationKey, ""),
 	)
 	res, err := r.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: "empty", Namespace: "default"},
@@ -173,7 +174,7 @@ func TestReconciler_NotFound_ReturnsNil(t *testing.T) {
 }
 
 func TestReconciler_DeleteFails_ReturnsError(t *testing.T) {
-	sdb := sandboxWithAnnotation("del-fail", "default", workloadmanager.LastActivityAnnotationKey,
+	sdb := sandboxWithAnnotation("del-fail", workloadmanager.LastActivityAnnotationKey,
 		time.Now().Add(-20*time.Minute).Format(time.RFC3339))
 
 	// fake client that always fails Delete
@@ -190,22 +191,23 @@ func TestReconciler_DeleteFails_ReturnsError(t *testing.T) {
 }
 
 func TestReconciler_SetupWithManager_Ok(t *testing.T) {
+	scheme := newScheme()
 	mgr, err := manager.New(&rest.Config{}, manager.Options{
-		Scheme: newScheme(),
+		Scheme: scheme,
 		Logger: zap.New(zap.UseDevMode(true)),
-		NewClient: func(config *rest.Config, options client.Options) (client.Client, error) {
-			return fake.NewClientBuilder().WithScheme(options.Scheme).Build(), nil
+		NewClient: func(_ *rest.Config, _ client.Options) (client.Client, error) {
+			return fake.NewClientBuilder().WithScheme(scheme).Build(), nil
 		},
 	})
 	require.NoError(t, err)
 
-	r := &Reconciler{Scheme: newScheme()}
+	r := &Reconciler{Scheme: scheme}
 	assert.NoError(t, r.SetupWithManager(mgr))
 }
 
 func TestReconciler_15MinBoundary(t *testing.T) {
 	edge := time.Now().Add(-SessionExpirationTimeout) // exactly 15 min ago
-	sdb := sandboxWithAnnotation("edge", "default", workloadmanager.LastActivityAnnotationKey,
+	sdb := sandboxWithAnnotation("edge", workloadmanager.LastActivityAnnotationKey,
 		edge.Format(time.RFC3339))
 
 	r := newFakeReconciler(sdb)
@@ -229,11 +231,11 @@ func newFakeReconciler(objs ...client.Object) *Reconciler {
 	}
 }
 
-func sandboxWithAnnotation(name, ns, key, value string) *sandboxv1alpha1.Sandbox {
+func sandboxWithAnnotation(name, key, value string) *sandboxv1alpha1.Sandbox {
 	return &sandboxv1alpha1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
-			Namespace:   ns,
+			Namespace:   "default",
 			Annotations: map[string]string{key: value},
 		},
 		Status: sandboxv1alpha1.SandboxStatus{
@@ -256,6 +258,6 @@ type deleteFailingClient struct {
 	client.Client
 }
 
-func (d *deleteFailingClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+func (d *deleteFailingClient) Delete(_ context.Context, _ client.Object, _ ...client.DeleteOption) error {
 	return k8serrors.NewServiceUnavailable("fake delete failed")
 }

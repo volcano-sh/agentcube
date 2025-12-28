@@ -266,3 +266,102 @@ func TestUpdateSandboxLastActivity(t *testing.T) {
 		t.Fatalf("unexpected lastActivity score after update: got %v, want %v", score, newLastActivity.Unix())
 	}
 }
+
+func TestRedisStoreContract(t *testing.T) {
+	runContractTests(t, func(t *testing.T) Store {
+		mr := miniredis.RunT(t)
+		return &redisStore{
+			cli:                  redisv9.NewClient(&redisv9.Options{Addr: mr.Addr()}), // fix 1
+			sessionPrefix:        "session:",
+			expiryIndexKey:       "sandbox:expiry",
+			lastActivityIndexKey: "sandbox:last_activity",
+		}
+	})
+}
+
+func runContractTests(t *testing.T, newStore func(*testing.T) Store) {
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		fn   func(*testing.T, Store, context.Context)
+	}{
+		{"Ping", func(t *testing.T, s Store, ctx context.Context) { assert.NoError(t, s.Ping(ctx)) }},
+		{"GetNotFound", func(t *testing.T, s Store, ctx context.Context) {
+			_, err := s.GetSandboxBySessionID(ctx, "no-such-session")
+			assert.ErrorIs(t, err, ErrNotFound)
+		}},
+		{"StoreGetRoundTrip", func(t *testing.T, s Store, ctx context.Context) {
+			in := &types.SandboxInfo{
+				SessionID: "contract-round", SandboxID: "sb-round",
+				Name: "round-trip", ExpiresAt: time.Now().Add(time.Hour).UTC(),
+				CreatedAt: time.Now().UTC(), Status: "running",
+			}
+			assert.NoError(t, s.StoreSandbox(ctx, in))
+			out, err := s.GetSandboxBySessionID(ctx, in.SessionID)
+			assert.NoError(t, err)
+			assert.Equal(t, in.SessionID, out.SessionID)
+			assert.Equal(t, in.Name, out.Name)
+		}},
+		{"UpdateNonExistentFails", func(t *testing.T, s Store, ctx context.Context) {
+			err := s.UpdateSandbox(ctx, &types.SandboxInfo{SessionID: "does-not-exist"})
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "not exists")
+		}},
+		{"DeleteIdempotent", func(t *testing.T, s Store, ctx context.Context) {
+			in := &types.SandboxInfo{SessionID: "del-idem", ExpiresAt: time.Now().Add(time.Hour)}
+			assert.NoError(t, s.StoreSandbox(ctx, in))
+			assert.NoError(t, s.DeleteSandboxBySessionID(ctx, in.SessionID))
+			_, err := s.GetSandboxBySessionID(ctx, in.SessionID)
+			assert.ErrorIs(t, err, ErrNotFound)
+			assert.NoError(t, s.DeleteSandboxBySessionID(ctx, in.SessionID)) // idempotent
+		}},
+		{"ListExpired", func(t *testing.T, s Store, ctx context.Context) {
+			now := time.Now().UTC().Truncate(time.Second)
+			sb1 := &types.SandboxInfo{SessionID: "exp-1", ExpiresAt: now.Add(-2 * time.Hour)}
+			sb2 := &types.SandboxInfo{SessionID: "exp-2", ExpiresAt: now.Add(-1 * time.Hour)}
+			sb3 := &types.SandboxInfo{SessionID: "exp-3", ExpiresAt: now.Add(time.Hour)}
+			assert.NoError(t, s.StoreSandbox(ctx, sb1))
+			assert.NoError(t, s.StoreSandbox(ctx, sb2))
+			assert.NoError(t, s.StoreSandbox(ctx, sb3))
+
+			list, err := s.ListExpiredSandboxes(ctx, now, 10)
+			assert.NoError(t, err)
+			assert.Len(t, list, 2)
+			assert.Equal(t, "exp-1", list[0].SessionID)
+			assert.Equal(t, "exp-2", list[1].SessionID)
+
+			list, err = s.ListExpiredSandboxes(ctx, now, 1)
+			assert.NoError(t, err)
+			assert.Len(t, list, 1)
+		}},
+		{"ListInactive", func(t *testing.T, s Store, ctx context.Context) {
+			now := time.Now().UTC().Truncate(time.Second)
+			sb1 := &types.SandboxInfo{SessionID: "in-1", ExpiresAt: now.Add(time.Hour)}
+			sb2 := &types.SandboxInfo{SessionID: "in-2", ExpiresAt: now.Add(time.Hour)}
+			assert.NoError(t, s.StoreSandbox(ctx, sb1))
+			assert.NoError(t, s.StoreSandbox(ctx, sb2))
+			assert.NoError(t, s.UpdateSessionLastActivity(ctx, "in-1", now.Add(-2*time.Hour)))
+			assert.NoError(t, s.UpdateSessionLastActivity(ctx, "in-2", now.Add(-1*time.Hour)))
+
+			list, err := s.ListInactiveSandboxes(ctx, now.Add(-30*time.Minute), 10)
+			assert.NoError(t, err)
+			assert.Len(t, list, 2)
+		}},
+		{"UpdateLastActivity", func(t *testing.T, s Store, ctx context.Context) {
+			sb := &types.SandboxInfo{SessionID: "last-act", ExpiresAt: time.Now().Add(time.Hour)}
+			assert.NoError(t, s.StoreSandbox(ctx, sb))
+			newTime := time.Now().Add(-time.Hour).UTC()
+			assert.NoError(t, s.UpdateSessionLastActivity(ctx, sb.SessionID, newTime))
+			list, err := s.ListInactiveSandboxes(ctx, newTime.Add(time.Minute), 10)
+			assert.NoError(t, err)
+			assert.Len(t, list, 1)
+			assert.Equal(t, sb.SessionID, list[0].SessionID)
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStore(t)
+			tc.fn(t, s, ctx)
+		})
+	}
+}

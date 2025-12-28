@@ -36,7 +36,7 @@ func TestMakeValkeyOptions(t *testing.T) {
 
 	t.Run("all basic env vars exist", func(t *testing.T) {
 		expectedAddr := "127.0.0.1:6379,127.0.0.1:6380"
-		expectedPwd := "test_valkey_pwd"
+		expectedPwd := "test_valkey_pwd" // #nosec G101 -- test dummy password, not a real credential
 		t.Setenv("VALKEY_ADDR", expectedAddr)
 		t.Setenv("VALKEY_PASSWORD", expectedPwd)
 

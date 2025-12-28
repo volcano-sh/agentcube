@@ -56,7 +56,7 @@ func TestParsePicodFlags(t *testing.T) {
 			var bootstrapPath string
 			for fname, content := range tt.createFiles {
 				path := filepath.Join(tmpDir, fname)
-				require.NoError(t, os.WriteFile(path, []byte(content), 0644))
+				require.NoError(t, os.WriteFile(path, []byte(content), 0600))
 				if fname == "key.pem" {
 					bootstrapPath = path // remember full path
 				}

@@ -8,6 +8,8 @@ from typing import Dict, Optional, Any, List, Union
 from urllib.parse import urljoin
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 
@@ -27,7 +29,10 @@ class DataPlaneClient:
         namespace: Optional[str] = None,
         cr_name: Optional[str] = None,
         base_url: Optional[str] = None,
-        timeout: int = 30
+        timeout: int = 120,
+        connect_timeout: float = 10.0,
+        pool_connections: int = 10,
+        pool_maxsize: int = 10,
     ):
         """Initialize Data Plane client.
 
@@ -38,11 +43,15 @@ class DataPlaneClient:
             namespace: Kubernetes namespace (optional if base_url is provided).
             cr_name: Code Interpreter resource name (optional if base_url is provided).
             base_url: Direct base URL for invocations (overrides router logic).
-            timeout: Default request timeout.
+            timeout: Default request timeout in seconds (default: 120).
+            connect_timeout: Connection timeout in seconds (default: 10).
+            pool_connections: Number of connection pools to cache (default: 10).
+            pool_maxsize: Maximum connections per pool (default: 10).
         """
         self.session_id = session_id
         self.private_key = private_key
         self.timeout = timeout
+        self.connect_timeout = connect_timeout
         self.logger = get_logger(f"{__name__}.DataPlaneClient")
         
         if base_url:
@@ -57,8 +66,24 @@ class DataPlaneClient:
         else:
             raise ValueError("Either 'base_url' or all of 'router_url', 'namespace', 'cr_name' must be provided.")
         
+        # Create session with connection pooling
         self.session = requests.Session()
-        # Add the routing header
+        
+        # Configure connection pool and retry strategy
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=[502, 503, 504],
+        )
+        adapter = HTTPAdapter(
+            pool_connections=pool_connections,
+            pool_maxsize=pool_maxsize,
+            max_retries=retry_strategy,
+        )
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
+        
+        # Set default headers
         self.session.headers.update({
             "x-agentcube-session-id": self.session_id
         })
@@ -91,19 +116,21 @@ class DataPlaneClient:
         token = self._create_jwt()
         headers["Authorization"] = f"Bearer {token}"
         
-        # Merge headers
-        req_headers = self.session.headers.copy()
-        req_headers.update(headers)
-        if "headers" in kwargs:
-            req_headers.update(kwargs.pop("headers"))
+        # Set timeout as (connect_timeout, read_timeout) tuple if not provided
+        if "timeout" not in kwargs:
+            kwargs["timeout"] = (self.connect_timeout, self.timeout)
+        elif isinstance(kwargs["timeout"], (int, float)):
+            # If a single timeout is provided, use it as read_timeout with default connect_timeout
+            kwargs["timeout"] = (self.connect_timeout, kwargs["timeout"])
 
         self.logger.debug(f"{method} {url}")
         
-        return requests.request(
+        # Use session for connection pooling
+        return self.session.request(
             method=method,
             url=url,
             data=body,
-            headers=req_headers,
+            headers=headers,
             **kwargs
         )
 

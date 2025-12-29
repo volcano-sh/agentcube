@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/cache"
@@ -316,11 +315,8 @@ func convertSandboxToStoreCache(sandboxCRD *sandboxv1alpha1.Sandbox, podIP strin
 
 // getSandboxStatus extracts status from Sandbox CRD conditions
 func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) string {
-	// Check conditions for Ready status
-	for _, condition := range sandbox.Status.Conditions {
-		if condition.Type == string(sandboxv1alpha1.SandboxConditionReady) && condition.Status == metav1.ConditionTrue {
-			return "running"
-		}
+	if IsSandboxReady(sandbox) {
+		return "running"
 	}
 	return "paused"
 }

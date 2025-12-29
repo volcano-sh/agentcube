@@ -131,9 +131,6 @@ class CodeInterpreterClient:
             self.cp_client.delete_session(self.session_id)
             self.session_id = None
             self.dp_client = None
-        
-        # Release control plane client resources
-        self.cp_client.close()
 
     # --- Data Plane Methods ---
 

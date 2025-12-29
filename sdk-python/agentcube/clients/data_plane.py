@@ -8,12 +8,11 @@ from typing import Dict, Optional, Any, List, Union
 from urllib.parse import urljoin
 
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from agentcube.utils.log import get_logger
+from agentcube.utils.http import create_session
 from agentcube.exceptions import CommandExecutionError
 
 class DataPlaneClient:
@@ -52,6 +51,8 @@ class DataPlaneClient:
         self.private_key = private_key
         self.timeout = timeout
         self.connect_timeout = connect_timeout
+        self.pool_connections = pool_connections
+        self.pool_maxsize = pool_maxsize
         self.logger = get_logger(f"{__name__}.DataPlaneClient")
         
         if base_url:
@@ -66,22 +67,11 @@ class DataPlaneClient:
         else:
             raise ValueError("Either 'base_url' or all of 'router_url', 'namespace', 'cr_name' must be provided.")
         
-        # Create session with connection pooling
-        self.session = requests.Session()
-        
-        # Configure connection pool and retry strategy
-        retry_strategy = Retry(
-            total=3,
-            backoff_factor=0.5,
-            status_forcelist=[502, 503, 504],
-        )
-        adapter = HTTPAdapter(
+        # Create session with connection pooling using shared utility
+        self.session = create_session(
             pool_connections=pool_connections,
             pool_maxsize=pool_maxsize,
-            max_retries=retry_strategy,
         )
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
         
         # Set default headers
         self.session.headers.update({
@@ -122,6 +112,10 @@ class DataPlaneClient:
         elif isinstance(kwargs["timeout"], (int, float)):
             # If a single timeout is provided, use it as read_timeout with default connect_timeout
             kwargs["timeout"] = (self.connect_timeout, kwargs["timeout"])
+
+        # Merge headers from kwargs to prevent TypeError (restoring previous behavior)
+        if "headers" in kwargs:
+            headers.update(kwargs.pop("headers"))
 
         self.logger.debug(f"{method} {url}")
         

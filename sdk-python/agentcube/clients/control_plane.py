@@ -1,11 +1,10 @@
 import os
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 from typing import Dict, Any, Optional
 
 from agentcube.utils.log import get_logger
 from agentcube.utils.utils import read_token_from_file
+from agentcube.utils.http import create_session
 
 class ControlPlaneClient:
     """Client for AgentCube Control Plane (WorkloadManager).
@@ -44,22 +43,11 @@ class ControlPlaneClient:
         
         self.logger = get_logger(f"{__name__}.ControlPlaneClient")
         
-        # Create session with connection pooling
-        self.session = requests.Session()
-        
-        # Configure connection pool and retry strategy
-        retry_strategy = Retry(
-            total=3,
-            backoff_factor=0.5,
-            status_forcelist=[502, 503, 504],
-        )
-        adapter = HTTPAdapter(
+        # Create session with connection pooling using shared utility
+        self.session = create_session(
             pool_connections=pool_connections,
             pool_maxsize=pool_maxsize,
-            max_retries=retry_strategy,
         )
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
         
         # Set default headers
         self.session.headers.update({

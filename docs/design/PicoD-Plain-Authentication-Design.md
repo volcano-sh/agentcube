@@ -15,7 +15,7 @@ The existing self-signed key-pair model is incompatible with this centralized ma
 
 ### Gateway-Managed Sandbox Access
 
-A user requests a sandbox environment using the AgentCube Python SDK. The Router receives this request and validates the user's identity (authorization logic is handled upstream). Upon successful validation, the Router selects and allocates an available PicoD instance. It records the mapping between the specific Session ID and the requesting client. The Router then returns the connection credentials to the client, enabling the Python SDK to establish a direct connection with the PicoD instance using the plain authentication mechanism.
+A user requests a sandbox environment using the AgentCube Python SDK. The Router receives this request and validates the user's identity (authorization logic is handled upstream). Upon successful validation, the Router selects and allocates an available PicoD instance. It records the mapping between the specific Session ID and the requesting client. The Router then returns the connection credentials to the client, enabling the Python SDK to establish a direct connection with the PicoD instance using the plain authentication mechanism.
 
 ## Design Details
 
@@ -103,7 +103,7 @@ sequenceDiagram
 
     Note over Router, PicoD: 2. Provisioning
     Router->>WM: Request Sandbox (No Key Payload)
-    WM->>K8s: Create Pod (EnvFrom: picod-router-public-key)
+    WM->>K8s: Create Pod (valueFrom: picod-router-public-key)
     K8s-->>PicoD: Start Container (Env: PICOD_AUTH_PUBLIC_KEY)
     PicoD->>PicoD: Load Key from Env
 
@@ -144,8 +144,6 @@ data:
 
 - **Name**: picod-router-public-key
 - **Purpose**: Stores the public key mounted into PicoD instances.
-
-codeYaml
 
 ```yaml
 apiVersion: v1
@@ -211,7 +209,7 @@ The Router signs tokens using the standard JWT (RFC 7519) format.
 
 1. **Router Identity Management**: Implementation of the "Bootstrap" logic to atomically create/load keys from Kubernetes.
 2. **JWT Implementation**: Signing logic in Router and verification logic in PicoD.
-3. **WorkloadManager Updates**: Modifying the Pod Spec generation to include the picod-router-public-key volume mount.
+3. **WorkloadManager Updates**: Modifying the Pod Spec generation to include the `PICOD_AUTH_PUBLIC_KEY` environment variable.
 
 ### Out of Scope
 

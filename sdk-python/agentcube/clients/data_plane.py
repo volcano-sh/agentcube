@@ -29,7 +29,7 @@ class DataPlaneClient:
         cr_name: Optional[str] = None,
         base_url: Optional[str] = None,
         timeout: int = 120,
-        connect_timeout: float = 10.0,
+        connect_timeout: float = 5.0,
         pool_connections: int = 10,
         pool_maxsize: int = 10,
     ):
@@ -43,7 +43,7 @@ class DataPlaneClient:
             cr_name: Code Interpreter resource name (optional if base_url is provided).
             base_url: Direct base URL for invocations (overrides router logic).
             timeout: Default request timeout in seconds (default: 120).
-            connect_timeout: Connection timeout in seconds (default: 10).
+            connect_timeout: Connection timeout in seconds (default: 5).
             pool_connections: Number of connection pools to cache (default: 10).
             pool_maxsize: Maximum connections per pool (default: 10).
         """

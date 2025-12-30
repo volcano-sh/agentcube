@@ -16,7 +16,7 @@ class ControlPlaneClient:
         workload_manager_url: Optional[str] = None,
         auth_token: Optional[str] = None,
         timeout: int = 120,
-        connect_timeout: float = 10.0,
+        connect_timeout: float = 5.0,
         pool_connections: int = 10,
         pool_maxsize: int = 10,
     ):
@@ -26,7 +26,7 @@ class ControlPlaneClient:
             workload_manager_url: URL of the WorkloadManager service.
             auth_token: Kubernetes Service Account Token for authentication.
             timeout: Default request timeout in seconds (default: 120).
-            connect_timeout: Connection timeout in seconds (default: 10).
+            connect_timeout: Connection timeout in seconds (default: 5).
             pool_connections: Number of connection pools to cache (default: 10).
             pool_maxsize: Maximum connections per pool (default: 10).
         """

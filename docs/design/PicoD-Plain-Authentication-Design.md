@@ -32,11 +32,11 @@ To ensure **High Availability (HA)** across multiple Router replicas and enfor
 2. **Decoupled Provisioning (WorkloadManager)**:
     
     - The WorkloadManager is relieved of cryptographic payload management.
-    - It provisions sandboxes by projecting the public identity ConfigMap into the picod container via standard Kubernetes Volume Mounts.
+    - It provisions sandboxes by injecting the Public Key into the picod container as an Environment Variable (PICOD_AUTH_PUBLIC_KEY).
         
 3. **Local Verification (PicoD)**:
     
-    - picod instances trust the Router by loading the mounted Public Key from the local filesystem at startup.
+    - `picod` instances trust the Router by loading the Public Key directly from the environment variable at startup.
         
 
 ### Workflow Description
@@ -57,8 +57,8 @@ Upon startup, every Router replica executes an **Atomic Initialization Routine*
 #### 2. Provisioning Phase
 
 - The **Router** sends a sandbox allocation request to the **WorkloadManager**. Crucially, this request **does not** contain key data.
-- The **WorkloadManager** constructs the Pod specification. It includes a volumeMount that projects the picod-router-public-key ConfigMap to a standard path (e.g., /etc/picod/auth/public.pem).
-- **PicoD** starts, reads the public key file, and initializes its JWT verifier.
+- The **WorkloadManager** constructs the Pod specification. It defines an environment variable `PICOD_AUTH_PUBLIC_KEY` that sources its value from the `picod-router-public-key` ConfigMap (using `valueFrom: configMapKeyRef`).
+- **PicoD** starts, reads the key from the **environment**, and initializes its JWT verifier.
 
 #### 3. Runtime Access Phase
 
@@ -103,9 +103,9 @@ sequenceDiagram
 
     Note over Router, PicoD: 2. Provisioning
     Router->>WM: Request Sandbox (No Key Payload)
-    WM->>K8s: Create Pod (VolumeMount: picod-router-public-key)
-    K8s-->>PicoD: Mount ConfigMap -> /etc/picod/auth/public.pem
-    PicoD->>PicoD: Load Public Key from File
+    WM->>K8s: Create Pod (EnvFrom: picod-router-public-key)
+    K8s-->>PicoD: Start Container (Env: PICOD_AUTH_PUBLIC_KEY)
+    PicoD->>PicoD: Load Key from Env
 
     Note over SDK, PicoD: 3. Runtime Access
     SDK->>Router: Request (No Auth)
@@ -147,7 +147,7 @@ data:
 
 codeYaml
 
-```
+```yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -161,7 +161,31 @@ data:
     -----END PUBLIC KEY-----
 ```
 
-### 2. JWT Token Spec
+### 2. WorkloadManager Pod Spec
+
+When creating the picod Pod, the WorkloadManager injects the key as follows:
+
+```yaml
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+    - name: picod
+      env:
+        - name: PICOD_AUTH_PUBLIC_KEY
+          valueFrom:
+            configMapKeyRef:
+              name: picod-router-public-key
+              key: public.pem
+```
+  
+### 3. PicoD Configuration
+The existing CLI flags for authentication are deprecated.
+
+* Environment Variable: picod requires `PICOD_AUTH_PUBLIC_KEY` to be set.
+* Behavior: If the environment variable is present, `picod` initializes the Plain Auth provider. If missing, it fails to start (or falls back to legacy mode if we decide to keep it for a transition period).
+
+### 4. JWT Token Spec
 
 The Router signs tokens using the standard JWT (RFC 7519) format.
 
@@ -181,18 +205,14 @@ The Router signs tokens using the standard JWT (RFC 7519) format.
 }
 ```
 
-### 3. PicoD Configuration
-
-PicoD will support new flags to enable this mode:
-
-- --auth-mode=plain: Enables the Plain Auth provider.
-- --auth-public-key-file: Specifies the path to the trusted key (default: /etc/picod/auth/public.pem).
 ## Scope & Constraints
 
 ### In Scope
-1. **Router Identity Management**: Implementation of the "Bootstrap" logic to atomically create/load keys from Kubernetes.    
+
+1. **Router Identity Management**: Implementation of the "Bootstrap" logic to atomically create/load keys from Kubernetes.
 2. **JWT Implementation**: Signing logic in Router and verification logic in PicoD.
 3. **WorkloadManager Updates**: Modifying the Pod Spec generation to include the picod-router-public-key volume mount.
+
 ### Out of Scope
 
 1. **Key Rotation**: For this initial version, the key pair is static. If rotation is needed, an administrator must manually delete the Secret/ConfigMap and restart the Routers. Automatic key rotation is deferred to a future release.

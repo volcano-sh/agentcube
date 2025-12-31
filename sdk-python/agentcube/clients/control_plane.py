@@ -45,7 +45,6 @@ class ControlPlaneClient:
         self,
         name: str = "simple-codeinterpreter",
         namespace: str = "default",
-        public_key: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         ttl: int = 3600,
     ) -> str:
@@ -54,7 +53,6 @@ class ControlPlaneClient:
         Args:
             name: Name of the CodeInterpreter template (CRD name).
             namespace: Kubernetes namespace.
-            public_key: RSA Public Key for Data Plane authentication (Base64 encoded PEM).
             metadata: Optional metadata.
             ttl: Time to live (seconds).
 
@@ -67,8 +65,6 @@ class ControlPlaneClient:
             "ttl": ttl,
             "metadata": metadata or {}
         }
-        if public_key:
-            payload["publicKey"] = public_key
 
         url = f"{self.base_url}/v1/code-interpreter"
         self.logger.debug(f"Creating session at {url} with payload: {payload}")

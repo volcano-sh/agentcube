@@ -109,7 +109,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: REDIS_ADDR
-              value: "127.0.0.1:6379"
+              value: "redis.agentcube.svc.cluster.local:6379"
             - name: REDIS_PASSWORD
               value: ""
           args:

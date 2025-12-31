@@ -65,10 +65,13 @@ func makeValkeyOptions() (*valkey.ClientOption, error) {
 	if valkeyAddr == "" {
 		return nil, fmt.Errorf("missing env var VALKEY_ADDR")
 	}
+
 	valkeyPassword := os.Getenv("VALKEY_PASSWORD")
-	if valkeyPassword == "" {
-		return nil, fmt.Errorf("missing env var VALKEY_PASSWORD")
+	// Secure-by-default: require non-empty password unless explicitly disabled via VALKEY_PASSWORD_REQUIRED=false.
+	if strings.ToLower(os.Getenv("VALKEY_PASSWORD_REQUIRED")) != "false" && valkeyPassword == "" {
+		return nil, fmt.Errorf("VALKEY_PASSWORD is required but not set")
 	}
+
 	valkeyClientOptions := &valkey.ClientOption{
 		InitAddress: strings.Split(valkeyAddr, ","),
 		Password:    valkeyPassword,

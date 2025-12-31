@@ -1,0 +1,102 @@
+apiVersion: runtime.agentcube.volcano.sh/v1alpha1
+kind: AgentRuntime
+metadata:
+  name: echo-agent
+  namespace: agentcube
+spec:
+  targetPort:
+    - pathPrefix: "/echo"
+      port: 8080
+      protocol: "HTTP"
+  podTemplate:
+    labels:
+      app: echo-agent
+      test: e2e
+    spec:
+      containers:
+        - name: echo-server
+          image: python:3.9-slim
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /echo
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /echo
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          command: ["python3", "-c"]
+          args:
+            - |
+              import http.server
+              import socketserver
+              import json
+              import sys
+
+              class EchoHandler(http.server.BaseHTTPRequestHandler):
+                  def do_POST(self):
+                      if self.path.startswith('/echo'):
+                          try:
+                              content_length = int(self.headers['Content-Length'])
+                              post_data = self.rfile.read(content_length)
+                              request_data = json.loads(post_data.decode('utf-8'))
+                              input_text = request_data.get('input', '')
+
+                              response = {
+                                  'output': f'echo: {input_text}',
+                                  'metadata': {
+                                      'echoed': True,
+                                      'original_input': input_text
+                                  }
+                              }
+
+                              self.send_response(200)
+                              self.send_header('Content-Type', 'application/json')
+                              self.end_headers()
+                              self.wfile.write(json.dumps(response).encode('utf-8'))
+                          except Exception as e:
+                              self.send_response(400)
+                              self.send_header('Content-Type', 'application/json')
+                              self.end_headers()
+                              self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+                      else:
+                          self.send_response(404)
+                          self.send_header('Content-Type', 'application/json')
+                          self.end_headers()
+                          self.wfile.write(b'{"error": "Not found"}')
+
+                  def do_GET(self):
+                      if self.path == '/echo':
+                          # Health check for livenessProbe and readinessProbe
+                          self.send_response(200)
+                          self.send_header('Content-Type', 'application/json')
+                          self.end_headers()
+                          self.wfile.write(b'{"status": "healthy"}')
+                      else:
+                          self.send_response(404)
+                          self.send_header('Content-Type', 'application/json')
+                          self.end_headers()
+                          self.wfile.write(b'{"error": "Not found"}')
+
+                  def log_message(self, format, *args):
+                      # Suppress server logs
+                      pass
+
+              with socketserver.TCPServer(("0.0.0.0", 8080), EchoHandler) as httpd:
+                  print("Echo server started on port 8080")
+                  httpd.serve_forever()
+  sessionTimeout: "15m"
+  maxSessionDuration: "8h"
+status: {}

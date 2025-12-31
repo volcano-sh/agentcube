@@ -43,7 +43,7 @@ func TestMakeRedisOptions(t *testing.T) {
 		opts, err := makeRedisOptions()
 		assert.Nil(t, opts)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "missing env var REDIS_PASSWORD")
+		assert.Contains(t, err.Error(), "REDIS_PASSWORD is required but not set")
 	})
 
 	t.Run("all env vars exist", func(t *testing.T) {

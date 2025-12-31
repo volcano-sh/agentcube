@@ -28,9 +28,8 @@ import (
 
 // Config defines server configuration
 type Config struct {
-	Port         int    `json:"port"`
-	BootstrapKey []byte `json:"bootstrap_key"`
-	Workspace    string `json:"workspace"`
+	Port      int    `json:"port"`
+	Workspace string `json:"workspace"`
 }
 
 // Server defines the PicoD HTTP server
@@ -71,20 +70,9 @@ func NewServer(config Config) *Server {
 	engine.Use(gin.Logger())   // Request logging
 	engine.Use(gin.Recovery()) // Crash recovery
 
-	// Load bootstrap key (Required)
-	if len(config.BootstrapKey) == 0 {
-		klog.Fatal("Bootstrap key is missing. Please ensure the bootstrap public key file is correctly mounted or provided.")
-	}
-
-	if err := s.authManager.LoadBootstrapKey(config.BootstrapKey); err != nil {
-		klog.Fatalf("Failed to load bootstrap key: %v", err)
-	}
-	klog.Info("Bootstrap key loaded successfully")
-
-	// Load existing public key if available
-	if err := s.authManager.LoadPublicKey(); err != nil {
-		// Log that server is not initialized, but don't fail startup
-		klog.Infof("Server not initialized: %v", err)
+	// Load public key from environment variable
+	if err := s.authManager.LoadPublicKeyFromEnv(); err != nil {
+		klog.Warningf("Failed to load public key from environment: %v. Server will reject authenticated requests until public key is available.", err)
 	}
 
 	// API route group (Authenticated)
@@ -96,8 +84,6 @@ func NewServer(config Config) *Server {
 		api.GET("/files", s.ListFilesHandler)
 		api.GET("/files/*path", s.DownloadFileHandler)
 	}
-
-	engine.POST("/init", s.authManager.InitHandler)
 
 	// Health check (no authentication required)
 	engine.GET("/health", s.HealthCheckHandler)
@@ -122,10 +108,16 @@ func (s *Server) Run() error {
 
 // HealthCheckHandler handles health check requests
 func (s *Server) HealthCheckHandler(c *gin.Context) {
+	status := "ok"
+	if !s.authManager.IsInitialized() {
+		status = "degraded"
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"status":  "ok",
-		"service": "PicoD",
-		"version": "0.0.1",
-		"uptime":  time.Since(s.startTime).String(),
+		"status":      status,
+		"service":     "PicoD",
+		"version":     "0.0.1",
+		"uptime":      time.Since(s.startTime).String(),
+		"initialized": s.authManager.IsInitialized(),
 	})
 }

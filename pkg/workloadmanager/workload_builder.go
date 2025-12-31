@@ -225,27 +225,23 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				Name:            "code-interpreter",
 				Image:           codeInterpreterObj.Spec.Template.Image,
 				ImagePullPolicy: codeInterpreterObj.Spec.Template.ImagePullPolicy,
-				Env:             codeInterpreterObj.Spec.Template.Environment,
-				Command:         codeInterpreterObj.Spec.Template.Command,
-				Args:            codeInterpreterObj.Spec.Template.Args,
-				Resources:       codeInterpreterObj.Spec.Template.Resources,
-				VolumeMounts: []corev1.VolumeMount{
-					{
-						Name:      JWTKeyVolumeName,
-						MountPath: "/etc/picod",
-						ReadOnly:  true,
+				Env: append(codeInterpreterObj.Spec.Template.Environment,
+					// Inject public key from Router's ConfigMap as environment variable
+					corev1.EnvVar{
+						Name: "PICOD_AUTH_PUBLIC_KEY",
+						ValueFrom: &corev1.EnvVarSource{
+							ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+								LocalObjectReference: corev1.LocalObjectReference{
+									Name: PublicKeyConfigMapName,
+								},
+								Key: PublicKeyDataKey,
+							},
+						},
 					},
-				},
-			},
-		},
-		Volumes: []corev1.Volume{
-			{
-				Name: JWTKeyVolumeName,
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName: JWTKeySecretName,
-					},
-				},
+				),
+				Command:   codeInterpreterObj.Spec.Template.Command,
+				Args:      codeInterpreterObj.Spec.Template.Args,
+				Resources: codeInterpreterObj.Spec.Template.Resources,
 			},
 		},
 	}

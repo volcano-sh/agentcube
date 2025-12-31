@@ -33,6 +33,15 @@ import (
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 )
 
+// Constants for Router's identity resources
+// WorkloadManager uses these to inject the public key into PicoD containers
+const (
+	// PublicKeyConfigMapName is the name of the ConfigMap storing Router's public key
+	PublicKeyConfigMapName = "picod-router-public-key"
+	// PublicKeyDataKey is the key in the ConfigMap data map for the public key
+	PublicKeyDataKey = "public.pem"
+)
+
 type buildSandboxParams struct {
 	namespace      string
 	workloadName   string
@@ -254,27 +263,23 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				Name:            "code-interpreter",
 				Image:           codeInterpreterObj.Spec.Template.Image,
 				ImagePullPolicy: codeInterpreterObj.Spec.Template.ImagePullPolicy,
-				Env:             codeInterpreterObj.Spec.Template.Environment,
-				Command:         codeInterpreterObj.Spec.Template.Command,
-				Args:            codeInterpreterObj.Spec.Template.Args,
-				Resources:       codeInterpreterObj.Spec.Template.Resources,
-				VolumeMounts: []corev1.VolumeMount{
-					{
-						Name:      JWTKeyVolumeName,
-						MountPath: "/etc/picod",
-						ReadOnly:  true,
+				Env: append(codeInterpreterObj.Spec.Template.Environment,
+					// Inject public key from Router's ConfigMap as environment variable
+					corev1.EnvVar{
+						Name: "PICOD_AUTH_PUBLIC_KEY",
+						ValueFrom: &corev1.EnvVarSource{
+							ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+								LocalObjectReference: corev1.LocalObjectReference{
+									Name: PublicKeyConfigMapName,
+								},
+								Key: PublicKeyDataKey,
+							},
+						},
 					},
-				},
-			},
-		},
-		Volumes: []corev1.Volume{
-			{
-				Name: JWTKeyVolumeName,
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName: JWTKeySecretName,
-					},
-				},
+				),
+				Command:   codeInterpreterObj.Spec.Template.Command,
+				Args:      codeInterpreterObj.Spec.Template.Args,
+				Resources: codeInterpreterObj.Spec.Template.Resources,
 			},
 		},
 	}

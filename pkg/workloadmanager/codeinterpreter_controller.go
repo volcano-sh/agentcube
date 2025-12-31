@@ -302,28 +302,24 @@ func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alph
 				ImagePullPolicy: template.ImagePullPolicy,
 				Command:         template.Command,
 				Args:            template.Args,
-				Env:             template.Environment,
-				Resources:       template.Resources,
-				VolumeMounts: []corev1.VolumeMount{
-					{
-						Name:      JWTKeyVolumeName,
-						MountPath: "/etc/picod",
-						ReadOnly:  true,
+				Env: append(template.Environment,
+					// Inject public key from Router's ConfigMap as environment variable
+					corev1.EnvVar{
+						Name: "PICOD_AUTH_PUBLIC_KEY",
+						ValueFrom: &corev1.EnvVarSource{
+							ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+								LocalObjectReference: corev1.LocalObjectReference{
+									Name: PublicKeyConfigMapName,
+								},
+								Key: PublicKeyDataKey,
+							},
+						},
 					},
-				},
+				),
+				Resources: template.Resources,
 			},
 		},
 		RuntimeClassName: runtimeClassName,
-		Volumes: []corev1.Volume{
-			{
-				Name: JWTKeyVolumeName,
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName: JWTKeySecretName,
-					},
-				},
-			},
-		},
 	}
 
 	return sandboxv1alpha1.PodTemplate{

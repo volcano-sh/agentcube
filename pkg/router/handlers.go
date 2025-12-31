@@ -155,6 +155,22 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 	// Use the shared HTTP transport for connection pooling
 	proxy.Transport = s.httpTransport
 
+	// Generate JWT token before setting up Director
+	// If token generation fails, return 500 immediately instead of forwarding without auth
+	var jwtToken string
+	if s.jwtManager != nil {
+		token, err := s.jwtManager.GenerateToken(nil)
+		if err != nil {
+			klog.Errorf("Failed to generate JWT token: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "failed to sign request",
+				"code":  "JWT_SIGNING_FAILED",
+			})
+			return
+		}
+		jwtToken = token
+	}
+
 	// Customize the director to modify the request
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
@@ -183,6 +199,11 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 			clientIP = strings.Join(prior, ", ") + ", " + clientIP
 		}
 		req.Header.Set("X-Forwarded-For", clientIP)
+
+		// Add JWT authorization header using pre-generated token
+		if jwtToken != "" {
+			req.Header.Set("Authorization", "Bearer "+jwtToken)
+		}
 
 		klog.Infof("Forwarding request to: %s%s", targetURL.String(), path)
 	}

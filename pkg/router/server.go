@@ -37,6 +37,7 @@ type Server struct {
 	storeClient    store.Store
 	semaphore      chan struct{}   // For limiting concurrent requests
 	httpTransport  *http.Transport // Reusable HTTP transport for connection pooling
+	jwtManager     *JWTManager     // JWT manager for signing requests to sandboxes
 }
 
 // NewServer creates a new Router API server instance
@@ -88,6 +89,20 @@ func NewServer(config *Config) (*Server, error) {
 		semaphore:      make(chan struct{}, config.MaxConcurrentRequests),
 		httpTransport:  httpTransport,
 	}
+
+	// Initialize JWT manager for signing requests to sandboxes
+	jwtManager, err := NewJWTManager()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create JWT manager: %w", err)
+	}
+
+	// Try to load existing keys from secret or store new ones
+	if err := jwtManager.TryStoreOrLoadJWTKeySecret(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to store/load JWT key secret: %w", err)
+	}
+
+	server.jwtManager = jwtManager
+	klog.Info("JWT manager initialized successfully")
 
 	// Setup routes
 	server.setupRoutes()

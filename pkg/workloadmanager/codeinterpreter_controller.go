@@ -270,6 +270,12 @@ func (r *CodeInterpreterReconciler) deleteSandboxTemplate(ctx context.Context, c
 
 // convertToPodTemplate converts CodeInterpreterSandboxTemplate to sandboxv1alpha1.PodTemplate
 func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alpha1.CodeInterpreterSandboxTemplate, _ *runtimev1alpha1.CodeInterpreter) sandboxv1alpha1.PodTemplate {
+	// Normalize RuntimeClassName: if it's an empty string, set it to nil
+	runtimeClassName := template.RuntimeClassName
+	if runtimeClassName != nil && *runtimeClassName == "" {
+		runtimeClassName = nil
+	}
+
 	// Build pod spec
 	podSpec := corev1.PodSpec{
 		ImagePullSecrets: template.ImagePullSecrets,
@@ -291,7 +297,7 @@ func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alph
 				},
 			},
 		},
-		RuntimeClassName: template.RuntimeClassName,
+		RuntimeClassName: runtimeClassName,
 		Volumes: []corev1.Volume{
 			{
 				Name: JWTKeyVolumeName,

@@ -11,6 +11,7 @@ However, emerging use cases require a more flexible architecture where the clien
 *   Managing the security of connections between clients (agents) and the service.
 
 The existing self-signed key-pair model is incompatible with this centralized management flow, as it bypasses the Router's ability to mediate access. To address this, we propose a new **Plain Authentication** mechanism for `picod`. This design enables the Router/Gateway to manage credentials and connection security, simplifying the client-side workflow while maintaining robust access control.
+
 ## Use Cases
 
 ### Gateway-Managed Sandbox Access
@@ -25,13 +26,12 @@ To ensure **High Availability (HA)** across multiple Router replicas and enfor
 
 1. **Shared Authority (Router)**:
     
-    - All Router replicas share a single cryptographic identity to function as a unified Certificate Authority (CA).
-    - **Private Key Storage**: Stored in a Kubernetes Secret (picod-router-identity). This is restricted to the Router namespace/service account.
+    - All Router replicas share a single cryptographic identity to function as a unified Token Issuer.
+    - **Private Key Storage**: Stored in a Kubernetes Secret (picod-router-identity). The Private Key is accessible only by the Router component.
     - **Public Key Distribution**: Published to a Kubernetes ConfigMap (picod-router-public-key). This is accessible by the WorkloadManager and PicoD instances.
         
 2. **Decoupled Provisioning (WorkloadManager)**:
     
-    - The WorkloadManager is relieved of cryptographic payload management.
     - It provisions sandboxes by injecting the Public Key into the picod container as an Environment Variable (PICOD_AUTH_PUBLIC_KEY).
         
 3. **Local Verification (PicoD)**:

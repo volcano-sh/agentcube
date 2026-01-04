@@ -41,10 +41,28 @@ func makeRedisOptions() (*redisv9.Options, error) {
 	if redisAddr == "" {
 		return nil, fmt.Errorf("missing env var REDIS_ADDR")
 	}
+
 	redisPassword := os.Getenv("REDIS_PASSWORD")
 	if redisPassword == "" {
-		return nil, fmt.Errorf("missing env var REDIS_PASSWORD")
+		passwordFile := os.Getenv("REDIS_PASSWORD_FILE")
+		if passwordFile != "" {
+			data, err := os.ReadFile(passwordFile)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read password file %s: %w", passwordFile, err)
+			}
+			// Trim possible whitespace/newlines from the file content
+			redisPassword = string(data)
+			// Handle cases where the file might have trailing newlines
+			if len(redisPassword) > 0 && redisPassword[len(redisPassword)-1] == '\n' {
+				redisPassword = redisPassword[:len(redisPassword)-1]
+			}
+		}
 	}
+
+	if redisPassword == "" {
+		return nil, fmt.Errorf("missing env var REDIS_PASSWORD or REDIS_PASSWORD_FILE")
+	}
+
 	redisOptions := &redisv9.Options{
 		Addr:     redisAddr,
 		Password: redisPassword,

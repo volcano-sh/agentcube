@@ -23,7 +23,8 @@ var (
 // support Redis, Valkey, Redis as default, can be setting by env STORE_TYPE
 // --- redis STORE_TYPE environments ---
 // REDIS_ADDR:     redis address, required
-// REDIS_PASSWORD: redis password, required
+// REDIS_PASSWORD: redis password, optional (must provide one of REDIS_PASSWORD/REDIS_PASSWORD_FILE)
+// REDIS_PASSWORD_FILE: redis password file path, optional
 // --- valkey STORE_TYPE environments ---
 // VALKEY_ADDR:          valkey address, required
 // VALKEY_PASSWORD:      valkey password, required

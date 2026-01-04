@@ -264,6 +264,13 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 		sessionID:    sessionID,
 		podSpec:      *podSpec,
 	}
+	// Apply labels and annotations from AgentRuntime template
+	if agentRuntimeObj.Spec.Template.Labels != nil {
+		buildParams.podLabels = agentRuntimeObj.Spec.Template.Labels
+	}
+	if agentRuntimeObj.Spec.Template.Annotations != nil {
+		buildParams.podAnnotations = agentRuntimeObj.Spec.Template.Annotations
+	}
 	if agentRuntimeObj.Spec.MaxSessionDuration != nil {
 		buildParams.ttl = agentRuntimeObj.Spec.MaxSessionDuration.Duration
 	}

@@ -9,16 +9,21 @@ WORKDIR /workspace
 
 # Copy go mod files
 COPY go.mod go.sum ./
-RUN go mod download
+
+# Download dependencies with caching
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 # Copy source code
 COPY cmd/ cmd/
 COPY pkg/ pkg/
 
-# Build with dynamic architecture support
+# Build with dynamic architecture support and caching
 # Supports amd64, arm64, arm/v7, etc.
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -o workloadmanager ./cmd/workload-manager
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -ldflags="-s -w" -o workloadmanager ./cmd/workload-manager
 
 # Runtime image
 FROM alpine:3.19

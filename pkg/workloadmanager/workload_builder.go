@@ -135,12 +135,19 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 
 	sessionID := uuid.New().String()
 	sandboxName := fmt.Sprintf("%s-%s", name, RandString(8))
+
+	// Normalize RuntimeClassName: if it's an empty string, set it to nil
+	podSpec := agentRuntimeObj.Spec.Template.Spec.DeepCopy()
+	if podSpec.RuntimeClassName != nil && *podSpec.RuntimeClassName == "" {
+		podSpec.RuntimeClassName = nil
+	}
+
 	buildParams := &buildSandboxParams{
 		namespace:    namespace,
 		workloadName: name,
 		sandboxName:  sandboxName,
 		sessionID:    sessionID,
-		podSpec:      agentRuntimeObj.Spec.Template.Spec,
+		podSpec:      *podSpec,
 	}
 	if agentRuntimeObj.Spec.MaxSessionDuration != nil {
 		buildParams.ttl = agentRuntimeObj.Spec.MaxSessionDuration.Duration
@@ -217,9 +224,15 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		return nil, nil, nil, fmt.Errorf("code interpreter %s has no template", codeInterpreterKey)
 	}
 
+	// Normalize RuntimeClassName: if it's an empty string, set it to nil
+	runtimeClassName := codeInterpreterObj.Spec.Template.RuntimeClassName
+	if runtimeClassName != nil && *runtimeClassName == "" {
+		runtimeClassName = nil
+	}
+
 	podSpec := corev1.PodSpec{
 		ImagePullSecrets: codeInterpreterObj.Spec.Template.ImagePullSecrets,
-		RuntimeClassName: codeInterpreterObj.Spec.Template.RuntimeClassName,
+		RuntimeClassName: runtimeClassName,
 		Containers: []corev1.Container{
 			{
 				Name:            "code-interpreter",

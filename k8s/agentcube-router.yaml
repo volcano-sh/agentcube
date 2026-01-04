@@ -46,8 +46,11 @@ spec:
           env:
             - name: REDIS_ADDR
               value: "127.0.0.1:6379"
-            - name: REDIS_PASSWORD_FILE
-              value: "/etc/agentcube/secrets/password"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-auth
+                  key: password
             - name: WORKLOAD_MANAGER_ADDR
               value: "http://agentcube-workload-manager:8080"
           args:
@@ -72,14 +75,7 @@ spec:
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 5
-          volumeMounts:
-            - name: redis-auth-volume
-              mountPath: "/etc/agentcube/secrets"
-              readOnly: true
-      volumes:
-        - name: redis-auth-volume
-          secret:
-            secretName: redis-auth
+
 
 ---
 apiVersion: v1

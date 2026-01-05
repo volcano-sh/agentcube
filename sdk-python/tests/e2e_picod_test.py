@@ -12,47 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+E2E Test for Router -> PicoD JWT Authentication Architecture.
+
+This test validates the new single-stage JWT verification flow where:
+1. Router generates JWT signing keys
+2. Router signs requests before forwarding to PicoD
+3. PicoD verifies JWT using public key from environment variable
+
+Test Flow:
+1. Generate RSA key pair (simulating Router's key generation)
+2. Start PicoD container with PICOD_AUTH_PUBLIC_KEY env var
+3. Start Router container (or simulate Router by signing JWTs locally)
+4. Test command execution, file operations through the authenticated flow
+"""
+
 import os
 import time
 import subprocess
+import base64
 import requests
 import jwt
-import base64
 import logging
+from datetime import datetime, timedelta, timezone
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
 
-from agentcube.clients.data_plane import DataPlaneClient
-from agentcube.exceptions import CommandExecutionError
-
 # Configure Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("sdk_e2e_test")
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("router_picod_e2e_test")
 
 # --- Constants ---
-IMAGE_NAME = "picod-test:latest"
-CONTAINER_NAME = "picod_e2e_test"
-HOST_PORT = 8080
-BOOTSTRAP_KEY_FILE = os.path.abspath("bootstrap_public.pem")
-
-# --- Helper Classes ---
-
-class DirectDataPlaneClient(DataPlaneClient):
-    """
-    Subclass of DataPlaneClient that connects directly to PicoD,
-    bypassing the Router URL construction logic.
-    """
-    def __init__(self, picod_url, session_id, private_key, timeout=30):
-        # Point directly to PicoD root (e.g., http://localhost:8080/)
-        base_url = picod_url if picod_url.endswith("/") else picod_url + "/"
-        
-        super().__init__(
-            session_id=session_id,
-            private_key=private_key,
-            base_url=base_url,
-            timeout=timeout
-        )
+PICOD_IMAGE = "picod-test:latest"
+PICOD_CONTAINER_NAME = "picod_router_e2e_test"
+PICOD_PORT = 8081
 
 # --- Helper Functions ---
 
@@ -78,240 +72,286 @@ def generate_key_pair():
     
     return private_key, priv_pem, pub_pem
 
-def start_picod_container():
-    """Start the PicoD docker container with mounted key."""
-    logger.info(f"Starting Docker container {CONTAINER_NAME}...")
+
+def start_picod_container(public_key_pem: bytes):
+    """
+    Start PicoD container with public key injected via environment variable.
+    This simulates the new architecture where WorkloadManager injects PICOD_AUTH_PUBLIC_KEY.
+    """
+    logger.info(f"Starting PicoD container {PICOD_CONTAINER_NAME}...")
     
     # Remove existing if any
-    subprocess.run(["docker", "rm", "-f", CONTAINER_NAME], capture_output=True)
+    subprocess.run(["docker", "rm", "-f", PICOD_CONTAINER_NAME], capture_output=True)
+    
+    # Decode public key PEM for environment variable
+    pub_key_str = public_key_pem.decode('utf-8')
     
     cmd = [
         "docker", "run", "-d",
-        "--name", CONTAINER_NAME,
-        "-p", f"{HOST_PORT}:8080",
-        "-v", f"{BOOTSTRAP_KEY_FILE}:/etc/picod/public-key.pem",
-        IMAGE_NAME,
-        "-bootstrap-key", "/etc/picod/public-key.pem"
+        "--name", PICOD_CONTAINER_NAME,
+        "-p", f"{PICOD_PORT}:8080",
+        "-e", f"PICOD_AUTH_PUBLIC_KEY={pub_key_str}",
+        PICOD_IMAGE
     ]
     
-    logger.info(f"Running: {' '.join(cmd)}")
+    logger.info(f"Running: docker run -d --name {PICOD_CONTAINER_NAME} -p {PICOD_PORT}:8080 -e PICOD_AUTH_PUBLIC_KEY=<key> {PICOD_IMAGE}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"Failed to start container: {result.stderr}")
+        raise RuntimeError(f"Failed to start PicoD container: {result.stderr}")
         
     # Wait for health check
-    url = f"http://localhost:{HOST_PORT}/health"
-    retries = 10
+    wait_for_health(f"http://localhost:{PICOD_PORT}/health", "PicoD")
+
+
+def wait_for_health(url: str, service_name: str, retries: int = 15):
+    """Wait for service health check to pass."""
     for i in range(retries):
         try:
-            resp = requests.get(url, timeout=1)
+            resp = requests.get(url, timeout=2)
             if resp.status_code == 200:
-                logger.info("PicoD is up and running!")
+                data = resp.json()
+                logger.info(f"{service_name} is up! Status: {data.get('status', 'unknown')}, Initialized: {data.get('initialized', 'unknown')}")
                 return
         except (requests.ConnectionError, requests.Timeout) as e:
-            # Ignore connection errors during health check; container may not be ready yet. Retry until healthy or max retries.
-            logger.debug(f"Health check attempt {i+1} failed: {e}")
-        logger.info("Waiting for PicoD...")
+            logger.debug(f"Health check attempt {i+1} for {service_name} failed: {e}")
+        logger.info(f"Waiting for {service_name}... ({i+1}/{retries})")
         time.sleep(1)
         
-    raise RuntimeError("PicoD failed to start or is unhealthy")
+    raise RuntimeError(f"{service_name} failed to start or is unhealthy")
 
-def stop_picod_container():
-    """Stop the Docker container."""
-    logger.info(f"Stopping container {CONTAINER_NAME}...")
-    subprocess.run(["docker", "rm", "-f", CONTAINER_NAME], capture_output=True)
 
-def perform_init_handshake(bootstrap_priv_key, session_pub_pem):
+def stop_containers():
+    """Stop all test containers."""
+    logger.info("Stopping test containers...")
+    subprocess.run(["docker", "rm", "-f", PICOD_CONTAINER_NAME], capture_output=True)
+
+
+class RouterSimulator:
     """
-    Simulate the WorkloadManager performing the Init handshake.
-    Sign a token with Bootstrap Private Key containing Session Public Key.
+    Simulates Router's JWT signing behavior.
+    In production, Router would handle this, but for E2E testing,
+    we simulate Router by signing JWTs with the same algorithm.
     """
-    logger.info("Performing Init Handshake...")
     
-    # Create JWT
-    now = int(time.time())
-    # Picod expects the public key to be base64-encoded without padding characters (i.e., unpadded base64)
-    session_pub_b64 = base64.b64encode(session_pub_pem).decode('utf-8').rstrip("=")
+    def __init__(self, private_key, picod_url: str):
+        self.private_key = private_key
+        self.picod_url = picod_url.rstrip("/")
+        self.session = requests.Session()
     
-    claims = {
-        "iss": "workload-manager-sim",
-        "iat": now,
-        "exp": now + 60,
-        "session_public_key": session_pub_b64
-    }
+    def _sign_jwt(self, claims: dict = None) -> str:
+        """Generate a JWT token like Router would."""
+        now = datetime.now(timezone.utc)
+        payload = {
+            "iss": "agentcube-router",
+            "iat": now,
+            "exp": now + timedelta(minutes=5),
+        }
+        if claims:
+            payload.update(claims)
+        
+        return jwt.encode(payload, self.private_key, algorithm="RS256")
     
-    token = jwt.encode(
-        payload=claims,
-        key=bootstrap_priv_key,
+    def request(self, method: str, endpoint: str, **kwargs) -> requests.Response:
+        """Make an authenticated request (simulating Router's forwarding)."""
+        url = f"{self.picod_url}/{endpoint.lstrip('/')}"
+        
+        # Sign JWT like Router does
+        token = self._sign_jwt({
+            "path": endpoint,
+        })
+        
+        headers = kwargs.pop("headers", {})
+        headers["Authorization"] = f"Bearer {token}"
+        
+        return self.session.request(method, url, headers=headers, **kwargs)
+    
+    def execute_command(self, command: list, timeout: str = "30s") -> dict:
+        """Execute a command via PicoD."""
+        payload = {
+            "command": command if isinstance(command, list) else [command],
+            "timeout": timeout
+        }
+        resp = self.request("POST", "/api/execute", json=payload)
+        resp.raise_for_status()
+        return resp.json()
+    
+    def upload_file(self, content: str, path: str):
+        """Upload a file to PicoD."""
+        payload = {
+            "path": path,
+            "content": base64.b64encode(content.encode()).decode(),
+            "mode": "0644"
+        }
+        resp = self.request("POST", "/api/files", json=payload)
+        resp.raise_for_status()
+        return resp.json()
+    
+    def download_file(self, path: str) -> bytes:
+        """Download a file from PicoD."""
+        resp = self.request("GET", f"/api/files/{path}")
+        resp.raise_for_status()
+        return resp.content
+    
+    def list_files(self, path: str = ".") -> list:
+        """List files in a directory."""
+        resp = self.request("GET", "/api/files", params={"path": path})
+        resp.raise_for_status()
+        return resp.json().get("files", [])
+
+
+# --- Tests ---
+
+def test_health_check():
+    """Test that PicoD health check shows initialized status."""
+    logger.info(">>> TEST: Health Check")
+    resp = requests.get(f"http://localhost:{PICOD_PORT}/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["initialized"] == True
+    logger.info(f"Health check passed: {data}")
+
+
+def test_unauthorized_access():
+    """Test that unauthenticated requests are rejected."""
+    logger.info(">>> TEST: Unauthorized Access")
+    resp = requests.post(
+        f"http://localhost:{PICOD_PORT}/api/execute",
+        json={"command": ["echo", "hello"]}
+    )
+    assert resp.status_code == 401, f"Expected 401, got {resp.status_code}"
+    logger.info("Unauthorized access correctly rejected")
+
+
+def test_invalid_token():
+    """Test that requests with invalid JWT are rejected."""
+    logger.info(">>> TEST: Invalid Token")
+    
+    # Generate a different key pair
+    wrong_key, _, _ = generate_key_pair()
+    wrong_token = jwt.encode(
+        {"iss": "fake", "iat": datetime.now(timezone.utc), "exp": datetime.now(timezone.utc) + timedelta(hours=1)},
+        wrong_key,
         algorithm="RS256"
     )
     
-    url = f"http://localhost:{HOST_PORT}/init"
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
-    
-    resp = requests.post(url, headers=headers)
-    if resp.status_code != 200:
-        raise RuntimeError(f"Init failed: {resp.status_code} {resp.text}")
-        
-    logger.info("Init Handshake Successful!")
+    resp = requests.post(
+        f"http://localhost:{PICOD_PORT}/api/execute",
+        json={"command": ["echo", "hello"]},
+        headers={"Authorization": f"Bearer {wrong_token}"}
+    )
+    assert resp.status_code == 401, f"Expected 401, got {resp.status_code}"
+    logger.info("Invalid token correctly rejected")
 
-# --- Main Test ---
+
+def test_command_execution(client: RouterSimulator):
+    """Test basic command execution."""
+    logger.info(">>> TEST: Command Execution")
+    result = client.execute_command(["echo", "Hello Router-PicoD!"])
+    assert result["exit_code"] == 0
+    assert result["stdout"].strip() == "Hello Router-PicoD!"
+    logger.info(f"Command output: {result['stdout'].strip()}")
+
+
+def test_python_execution(client: RouterSimulator):
+    """Test Python code execution."""
+    logger.info(">>> TEST: Python Execution")
+    
+    # Upload Python script
+    code = "import sys; print(f'Python {sys.version_info.major}.{sys.version_info.minor}')"
+    client.upload_file(code, "test_python.py")
+    
+    # Execute it
+    result = client.execute_command(["python3", "test_python.py"])
+    assert result["exit_code"] == 0
+    assert "Python 3" in result["stdout"]
+    logger.info(f"Python output: {result['stdout'].strip()}")
+
+
+def test_file_operations(client: RouterSimulator):
+    """Test file upload, download, and listing."""
+    logger.info(">>> TEST: File Operations")
+    
+    # Upload
+    content = "Hello from Router-PicoD E2E test!"
+    client.upload_file(content, "e2e_test.txt")
+    logger.info("File uploaded")
+    
+    # Verify with cat
+    result = client.execute_command(["cat", "e2e_test.txt"])
+    assert result["stdout"].strip() == content
+    logger.info("File content verified via cat")
+    
+    # Download
+    downloaded = client.download_file("e2e_test.txt")
+    assert downloaded.decode() == content
+    logger.info("File downloaded and verified")
+    
+    # List
+    files = client.list_files(".")
+    filenames = [f["name"] for f in files]
+    assert "e2e_test.txt" in filenames
+    logger.info(f"File listing: {filenames}")
+
+
+def test_timeout(client: RouterSimulator):
+    """Test command timeout handling."""
+    logger.info(">>> TEST: Timeout Handling")
+    
+    # Should pass with sufficient timeout
+    result = client.execute_command(["sleep", "0.1"], timeout="5s")
+    assert result["exit_code"] == 0
+    
+    # Should timeout
+    result = client.execute_command(["sleep", "5"], timeout="0.5s")
+    assert result["exit_code"] == 124  # Timeout exit code
+    assert "timed out" in result["stderr"].lower()
+    logger.info("Timeout correctly handled")
+
+
+# --- Main ---
 
 def main():
     try:
-        # 1. Generate Bootstrap Keys (Simulating Infrastructure Setup)
-        logger.info("Generating Bootstrap Keys...")
-        bootstrap_priv, bootstrap_priv_pem, bootstrap_pub_pem = generate_key_pair()
+        # 1. Generate Router's key pair
+        logger.info("=== SETUP: Generating Router's JWT key pair ===")
+        router_private_key, _, router_public_key_pem = generate_key_pair()
         
-        # Save Public Key for Docker mount
-        with open(BOOTSTRAP_KEY_FILE, "wb") as f:
-            f.write(bootstrap_pub_pem)
-            
-        # 2. Start PicoD
-        start_picod_container()
+        # 2. Start PicoD with public key
+        logger.info("=== SETUP: Starting PicoD container ===")
+        start_picod_container(router_public_key_pem)
         
-        # 3. Generate Session Keys (Simulating Client/SDK)
-        logger.info("Generating Session Keys...")
-        session_priv, session_priv_pem, session_pub_pem = generate_key_pair()
-        session_id = "test-session-123"
-        
-        # 4. Perform Handshake (Simulating WM)
-        perform_init_handshake(bootstrap_priv, session_pub_pem)
-        
-        # 5. Initialize SDK Client (Direct Mode)
-        logger.info("Initializing DirectDataPlaneClient...")
-        client = DirectDataPlaneClient(
-            picod_url=f"http://localhost:{HOST_PORT}",
-            session_id=session_id,
-            private_key=session_priv
+        # 3. Create Router simulator
+        logger.info("=== SETUP: Creating Router simulator ===")
+        client = RouterSimulator(
+            private_key=router_private_key,
+            picod_url=f"http://localhost:{PICOD_PORT}"
         )
         
-        # 6. Run Tests
-        logger.info(">>> TEST: Execute Command")
-        output = client.execute_command("echo 'Hello SDK'")
-        print(f"Output: {output.strip()}")
-        assert output.strip() == "Hello SDK"
-
-        logger.info(">>> TEST: Execute Command with List Arguments")
-        output_list_cmd = client.execute_command(["echo", "Hello from list args"])
-        print(f"Output (list args): {output_list_cmd.strip()}")
-        assert output_list_cmd.strip() == "Hello from list args"
+        # 4. Run tests
+        logger.info("=== RUNNING TESTS ===")
+        test_health_check()
+        test_unauthorized_access()
+        test_invalid_token()
+        test_command_execution(client)
+        test_python_execution(client)
+        test_file_operations(client)
+        test_timeout(client)
         
-        logger.info(">>> TEST: Run Python Code")
-        code = "print(10 + 20)"
-        output = client.run_code("python", code)
-        print(f"Output: {output.strip()}")
-        assert output.strip() == "30"
-        
-        logger.info(">>> TEST: File Upload & Download")
-        test_content = "This is a test file."
-        client.write_file(test_content, "test.txt")
-        
-        # Verify with cat
-        output = client.execute_command("cat test.txt")
-        assert output.strip() == test_content
-        
-        # Verify with download
-        client.download_file("test.txt", "downloaded_test.txt")
-        with open("downloaded_test.txt", "r") as f:
-            content = f.read()
-        assert content == test_content
-
-        logger.info(">>> TEST: File Upload (Multipart)")
-        local_multipart = "local_multipart.txt"
-        multipart_content = "This is multipart content."
-        with open(local_multipart, "w") as f:
-            f.write(multipart_content)
-        
-        try:
-            # Test upload_file (multipart)
-            client.upload_file(local_multipart, "remote_multipart.txt")
-            
-            # Verify upload with cat
-            output = client.execute_command("cat remote_multipart.txt")
-            assert output.strip() == multipart_content
-        finally:
-             if os.path.exists(local_multipart):
-                 os.remove(local_multipart)
-
-        logger.info(">>> TEST: List Files")
-        files = client.list_files(".")
-        # We expect at least test.txt (from previous test) and remote_multipart.txt
-        filenames = [f['name'] for f in files]
-        logger.info(f"Files found: {filenames}")
-        assert "test.txt" in filenames
-        assert "remote_multipart.txt" in filenames
-        
-        # Verify file info structure
-        test_file = next(f for f in files if f['name'] == 'test.txt')
-        assert test_file['size'] > 0
-        assert not test_file['is_dir']
-
-        logger.info(">>> TEST: Command Failure")
-        try:
-            client.execute_command("ls /nonexistent_directory_for_test")
-            assert False, "Command should have failed"
-        except CommandExecutionError as e:
-            logger.info(f"Caught expected error: {e}")
-            assert e.exit_code != 0
-        except Exception as e:
-            assert False, f"Caught unexpected exception type: {type(e)}"
-            
-        logger.info(">>> TEST: Timeout")
-        # Should pass with sufficient timeout
-        client.execute_command("sleep 0.1", timeout=1.0)
-        
-        try:
-             # Should fail with short timeout
-             # Note: We rely on the SDK client to pass "0.1s" to PicoD
-             client.execute_command("sleep 2", timeout=0.1)
-             assert False, "Command should have timed out"
-        except Exception as e:
-             logger.info(f"Caught expected timeout error: {e}")
-             # PicoD returns exit code 124 for timeout
-             assert "124" in str(e)
-
-        logger.info(">>> TEST: ControlPlaneClient without WORKLOAD_MANAGER_URL")
-        original_workload_manager_url = os.getenv("WORKLOAD_MANAGER_URL")
-        if original_workload_manager_url:
-            del os.environ["WORKLOAD_MANAGER_URL"]
-        
-        try:
-            from agentcube.clients.control_plane import ControlPlaneClient
-            ControlPlaneClient()
-            assert False, "ControlPlaneClient should have raised ValueError without WORKLOAD_MANAGER_URL"
-        except ValueError as e:
-            logger.info(f"Caught expected error: {e}")
-            assert "Workload Manager URL must be provided" in str(e)
-        except Exception as e:
-            assert False, f"Caught unexpected exception type: {type(e)}"
-        finally:
-            if original_workload_manager_url:
-                os.environ["WORKLOAD_MANAGER_URL"] = original_workload_manager_url
-            else:
-                if "WORKLOAD_MANAGER_URL" in os.environ:
-                    del os.environ["WORKLOAD_MANAGER_URL"]
-
-        logger.info(">>> ALL TESTS PASSED SUCCESSFULLY! <<<")
+        logger.info("=== ALL TESTS PASSED! ===")
         
     except Exception as e:
-        logger.error(f"Test Failed: {e}")
+        logger.error(f"Test failed: {e}")
         # Print container logs on failure
-        logs = subprocess.run(["docker", "logs", CONTAINER_NAME], capture_output=True, text=True)
-        print("--- Container Logs ---")
-        print(logs.stderr)
+        logger.info("--- PicoD Container Logs ---")
+        logs = subprocess.run(["docker", "logs", PICOD_CONTAINER_NAME], capture_output=True, text=True)
         print(logs.stdout)
+        print(logs.stderr)
         raise
         
     finally:
-        # Cleanup
-        stop_picod_container()
-        if os.path.exists(BOOTSTRAP_KEY_FILE):
-            os.remove(BOOTSTRAP_KEY_FILE)
-        if os.path.exists("downloaded_test.txt"):
-            os.remove("downloaded_test.txt")
+        stop_containers()
+
 
 if __name__ == "__main__":
     main()

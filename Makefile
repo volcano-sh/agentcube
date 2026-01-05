@@ -143,6 +143,12 @@ vet: ## Run go vet against code.
 lint: golangci-lint ## Run golangci-lint
 	$(GOLANGCI_LINT) run ./...
 
+# Generate copyright headers
+.PHONY: gen-copyright
+gen-copyright:
+	@echo "Adding copyright headers..."
+	@hack/update-copyright.sh
+
 # Install to system
 install: build
 	@echo "Installing workloadmanager..."

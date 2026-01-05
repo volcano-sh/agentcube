@@ -127,7 +127,14 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 
 	if err != nil {
 		klog.Errorf("build sandbox failed: %v", err)
-		respondError(c, http.StatusBadRequest, "SANDBOX_BUILD_FAILED", err.Error())
+		// Check if it's a "not found" error and return 404
+		if errors.Is(err, ErrAgentRuntimeNotFound) || errors.Is(err, ErrCodeInterpreterNotFound) {
+			respondError(c, http.StatusNotFound, "NOT_FOUND", err.Error())
+		} else if errors.Is(err, ErrTemplateMissing) || errors.Is(err, ErrPublicKeyMissing) {
+			respondError(c, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		} else {
+			respondError(c, http.StatusBadRequest, "SANDBOX_BUILD_FAILED", err.Error())
+		}
 		return
 	}
 

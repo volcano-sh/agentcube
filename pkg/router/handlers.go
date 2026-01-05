@@ -17,6 +17,7 @@ limitations under the License.
 package router
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
@@ -64,43 +65,19 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	sandbox, err := s.sessionManager.GetSandboxBySession(c.Request.Context(), sessionID, namespace, name, kind)
 	if err != nil {
 		klog.Errorf("Failed to get sandbox info: %v, session id %s", err, sessionID)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("Invalid session id %s", sessionID),
-			"code":  "BadRequest",
-		})
+		s.handleSandboxLookupError(c, err, sessionID, namespace, name, kind)
 		return
 	}
 
 	// Extract endpoint from sandbox - find matching entry point by path
-	var endpoint string
-	for _, ep := range sandbox.EntryPoints {
-		if strings.HasPrefix(path, ep.Path) {
-			// Only add protocol if not already present
-			if ep.Protocol != "" && !strings.Contains(ep.Endpoint, "://") {
-				endpoint = strings.ToLower(ep.Protocol) + "://" + ep.Endpoint
-			} else {
-				endpoint = ep.Endpoint
-			}
-			break
-		}
-	}
-
-	// If no matching endpoint found, use the first one as fallback
-	if endpoint == "" {
-		if len(sandbox.EntryPoints) == 0 {
-			klog.Warningf("No entry points found for sandbox: %s", sandbox.SandboxID)
-			c.JSON(http.StatusNotFound, gin.H{
-				"error": "no entry points found for sandbox",
-				"code":  "Service not found",
-			})
-			return
-		}
-		// Only add protocol if not already present
-		if sandbox.EntryPoints[0].Protocol != "" && !strings.Contains(sandbox.EntryPoints[0].Endpoint, "://") {
-			endpoint = strings.ToLower(sandbox.EntryPoints[0].Protocol) + "://" + sandbox.EntryPoints[0].Endpoint
-		} else {
-			endpoint = sandbox.EntryPoints[0].Endpoint
-		}
+	endpoint, err := selectSandboxEndpoint(sandbox, path)
+	if err != nil {
+		klog.Warningf("Failed to select endpoint for sandbox %s: %v", sandbox.SandboxID, err)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+			"code":  "Service not found",
+		})
+		return
 	}
 
 	klog.Infof("The selected entrypoint for session-id %s to sandbox is %s", sandbox.SessionID, endpoint)
@@ -118,6 +95,48 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	if err := s.storeClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
 		klog.Warningf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
 	}
+}
+
+func (s *Server) handleSandboxLookupError(c *gin.Context, err error, sessionID, namespace, name, kind string) {
+	switch {
+	case errors.Is(err, ErrSessionNotFound):
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Invalid session id %s", sessionID),
+			"code":  "BadRequest",
+		})
+	case errors.Is(err, ErrAgentRuntimeNotFound):
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("%s '%s' not found in namespace '%s'", kind, name, namespace),
+			"code":  "NotFound",
+		})
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid session or request",
+			"code":  "BadRequest",
+		})
+	}
+}
+
+func selectSandboxEndpoint(sandbox *types.SandboxInfo, path string) (string, error) {
+	// prefer matched entrypoint by path
+	for _, ep := range sandbox.EntryPoints {
+		if strings.HasPrefix(path, ep.Path) {
+			return prependProtocol(ep.Protocol, ep.Endpoint), nil
+		}
+	}
+	// fallback to first entrypoint
+	if len(sandbox.EntryPoints) == 0 {
+		return "", fmt.Errorf("no entry points found for sandbox")
+	}
+	ep := sandbox.EntryPoints[0]
+	return prependProtocol(ep.Protocol, ep.Endpoint), nil
+}
+
+func prependProtocol(protocol, endpoint string) string {
+	if protocol != "" && !strings.Contains(endpoint, "://") {
+		return strings.ToLower(protocol) + "://" + endpoint
+	}
+	return endpoint
 }
 
 // handleAgentInvoke handles agent invocation requests

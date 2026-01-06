@@ -36,9 +36,9 @@ import (
 // Constants for Router's identity resources
 // WorkloadManager uses these to inject the public key into PicoD containers
 const (
-	// PublicKeyConfigMapName is the name of the ConfigMap storing Router's public key
-	PublicKeyConfigMapName = "picod-router-public-key"
-	// PublicKeyDataKey is the key in the ConfigMap data map for the public key
+	// IdentitySecretName is the name of the Secret storing Router's keys
+	IdentitySecretName = "picod-router-identity" //nolint:gosec // This is a name reference, not a credential
+	// PublicKeyDataKey is the key in the Secret data map for the public key
 	PublicKeyDataKey = "public.pem"
 )
 
@@ -264,13 +264,13 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				Image:           codeInterpreterObj.Spec.Template.Image,
 				ImagePullPolicy: codeInterpreterObj.Spec.Template.ImagePullPolicy,
 				Env: append(codeInterpreterObj.Spec.Template.Environment,
-					// Inject public key from Router's ConfigMap as environment variable
+					// Inject public key from Router's Secret as environment variable
 					corev1.EnvVar{
 						Name: "PICOD_AUTH_PUBLIC_KEY",
 						ValueFrom: &corev1.EnvVarSource{
-							ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+							SecretKeyRef: &corev1.SecretKeySelector{
 								LocalObjectReference: corev1.LocalObjectReference{
-									Name: PublicKeyConfigMapName,
+									Name: IdentitySecretName,
 								},
 								Key: PublicKeyDataKey,
 							},

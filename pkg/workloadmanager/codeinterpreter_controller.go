@@ -303,13 +303,13 @@ func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alph
 				Command:         template.Command,
 				Args:            template.Args,
 				Env: append(template.Environment,
-					// Inject public key from Router's ConfigMap as environment variable
+					// Inject public key from Router's Secret as environment variable
 					corev1.EnvVar{
 						Name: "PICOD_AUTH_PUBLIC_KEY",
 						ValueFrom: &corev1.EnvVarSource{
-							ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+							SecretKeyRef: &corev1.SecretKeySelector{
 								LocalObjectReference: corev1.LocalObjectReference{
-									Name: PublicKeyConfigMapName,
+									Name: IdentitySecretName,
 								},
 								Key: PublicKeyDataKey,
 							},

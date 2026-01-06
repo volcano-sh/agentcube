@@ -40,17 +40,15 @@ const (
 	rsaKeySize = 2048
 	// JWT token expiration time
 	jwtExpiration = 5 * time.Minute
-	// IdentitySecretName is the name of the secret storing Router's private key
+	// IdentitySecretName is the name of the secret storing Router's keys
 	IdentitySecretName = "picod-router-identity" //nolint:gosec // This is a name reference, not a credential
-	// PublicKeyConfigMapName is the name of the ConfigMap storing Router's public key
-	PublicKeyConfigMapName = "picod-router-public-key"
 	// PrivateKeyDataKey is the key in the secret data map for private key
 	PrivateKeyDataKey = "private.pem"
-	// PublicKeyDataKey is the key in the ConfigMap data map for public key
+	// PublicKeyDataKey is the key in the secret data map for public key
 	PublicKeyDataKey = "public.pem"
 )
 
-// IdentityNamespace is the namespace for the identity secret and public key configmap
+// IdentityNamespace is the namespace for the identity secret
 var IdentityNamespace = "default"
 
 func init() {
@@ -159,7 +157,7 @@ func (jm *JWTManager) TryStoreOrLoadJWTKeySecret(ctx context.Context) error {
 	}
 	privateKeyPEM := jm.GetPrivateKeyPEM()
 
-	// Step 1: Try to create or load the identity Secret (private key)
+	// Try to create or load the identity Secret (both keys)
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      IdentitySecretName,
@@ -172,6 +170,7 @@ func (jm *JWTManager) TryStoreOrLoadJWTKeySecret(ctx context.Context) error {
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
 			PrivateKeyDataKey: privateKeyPEM,
+			PublicKeyDataKey:  publicKeyPEM,
 		},
 	}
 
@@ -197,51 +196,9 @@ func (jm *JWTManager) TryStoreOrLoadJWTKeySecret(ctx context.Context) error {
 			return fmt.Errorf("failed to load private key from secret: %w", err)
 		}
 
-		// Update publicKeyPEM from the loaded private key
-		publicKeyPEM, err = jm.GetPublicKeyPEM()
-		if err != nil {
-			return fmt.Errorf("failed to get public key from loaded private key: %w", err)
-		}
-
 		klog.Infof("Loaded identity from existing secret %s/%s", IdentityNamespace, IdentitySecretName)
 	} else {
 		klog.Infof("Created identity secret %s/%s", IdentityNamespace, IdentitySecretName)
-	}
-
-	// Step 2: Reconcile the public key ConfigMap
-	configMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      PublicKeyConfigMapName,
-			Namespace: IdentityNamespace,
-			Labels: map[string]string{
-				"app":       "agentcube",
-				"component": "router",
-			},
-		},
-		Data: map[string]string{
-			PublicKeyDataKey: string(publicKeyPEM),
-		},
-	}
-
-	_, err = jm.clientset.CoreV1().ConfigMaps(IdentityNamespace).Create(ctx, configMap, metav1.CreateOptions{})
-	if err != nil {
-		if !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create public key configmap: %w", err)
-		}
-
-		// ConfigMap exists, get it first to obtain resourceVersion, then update
-		existingCM, err := jm.clientset.CoreV1().ConfigMaps(IdentityNamespace).Get(ctx, PublicKeyConfigMapName, metav1.GetOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to get configmap %s for update: %w", PublicKeyConfigMapName, err)
-		}
-		existingCM.Data = configMap.Data
-		_, err = jm.clientset.CoreV1().ConfigMaps(IdentityNamespace).Update(ctx, existingCM, metav1.UpdateOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to update public key configmap: %w", err)
-		}
-		klog.Infof("Updated public key configmap %s/%s", IdentityNamespace, PublicKeyConfigMapName)
-	} else {
-		klog.Infof("Created public key configmap %s/%s", IdentityNamespace, PublicKeyConfigMapName)
 	}
 
 	return nil

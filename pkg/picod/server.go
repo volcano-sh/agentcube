@@ -50,8 +50,10 @@ func NewServer(config Config) *Server {
 	}
 
 	// Initialize workspace directory
+	klog.Infof("Initializing workspace with config.Workspace: %q", config.Workspace)
 	if config.Workspace != "" {
 		s.setWorkspace(config.Workspace)
+		klog.Infof("Set workspace to configured value: %q", config.Workspace)
 	} else {
 		// Default to current working directory if not specified
 		cwd, err := os.Getwd()
@@ -59,7 +61,9 @@ func NewServer(config Config) *Server {
 			klog.Fatalf("Failed to get current working directory: %v", err)
 		}
 		s.setWorkspace(cwd)
+		klog.Infof("Set workspace to current working directory: %q", cwd)
 	}
+	klog.Infof("Final workspace directory: %q", s.workspaceDir)
 
 	// Disable Gin debug output in production mode
 	gin.SetMode(gin.ReleaseMode)

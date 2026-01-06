@@ -112,6 +112,8 @@ spec:
               value: "redis.agentcube.svc.cluster.local:6379"
             - name: REDIS_PASSWORD
               value: ""
+            - name: JWT_KEY_SECRET_NAMESPACE
+              value: "agentcube"
           args:
             - --port=8080
             - --runtime-class-name=

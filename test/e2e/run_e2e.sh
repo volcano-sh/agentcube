@@ -11,6 +11,7 @@ ROUTER_IMAGE=${ROUTER_IMAGE:-agentcube-router:latest}
 PICOD_IMAGE=${PICOD_IMAGE:-picod:latest}
 REDIS_IMAGE=${REDIS_IMAGE:-redis:7-alpine}
 AGENTCUBE_NAMESPACE=${AGENTCUBE_NAMESPACE:-agentcube}
+E2E_VENV_DIR=${E2E_VENV_DIR:-/tmp/agentcube-e2e-venv}
 
 # Images that need to be pre-pulled and loaded into kind cluster
 # Based on agent-sandbox manifest analysis, only these images are needed:
@@ -27,14 +28,46 @@ ROUTER_LOCAL_PORT=${ROUTER_LOCAL_PORT:-8081}
 # Function to clean up
 cleanup() {
     echo "Cleaning up..."
+
+    # Kill port-forward processes by PID
     if [ -n "${WORKLOAD_PID:-}" ]; then
-        echo "Stopping workload manager port forward..."
-        kill "$WORKLOAD_PID" || true
+        echo "Stopping workload manager port forward (PID: $WORKLOAD_PID)..."
+        kill "$WORKLOAD_PID" 2>/dev/null || true
     fi
     if [ -n "${ROUTER_PID:-}" ]; then
-        echo "Stopping router port forward..."
-        kill "$ROUTER_PID" || true
+        echo "Stopping router port forward (PID: $ROUTER_PID)..."
+        kill "$ROUTER_PID" 2>/dev/null || true
     fi
+
+    # Kill any remaining kubectl port-forward processes
+    echo "Killing any remaining kubectl port-forward processes..."
+    pkill -f "kubectl port-forward" 2>/dev/null || true
+
+    # Wait a moment for processes to terminate
+    sleep 2
+
+    # Force kill any remaining processes on our ports
+    echo "Force killing any processes using ports 8080-8081..."
+    for port in 8080 8081; do
+        # Try lsof first (most Linux systems)
+        if command -v lsof >/dev/null 2>&1 && lsof -i :$port >/dev/null 2>&1; then
+            echo "Port $port is still in use, force killing with lsof..."
+            lsof -ti :$port | xargs kill -9 2>/dev/null || true
+        # Fallback to netstat if lsof not available
+        elif command -v netstat >/dev/null 2>&1 && netstat -tulpn 2>/dev/null | grep ":$port " >/dev/null; then
+            echo "Port $port is still in use, force killing with netstat..."
+            netstat -tulpn 2>/dev/null | grep ":$port " | awk '{print $7}' | cut -d'/' -f1 | xargs kill -9 2>/dev/null || true
+        fi
+    done
+
+    # Clean up virtual environment
+    if [ -d "${E2E_VENV_DIR:-}" ]; then
+        echo "Removing Python virtual environment..."
+        rm -rf "$E2E_VENV_DIR" || true
+    fi
+
+    # Clean up temp files
+    rm -f /tmp/workload_port_forward.log /tmp/router_port_forward.log 2>/dev/null || true
 }
 
 # Register cleanup on exit
@@ -43,6 +76,14 @@ trap cleanup EXIT
 require_cmd() {
     command -v "$1" >/dev/null 2>&1 || {
         echo "Missing required command: $1" >&2
+        exit 1
+    }
+}
+
+require_python() {
+    # Check if agentcube package is available in the virtual environment
+    "$E2E_VENV_DIR/bin/python" -c "import agentcube" 2>/dev/null || {
+        echo "Python package 'agentcube' not found in virtual environment. Please ensure sdk-python is properly installed." >&2
         exit 1
     }
 }
@@ -206,6 +247,7 @@ fi
 step "Deploying workloadmanager..."
 kubectl apply --validate=false -f k8s/workloadmanager.yaml
 kubectl -n "${AGENTCUBE_NAMESPACE}" set env deployment/workloadmanager REDIS_PASSWORD_REQUIRED=false --overwrite=true
+kubectl -n "${AGENTCUBE_NAMESPACE}" set env deployment/workloadmanager JWT_KEY_SECRET_NAMESPACE=agentcube --overwrite=true
 
 step "Deploying agentcube-router..."
 kubectl apply --validate=false -f k8s/agentcube-router.yaml
@@ -228,11 +270,29 @@ sed 's/name: echo-agent/name: echo-agent-short-ttl/; s/app: echo-agent/app: echo
 kubectl apply --validate=false -f "$tmp_ttl_agent"
 rm -f "$tmp_ttl_agent"
 
+step "Creating test CodeInterpreter..."
+# Create e2e-code-interpreter CodeInterpreter
+kubectl apply --validate=false -f test/e2e/e2e_code_interpreter.yaml
+
 step "Waiting for AgentRuntimes to be ready..."
-kubectl get agentruntime echo-agent -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.name}' || echo "echo-agent may still be starting..."
-kubectl get agentruntime echo-agent-short-ttl -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.name}' || echo "echo-agent-short-ttl may still be starting..."
+kubectl get agentruntime echo-agent -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.name}{"\n"}' || echo "echo-agent may still be starting..."
+kubectl get agentruntime echo-agent-short-ttl -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.name}{"\n"}' || echo "echo-agent-short-ttl may still be starting..."
 echo "AgentRuntimes created, waiting for pods to be ready..."
 sleep 10
+
+step "Pre-cleanup"
+# Clean up any leftover processes before starting
+echo "Performing pre-run cleanup..."
+pkill -f "kubectl port-forward" 2>/dev/null || true
+for port in 8080 8081; do
+    if command -v lsof >/dev/null 2>&1 && lsof -i :$port >/dev/null 2>&1; then
+        lsof -ti :$port | xargs kill -9 2>/dev/null || true
+    elif command -v netstat >/dev/null 2>&1 && netstat -tulpn 2>/dev/null | grep ":$port " >/dev/null; then
+        netstat -tulpn 2>/dev/null | grep ":$port " | awk '{print $7}' | cut -d'/' -f1 | xargs kill -9 2>/dev/null || true
+    fi
+done
+rm -f /tmp/workload_port_forward.log /tmp/router_port_forward.log 2>/dev/null || true
+sleep 2
 
 step "Running tests..."
 # Create token
@@ -280,3 +340,24 @@ done
 # Run tests
 echo "Running Go tests..."
 WORKLOAD_MANAGER_ADDR="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN go test -v ./test/e2e/...
+
+echo "Running Python CodeInterpreter tests..."
+cd "$(dirname "$0")"
+
+# Setup Python virtual environment for testing
+if [ ! -d "$E2E_VENV_DIR" ]; then
+    echo "Creating Python virtual environment..."
+    python3 -m venv "$E2E_VENV_DIR"
+fi
+
+echo "Activating virtual environment and installing dependencies..."
+source "$E2E_VENV_DIR/bin/activate"
+pip install --upgrade pip
+
+# Install agentcube SDK in development mode
+pip install -e ../../sdk-python
+
+# Check if agentcube package is available after installation
+require_python
+
+WORKLOAD_MANAGER_ADDR="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py

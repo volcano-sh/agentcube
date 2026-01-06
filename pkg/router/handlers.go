@@ -90,6 +90,7 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	}
 
 	// Forward request to sandbox with session ID
+	klog.Infof("Forwarding to sandbox: sessionID=%s namespace=%s name=%s path=%s endpoint=%s", sandbox.SessionID, namespace, name, path, endpoint)
 	s.forwardToSandbox(c, endpoint, path, sandbox.SessionID)
 
 	if err := s.storeClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {

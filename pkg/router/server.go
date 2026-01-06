@@ -149,10 +149,12 @@ func (s *Server) setupRoutes() {
 
 	v1.Use(s.concurrencyLimitMiddleware()) // Apply concurrency limit to API routes
 
-	// Agent invoke requests
+	// Agent invoke requests (support GET/POST, since downstream uses these methods)
+	v1.GET("/namespaces/:namespace/agent-runtimes/:name/invocations/*path", s.handleAgentInvoke)
 	v1.POST("/namespaces/:namespace/agent-runtimes/:name/invocations/*path", s.handleAgentInvoke)
 
-	// Code interpreter invoke requests
+	// Code interpreter invoke requests (support GET/POST, since downstream uses GET for file download)
+	v1.GET("/namespaces/:namespace/code-interpreters/:name/invocations/*path", s.handleCodeInterpreterInvoke)
 	v1.POST("/namespaces/:namespace/code-interpreters/:name/invocations/*path", s.handleCodeInterpreterInvoke)
 }
 

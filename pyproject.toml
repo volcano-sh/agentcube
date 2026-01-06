@@ -1,0 +1,21 @@
+# Root-level configuration for monorepo structure and IDE navigation, 
+# ensuring cross-package import resolution for both SDK and E2E tests.
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentcube"
+version = "0.1.0"
+description = "AgentCube Python SDK and E2E Tests"
+readme = "README.md"
+
+[tool.setuptools.packages.find]
+where = ["sdk-python"]
+include = ["agentcube*"]
+namespaces = false
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["test*"]
+namespaces = false

@@ -109,9 +109,6 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		err = json.NewDecoder(resp.Body).Decode(&body)
 		require.NoError(t, err)
 		assert.Equal(t, "ok", body["status"])
-		initializedVal, ok := body["initialized"].(bool)
-		require.True(t, ok)
-		assert.True(t, initializedVal)
 	})
 
 	t.Run("Unauthenticated Access", func(t *testing.T) {
@@ -327,47 +324,8 @@ func TestPicoD_EndToEnd(t *testing.T) {
 	})
 }
 
-func TestPicoD_NoPublicKey(t *testing.T) {
-	// Test server behavior when no public key is set
-	os.Unsetenv(PublicKeyEnvVar)
-
-	tmpDir, err := os.MkdirTemp("", "picod_no_key_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	config := Config{
-		Port:      0,
-		Workspace: tmpDir,
-	}
-
-	server := NewServer(config)
-	ts := httptest.NewServer(server.engine)
-	defer ts.Close()
-
-	client := ts.Client()
-
-	// Health check should show degraded status
-	resp, err := client.Get(ts.URL + "/health")
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	var body map[string]interface{}
-	err = json.NewDecoder(resp.Body).Decode(&body)
-	require.NoError(t, err)
-	assert.Equal(t, "degraded", body["status"])
-	initializedVal, ok := body["initialized"].(bool)
-	require.True(t, ok)
-	assert.False(t, initializedVal)
-
-	// API calls should fail with 503
-	execReq := ExecuteRequest{Command: []string{"echo", "hello"}}
-	reqBody, _ := json.Marshal(execReq)
-	req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(reqBody))
-	req.Header.Set("Authorization", "Bearer fake-token")
-	resp, err = client.Do(req)
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
-}
+// NOTE: TestPicoD_NoPublicKey was removed because the new architecture
+// requires public key at startup. Without it, PicoD will fail to start.
 
 func TestPicoD_DefaultWorkspace(t *testing.T) {
 	// Setup temporary directory for test

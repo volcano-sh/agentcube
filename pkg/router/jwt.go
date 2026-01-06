@@ -52,7 +52,7 @@ const (
 var IdentityNamespace = "default"
 
 func init() {
-	if ns := os.Getenv("PICOD_ROUTER_NAMESPACE"); ns != "" {
+	if ns := os.Getenv("AGENTCUBE_NAMESPACE"); ns != "" {
 		IdentityNamespace = ns
 	}
 }

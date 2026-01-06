@@ -27,26 +27,26 @@ Test Flow:
 4. Test command execution, file operations through the authenticated flow
 """
 
-import os
-import time
-import subprocess
 import base64
-import requests
-import jwt
 import logging
+import subprocess
+import time
 from datetime import datetime, timedelta, timezone
+
+import jwt
+import requests
+from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.backends import default_backend
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("router_picod_e2e_test")
+logger = logging.getLogger("e2e_picod_test")
 
 # --- Constants ---
 PICOD_IMAGE = "picod-test:latest"
 PICOD_CONTAINER_NAME = "picod_router_e2e_test"
-PICOD_PORT = 8081
+PICOD_PORT = 8080
 
 # --- Helper Functions ---
 
@@ -110,7 +110,7 @@ def wait_for_health(url: str, service_name: str, retries: int = 15):
             resp = requests.get(url, timeout=2)
             if resp.status_code == 200:
                 data = resp.json()
-                logger.info(f"{service_name} is up! Status: {data.get('status', 'unknown')}, Initialized: {data.get('initialized', 'unknown')}")
+                logger.info(f"{service_name} is up! Status: {data.get('status', 'unknown')}")
                 return
         except (requests.ConnectionError, requests.Timeout) as e:
             logger.debug(f"Health check attempt {i+1} for {service_name} failed: {e}")
@@ -202,13 +202,12 @@ class RouterSimulator:
 # --- Tests ---
 
 def test_health_check():
-    """Test that PicoD health check shows initialized status."""
+    """Test that PicoD health check returns ok status."""
     logger.info(">>> TEST: Health Check")
     resp = requests.get(f"http://localhost:{PICOD_PORT}/health")
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
-    assert data["initialized"] == True
     logger.info(f"Health check passed: {data}")
 
 

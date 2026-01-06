@@ -43,16 +43,13 @@ const (
 // AuthManager manages RSA public key authentication
 // The public key is loaded from environment variable at startup
 type AuthManager struct {
-	publicKey   *rsa.PublicKey
-	mutex       sync.RWMutex
-	initialized bool
+	publicKey *rsa.PublicKey
+	mutex     sync.RWMutex
 }
 
 // NewAuthManager creates a new auth manager
 func NewAuthManager() *AuthManager {
-	return &AuthManager{
-		initialized: false,
-	}
+	return &AuthManager{}
 }
 
 // LoadPublicKeyFromEnv loads the public key from environment variable.
@@ -82,32 +79,14 @@ func (am *AuthManager) LoadPublicKeyFromEnv() error {
 	}
 
 	am.publicKey = rsaPub
-	am.initialized = true
 	klog.Info("Public key loaded successfully from environment variable")
 	return nil
 }
 
-// IsInitialized checks if auth manager has loaded the public key
-func (am *AuthManager) IsInitialized() bool {
-	am.mutex.RLock()
-	defer am.mutex.RUnlock()
-	return am.initialized
-}
-
 // AuthMiddleware creates authentication middleware with JWT verification
+// Note: Public key must be loaded at startup (via LoadPublicKeyFromEnv), so we don't check here
 func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Check if public key is loaded
-		if !am.IsInitialized() {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"error":  "Server not initialized",
-				"code":   http.StatusServiceUnavailable,
-				"detail": fmt.Sprintf("Public key not loaded. Check %s environment variable.", PublicKeyEnvVar),
-			})
-			c.Abort()
-			return
-		}
-
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{

@@ -141,7 +141,7 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 	// Parse the target URL
 	targetURL, err := url.Parse(endpoint)
 	if err != nil {
-		klog.Errorf("Invalid sandbox endpoint: %s, error: %v", endpoint, err)
+		klog.Errorf("Invalid sandbox endpoint: %s (session: %s), error: %v", endpoint, sessionID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "internal server error",
 			"code":  "INTERNAL_ERROR",
@@ -156,12 +156,15 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 	proxy.Transport = s.httpTransport
 
 	// Generate JWT token before setting up Director
-	// If token generation fails, return 500 immediately instead of forwarding without auth
+	// Include session ID in claims for debugging and request tracking
 	var jwtToken string
 	if s.jwtManager != nil {
-		token, err := s.jwtManager.GenerateToken(nil)
+		claims := map[string]interface{}{
+			"session_id": sessionID,
+		}
+		token, err := s.jwtManager.GenerateToken(claims)
 		if err != nil {
-			klog.Errorf("Failed to generate JWT token: %v", err)
+			klog.Errorf("Failed to generate JWT token (session: %s): %v", sessionID, err)
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": "failed to sign request",
 				"code":  "JWT_SIGNING_FAILED",
@@ -205,12 +208,12 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 			req.Header.Set("Authorization", "Bearer "+jwtToken)
 		}
 
-		klog.Infof("Forwarding request to: %s%s", targetURL.String(), path)
+		klog.Infof("Forwarding request to: %s%s (session: %s)", targetURL.String(), path, sessionID)
 	}
 
 	// Customize error handler
 	proxy.ErrorHandler = func(_ http.ResponseWriter, _ *http.Request, err error) {
-		klog.Errorf("Proxy error: %v", err)
+		klog.Errorf("Proxy error (session: %s): %v", sessionID, err)
 
 		// Determine error type and return appropriate response
 		switch {

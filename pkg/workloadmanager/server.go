@@ -68,6 +68,10 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
+	// Initialize public key cache from Router's Secret in background
+	// This will retry until successful (handles case where Router isn't ready yet)
+	InitPublicKeyCache(k8sClient.clientset)
+
 	// Create sandbox store
 	sandboxStore := NewSandboxStore()
 

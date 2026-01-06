@@ -70,9 +70,9 @@ func NewServer(config Config) *Server {
 	engine.Use(gin.Logger())   // Request logging
 	engine.Use(gin.Recovery()) // Crash recovery
 
-	// Load public key from environment variable
+	// Load public key from environment variable (required)
 	if err := s.authManager.LoadPublicKeyFromEnv(); err != nil {
-		klog.Warningf("Failed to load public key from environment: %v. Server will reject authenticated requests until public key is available.", err)
+		klog.Fatalf("Failed to load public key from environment: %v", err)
 	}
 
 	// API route group (Authenticated)
@@ -108,16 +108,10 @@ func (s *Server) Run() error {
 
 // HealthCheckHandler handles health check requests
 func (s *Server) HealthCheckHandler(c *gin.Context) {
-	status := "ok"
-	if !s.authManager.IsInitialized() {
-		status = "degraded"
-	}
-
 	c.JSON(http.StatusOK, gin.H{
-		"status":      status,
-		"service":     "PicoD",
-		"version":     "0.0.1",
-		"uptime":      time.Since(s.startTime).String(),
-		"initialized": s.authManager.IsInitialized(),
+		"status":  "ok",
+		"service": "PicoD",
+		"version": "0.0.1",
+		"uptime":  time.Since(s.startTime).String(),
 	})
 }

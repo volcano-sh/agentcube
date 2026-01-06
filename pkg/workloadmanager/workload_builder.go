@@ -17,7 +17,10 @@ limitations under the License.
 package workloadmanager
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
@@ -41,6 +45,92 @@ const (
 	// PublicKeyDataKey is the key in the Secret data map for the public key
 	PublicKeyDataKey = "public.pem"
 )
+
+// IdentitySecretNamespace is the namespace where the identity secret is stored
+// This is read from AGENTCUBE_NAMESPACE env var
+var IdentitySecretNamespace = "default"
+
+func init() {
+	if ns := os.Getenv("AGENTCUBE_NAMESPACE"); ns != "" {
+		IdentitySecretNamespace = ns
+	}
+}
+
+// cachedPublicKey stores the public key loaded from Router's Secret
+// This allows PicoD pods to be created in any namespace without cross-namespace Secret references
+var (
+	cachedPublicKey     string
+	publicKeyCacheMutex sync.RWMutex
+)
+
+// GetCachedPublicKey returns the cached public key, or empty string if not loaded
+func GetCachedPublicKey() string {
+	publicKeyCacheMutex.RLock()
+	defer publicKeyCacheMutex.RUnlock()
+	return cachedPublicKey
+}
+
+// IsPublicKeyCached returns true if the public key has been successfully loaded
+func IsPublicKeyCached() bool {
+	publicKeyCacheMutex.RLock()
+	defer publicKeyCacheMutex.RUnlock()
+	return cachedPublicKey != ""
+}
+
+// InitPublicKeyCache starts a background goroutine that continuously tries to load
+// the public key from Router's Secret until successful. This handles the case where
+// Router hasn't started yet when WorkloadManager starts.
+func InitPublicKeyCache(clientset kubernetes.Interface) {
+	go func() {
+		retryInterval := 5 * time.Second
+		maxRetryInterval := 60 * time.Second
+
+		for {
+			if IsPublicKeyCached() {
+				return
+			}
+
+			err := loadPublicKeyFromSecret(clientset)
+			if err == nil {
+				klog.Infof("Public key cached from Secret %s/%s", IdentitySecretNamespace, IdentitySecretName)
+				return
+			}
+
+			klog.Warningf("Failed to load public key from Router Secret: %v. Retrying in %v...", err, retryInterval)
+			time.Sleep(retryInterval)
+
+			// Exponential backoff with max limit
+			retryInterval = retryInterval * 2
+			if retryInterval > maxRetryInterval {
+				retryInterval = maxRetryInterval
+			}
+		}
+	}()
+}
+
+// loadPublicKeyFromSecret reads the public key from Router's Secret
+func loadPublicKeyFromSecret(clientset kubernetes.Interface) error {
+	secret, err := clientset.CoreV1().Secrets(IdentitySecretNamespace).Get(
+		context.Background(),
+		IdentitySecretName,
+		metav1.GetOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to get Router identity secret %s/%s: %w",
+			IdentitySecretNamespace, IdentitySecretName, err)
+	}
+
+	publicKeyData, ok := secret.Data[PublicKeyDataKey]
+	if !ok {
+		return fmt.Errorf("public key not found in secret %s/%s (key: %s)",
+			IdentitySecretNamespace, IdentitySecretName, PublicKeyDataKey)
+	}
+
+	publicKeyCacheMutex.Lock()
+	cachedPublicKey = string(publicKeyData)
+	publicKeyCacheMutex.Unlock()
+	return nil
+}
 
 type buildSandboxParams struct {
 	namespace      string
@@ -191,6 +281,11 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 }
 
 func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxExternalInfo, error) {
+	// Check if public key is cached before creating pods that require it
+	if !IsPublicKeyCached() {
+		return nil, nil, nil, fmt.Errorf("public key not yet cached from Router Secret, cannot create PicoD pod")
+	}
+
 	codeInterpreterKey := namespace + "/" + codeInterpreterName
 	runtimeObj, exists, err := ifm.CodeInterpreterInformer.GetStore().GetByKey(codeInterpreterKey)
 	if err != nil {
@@ -264,17 +359,10 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				Image:           codeInterpreterObj.Spec.Template.Image,
 				ImagePullPolicy: codeInterpreterObj.Spec.Template.ImagePullPolicy,
 				Env: append(codeInterpreterObj.Spec.Template.Environment,
-					// Inject public key from Router's Secret as environment variable
+					// Inject public key (cached at startup from Router's Secret)
 					corev1.EnvVar{
-						Name: "PICOD_AUTH_PUBLIC_KEY",
-						ValueFrom: &corev1.EnvVarSource{
-							SecretKeyRef: &corev1.SecretKeySelector{
-								LocalObjectReference: corev1.LocalObjectReference{
-									Name: IdentitySecretName,
-								},
-								Key: PublicKeyDataKey,
-							},
-						},
+						Name:  "PICOD_AUTH_PUBLIC_KEY",
+						Value: GetCachedPublicKey(),
 					},
 				),
 				Command:   codeInterpreterObj.Spec.Template.Command,

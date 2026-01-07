@@ -185,7 +185,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		// Successfully received notification, cleanup will be handled by defer
 		createdSandbox = result.Sandbox
 		klog.Infof("sandbox %s/%s running", createdSandbox.Namespace, createdSandbox.Name)
-	case <-time.After(3 * time.Minute):
+	case <-time.After(2 * time.Minute): // consistent with router settings
 		// timeout, Sandbox/SandboxClaim maybe create successfully later,
 		// UnWatchSandbox will be called by defer to prevent memory leak
 		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)

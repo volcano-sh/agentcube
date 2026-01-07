@@ -24,9 +24,6 @@ type Config struct {
 	// Port is the port the API server listens on
 	Port string
 
-	// SandboxEndpoints is the list of available sandbox endpoints
-	SandboxEndpoints []string
-
 	// Debug enables debug mode
 	Debug bool
 
@@ -41,13 +38,4 @@ type Config struct {
 
 	// MaxConcurrentRequests limits the number of concurrent requests (0 = unlimited)
 	MaxConcurrentRequests int
-
-	// RequestTimeout sets the timeout for individual requests
-	RequestTimeout int // seconds
-
-	// MaxIdleConns sets the maximum number of idle connections in the connection pool
-	MaxIdleConns int
-
-	// MaxConnsPerHost sets the maximum number of connections per host
-	MaxConnsPerHost int
 }

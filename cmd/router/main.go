@@ -35,15 +35,12 @@ func main() {
 		tlsCert               = flag.String("tls-cert", "", "Path to TLS certificate file")
 		tlsKey                = flag.String("tls-key", "", "Path to TLS key file")
 		debug                 = flag.Bool("debug", false, "Enable debug mode")
-		maxConcurrentRequests = flag.Int("max-concurrent-requests", 1000, "Maximum number of concurrent requests")
-		requestTimeout        = flag.Int("request-timeout", 30, "Request timeout in seconds")
-		maxIdleConns          = flag.Int("max-idle-conns", 100, "Maximum number of idle connections")
-		maxConnsPerHost       = flag.Int("max-conns-per-host", 10, "Maximum number of connections per host")
+		maxConcurrentRequests = flag.Int("max-concurrent-requests", 1000, "Maximum number of concurrent requests that a router server can handle (0 = unlimited)")
 	)
 
 	// Initialize klog flags
 	klog.InitFlags(nil)
-	
+
 	// Parse command line flags
 	flag.Parse()
 
@@ -55,9 +52,6 @@ func main() {
 		TLSCert:               *tlsCert,
 		TLSKey:                *tlsKey,
 		MaxConcurrentRequests: *maxConcurrentRequests,
-		RequestTimeout:        *requestTimeout,
-		MaxIdleConns:          *maxIdleConns,
-		MaxConnsPerHost:       *maxConnsPerHost,
 	}
 
 	// Create Router API server

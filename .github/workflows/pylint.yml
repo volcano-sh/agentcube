@@ -1,0 +1,31 @@
+name: Python Lint
+
+on:
+  pull_request:
+    branches:
+      - main
+      - release
+    paths:
+      - "python/**"
+      - "**.py"
+      - "python/kthena/pyproject.toml"
+  push:
+    branches:
+      - main
+    paths:
+      - "python/**"
+      - "python/kthena/pyproject.toml"
+
+jobs:
+  python_lint:
+    name: Python Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+      - name: Run Lint
+        run: |
+          make lint-python

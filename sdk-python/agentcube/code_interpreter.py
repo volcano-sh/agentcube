@@ -20,6 +20,7 @@ from agentcube.clients.control_plane import ControlPlaneClient
 from agentcube.clients.data_plane import DataPlaneClient
 from agentcube.utils.log import get_logger
 
+
 class CodeInterpreterClient:
     """
     AgentCube Code Interpreter Client.
@@ -27,8 +28,25 @@ class CodeInterpreterClient:
     Manages the lifecycle of a Code Interpreter session and provides methods
     to execute code and manage files within it.
     
-    Note: JWT authentication is now handled by the Router. The SDK no longer
-    needs to generate keys or sign requests.
+    The session is created immediately upon initialization (or reused if
+    session_id is provided). Use close() to release connections while keeping
+    the session alive, or delete() to terminate the session.
+    
+    Example:
+        # Create new session
+        client = CodeInterpreterClient()
+        print(client.session_id)  # Available immediately
+        
+        # Reuse existing session
+        client2 = CodeInterpreterClient(session_id=client.session_id)
+        
+        # Context manager (calls close() on exit, session persists)
+        with CodeInterpreterClient() as client:
+            result = client.run_code("python", "print('hello')")
+            session_id = client.session_id  # Save for later reuse
+        
+        # Explicit cleanup
+        client.delete()  # Terminates the session
     """
     
     def __init__(
@@ -39,19 +57,24 @@ class CodeInterpreterClient:
         workload_manager_url: Optional[str] = None,
         router_url: Optional[str] = None,
         auth_token: Optional[str] = None,
-        verbose: bool = False
+        verbose: bool = False,
+        session_id: Optional[str] = None,
     ):
         """
         Initialize the Code Interpreter Client.
         
+        Creates a new session immediately, or reuses an existing session if
+        session_id is provided.
+        
         Args:
             name: Name of the CodeInterpreter template (CRD name).
             namespace: Kubernetes namespace.
-            ttl: Time to live (seconds).
+            ttl: Time to live (seconds) for new sessions.
             workload_manager_url: URL of WorkloadManager (Control Plane).
             router_url: URL of Router (Data Plane).
             auth_token: Auth token for Kubernetes/WorkloadManager.
             verbose: Enable debug logging.
+            session_id: Optional. Reuse an existing session instead of creating new one.
         """
         self.name = name
         self.namespace = namespace
@@ -62,66 +85,76 @@ class CodeInterpreterClient:
         level = logging.DEBUG if verbose else logging.INFO
         self.logger = get_logger(__name__, level=level)
         
-        # Clients
+        # Initialize Control Plane client
         self.cp_client = ControlPlaneClient(workload_manager_url, auth_token)
         if verbose:
             self.cp_client.logger.setLevel(logging.DEBUG)
 
+        # Validate Router URL
         router_url = router_url or os.getenv("ROUTER_URL")
         if not router_url:
-            raise ValueError("Router URL for Data Plane communication must be provided via 'router_url' argument or 'ROUTER_URL' environment variable.")
+            raise ValueError(
+                "Router URL for Data Plane communication must be provided via "
+                "'router_url' argument or 'ROUTER_URL' environment variable."
+            )
         self.router_url = router_url
         
-        self.dp_client: Optional[DataPlaneClient] = None
-        self.session_id: Optional[str] = None
-
-    def start(self):
-        """Start the session (if not already started)."""
-        if self.session_id:
-            return
-
-        self.logger.info("Creating session...")
-
-        self.session_id = self.cp_client.create_session(
-            name=self.name,
-            namespace=self.namespace,
-            ttl=self.ttl
-        )
+        # Create or reuse session
+        if session_id:
+            self.logger.info(f"Reusing existing session: {session_id}")
+            self.session_id = session_id
+        else:
+            self.logger.info("Creating new session...")
+            self.session_id = self.cp_client.create_session(
+                name=self.name,
+                namespace=self.namespace,
+                ttl=self.ttl
+            )
+            self.logger.info(f"Session created: {self.session_id}")
         
-        self.logger.info(f"Session created: {self.session_id}")
-        
-        # Initialize Data Plane - no keys needed, Router handles JWT
+        # Initialize Data Plane client
         self.dp_client = DataPlaneClient(
             cr_name=self.name,
             router_url=self.router_url,
             namespace=self.namespace,
             session_id=self.session_id,
         )
-        if self.verbose:
+        if verbose:
             self.dp_client.logger.setLevel(logging.DEBUG)
 
-    def _ensure_started(self):
-        """Lazy initialization of the session."""
-        if not self.session_id:
-            self.start()
-
     def __enter__(self):
-        self.start()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.stop()
+        self.close()
 
-    def stop(self):
-        """Stop the session."""
+    def close(self):
+        """
+        Close connections without deleting the session.
+        
+        The session remains alive on the server and can be reused by creating
+        a new CodeInterpreterClient with the same session_id.
+        """
         if self.dp_client:
             self.dp_client.close()
-            
-        if self.session_id:
-            self.logger.info(f"Deleting session {self.session_id}...")
-            self.cp_client.delete_session(self.session_id)
-            self.session_id = None
-            self.dp_client = None
+        self.cp_client.close()
+        self.logger.debug(f"Connections closed for session {self.session_id}")
+
+    def delete(self):
+        """
+        Delete the session from the server.
+        
+        This terminates the Code Interpreter instance. After calling this,
+        the session_id can no longer be reused.
+        """
+        if not self.session_id:
+            self.logger.warning("No session to delete")
+            return
+        
+        self.logger.info(f"Deleting session {self.session_id}...")
+        self.cp_client.delete_session(self.session_id)
+        self.close()
+        self.session_id = None
 
     # --- Data Plane Methods ---
 
@@ -136,9 +169,6 @@ class CodeInterpreterClient:
         Returns:
             str: The output of the command.
         """
-        self._ensure_started()
-        if not self.dp_client:
-             raise RuntimeError("Data Plane client not initialized.")
         return self.dp_client.execute_command(command, timeout)
 
     def run_code(self, language: str, code: str, timeout: Optional[float] = None) -> str:
@@ -157,9 +187,6 @@ class CodeInterpreterClient:
         Returns:
             The standard output (stdout) generated by the code execution.
         """
-        self._ensure_started()
-        if not self.dp_client:
-             raise RuntimeError("Data Plane client not initialized.")
         return self.dp_client.run_code(language, code, timeout)
 
     def write_file(self, content: str, remote_path: str):
@@ -170,12 +197,7 @@ class CodeInterpreterClient:
             content: The string content to write to the file.
             remote_path: The destination path of the file in the remote environment.
                          This path is relative to the session's working directory.
-        Raises:
-            RuntimeError: If the data plane client is not initialized.
         """
-        self._ensure_started()
-        if not self.dp_client:
-             raise RuntimeError("Data Plane client not initialized.")
         self.dp_client.write_file(content, remote_path)
 
     def upload_file(self, local_path: str, remote_path: str):
@@ -186,12 +208,7 @@ class CodeInterpreterClient:
             local_path: The path to the file on the local filesystem.
             remote_path: The destination path of the file in the remote environment.
                          This path is relative to the session's working directory.
-        Raises:
-            RuntimeError: If the data plane client is not initialized.
         """
-        self._ensure_started()
-        if not self.dp_client:
-             raise RuntimeError("Data Plane client not initialized.")
         self.dp_client.upload_file(local_path, remote_path)
 
     def download_file(self, remote_path: str, local_path: str):
@@ -202,15 +219,8 @@ class CodeInterpreterClient:
             remote_path: The path to the file in the remote environment.
                          This path is relative to the session's working directory.
             local_path: The destination path on the local filesystem to save the file.
-        Returns:
-            The content of the downloaded file as a string.
-        Raises:
-            RuntimeError: If the data plane client is not initialized.
         """
-        self._ensure_started()
-        if not self.dp_client:
-             raise RuntimeError("Data Plane client not initialized.")
-        return self.dp_client.download_file(remote_path, local_path)
+        self.dp_client.download_file(remote_path, local_path)
 
     def list_files(self, path: str = "."):
         """
@@ -220,11 +230,6 @@ class CodeInterpreterClient:
             path: The directory path to list. Defaults to ".". This path is relative
                   to the session's working directory.
         Returns:
-            A list of strings, where each string is a file or directory name.
-        Raises:
-            RuntimeError: If the data plane client is not initialized.
+            A list of file/directory information dicts.
         """
-        self._ensure_started()
-        if not self.dp_client:
-             raise RuntimeError("Data Plane client not initialized.")
         return self.dp_client.list_files(path)

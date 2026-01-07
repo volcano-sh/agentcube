@@ -2,136 +2,103 @@
 
 The official Python SDK for **AgentCube**, enabling programmatic interaction with secure, isolated Code Interpreter environments.
 
-This SDK creates a seamless bridge between your application and the AgentCube runtime, handling the complexity of:
-*   **Session Management**: Automatically creating and destroying isolated environments.
-*   **Security**: End-to-end encryption using client-generated RSA keys and JWTs.
-*   **Execution**: Running shell commands and code (Python, Bash) remotely.
-*   **File Management**: Uploading and downloading files to/from the sandbox.
-
-## Features
-
-*   **Secure by Design**: Uses asymmetric cryptography (RSA-2048) to authorize Data Plane requests. Only the client holding the private key can execute code.
-*   **Simple API**: Pythonic context managers (`with` statement) for automatic resource cleanup.
-*   **Flexible**: Supports both short-lived (ephemeral) and long-running sessions.
-*   **Kubernetes Native**: Automatically authenticates using Service Account tokens when running in-cluster.
-
 ## Installation
 
-**From Source**:
 ```bash
 git clone https://github.com/volcano-sh/agentcube.git
 cd agentcube/sdk-python
 pip install .
 ```
 
-**Development Mode**:
-```bash
-pip install -e .
-```
-
-## Usage
-
-### Quick Start (Context Manager)
-
-The recommended way to use the SDK is with a context manager, which ensures the session is properly closed (and the remote pod deleted) when done.
+## Quick Start
 
 ```python
 from agentcube import CodeInterpreterClient
 
-# Initialize client (uses env vars for configuration)
+client = CodeInterpreterClient()
+
+# Execute commands and code
+client.execute_command("whoami")
+output = client.run_code("python", "print('Hello, AgentCube!')")
+
+# Cleanup when done
+client.delete()
+```
+
+### With Context Manager
+
+```python
 with CodeInterpreterClient() as client:
-    # 1. Run a simple shell command
-    print("User: whoami")
-    print(client.execute_command("whoami"))
-
-    # 2. Execute Python code
-    code = """
-    import math
-    print(f"Pi is approximately {math.pi:.4f}")
-    """
-    output = client.run_code("python", code)
-    print(f"Result: {output}")
+    output = client.run_code("python", "print(2 + 2)")
+# Connections closed automatically
 ```
 
-### File Operations
-
-You can easily move files in and out of the sandbox.
+## File Operations
 
 ```python
-with CodeInterpreterClient() as sandbox:
-    # Upload a local dataset
-    sandbox.upload_file("./data.csv", "/workspace/data.csv")
-    
-    # Process it with Python
-    script = """
-    import pandas as pd
-    df = pd.read_csv('/workspace/data.csv')
-    df.describe().to_csv('/workspace/summary.csv')
-    """
-    sandbox.run_code("python", script)
-    
-    # Download the result
-    sandbox.download_file("/workspace/summary.csv", "./summary.csv")
+client = CodeInterpreterClient()
+
+client.upload_file("./data.csv", "/workspace/data.csv")
+client.run_code("python", """
+import pandas as pd
+df = pd.read_csv('/workspace/data.csv')
+df.describe().to_csv('/workspace/summary.csv')
+""")
+client.download_file("/workspace/summary.csv", "./summary.csv")
+
+client.delete()
 ```
 
-### Manual Lifecycle Management
+## API Reference
 
-For long-running applications (like a web server managing user sessions), you can manually control the lifecycle.
+| Method | Description |
+|--------|-------------|
+| `execute_command(cmd)` | Execute shell command |
+| `run_code(language, code)` | Execute code (python/bash) |
+| `upload_file(local, remote)` | Upload file to sandbox |
+| `download_file(remote, local)` | Download file from sandbox |
+| `write_file(content, path)` | Write string to file |
+| `list_files(path)` | List directory contents |
+| `close()` | Close connections |
+| `delete()` | Delete session from server |
 
-```python
-# Create a session with a 1-hour timeout
-client = CodeInterpreterClient(ttl=3600) 
-
-try:
-    client.execute_command("echo 'Session started'")
-    # ... perform operations ...
-finally:
-    client.stop() # CRITICAL: Ensure resources are released
-```
-
-### Customizing the Environment
+## Configuration
 
 ```python
 client = CodeInterpreterClient(
-    name="custom-template",    # Name of the CodeInterpreter CRD template to use
-    namespace="agentcube",     # Kubernetes namespace where AgentCube runs
-    ttl=7200,                  # 2 hours Time-To-Live
-    verbose=True               # Enable debug logging
+    name="custom-template",        # CodeInterpreter CRD template name
+    namespace="agentcube",         # Kubernetes namespace
+    ttl=7200,                      # Session TTL (seconds)
+    verbose=True                   # Enable debug logging
 )
 ```
 
-## Architecture
+**Environment Variables**:
 
-The SDK operates on a **Split-Plane Architecture**:
+- `WORKLOAD_MANAGER_URL`: Control Plane URL
+- `ROUTER_URL`: Data Plane URL  
+- `API_TOKEN`: Authentication token
 
-1.  **Control Plane (Workload Manager)**: 
-    *   The SDK authenticates via K8s Service Account Token.
-    *   It requests a new session and sends a locally generated **Public Key**.
-    *   The Workload Manager creates the Pod and injects this Public Key.
-2.  **Data Plane (Router -> PicoD)**: 
-    *   The SDK uses the corresponding **Private Key** to sign JWTs for every execution request.
-    *   The agent inside the Pod (PicoD) validates the JWT using the injected Public Key.
-    *   This ensures that **only** the SDK instance that created the session can execute code in it.
+## Advanced: Session Reuse
+
+For workflows requiring state persistence across multiple invocations:
+
+```python
+# First invocation
+client1 = CodeInterpreterClient()
+session_id = client1.session_id
+client1.run_code("python", "x = 42")
+client1.close()
+
+# Later invocation - reuse session
+client2 = CodeInterpreterClient(session_id=session_id)
+client2.run_code("python", "print(x)")  # x still exists
+client2.delete()
+```
 
 ## Development
 
-### Building the Package
-
-Use the provided Makefile in the root directory to build the distribution packages (Wheel and Source):
-
 ```bash
-# Build the Python SDK
 make build-python-sdk
-```
-
-Artifacts will be generated in `sdk-python/dist/`.
-
-### Running Tests
-
-```bash
-# Install test dependencies
-pip install pytest requests PyJWT cryptography
-
-# Run E2E tests (requires local Docker environment for mocking)
 python3 tests/e2e_picod_test.py
 ```

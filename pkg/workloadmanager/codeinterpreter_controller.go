@@ -133,6 +133,11 @@ func (r *CodeInterpreterReconciler) updateStatus(ctx context.Context, ci *runtim
 
 // ensureSandboxTemplate ensures that a SandboxTemplate exists for this CodeInterpreter
 func (r *CodeInterpreterReconciler) ensureSandboxTemplate(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) error {
+	// Check if public key is cached before creating SandboxTemplate that requires it
+	if !IsPublicKeyCached() {
+		return fmt.Errorf("waiting for public key to be cached from Router Secret; ensure Router has started and created the identity Secret before creating SandboxTemplate")
+	}
+
 	template := ci.Spec.Template
 	if template == nil {
 		return fmt.Errorf("template is required")
@@ -302,28 +307,17 @@ func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alph
 				ImagePullPolicy: template.ImagePullPolicy,
 				Command:         template.Command,
 				Args:            template.Args,
-				Env:             template.Environment,
-				Resources:       template.Resources,
-				VolumeMounts: []corev1.VolumeMount{
-					{
-						Name:      JWTKeyVolumeName,
-						MountPath: "/etc/picod",
-						ReadOnly:  true,
+				Env: append(template.Environment,
+					// Inject public key (cached at startup from Router's Secret)
+					corev1.EnvVar{
+						Name:  "PICOD_AUTH_PUBLIC_KEY",
+						Value: GetCachedPublicKey(),
 					},
-				},
+				),
+				Resources: template.Resources,
 			},
 		},
 		RuntimeClassName: runtimeClassName,
-		Volumes: []corev1.Volume{
-			{
-				Name: JWTKeyVolumeName,
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName: JWTKeySecretName,
-					},
-				},
-			},
-		},
 	}
 
 	return sandboxv1alpha1.PodTemplate{

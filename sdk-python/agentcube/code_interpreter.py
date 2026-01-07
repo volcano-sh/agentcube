@@ -13,12 +13,8 @@
 # limitations under the License.
 
 import os
-import base64
 import logging
 from typing import Optional
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.backends import default_backend
 
 from agentcube.clients.control_plane import ControlPlaneClient
 from agentcube.clients.data_plane import DataPlaneClient
@@ -30,6 +26,9 @@ class CodeInterpreterClient:
     
     Manages the lifecycle of a Code Interpreter session and provides methods
     to execute code and manage files within it.
+    
+    Note: JWT authentication is now handled by the Router. The SDK no longer
+    needs to generate keys or sign requests.
     """
     
     def __init__(
@@ -75,36 +74,28 @@ class CodeInterpreterClient:
         
         self.dp_client: Optional[DataPlaneClient] = None
         self.session_id: Optional[str] = None
-        self.private_key: Optional[rsa.RSAPrivateKey] = None
-        self.public_key_pem: Optional[str] = None
 
     def start(self):
         """Start the session (if not already started)."""
         if self.session_id:
             return
 
-        self.logger.info("Generating keys...")
-        self._generate_keys()
-
-        # Picod expects the public key to be passed as a base64-encoded PEM string, with padding characters removed.
-        public_key_b64 = base64.b64encode(self.public_key_pem.encode('utf-8')).decode('utf-8').rstrip('=')
+        self.logger.info("Creating session...")
 
         self.session_id = self.cp_client.create_session(
             name=self.name,
             namespace=self.namespace,
-            public_key=public_key_b64,
             ttl=self.ttl
         )
         
         self.logger.info(f"Session created: {self.session_id}")
         
-        # Initialize Data Plane
+        # Initialize Data Plane - no keys needed, Router handles JWT
         self.dp_client = DataPlaneClient(
             cr_name=self.name,
             router_url=self.router_url,
             namespace=self.namespace,
             session_id=self.session_id,
-            private_key=self.private_key
         )
         if self.verbose:
             self.dp_client.logger.setLevel(logging.DEBUG)
@@ -113,20 +104,6 @@ class CodeInterpreterClient:
         """Lazy initialization of the session."""
         if not self.session_id:
             self.start()
-
-    def _generate_keys(self):
-        """Generate RSA 2048 key pair."""
-        self.private_key = rsa.generate_private_key(
-            public_exponent=65537,
-            key_size=2048,
-            backend=default_backend()
-        )
-        
-        pub = self.private_key.public_key()
-        self.public_key_pem = pub.public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
-        ).decode('utf-8')
 
     def __enter__(self):
         self.start()

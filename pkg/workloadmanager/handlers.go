@@ -61,7 +61,8 @@ func (s *Server) extractUserK8sClient(c *gin.Context) (dynamic.Interface, error)
 	return userClient.dynamicClient, nil
 }
 
-func (s *Server) codeInterpreterInitialization(ctx context.Context, sandboxReq *types.CreateSandboxRequest, sandboxResp *types.CreateSandboxResponse, storeCacheInfo *types.SandboxInfo, externalInfo *sandboxExternalInfo, podIP string) error {
+//nolint:unparam // error return kept for future extensibility
+func (s *Server) codeInterpreterInitialization(_ context.Context, sandboxReq *types.CreateSandboxRequest, sandboxResp *types.CreateSandboxResponse, storeCacheInfo *types.SandboxInfo, externalInfo *sandboxExternalInfo, podIP string) error {
 	// Check if CodeInterpreter need initialization
 	if externalInfo.NeedInitialization == false {
 		klog.Infof("skipping initialization for sandbox %s/%s", sandboxReq.Namespace, sandboxReq.Name)
@@ -80,33 +81,8 @@ func (s *Server) codeInterpreterInitialization(ctx context.Context, sandboxReq *
 		sandboxResp.EntryPoints = storeCacheInfo.EntryPoints
 	}
 
-	// Code Interpreter sandbox created, init code interpreter
-	// Find the /init endpoint from entryPoints
-	var initEndpoint string
-	for _, access := range storeCacheInfo.EntryPoints {
-		if access.Path == "/init" {
-			initEndpoint = fmt.Sprintf("%s://%s", access.Protocol, access.Endpoint)
-			break
-		}
-	}
-
-	// If no /init path found, use the first entryPoint endpoint fallback
-	if initEndpoint == "" {
-		initEndpoint = fmt.Sprintf("%s://%s", storeCacheInfo.EntryPoints[0].Protocol,
-			storeCacheInfo.EntryPoints[0].Endpoint)
-	}
-
-	// Call sandbox init endpoint with JWT-signed request
-	err := s.InitCodeInterpreterSandbox(
-		ctx,
-		initEndpoint,
-		externalInfo.SessionID,
-		sandboxReq.PublicKey,
-		sandboxReq.Metadata,
-		sandboxReq.InitTimeoutSeconds,
-	)
-
-	return err
+	klog.Infof("Code interpreter sandbox %s/%s ready", sandboxReq.Namespace, sandboxReq.Name)
+	return nil
 }
 
 // handleCreateSandbox do create sandbox

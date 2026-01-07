@@ -39,7 +39,6 @@ type Server struct {
 	tokenCache        *TokenCache
 	informers         *Informers
 	storeClient       store.Store
-	jwtManager        *JWTManager
 }
 
 type Config struct {
@@ -69,17 +68,15 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
+	// Initialize public key cache from Router's Secret in background
+	// This will retry until successful (handles case where Router isn't ready yet)
+	InitPublicKeyCache(k8sClient.clientset)
+
 	// Create sandbox store
 	sandboxStore := NewSandboxStore()
 
 	// Create token cache (cache up to 1000 tokens, 5min TTL)
 	tokenCache := NewTokenCache(1000, 5*time.Minute)
-
-	// Create JWT manager for signing sandbox init requests
-	jwtManager, err := NewJWTManager()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create JWT manager: %w", err)
-	}
 
 	server := &Server{
 		config:            config,
@@ -89,7 +86,6 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 		tokenCache:        tokenCache,
 		informers:         NewInformers(k8sClient),
 		storeClient:       store.Storage(),
-		jwtManager:        jwtManager,
 	}
 
 	// Setup routes
@@ -127,10 +123,6 @@ func (s *Server) setupRoutes() {
 
 // Start starts the API server
 func (s *Server) Start(ctx context.Context) error {
-	if err := s.TryStoreOrLoadJWTKeySecret(ctx); err != nil {
-		return fmt.Errorf("failed to store or load JWT key: %w", err)
-	}
-
 	// Initialize store with informer before starting server
 	if err := s.InitializeStore(ctx); err != nil {
 		return fmt.Errorf("failed to initialize sandbox store: %w", err)

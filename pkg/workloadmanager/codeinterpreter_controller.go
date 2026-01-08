@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -67,9 +68,13 @@ func (r *CodeInterpreterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// Manage SandboxTemplate and SandboxWarmPool if configured
 	if codeInterpreter.Spec.WarmPoolSize != nil && *codeInterpreter.Spec.WarmPoolSize > 0 {
 		// Ensure SandboxTemplate exists (required for SandboxWarmPool)
-		if err := r.ensureSandboxTemplate(ctx, codeInterpreter); err != nil {
+		result, err := r.ensureSandboxTemplate(ctx, codeInterpreter)
+		if err != nil {
 			logger.Error(err, "failed to ensure SandboxTemplate")
 			return ctrl.Result{}, err
+		}
+		if result.RequeueAfter > 0 {
+			return result, nil
 		}
 		// Ensure SandboxWarmPool exists
 		if err := r.ensureSandboxWarmPool(ctx, codeInterpreter); err != nil {
@@ -132,15 +137,18 @@ func (r *CodeInterpreterReconciler) updateStatus(ctx context.Context, ci *runtim
 }
 
 // ensureSandboxTemplate ensures that a SandboxTemplate exists for this CodeInterpreter
-func (r *CodeInterpreterReconciler) ensureSandboxTemplate(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) error {
+func (r *CodeInterpreterReconciler) ensureSandboxTemplate(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
 	// Check if public key is cached before creating SandboxTemplate that requires it
 	if !IsPublicKeyCached() {
-		return fmt.Errorf("waiting for public key to be cached from Router Secret; ensure Router has started and created the identity Secret before creating SandboxTemplate")
+		logger.Info("waiting for public key to be cached from Router Secret; ensure Router has started and created the identity Secret")
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	template := ci.Spec.Template
 	if template == nil {
-		return fmt.Errorf("template is required")
+		return ctrl.Result{}, fmt.Errorf("template is required")
 	}
 
 	templateName := ci.Name
@@ -164,28 +172,28 @@ func (r *CodeInterpreterReconciler) ensureSandboxTemplate(ctx context.Context, c
 
 		// Set owner reference
 		if err := controllerutil.SetControllerReference(ci, sandboxTemplate, r.Scheme); err != nil {
-			return fmt.Errorf("failed to set controller reference: %w", err)
+			return ctrl.Result{}, fmt.Errorf("failed to set controller reference: %w", err)
 		}
 
 		if err := r.Create(ctx, sandboxTemplate); err != nil {
 			if !errors.IsAlreadyExists(err) {
-				return fmt.Errorf("failed to create SandboxTemplate: %w", err)
+				return ctrl.Result{}, fmt.Errorf("failed to create SandboxTemplate: %w", err)
 			}
 		}
-		return nil
+		return ctrl.Result{}, nil
 	} else if err != nil {
-		return fmt.Errorf("failed to get SandboxTemplate: %w", err)
+		return ctrl.Result{}, fmt.Errorf("failed to get SandboxTemplate: %w", err)
 	}
 
 	// Update existing SandboxTemplate if needed
 	if !r.podTemplateEqual(sandboxTemplate.Spec.PodTemplate, podTemplate) {
 		sandboxTemplate.Spec.PodTemplate = podTemplate
 		if err := r.Update(ctx, sandboxTemplate); err != nil {
-			return fmt.Errorf("failed to update SandboxTemplate: %w", err)
+			return ctrl.Result{}, fmt.Errorf("failed to update SandboxTemplate: %w", err)
 		}
 	}
 
-	return nil
+	return ctrl.Result{}, nil
 }
 
 // ensureSandboxWarmPool ensures that a SandboxWarmPool exists for this CodeInterpreter

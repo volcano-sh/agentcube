@@ -70,7 +70,12 @@ func NewSessionManager(storeClient store.Store) (SessionManager, error) {
 		storeClient:     storeClient,
 		workloadMgrAddr: workloadMgrAddr,
 		httpClient: &http.Client{
-			Timeout: time.Minute, // 1-minute for createSandbox requests
+			Timeout: 2 * time.Minute, // consistent with manager setting
+			Transport: &http.Transport{
+				ForceAttemptHTTP2:   true,
+				MaxIdleConnsPerHost: 100,
+				DisableCompression:  false,
+			},
 		},
 	}, nil
 }

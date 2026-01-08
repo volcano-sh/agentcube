@@ -141,11 +141,10 @@ func (s *Server) Start(ctx context.Context) error {
 	addr := ":" + s.config.Port
 
 	s.httpServer = &http.Server{
-		Addr:         addr,
-		Handler:      s.router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:        addr,
+		Handler:     s.router,
+		ReadTimeout: 15 * time.Second,
+		IdleTimeout: 90 * time.Second, // golang http default transport's idletimeout is 90s
 	}
 
 	// Listen for shutdown signal in goroutine

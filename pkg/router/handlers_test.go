@@ -263,8 +263,7 @@ func TestHandleAgentInvoke(t *testing.T) {
 	defer testServer.Close()
 
 	config := &Config{
-		Port:           "8080",
-		RequestTimeout: 30,
+		Port: "8080",
 	}
 
 	server, err := NewServer(config)
@@ -333,8 +332,7 @@ func TestHandleCodeInterpreterInvoke(t *testing.T) {
 	defer testServer.Close()
 
 	config := &Config{
-		Port:           "8080",
-		RequestTimeout: 30,
+		Port: "8080",
 	}
 
 	server, err := NewServer(config)
@@ -392,8 +390,7 @@ func TestForwardToSandbox_InvalidEndpoint(t *testing.T) {
 	}()
 
 	config := &Config{
-		Port:           "8080",
-		RequestTimeout: 30,
+		Port: "8080",
 	}
 
 	server, err := NewServer(config)
@@ -439,7 +436,6 @@ func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 	config := &Config{
 		Port:                  "8080",
 		MaxConcurrentRequests: 1, // Set to 1 to easily trigger overload
-		RequestTimeout:        30,
 	}
 
 	server, err := NewServer(config)

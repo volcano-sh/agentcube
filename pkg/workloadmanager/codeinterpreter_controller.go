@@ -141,7 +141,8 @@ func (r *CodeInterpreterReconciler) ensureSandboxTemplate(ctx context.Context, c
 	logger := log.FromContext(ctx)
 
 	// Check if public key is cached before creating SandboxTemplate that requires it
-	if !IsPublicKeyCached() {
+	// Skip this check if authMode is "none" (custom images that don't use PicoD auth)
+	if ci.Spec.AuthMode != runtimev1alpha1.AuthModeNone && !IsPublicKeyCached() {
 		logger.Info("waiting for public key to be cached from Router Secret; ensure Router has started and created the identity Secret")
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
@@ -298,11 +299,22 @@ func (r *CodeInterpreterReconciler) deleteSandboxTemplate(ctx context.Context, c
 }
 
 // convertToPodTemplate converts CodeInterpreterSandboxTemplate to sandboxv1alpha1.PodTemplate
-func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alpha1.CodeInterpreterSandboxTemplate, _ *runtimev1alpha1.CodeInterpreter) sandboxv1alpha1.PodTemplate {
+func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alpha1.CodeInterpreterSandboxTemplate, ci *runtimev1alpha1.CodeInterpreter) sandboxv1alpha1.PodTemplate {
 	// Normalize RuntimeClassName: if it's an empty string, set it to nil
 	runtimeClassName := template.RuntimeClassName
 	if runtimeClassName != nil && *runtimeClassName == "" {
 		runtimeClassName = nil
+	}
+
+	// Build environment variables - create a copy to avoid mutating the cached object
+	envVars := make([]corev1.EnvVar, len(template.Environment))
+	copy(envVars, template.Environment)
+	// Only inject public key for picod auth mode (default behavior)
+	if ci.Spec.AuthMode != runtimev1alpha1.AuthModeNone {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "PICOD_AUTH_PUBLIC_KEY",
+			Value: GetCachedPublicKey(),
+		})
 	}
 
 	// Build pod spec
@@ -315,14 +327,8 @@ func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alph
 				ImagePullPolicy: template.ImagePullPolicy,
 				Command:         template.Command,
 				Args:            template.Args,
-				Env: append(template.Environment,
-					// Inject public key (cached at startup from Router's Secret)
-					corev1.EnvVar{
-						Name:  "PICOD_AUTH_PUBLIC_KEY",
-						Value: GetCachedPublicKey(),
-					},
-				),
-				Resources: template.Resources,
+				Env:             envVars,
+				Resources:       template.Resources,
 			},
 		},
 		RuntimeClassName: runtimeClassName,

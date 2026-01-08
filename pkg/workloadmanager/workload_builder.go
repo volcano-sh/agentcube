@@ -288,11 +288,6 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 }
 
 func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxExternalInfo, error) {
-	// Check if public key is cached before creating pods that require it
-	if !IsPublicKeyCached() {
-		return nil, nil, nil, ErrPublicKeyMissing
-	}
-
 	codeInterpreterKey := namespace + "/" + codeInterpreterName
 	runtimeObj, exists, err := ifm.CodeInterpreterInformer.GetStore().GetByKey(codeInterpreterKey)
 	if err != nil {
@@ -312,6 +307,12 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	var codeInterpreterObj runtimev1alpha1.CodeInterpreter
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.Object, &codeInterpreterObj); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to convert unstructured to CodeInterpreter: %w", err)
+	}
+
+	// Check if public key is cached before creating pods that require it
+	// Skip this check if authMode is "none" (custom images that don't use PicoD auth)
+	if codeInterpreterObj.Spec.AuthMode != runtimev1alpha1.AuthModeNone && !IsPublicKeyCached() {
+		return nil, nil, nil, fmt.Errorf("public key not yet cached from Router Secret, cannot create PicoD pod")
 	}
 
 	sessionID := uuid.New().String()
@@ -357,6 +358,17 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		runtimeClassName = nil
 	}
 
+	// Build environment variables - create a copy to avoid mutating the informer cached object
+	envVars := make([]corev1.EnvVar, len(codeInterpreterObj.Spec.Template.Environment))
+	copy(envVars, codeInterpreterObj.Spec.Template.Environment)
+	// Only inject public key for picod auth mode (default behavior)
+	if codeInterpreterObj.Spec.AuthMode != runtimev1alpha1.AuthModeNone {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "PICOD_AUTH_PUBLIC_KEY",
+			Value: GetCachedPublicKey(),
+		})
+	}
+
 	podSpec := corev1.PodSpec{
 		ImagePullSecrets: codeInterpreterObj.Spec.Template.ImagePullSecrets,
 		RuntimeClassName: runtimeClassName,
@@ -365,16 +377,10 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				Name:            "code-interpreter",
 				Image:           codeInterpreterObj.Spec.Template.Image,
 				ImagePullPolicy: codeInterpreterObj.Spec.Template.ImagePullPolicy,
-				Env: append(codeInterpreterObj.Spec.Template.Environment,
-					// Inject public key (cached at startup from Router's Secret)
-					corev1.EnvVar{
-						Name:  "PICOD_AUTH_PUBLIC_KEY",
-						Value: GetCachedPublicKey(),
-					},
-				),
-				Command:   codeInterpreterObj.Spec.Template.Command,
-				Args:      codeInterpreterObj.Spec.Template.Args,
-				Resources: codeInterpreterObj.Spec.Template.Resources,
+				Env:             envVars,
+				Command:         codeInterpreterObj.Spec.Template.Command,
+				Args:            codeInterpreterObj.Spec.Template.Args,
+				Resources:       codeInterpreterObj.Spec.Template.Resources,
 			},
 		},
 	}

@@ -78,6 +78,14 @@ type CodeInterpreterSpec struct {
 	// default true if NeedInitialization is nil
 	// +optional
 	NeedInitialization *bool `json:"needInitialization,omitempty"`
+
+	// AuthMode specifies the authentication mode for the sandbox runtime.
+	// - "picod" (default): Inject PICOD_AUTH_PUBLIC_KEY from Router Secret, requires Router to be running
+	// - "none": No authentication injection (for custom images that handle auth differently)
+	// +kubebuilder:default="picod"
+	// +kubebuilder:validation:Enum=picod;none
+	// +optional
+	AuthMode AuthModeType `json:"authMode,omitempty"`
 }
 
 // CodeInterpreterStatus represents the observed state of a CodeInterpreter.
@@ -166,6 +174,16 @@ type TargetPort struct {
 	// +kubebuilder:validation:Enum=HTTP;HTTPS;
 	Protocol ProtocolType `json:"protocol"`
 }
+
+// AuthModeType defines the authentication mode for the sandbox runtime.
+type AuthModeType string
+
+const (
+	// AuthModePicoD injects PICOD_AUTH_PUBLIC_KEY from Router Secret
+	AuthModePicoD AuthModeType = "picod"
+	// AuthModeNone disables auth injection for custom images
+	AuthModeNone AuthModeType = "none"
+)
 
 // ProtocolType defines the protocol for a port.
 type ProtocolType string

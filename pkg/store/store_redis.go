@@ -57,10 +57,12 @@ func makeRedisOptions() (*redisv9.Options, error) {
 	if redisAddr == "" {
 		return nil, fmt.Errorf("missing env var REDIS_ADDR")
 	}
+
 	redisPassword := os.Getenv("REDIS_PASSWORD")
 	if redisPassword == "" {
 		return nil, fmt.Errorf("missing env var REDIS_PASSWORD")
 	}
+
 	redisOptions := &redisv9.Options{
 		Addr:     redisAddr,
 		Password: redisPassword,

@@ -44,7 +44,7 @@ func TestMakeValkeyOptions(t *testing.T) {
 		opts, err := makeValkeyOptions()
 		assert.Nil(t, opts)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "missing env var VALKEY_PASSWORD")
+		assert.Contains(t, err.Error(), "VALKEY_PASSWORD is required but not set")
 	})
 
 	t.Run("all basic env vars exist", func(t *testing.T) {

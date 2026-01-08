@@ -230,7 +230,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 		return nil, nil, fmt.Errorf("get agent runtime %s from informer failed: %v", agentRuntimeKey, err)
 	}
 	if !exists {
-		return nil, nil, fmt.Errorf("agent runtime %s not found", agentRuntimeKey)
+		return nil, nil, fmt.Errorf("%w: %s", ErrAgentRuntimeNotFound, agentRuntimeKey)
 	}
 
 	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
@@ -245,7 +245,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	}
 
 	if agentRuntimeObj.Spec.Template == nil {
-		return nil, nil, fmt.Errorf("agent runtime %s has no template", agentRuntimeKey)
+		return nil, nil, fmt.Errorf("%w: %s", ErrTemplateMissing, agentRuntimeKey)
 	}
 
 	sessionID := uuid.New().String()
@@ -263,6 +263,13 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 		sandboxName:  sandboxName,
 		sessionID:    sessionID,
 		podSpec:      *podSpec,
+	}
+	// Apply labels and annotations from AgentRuntime template
+	if agentRuntimeObj.Spec.Template.Labels != nil {
+		buildParams.podLabels = agentRuntimeObj.Spec.Template.Labels
+	}
+	if agentRuntimeObj.Spec.Template.Annotations != nil {
+		buildParams.podAnnotations = agentRuntimeObj.Spec.Template.Annotations
 	}
 	if agentRuntimeObj.Spec.MaxSessionDuration != nil {
 		buildParams.ttl = agentRuntimeObj.Spec.MaxSessionDuration.Duration
@@ -283,7 +290,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxExternalInfo, error) {
 	// Check if public key is cached before creating pods that require it
 	if !IsPublicKeyCached() {
-		return nil, nil, nil, fmt.Errorf("public key not yet cached from Router Secret, cannot create PicoD pod")
+		return nil, nil, nil, ErrPublicKeyMissing
 	}
 
 	codeInterpreterKey := namespace + "/" + codeInterpreterName
@@ -293,7 +300,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 
 	if !exists {
-		return nil, nil, nil, fmt.Errorf("code interpreter %s not found", codeInterpreterKey)
+		return nil, nil, nil, fmt.Errorf("%w: %s", ErrCodeInterpreterNotFound, codeInterpreterKey)
 	}
 
 	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
@@ -341,7 +348,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 
 	if codeInterpreterObj.Spec.Template == nil {
-		return nil, nil, nil, fmt.Errorf("code interpreter %s has no template", codeInterpreterKey)
+		return nil, nil, nil, fmt.Errorf("%w: %s", ErrTemplateMissing, codeInterpreterKey)
 	}
 
 	// Normalize RuntimeClassName: if it's an empty string, set it to nil

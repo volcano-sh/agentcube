@@ -8,6 +8,39 @@ metadata:
   name: agentcube
 
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agentcube-router
+  namespace: agentcube
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agentcube-router
+  namespace: agentcube
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agentcube-router
+  namespace: agentcube
+subjects:
+  - kind: ServiceAccount
+    name: agentcube-router
+    namespace: agentcube
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agentcube-router
+
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,6 +58,7 @@ spec:
       labels:
         app: agentcube-router
     spec:
+      serviceAccountName: agentcube-router
       containers:
         - name: agentcube-router
           image: agentcube-router:latest
@@ -39,11 +73,11 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: REDIS_ADDR
-              value: "127.0.0.1:6379"
+              value: "redis.agentcube.svc.cluster.local:6379"
             - name: REDIS_PASSWORD
               value: ""
             - name: WORKLOAD_MANAGER_ADDR
-              value: "http://agentcube-workload-manager:8080"
+              value: "http://workloadmanager:8080"
           args:
             - --port=8080
             - --debug
@@ -56,13 +90,13 @@ spec:
               memory: 512Mi
           livenessProbe:
             httpGet:
-              path: /health
+              path: /health/live
               port: 8080
             initialDelaySeconds: 10
             periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /health
+              path: /health/ready
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 5

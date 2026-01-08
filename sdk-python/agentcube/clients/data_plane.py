@@ -90,7 +90,7 @@ class DataPlaneClient:
             "x-agentcube-session-id": self.session_id
         })
 
-    def _request(self, method: str, endpoint: str, body: bytes = None, **kwargs) -> requests.Response:
+    def _request(self, method: str, endpoint: str, body: Optional[bytes] = None, **kwargs) -> requests.Response:
         """Make a request to the Data Plane via Router.
         
         Note: Router handles JWT authentication, so we don't add Authorization header here.

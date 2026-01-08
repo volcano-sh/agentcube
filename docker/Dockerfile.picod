@@ -8,11 +8,18 @@ ARG TARGETARCH
 WORKDIR /app
 
 COPY go.mod go.sum ./
-RUN go mod download
+
+# Download dependencies with caching
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -a -installsuffix cgo -o picod ./cmd/picod
+# Build with caching
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -ldflags="-s -w" -o picod ./cmd/picod
 
 # Run stage
 FROM ubuntu:24.04

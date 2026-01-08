@@ -1,0 +1,21 @@
+name: Codespell
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  codespell:
+    name: Check for spelling errors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: codespell-project/actions-codespell@v2
+        with:
+          check_filenames: true
+          skip: ./.git,./go.sum,./*.png,./*.jpg,./*.gif,./*.sum,./bin,./vendor
+          ignore_words_list: fo,nam,te

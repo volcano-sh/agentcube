@@ -1,0 +1,34 @@
+name: Codegen Check
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'pkg/apis/**'
+      - 'hack/**'
+      - 'Makefile'
+  push:
+    branches:
+      - main
+    paths:
+      - 'pkg/apis/**'
+      - 'hack/**'
+      - 'Makefile'
+
+jobs:
+  check-codegen:
+    name: Check Generated Code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.4'
+
+      - name: Verify Generated Code
+        run: |
+          make gen-check

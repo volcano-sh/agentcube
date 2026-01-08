@@ -28,7 +28,7 @@ class CodeInterpreterClient:
     Manages the lifecycle of a Code Interpreter session and provides methods
     to execute code and manage files within it.
     
-    Session is created lazily on first API call (no need to call start() explicitly).
+    Session can be lazily created on first API call, or you can explicitly call start() to create one session beforehand.
     Call stop() to delete the session, or use context manager for automatic cleanup.
     
     Example:
@@ -161,7 +161,7 @@ class CodeInterpreterClient:
             str: The session ID.
         """
         self._ensure_started()
-        return self.session_id
+        return self._session_id
 
     def __enter__(self):
         return self

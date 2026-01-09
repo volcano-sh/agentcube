@@ -19,4 +19,4 @@ jobs:
         with:
           check_filenames: true
           skip: ./.git,./go.sum,./*.png,./*.jpg,./*.svg,./*.gif,./*.sum,./bin,./vendor
-          ignore_words_list: fo,nam,te
+          ignore_words_list: fo,nam,te,notin,NotIn

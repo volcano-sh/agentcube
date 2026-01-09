@@ -7,8 +7,12 @@ on:
       - release-*
     paths:
       - "python/**"
+      - "cmd/cli/**"
+      - "sdk-python/**"
+      - "example/**"
       - "**.py"
-
+      - "cmd/cli/pyproject.toml"
+      - "sdk-python/pyproject.toml"
 jobs:
   python_lint:
     name: Python Lint

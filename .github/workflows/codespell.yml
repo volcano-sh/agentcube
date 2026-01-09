@@ -15,13 +15,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run codespell without config files
+      
+      - name: Backup and remove problematic TOML files
         run: |
-          # Install codespell directly to bypass config detection
+          # Backup TOML files
+          mkdir -p /tmp/toml_backup
+          find . -name "pyproject.toml" -exec cp {} /tmp/toml_backup/ \;
+          # Remove TOML files temporarily
+          find . -name "pyproject.toml" -delete
+          
+      - name: Run codespell
+        run: |
           pip install codespell
-          # Run with explicit command-line args only
           codespell \
             --check-filenames \
-            --skip .git,go.sum,*.png,*.jpg,*.svg,*.gif,*.sum,bin,vendor,*.toml \
+            --skip .git,go.sum,*.png,*.jpg,*.svg,*.gif,*.sum,bin,vendor \
             --ignore-words-list fo,nam,te,notin,NotIn \
             .
+            
+      - name: Restore TOML files
+        run: |
+          # Restore backed up files
+          find /tmp/toml_backup -name "pyproject.toml" -exec cp {} . \;

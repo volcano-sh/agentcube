@@ -1,0 +1,40 @@
+name: Python Lint
+
+on:
+  pull_request:
+    branches:
+      - main
+      - release
+    paths:
+      - "cmd/cli/**"
+      - "sdk-python/**"
+      - "example/**"
+      - "**.py"
+      - "cmd/cli/pyproject.toml"
+      - "sdk-python/pyproject.toml"
+  push:
+    branches:
+      - main
+    paths:
+      - "cmd/cli/**"
+      - "sdk-python/**"
+      - "example/**"
+      - "cmd/cli/pyproject.toml"
+      - "sdk-python/pyproject.toml"
+
+jobs:
+  python_lint:
+    name: Python Lint 
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+      - name: Install ruff
+        run: |
+          pip install ruff>=0.1.0
+      - name: Run Lint
+        run: |
+          make lint-python

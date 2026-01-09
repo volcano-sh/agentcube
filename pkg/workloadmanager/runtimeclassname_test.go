@@ -60,7 +60,13 @@ func TestConvertToPodTemplate_RuntimeClassName(t *testing.T) {
 				RuntimeClassName: tt.runtimeClassName,
 			}
 
-			result := reconciler.convertToPodTemplate(template, nil)
+			ci := &runtimev1alpha1.CodeInterpreter{
+				Spec: runtimev1alpha1.CodeInterpreterSpec{
+					AuthMode: runtimev1alpha1.AuthModeNone, // Use none to skip public key injection
+				},
+			}
+
+			result := reconciler.convertToPodTemplate(template, ci)
 
 			assert.Equal(t, tt.expected, result.Spec.RuntimeClassName, tt.description)
 		})

@@ -15,8 +15,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: codespell-project/actions-codespell@v2
-        with:
-          check_filenames: true
-          skip: './.git,./go.sum,./*.png,./*.jpg,./*.svg,./*.gif,./*.sum,./bin,./vendor,*.toml'
-          ignore_words_list: fo,nam,te,notin,NotIn
+      - name: Run codespell without config files
+        run: |
+          # Install codespell directly to bypass config detection
+          pip install codespell
+          # Run with explicit command-line args only
+          codespell \
+            --check-filenames \
+            --skip .git,go.sum,*.png,*.jpg,*.svg,*.gif,*.sum,bin,vendor,*.toml \
+            --ignore-words-list fo,nam,te,notin,NotIn \
+            .

@@ -15,6 +15,9 @@ spec:
       labels:
         app: agentcube-router
     spec:
+      {{- if .Values.router.serviceAccountName }}
+      serviceAccountName: {{ .Values.router.serviceAccountName }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -38,6 +41,9 @@ spec:
               value: {{ .Values.redis.password | quote }}
             - name: WORKLOAD_MANAGER_ADDR
               value: "http://workloadmanager.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.workloadmanager.service.port }}"
+            {{- with .Values.router.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           args:
             - --port={{ .Values.router.service.targetPort }}
             - --debug
@@ -45,13 +51,13 @@ spec:
             {{- toYaml .Values.router.resources | nindent 12 }}
           livenessProbe:
             httpGet:
-              path: /health
+              path: /health/live
               port: {{ .Values.router.service.targetPort }}
             initialDelaySeconds: 10
             periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /health
+              path: /health/ready
               port: {{ .Values.router.service.targetPort }}
             initialDelaySeconds: 5
             periodSeconds: 5

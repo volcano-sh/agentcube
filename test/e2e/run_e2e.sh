@@ -141,7 +141,12 @@ docker_pull_if_missing() {
 
 kind_load_image() {
     local image="$1"
-    kind load docker-image "${image}" --name "${E2E_CLUSTER_NAME}"
+    # Note: Docker Desktop 29.x with containerd image store can fail to load multi-platform
+    # images. We allow failures here and let Kind nodes pull from registry instead.
+    if ! kind load docker-image "${image}" --name "${E2E_CLUSTER_NAME}"; then
+        echo "Warning: Failed to load image ${image} into Kind. Will attempt to pull from registry." >&2
+        return 0
+    fi
 }
 
 curl_download() {

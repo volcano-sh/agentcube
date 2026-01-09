@@ -190,6 +190,7 @@ require_cmd kind
 require_cmd kubectl
 require_cmd docker
 require_cmd curl
+require_cmd helm
 
 ensure_kind_cluster
 
@@ -201,9 +202,6 @@ for image in "${PRE_PULL_IMAGES[@]}"; do
     echo "Loading image into kind: ${image}"
     kind load docker-image "${image}" --name "${E2E_CLUSTER_NAME}" || echo "Warning: Failed to load ${image}"
 done
-
-step "Installing CRDs..."
-kubectl apply --server-side --validate=false -f manifests/charts/base/crds/
 
 step "Installing agent-sandbox (${AGENT_SANDBOX_VERSION})..."
 # Download then apply to avoid URL parsing issues / improve debuggability.
@@ -244,14 +242,27 @@ if [ "$REDIS_READY" != "true" ]; then
     exit 1
 fi
 
-step "Deploying workloadmanager..."
-kubectl apply --validate=false -f k8s/workloadmanager.yaml
-kubectl -n "${AGENTCUBE_NAMESPACE}" set env deployment/workloadmanager REDIS_PASSWORD_REQUIRED=false --overwrite=true
-kubectl -n "${AGENTCUBE_NAMESPACE}" set env deployment/workloadmanager JWT_KEY_SECRET_NAMESPACE=agentcube --overwrite=true
+step "Deploying AgentCube via Helm (using native parameters)..."
+# Prepare extra environment variables as JSON for Helm
+WM_EXTRA_ENV='[{"name":"REDIS_PASSWORD_REQUIRED","value":"false"},{"name":"JWT_KEY_SECRET_NAMESPACE","value":"agentcube"}]'
+ROUTER_EXTRA_ENV='[{"name":"REDIS_PASSWORD_REQUIRED","value":"false"}]'
 
-step "Deploying agentcube-router..."
-kubectl apply --validate=false -f k8s/agentcube-router.yaml
-kubectl -n "${AGENTCUBE_NAMESPACE}" set env deployment/agentcube-router REDIS_PASSWORD_REQUIRED=false --overwrite=true
+# Install using Helm directly from the source chart
+# We use --set-json to pass the extra environment variables and enable RBAC/SA for the router
+helm upgrade --install agentcube manifests/charts/base \
+    --namespace "${AGENTCUBE_NAMESPACE}" \
+    --create-namespace \
+    --set redis.addr="redis.${AGENTCUBE_NAMESPACE}.svc.cluster.local:6379" \
+    --set redis.password="" \
+    --set workloadmanager.image.repository="workloadmanager" \
+    --set workloadmanager.image.tag="latest" \
+    --set-json "workloadmanager.extraEnv=${WM_EXTRA_ENV}" \
+    --set router.image.repository="agentcube-router" \
+    --set router.image.tag="latest" \
+    --set router.rbac.create=true \
+    --set router.serviceAccountName="agentcube-router" \
+    --set-json "router.extraEnv=${ROUTER_EXTRA_ENV}" \
+    --wait
 
 step "Waiting for deployments..."
 kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/workloadmanager --timeout=300s

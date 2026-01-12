@@ -1,0 +1,8 @@
+{
+  "label": "Architecture",
+  "position": 3,
+  "link": {
+    "type": "generated-index",
+    "description": "Understand the internal design and components of AgentCube."
+  }
+}

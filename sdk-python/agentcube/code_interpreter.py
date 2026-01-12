@@ -28,7 +28,7 @@ class CodeInterpreterClient:
     Manages the lifecycle of a Code Interpreter session and provides methods
     to execute code and manage files within it.
     
-    Session can be lazily created on first API call, or you can explicitly call start() to create one session beforehand.
+    Session is created upon initialization (or reused if session_id is provided).
     Call stop() to delete the session, or use context manager for automatic cleanup.
     
     Example:
@@ -39,8 +39,8 @@ class CodeInterpreterClient:
         
         # Session reuse for multi-step workflows
         client1 = CodeInterpreterClient()
+        session_id = client1.session_id
         client1.run_code("python", "x = 42")
-        session_id = client1.session_id  # Save for reuse
         # Don't call stop() - let session persist
         
         client2 = CodeInterpreterClient(session_id=session_id)
@@ -62,7 +62,7 @@ class CodeInterpreterClient:
         """
         Initialize the Code Interpreter Client.
         
-        Session is created lazily on first API call, or reuses existing session
+        Creates a new session, or reuses an existing session
         if session_id is provided.
         
         Args:
@@ -98,24 +98,33 @@ class CodeInterpreterClient:
             )
         self.router_url = router_url
         
-        # Session state (lazy initialization)
-        self._session_id: Optional[str] = session_id
+        # Session state
+        self.session_id: Optional[str] = session_id
         self.dp_client: Optional[DataPlaneClient] = None
         
-        # If session_id provided, initialize dp_client immediately
+        # Initialize session
         if session_id:
             self.logger.info(f"Reusing existing session: {session_id}")
             self._init_data_plane()
-
-    @property
-    def session_id(self) -> str:
-        """
-        Get the session ID, auto-starting if needed.
-        
-        This property ensures a session always exists when accessed.
-        """
-        self._ensure_started()
-        return self._session_id
+        else:
+            self.logger.info("Creating new session...")
+            self.session_id = self.cp_client.create_session(
+                name=self.name,
+                namespace=self.namespace,
+                ttl=self.ttl
+            )
+            self.logger.info(f"Session created: {self.session_id}")
+            try:
+                self._init_data_plane()
+            except Exception:
+                # Cleanup session if DataPlaneClient initialization fails
+                self.logger.warning(
+                    f"Failed to initialize data plane client, "
+                    f"deleting session {self.session_id} to prevent resource leak"
+                )
+                self.cp_client.delete_session(self.session_id)
+                self.session_id = None
+                raise
 
     def _init_data_plane(self):
         """Initialize the Data Plane client."""
@@ -123,45 +132,10 @@ class CodeInterpreterClient:
             cr_name=self.name,
             router_url=self.router_url,
             namespace=self.namespace,
-            session_id=self._session_id,
+            session_id=self.session_id,
         )
         if self.verbose:
             self.dp_client.logger.setLevel(logging.DEBUG)
-
-    def _ensure_started(self):
-        """Lazy initialization - create session on first use."""
-        if self._session_id is None:
-            self.logger.info("Creating new session...")
-            self._session_id = self.cp_client.create_session(
-                name=self.name,
-                namespace=self.namespace,
-                ttl=self.ttl
-            )
-            self.logger.info(f"Session created: {self._session_id}")
-            try:
-                self._init_data_plane()
-            except Exception:
-                # Cleanup session if DataPlaneClient initialization fails
-                self.logger.warning(
-                    f"Failed to initialize data plane client, "
-                    f"deleting session {self._session_id} to prevent resource leak"
-                )
-                self.cp_client.delete_session(self._session_id)
-                self._session_id = None
-                raise
-
-    def start(self):
-        """
-        Explicitly start the session.
-        
-        This is optional - sessions are created automatically on first API call.
-        Use this if you need the session_id before making any API calls.
-        
-        Returns:
-            str: The session ID.
-        """
-        self._ensure_started()
-        return self._session_id
 
     def __enter__(self):
         return self
@@ -180,10 +154,10 @@ class CodeInterpreterClient:
             self.dp_client.close()
             self.dp_client = None
             
-        if self._session_id:
-            self.logger.info(f"Deleting session {self._session_id}...")
-            self.cp_client.delete_session(self._session_id)
-            self._session_id = None
+        if self.session_id:
+            self.logger.info(f"Deleting session {self.session_id}...")
+            self.cp_client.delete_session(self.session_id)
+            self.session_id = None
         
         self.cp_client.close()
 
@@ -200,7 +174,6 @@ class CodeInterpreterClient:
         Returns:
             str: The output of the command.
         """
-        self._ensure_started()
         return self.dp_client.execute_command(command, timeout)
 
     def run_code(self, language: str, code: str, timeout: Optional[float] = None) -> str:
@@ -219,7 +192,6 @@ class CodeInterpreterClient:
         Returns:
             The standard output (stdout) generated by the code execution.
         """
-        self._ensure_started()
         return self.dp_client.run_code(language, code, timeout)
 
     def write_file(self, content: str, remote_path: str):
@@ -231,7 +203,6 @@ class CodeInterpreterClient:
             remote_path: The destination path of the file in the remote environment.
                          This path is relative to the session's working directory.
         """
-        self._ensure_started()
         self.dp_client.write_file(content, remote_path)
 
     def upload_file(self, local_path: str, remote_path: str):
@@ -243,7 +214,6 @@ class CodeInterpreterClient:
             remote_path: The destination path of the file in the remote environment.
                          This path is relative to the session's working directory.
         """
-        self._ensure_started()
         self.dp_client.upload_file(local_path, remote_path)
 
     def download_file(self, remote_path: str, local_path: str):
@@ -255,7 +225,6 @@ class CodeInterpreterClient:
                          This path is relative to the session's working directory.
             local_path: The destination path on the local filesystem to save the file.
         """
-        self._ensure_started()
         self.dp_client.download_file(remote_path, local_path)
 
     def list_files(self, path: str = "."):
@@ -268,5 +237,4 @@ class CodeInterpreterClient:
         Returns:
             A list of file/directory information dicts.
         """
-        self._ensure_started()
         return self.dp_client.list_files(path)

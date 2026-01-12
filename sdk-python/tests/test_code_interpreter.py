@@ -16,7 +16,7 @@
 Unit tests for CodeInterpreterClient session management.
 
 Tests cover:
-- Lazy initialization
+- Session creation
 - Session reuse
 - Context manager behavior
 - Error handling / resource cleanup
@@ -33,25 +33,27 @@ from agentcube.code_interpreter import CodeInterpreterClient
 
 
 class TestCodeInterpreterClientInit(unittest.TestCase):
-    """Test client initialization and lazy loading."""
+    """Test client initialization."""
     
+    @patch('agentcube.code_interpreter.DataPlaneClient')
     @patch('agentcube.code_interpreter.ControlPlaneClient')
-    def test_init_no_session_id_lazy_loading(self, mock_cp_class):
-        """Session should not be created on init without session_id."""
+    def test_init_creates_session(self, mock_cp_class, mock_dp_class):
+        """Session should be created on init."""
         mock_cp = Mock()
+        mock_cp.create_session.return_value = "new-session-123"
         mock_cp_class.return_value = mock_cp
         
         client = CodeInterpreterClient(router_url="http://test:8080")
         
-        # Session not created yet (lazy)
-        self.assertIsNone(client._session_id)
-        self.assertIsNone(client.dp_client)
-        mock_cp.create_session.assert_not_called()
+        # Session should be created
+        self.assertEqual(client.session_id, "new-session-123")
+        mock_cp.create_session.assert_called_once()
+        mock_dp_class.assert_called_once()
     
     @patch('agentcube.code_interpreter.DataPlaneClient')
     @patch('agentcube.code_interpreter.ControlPlaneClient')
-    def test_init_with_session_id_immediate_dp_init(self, mock_cp_class, mock_dp_class):
-        """DataPlaneClient should be initialized immediately when session_id provided."""
+    def test_init_with_session_id_reuses_session(self, mock_cp_class, mock_dp_class):
+        """Providing session_id should reuse existing session."""
         mock_cp = Mock()
         mock_cp_class.return_value = mock_cp
         
@@ -60,33 +62,27 @@ class TestCodeInterpreterClientInit(unittest.TestCase):
             session_id="existing-session-123"
         )
         
-        # Session should be set immediately
-        self.assertEqual(client._session_id, "existing-session-123")
-        # DataPlaneClient should be initialized
+        # Should reuse session, not create new
+        self.assertEqual(client.session_id, "existing-session-123")
+        mock_cp.create_session.assert_not_called()
         mock_dp_class.assert_called_once()
-        self.assertIsNotNone(client.dp_client)
 
 
 class TestSessionIdProperty(unittest.TestCase):
-    """Test session_id property auto-start behavior."""
+    """Test session_id property."""
     
     @patch('agentcube.code_interpreter.DataPlaneClient')
     @patch('agentcube.code_interpreter.ControlPlaneClient')
-    def test_session_id_property_triggers_start(self, mock_cp_class, mock_dp_class):
-        """Accessing session_id should auto-start session."""
+    def test_session_id_available_after_init(self, mock_cp_class, mock_dp_class):
+        """session_id should be available after init."""
         mock_cp = Mock()
         mock_cp.create_session.return_value = "new-session-456"
         mock_cp_class.return_value = mock_cp
         
         client = CodeInterpreterClient(router_url="http://test:8080")
         
-        # Access session_id property
-        session_id = client.session_id
-        
-        # Session should be created
-        self.assertEqual(session_id, "new-session-456")
-        mock_cp.create_session.assert_called_once()
-        mock_dp_class.assert_called_once()
+        # session_id should be available
+        self.assertEqual(client.session_id, "new-session-456")
 
 
 class TestSessionReuse(unittest.TestCase):
@@ -104,9 +100,6 @@ class TestSessionReuse(unittest.TestCase):
             router_url="http://test:8080",
             session_id="reused-session-789"
         )
-        
-        # Trigger an API call
-        client._ensure_started()
         
         # Should NOT create new session
         mock_cp.create_session.assert_not_called()
@@ -131,7 +124,7 @@ class TestContextManager(unittest.TestCase):
         mock_dp_class.return_value = mock_dp
         
         with CodeInterpreterClient(router_url="http://test:8080") as client:
-            _ = client.session_id  # Trigger session creation
+            pass  # Session already created in __init__
         
         # stop() should delete session
         mock_cp.delete_session.assert_called_once_with("ctx-session-123")
@@ -153,52 +146,13 @@ class TestResourceLeakPrevention(unittest.TestCase):
         # Make DataPlaneClient init fail
         mock_dp_class.side_effect = Exception("Connection failed")
         
-        client = CodeInterpreterClient(router_url="http://test:8080")
-        
         with self.assertRaises(Exception) as ctx:
-            _ = client.session_id  # Trigger session creation
+            CodeInterpreterClient(router_url="http://test:8080")
         
         self.assertIn("Connection failed", str(ctx.exception))
         
         # Session should be cleaned up
         mock_cp.delete_session.assert_called_once_with("leaked-session-999")
-        self.assertIsNone(client._session_id)
-
-
-class TestStartMethod(unittest.TestCase):
-    """Test explicit start() method."""
-    
-    @patch('agentcube.code_interpreter.DataPlaneClient')
-    @patch('agentcube.code_interpreter.ControlPlaneClient')
-    def test_start_returns_session_id(self, mock_cp_class, mock_dp_class):
-        """start() should return session_id."""
-        mock_cp = Mock()
-        mock_cp.create_session.return_value = "started-session-111"
-        mock_cp_class.return_value = mock_cp
-        
-        client = CodeInterpreterClient(router_url="http://test:8080")
-        session_id = client.start()
-        
-        self.assertEqual(session_id, "started-session-111")
-        mock_cp.create_session.assert_called_once()
-    
-    @patch('agentcube.code_interpreter.DataPlaneClient')
-    @patch('agentcube.code_interpreter.ControlPlaneClient')
-    def test_start_idempotent(self, mock_cp_class, mock_dp_class):
-        """Calling start() multiple times should not create multiple sessions."""
-        mock_cp = Mock()
-        mock_cp.create_session.return_value = "single-session-222"
-        mock_cp_class.return_value = mock_cp
-        
-        client = CodeInterpreterClient(router_url="http://test:8080")
-        
-        # Call start() multiple times
-        client.start()
-        client.start()
-        client.start()
-        
-        # Should only create one session
-        mock_cp.create_session.assert_called_once()
 
 
 if __name__ == "__main__":

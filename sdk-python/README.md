@@ -68,7 +68,6 @@ df.describe().to_csv('/workspace/summary.csv')
 
 | Method | Description |
 |--------|-------------|
-| `start()` | Explicitly start the session (optional, auto-starts on first API call) |
 | `execute_command(cmd)` | Execute shell command |
 | `run_code(language, code)` | Execute code (python/bash) |
 | `upload_file(local, remote)` | Upload file to sandbox |

@@ -55,8 +55,6 @@ var (
 	LastActivityAnnotationKey = "last-activity-time"
 	// IdleTimeoutAnnotationKey key for idle timeout
 	IdleTimeoutAnnotationKey = "runtime.agentcube.io/idle-timeout"
-	// CreatorServiceAccountAnnotationKey Annotation key for creator service account
-	CreatorServiceAccountAnnotationKey = "creator-service-account"
 )
 
 // K8sClient encapsulates the Kubernetes client
@@ -72,7 +70,7 @@ type K8sClient struct {
 	podLister       listersv1.PodLister
 }
 
-type sandboxExternalInfo struct {
+type sandboxEntry struct {
 	Kind      string
 	SessionID string
 	Ports     []runtimev1alpha1.TargetPort
@@ -96,6 +94,10 @@ func NewK8sClient() (*K8sClient, error) {
 			return nil, fmt.Errorf("failed to load kubeconfig: %w", err)
 		}
 	}
+
+	// Set higher QPS and Burst for better performance
+	config.QPS = 1000
+	config.Burst = 2000
 
 	// Create clientset
 	clientset, err := kubernetes.NewForConfig(config)

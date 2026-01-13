@@ -223,7 +223,7 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 	return sandboxClaim
 }
 
-func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxExternalInfo, error) {
+func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
 	agentRuntimeKey := namespace + "/" + name
 	runtimeObj, exists, err := ifm.AgentRuntimeInformer.GetStore().GetByKey(agentRuntimeKey)
 	if err != nil {
@@ -278,17 +278,17 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 		buildParams.idleTimeout = agentRuntimeObj.Spec.SessionTimeout.Duration
 	}
 	sandbox := buildSandboxObject(buildParams)
-	externalInfo := &sandboxExternalInfo{
+	entry := &sandboxEntry{
 		Kind:      types.SandboxKind,
 		Ports:     agentRuntimeObj.Spec.Ports,
 		SessionID: sessionID,
 	}
-	return sandbox, externalInfo, nil
+	return sandbox, entry, nil
 }
 
-func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxExternalInfo, error) {
+func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
 	codeInterpreterKey := namespace + "/" + codeInterpreterName
-	runtimeObj, exists, err := ifm.CodeInterpreterInformer.GetStore().GetByKey(codeInterpreterKey)
+	runtimeObj, exists, err := informer.CodeInterpreterInformer.GetStore().GetByKey(codeInterpreterKey)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("get code interpreter %s from informer failed: %v", codeInterpreterKey, err)
 	}
@@ -316,17 +316,10 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 
 	sessionID := uuid.New().String()
 	sandboxName := fmt.Sprintf("%s-%s", codeInterpreterName, RandString(8))
-	externalInfo := &sandboxExternalInfo{
+	sandboxEntry := &sandboxEntry{
 		Kind:      types.SandboxKind,
 		Ports:     codeInterpreterObj.Spec.Ports,
 		SessionID: sessionID,
-	}
-
-	// Set default port for code interpreter if not configured
-	if len(externalInfo.Ports) == 0 {
-		externalInfo.Ports = []runtimev1alpha1.TargetPort{
-			{Port: 8080, Protocol: runtimev1alpha1.ProtocolTypeHTTP, PathPrefix: "/"},
-		}
 	}
 
 	if codeInterpreterObj.Spec.WarmPoolSize != nil && *codeInterpreterObj.Spec.WarmPoolSize > 0 {
@@ -345,8 +338,8 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				},
 			},
 		}
-		externalInfo.Kind = types.SandboxClaimsKind
-		return simpleSandbox, sandboxClaim, externalInfo, nil
+		sandboxEntry.Kind = types.SandboxClaimsKind
+		return simpleSandbox, sandboxClaim, sandboxEntry, nil
 	}
 
 	if codeInterpreterObj.Spec.Template == nil {
@@ -398,5 +391,5 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		buildParams.ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration
 	}
 	sandbox := buildSandboxObject(buildParams)
-	return sandbox, nil, externalInfo, nil
+	return sandbox, nil, sandboxEntry, nil
 }

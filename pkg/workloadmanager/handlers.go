@@ -177,6 +177,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	}
 
 	needRollbackSandbox := true
+	// TODO(hzxuzhonghu): in some case we need to rollback sandboxClaim
 	sandboxRollbackFunc := func() {
 		ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()

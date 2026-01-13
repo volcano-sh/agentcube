@@ -74,5 +74,5 @@ func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) string {
 			return "running"
 		}
 	}
-	return "paused"
+	return "unknown"
 }

@@ -202,16 +202,15 @@ func (s *SandboxStore) onSandboxDelete(obj interface{}) {
 		return
 	}
 
-	// Get sandbox ID from labels
-	labels := unstructuredObj.GetLabels()
-	sessionID := labels[SessionIdLabelKey]
-	if sessionID == "" {
+	sandbox, err := convertK8sSandboxToSandbox(unstructuredObj)
+	if err != nil {
 		return
 	}
-
-	s.mu.Lock()
-	delete(s.sandboxes, sessionID)
-	s.mu.Unlock()
+	if sandbox != nil && sandbox.SandboxID != "" {
+		s.mu.Lock()
+		delete(s.sandboxes, sandbox.SandboxID)
+		s.mu.Unlock()
+	}
 }
 
 // convertK8sSandboxToSandbox converts a Kubernetes Sandbox CRD to internal Sandbox structure

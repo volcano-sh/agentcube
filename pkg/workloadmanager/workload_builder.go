@@ -279,10 +279,9 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	}
 	sandbox := buildSandboxObject(buildParams)
 	externalInfo := &sandboxExternalInfo{
-		Kind:               types.SandboxKind,
-		Ports:              agentRuntimeObj.Spec.Ports,
-		SessionID:          sessionID,
-		NeedInitialization: false,
+		Kind:      types.SandboxKind,
+		Ports:     agentRuntimeObj.Spec.Ports,
+		SessionID: sessionID,
 	}
 	return sandbox, externalInfo, nil
 }
@@ -318,14 +317,16 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	sessionID := uuid.New().String()
 	sandboxName := fmt.Sprintf("%s-%s", codeInterpreterName, RandString(8))
 	externalInfo := &sandboxExternalInfo{
-		Kind:               types.SandboxKind,
-		Ports:              codeInterpreterObj.Spec.Ports,
-		SessionID:          sessionID,
-		NeedInitialization: true,
+		Kind:      types.SandboxKind,
+		Ports:     codeInterpreterObj.Spec.Ports,
+		SessionID: sessionID,
 	}
 
-	if codeInterpreterObj.Spec.NeedInitialization != nil {
-		externalInfo.NeedInitialization = *codeInterpreterObj.Spec.NeedInitialization
+	// Set default port for code interpreter if not configured
+	if len(externalInfo.Ports) == 0 {
+		externalInfo.Ports = []runtimev1alpha1.TargetPort{
+			{Port: 8080, Protocol: runtimev1alpha1.ProtocolTypeHTTP, PathPrefix: "/"},
+		}
 	}
 
 	if codeInterpreterObj.Spec.WarmPoolSize != nil && *codeInterpreterObj.Spec.WarmPoolSize > 0 {

@@ -51,11 +51,8 @@ source "${CODEGEN_PKG}/kube_codegen.sh"
 # Generate the code
 echo "Generating client-go code for runtime.agentcube.volcano.sh/v1alpha1..."
 
-# Generate helpers (deepcopy, defaulter, etc.)
-# Note: input-dir must be a local path, not a Go package path
-kube::codegen::gen_helpers \
-  --boilerplate "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
-  "${SCRIPT_ROOT}/pkg/apis"
+# Note: We skip gen_helpers because controller-gen in 'make generate' already generates
+# the deepcopy code. Using gen_helpers here would delete and regenerate it, causing conflicts.
 
 # Generate client code
 # Note: input-dir must be a local path, not a Go package path
@@ -70,6 +67,12 @@ kube::codegen::gen_client \
 # Fix lister-gen bug: Resource() returns GroupVersionResource but listers.New needs GroupResource
 # This is a workaround for https://github.com/kubernetes/code-generator/issues/XXX
 echo "Fixing lister-gen GroupResource issue..."
-find "${SCRIPT_ROOT}/client-go/listers" -name "*.go" -type f -exec sed -i 's/runtimev1alpha1\.Resource("codeinterpreter")/runtimev1alpha1.Resource("codeinterpreter").GroupResource()/g' {} \;
+find "${SCRIPT_ROOT}/client-go/listers" -name "*.go" -type f | while read -r file; do
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    sed -i '' 's/runtimev1alpha1\.Resource("codeinterpreter")/runtimev1alpha1.Resource("codeinterpreter").GroupResource()/g' "$file"
+  else
+    sed -i 's/runtimev1alpha1\.Resource("codeinterpreter")/runtimev1alpha1.Resource("codeinterpreter").GroupResource()/g' "$file"
+  fi
+done
 
 echo "Client-go code generation completed!"

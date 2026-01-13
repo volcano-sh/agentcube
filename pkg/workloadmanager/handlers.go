@@ -61,30 +61,6 @@ func (s *Server) extractUserK8sClient(c *gin.Context) (dynamic.Interface, error)
 	return userClient.dynamicClient, nil
 }
 
-//nolint:unparam // error return kept for future extensibility
-func (s *Server) codeInterpreterInitialization(_ context.Context, sandboxReq *types.CreateSandboxRequest, sandboxResp *types.CreateSandboxResponse, storeCacheInfo *types.SandboxInfo, externalInfo *sandboxExternalInfo, podIP string) error {
-	// Check if CodeInterpreter need initialization
-	if externalInfo.NeedInitialization == false {
-		klog.Infof("skipping initialization for sandbox %s/%s", sandboxReq.Namespace, sandboxReq.Name)
-		return nil
-	}
-
-	if len(storeCacheInfo.EntryPoints) == 0 {
-		// Fallback to default http://ip:8080
-		klog.Infof("sandbox %s/%s entryPoints is empty, fallback with default", sandboxReq.Namespace, sandboxReq.Name)
-		defaultEntryPoint := types.SandboxEntryPoints{
-			Path:     "/",
-			Protocol: "http",
-			Endpoint: fmt.Sprintf("%s:8080", podIP),
-		}
-		storeCacheInfo.EntryPoints = []types.SandboxEntryPoints{defaultEntryPoint}
-		sandboxResp.EntryPoints = storeCacheInfo.EntryPoints
-	}
-
-	klog.Infof("Code interpreter sandbox %s/%s ready", sandboxReq.Namespace, sandboxReq.Name)
-	return nil
-}
-
 // handleCreateSandbox do create sandbox
 // nolint: gocyclo
 func (s *Server) handleCreateSandbox(c *gin.Context) {
@@ -236,14 +212,6 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		SandboxID:   storeCacheInfo.SandboxID,
 		SandboxName: sandboxName,
 		EntryPoints: storeCacheInfo.EntryPoints,
-	}
-
-	err = s.codeInterpreterInitialization(c.Request.Context(), sandboxReq, response, storeCacheInfo, externalInfo, podIP)
-	if err != nil {
-		klog.Infof("init sandbox %s/%s failed: %v", createdSandbox.Namespace, createdSandbox.Name, err)
-		respondError(c, http.StatusInternalServerError, "SANDBOX_INIT_FAILED",
-			fmt.Sprintf("Failed to initialize code interpreter: %v", err))
-		return
 	}
 
 	err = s.storeClient.UpdateSandbox(c.Request.Context(), storeCacheInfo)

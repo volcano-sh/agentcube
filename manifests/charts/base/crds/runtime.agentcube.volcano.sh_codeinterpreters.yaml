@@ -65,11 +65,6 @@ spec:
                   After this duration, the session will be terminated regardless of activity, to
                   prevent long-lived sandboxes from accumulating unbounded state.
                 type: string
-              needInitialization:
-                description: |-
-                  NeedInitialization specifies if CodeInterpreter need initialization
-                  default true if NeedInitialization is nil
-                type: boolean
               ports:
                 description: |-
                   Ports is a list of ports that the code interpreter runtime will expose.

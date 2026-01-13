@@ -74,11 +74,6 @@ type CodeInterpreterSpec struct {
 	// +optional
 	WarmPoolSize *int32 `json:"warmPoolSize,omitempty"`
 
-	// NeedInitialization specifies if CodeInterpreter need initialization
-	// default true if NeedInitialization is nil
-	// +optional
-	NeedInitialization *bool `json:"needInitialization,omitempty"`
-
 	// AuthMode specifies the authentication mode for the sandbox runtime.
 	// - "picod" (default): Inject PICOD_AUTH_PUBLIC_KEY from Router Secret, requires Router to be running
 	// - "none": No authentication injection (for custom images that handle auth differently)

@@ -70,7 +70,7 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			case resultChan <- SandboxStatusUpdate{Sandbox: sandbox}:
 				klog.V(2).Infof("Notified waiter about sandbox %s/%s reaching Running state", sandbox.Namespace, sandbox.Name)
 			default:
-				klog.Warningf("watch chan for sandbox %s/%s should be deleted", sandbox.Namespace, sandbox.Name)
+				klog.Warningf("Failed to notify watcher for sandbox %s/%s: channel buffer full or not receiving", sandbox.Namespace, sandbox.Name)
 			}
 		}
 	}

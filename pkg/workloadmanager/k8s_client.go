@@ -95,9 +95,9 @@ func NewK8sClient() (*K8sClient, error) {
 		}
 	}
 
-	// Set higher QPS and Burst for better performance
-	config.QPS = 1000
-	config.Burst = 2000
+	// Set conservative QPS and Burst to avoid overloading the API server
+	config.QPS = 50
+	config.Burst = 100
 
 	// Create clientset
 	clientset, err := kubernetes.NewForConfig(config)

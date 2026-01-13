@@ -322,6 +322,17 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		SessionID: sessionID,
 	}
 
+	// Set default port for code interpreter if not configured
+	if len(sandboxEntry.Ports) == 0 {
+		sandboxEntry.Ports = []runtimev1alpha1.TargetPort{
+			{
+				Port:       8080,
+				Protocol:   runtimev1alpha1.ProtocolTypeHTTP,
+				PathPrefix: "/",
+			},
+		}
+	}
+
 	if codeInterpreterObj.Spec.WarmPoolSize != nil && *codeInterpreterObj.Spec.WarmPoolSize > 0 {
 		sandboxClaim := buildSandboxClaimObject(&buildSandboxClaimParams{
 			namespace:           namespace,

@@ -17,7 +17,6 @@ limitations under the License.
 package router
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
@@ -26,6 +25,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
@@ -40,7 +40,6 @@ func (s *Server) handleHealthLive(c *gin.Context) {
 
 // handleHealthReady handles readiness probe
 func (s *Server) handleHealthReady(c *gin.Context) {
-	// Check if SessionManager is available
 	if s.sessionManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"status": "not ready",
@@ -48,7 +47,6 @@ func (s *Server) handleHealthReady(c *gin.Context) {
 		})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"status": "ready",
 	})
@@ -56,7 +54,7 @@ func (s *Server) handleHealthReady(c *gin.Context) {
 
 // handleInvoke is a private helper function that handles invocation requests for both agents and code interpreters
 func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string) {
-	klog.Infof("%s invoke request: namespace=%s, name=%s, path=%s", kind, namespace, name, path)
+	klog.V(4).Infof("%s invoke request: namespace=%s, name=%s, path=%s", kind, namespace, name, path)
 
 	// Extract session ID from header
 	sessionID := c.GetHeader("x-agentcube-session-id")
@@ -80,7 +78,7 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 		return
 	}
 
-	klog.Infof("The selected entrypoint for session-id %s to sandbox is %s", sandbox.SessionID, endpoint)
+	klog.V(4).Infof("The selected entrypoint for session-id %s to sandbox is %s", sandbox.SessionID, endpoint)
 
 	// Update session activity in store when receiving request
 	if sandbox.SessionID != "" && sandbox.SandboxID != "" {
@@ -99,23 +97,35 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 }
 
 func (s *Server) handleSandboxLookupError(c *gin.Context, err error, sessionID, namespace, name, kind string) {
-	switch {
-	case errors.Is(err, ErrSessionNotFound):
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("Invalid session id %s", sessionID),
-			"code":  "BadRequest",
-		})
-	case errors.Is(err, ErrAgentRuntimeNotFound):
+	if apierrors.IsNotFound(err) {
+		if statusErr, ok := err.(apierrors.APIStatus); ok {
+			if details := statusErr.Status().Details; details != nil && details.Kind == sessionResource.Resource {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("Invalid session id %s", sessionID),
+					"code":  "BadRequest",
+				})
+				return
+			}
+		}
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": fmt.Sprintf("%s '%s' not found in namespace '%s'", kind, name, namespace),
 			"code":  "NotFound",
 		})
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid session or request",
-			"code":  "BadRequest",
-		})
+		return
 	}
+
+	if apierrors.IsServiceUnavailable(err) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "Upstream workload manager unavailable",
+			"code":  "ServiceUnavailable",
+		})
+		return
+	}
+
+	c.JSON(http.StatusBadRequest, gin.H{
+		"error": "Invalid session or request",
+		"code":  "BadRequest",
+	})
 }
 
 func selectSandboxEndpoint(sandbox *types.SandboxInfo, path string) (string, error) {

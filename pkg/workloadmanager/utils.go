@@ -18,18 +18,14 @@ package workloadmanager
 
 import (
 	"math/rand"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 // ErrorResponse represents an API error response
 type ErrorResponse struct {
-	Error     string                 `json:"error"`
-	Message   string                 `json:"message"`
-	Details   map[string]interface{} `json:"details,omitempty"`
-	Timestamp time.Time              `json:"timestamp"`
-	RequestID string                 `json:"requestId,omitempty"`
+	Error   string `json:"error"`
+	Message string `json:"message"`
 }
 
 // respondJSON sends a JSON response
@@ -40,9 +36,8 @@ func respondJSON(c *gin.Context, statusCode int, data interface{}) {
 // respondError sends an error response
 func respondError(c *gin.Context, statusCode int, errorCode, message string) {
 	response := ErrorResponse{
-		Error:     errorCode,
-		Message:   message,
-		Timestamp: time.Now(),
+		Error:   errorCode,
+		Message: message,
 	}
 	respondJSON(c, statusCode, response)
 }

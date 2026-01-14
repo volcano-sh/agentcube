@@ -106,8 +106,6 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		// Check if it's a "not found" error and return 404
 		if errors.Is(err, ErrAgentRuntimeNotFound) || errors.Is(err, ErrCodeInterpreterNotFound) {
 			respondError(c, http.StatusNotFound, "NOT_FOUND", err.Error())
-		} else if errors.Is(err, ErrTemplateMissing) || errors.Is(err, ErrPublicKeyMissing) {
-			respondError(c, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		} else {
 			respondError(c, http.StatusBadRequest, "SANDBOX_BUILD_FAILED", err.Error())
 		}
@@ -247,12 +245,11 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 	sandbox, err := s.storeClient.GetSandboxBySessionID(c.Request.Context(), sessionID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			klog.Infof("sessionID %s not found in store", sessionID)
-			respondError(c, http.StatusNotFound, "SESSION_NOT_FOUND", "Sandbox not found")
+			respondError(c, http.StatusNotFound, "SESSION_NOT_FOUND", fmt.Sprintf("Session ID %s not found, maybe already deleted", sessionID))
 			return
 		}
-		klog.Infof("get sandbox from store by sessionID %s failed: %v", sessionID, err)
-		respondError(c, http.StatusInternalServerError, "FIND_SESSION_FAILED", err.Error())
+		klog.Errorf("get sandbox from store by sessionID %s failed: %v", sessionID, err)
+		respondError(c, http.StatusInternalServerError, "GET_SANDBOX_FAILED", "")
 		return
 	}
 
@@ -269,7 +266,7 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 	if sandbox.Kind == types.SandboxClaimsKind {
 		err = deleteSandboxClaim(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
 		if err != nil {
-			klog.Infof("failed to delete sandbox claim %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
+			klog.Errorf("failed to delete sandbox claim %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
 			respondError(c, http.StatusForbidden, "SANDBOX_CLAIM_DELETE_FAILED",
 				fmt.Sprintf("Failed to delete sandbox claim (namespace: %s): %v", sandbox.SandboxNamespace, err))
 			return

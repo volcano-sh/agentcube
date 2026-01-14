@@ -244,10 +244,6 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 		return nil, nil, fmt.Errorf("failed to convert unstructured to AgentRuntime: %w", err)
 	}
 
-	if agentRuntimeObj.Spec.Template == nil {
-		return nil, nil, fmt.Errorf("%w: %s", ErrTemplateMissing, agentRuntimeKey)
-	}
-
 	sessionID := uuid.New().String()
 	sandboxName := fmt.Sprintf("%s-%s", name, RandString(8))
 
@@ -351,10 +347,6 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		}
 		sandboxEntry.Kind = types.SandboxClaimsKind
 		return simpleSandbox, sandboxClaim, sandboxEntry, nil
-	}
-
-	if codeInterpreterObj.Spec.Template == nil {
-		return nil, nil, nil, fmt.Errorf("%w: %s", ErrTemplateMissing, codeInterpreterKey)
 	}
 
 	// Normalize RuntimeClassName: if it's an empty string, set it to nil

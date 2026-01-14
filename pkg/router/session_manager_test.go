@@ -19,12 +19,13 @@ package router
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	"github.com/volcano-sh/agentcube/pkg/store"
@@ -142,8 +143,8 @@ func TestGetSandboxBySession_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for not found session")
 	}
-	if !errors.Is(err, ErrSessionNotFound) {
-		t.Fatalf("expected ErrSessionNotFound, got %v", err)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("expected not found error, got %v", err)
 	}
 }
 
@@ -328,8 +329,8 @@ func TestGetSandboxBySession_CreateSandbox_WorkloadManagerUnavailable(t *testing
 	if err == nil {
 		t.Fatalf("expected error for unavailable workload manager")
 	}
-	if !errors.Is(err, ErrUpstreamUnavailable) {
-		t.Errorf("expected ErrUpstreamUnavailable, got %v", err)
+	if !apierrors.IsServiceUnavailable(err) {
+		t.Errorf("expected service unavailable error, got %v", err)
 	}
 }
 
@@ -352,8 +353,8 @@ func TestGetSandboxBySession_CreateSandbox_NonOKStatus(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for non-OK status")
 	}
-	if !errors.Is(err, ErrCreateSandboxFailed) {
-		t.Errorf("expected ErrCreateSandboxFailed, got %v", err)
+	if !apierrors.IsInternalError(err) {
+		t.Errorf("expected internal error, got %v", err)
 	}
 }
 
@@ -410,7 +411,7 @@ func TestGetSandboxBySession_CreateSandbox_EmptySessionID(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for empty sessionID in response")
 	}
-	if !errors.Is(err, ErrCreateSandboxFailed) {
-		t.Errorf("expected ErrCreateSandboxFailed, got %v", err)
+	if !apierrors.IsInternalError(err) {
+		t.Errorf("expected internal error, got %v", err)
 	}
 }

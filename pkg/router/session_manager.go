@@ -32,20 +32,6 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/store"
 )
 
-var (
-	// ErrSessionNotFound indicates that the session does not exist in store.
-	ErrSessionNotFound = errors.New("sessionmgr: session not found")
-
-	// ErrUpstreamUnavailable indicates that the workload manager is unavailable.
-	ErrUpstreamUnavailable = errors.New("sessionmgr: workload manager unavailable")
-
-	// ErrCreateSandboxFailed indicates that the workload manager returned an error.
-	ErrCreateSandboxFailed = errors.New("sessionmgr: create sandbox failed")
-
-	// ErrAgentRuntimeNotFound indicates that the AgentRuntime does not exist.
-	ErrAgentRuntimeNotFound = errors.New("sessionmgr: agent runtime not found")
-)
-
 // SessionManager defines the session management behavior on top of Store and the workload manager.
 type SessionManager interface {
 	// GetSandboxBySession returns the sandbox associated with the given sessionID.
@@ -97,7 +83,7 @@ func (m *manager) GetSandboxBySession(ctx context.Context, sessionID string, nam
 	sandbox, err := m.storeClient.GetSandboxBySessionID(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, ErrSessionNotFound
+			return nil, sessionNotFoundError(sessionID)
 		}
 		return nil, fmt.Errorf("failed to get sandbox from store: %w", err)
 	}
@@ -140,7 +126,7 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 	// Send the request
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUpstreamUnavailable, err)
+		return nil, upstreamUnavailableError(err)
 	}
 	defer resp.Body.Close()
 
@@ -153,24 +139,24 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("%w: %s", ErrAgentRuntimeNotFound, string(respBody))
+			return nil, sandboxNotFoundError(namespace, name, kind)
 		}
 		// Also check for BadRequest with "not found" message (for backward compatibility)
 		if resp.StatusCode == http.StatusBadRequest && strings.Contains(string(respBody), "not found") {
-			return nil, fmt.Errorf("%w: %s", ErrAgentRuntimeNotFound, string(respBody))
+			return nil, sandboxNotFoundError(namespace, name, kind)
 		}
-		return nil, fmt.Errorf("%w: status code %d, body: %s", ErrCreateSandboxFailed, resp.StatusCode, string(respBody))
+		return nil, createSandboxFailedStatusError(resp.StatusCode, respBody)
 	}
 
 	// Parse response
 	var createResp types.CreateSandboxResponse
 	if err := json.Unmarshal(respBody, &createResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+		return nil, createSandboxFailedError(fmt.Errorf("failed to unmarshal response: %w", err))
 	}
 
 	// Validate response
 	if createResp.SessionID == "" {
-		return nil, fmt.Errorf("%w: response with empty session id from workload manager", ErrCreateSandboxFailed)
+		return nil, createSandboxFailedError(fmt.Errorf("response with empty session id from workload manager"))
 	}
 
 	// Construct Sandbox Info from response

@@ -26,8 +26,8 @@ import (
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 )
 
-func buildSandboxStoreCachePlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxEntry) *types.SandboxInfo {
-	sandboxStore := &types.SandboxInfo{
+func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxEntry) *types.SandboxInfo {
+	return &types.SandboxInfo{
 		Kind:             entry.Kind,
 		SessionID:        entry.SessionID,
 		SandboxNamespace: sandboxCR.GetNamespace(),
@@ -35,14 +35,13 @@ func buildSandboxStoreCachePlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry
 		ExpiresAt:        time.Now().Add(DefaultSandboxTTL),
 		Status:           "creating",
 	}
-	return sandboxStore
 }
 
-func buildSandboxInfo(sandboxCR *sandboxv1alpha1.Sandbox, podIP string, entry *sandboxEntry) *types.SandboxInfo {
-	createdAt := sandboxCR.GetCreationTimestamp().Time
+func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *sandboxEntry) *types.SandboxInfo {
+	createdAt := sandbox.GetCreationTimestamp().Time
 	expiresAt := createdAt.Add(DefaultSandboxTTL)
-	if sandboxCR.Spec.ShutdownTime != nil {
-		expiresAt = sandboxCR.Spec.ShutdownTime.Time
+	if sandbox.Spec.ShutdownTime != nil {
+		expiresAt = sandbox.Spec.ShutdownTime.Time
 	}
 	accesses := make([]types.SandboxEntryPoints, 0, len(entry.Ports))
 	for _, port := range entry.Ports {
@@ -52,18 +51,17 @@ func buildSandboxInfo(sandboxCR *sandboxv1alpha1.Sandbox, podIP string, entry *s
 			Endpoint: net.JoinHostPort(podIP, strconv.Itoa(int(port.Port))),
 		})
 	}
-	sandboxStore := &types.SandboxInfo{
+	return &types.SandboxInfo{
 		Kind:             entry.Kind,
-		SandboxID:        string(sandboxCR.GetUID()),
-		Name:             sandboxCR.GetName(),
-		SandboxNamespace: sandboxCR.GetNamespace(),
+		SandboxID:        string(sandbox.GetUID()),
+		Name:             sandbox.GetName(),
+		SandboxNamespace: sandbox.GetNamespace(),
 		EntryPoints:      accesses,
 		SessionID:        entry.SessionID,
 		CreatedAt:        createdAt,
 		ExpiresAt:        expiresAt,
-		Status:           getSandboxStatus(sandboxCR),
+		Status:           getSandboxStatus(sandbox),
 	}
-	return sandboxStore
 }
 
 // getSandboxStatus extracts status from Sandbox CRD conditions

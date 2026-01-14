@@ -136,7 +136,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	defer s.sandboxController.UnWatchSandbox(namespace, sandboxName)
 
 	// Store placeholder before creating, make sandbox/sandboxClaim GarbageCollection possible
-	sandboxStorePlaceHolder := buildSandboxStoreCachePlaceHolder(sandbox, sandboxEntry)
+	sandboxStorePlaceHolder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
 	if err = s.storeClient.StoreSandbox(c.Request.Context(), sandboxStorePlaceHolder); err != nil {
 		errMessage := fmt.Sprintf("store sandbox place holder into store failed: %v", err)
 		klog.Error(errMessage)

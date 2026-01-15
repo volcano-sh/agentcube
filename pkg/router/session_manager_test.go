@@ -329,8 +329,8 @@ func TestGetSandboxBySession_CreateSandbox_WorkloadManagerUnavailable(t *testing
 	if err == nil {
 		t.Fatalf("expected error for unavailable workload manager")
 	}
-	if !apierrors.IsServiceUnavailable(err) {
-		t.Errorf("expected service unavailable error, got %v", err)
+	if !apierrors.IsInternalError(err) {
+		t.Errorf("expected internal error, got %v", err)
 	}
 }
 

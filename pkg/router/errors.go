@@ -36,15 +36,6 @@ var (
 	sessionResource         = schema.GroupResource{Group: resourceGroup, Resource: sessionResourceName}
 	agentRuntimeResource    = schema.GroupResource{Group: resourceGroup, Resource: agentRuntimeResourceName}
 	codeInterpreterResource = schema.GroupResource{Group: resourceGroup, Resource: codeInterpreterResourceName}
-
-	// ErrUpstreamUnavailable indicates that the workload manager is unavailable.
-	ErrUpstreamUnavailable = apierrors.NewServiceUnavailable("sessionmgr: workload manager unavailable")
-
-	// ErrCreateSandboxFailed indicates that the workload manager returned an error.
-	ErrCreateSandboxFailed = apierrors.NewInternalError(fmt.Errorf("sessionmgr: create sandbox failed"))
-
-	// ErrAgentRuntimeNotFound indicates that the AgentRuntime does not exist.
-	ErrAgentRuntimeNotFound = apierrors.NewNotFound(agentRuntimeResource, "")
 )
 
 func NewSessionNotFoundError(sessionID string) error {

@@ -1,0 +1,8 @@
+# List of usernames who may use /lgtm
+reviewers:
+  - t2wang
+  - acsoto
+
+# List of usernames who may use /approve
+approvers:
+  - t2wang

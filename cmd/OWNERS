@@ -1,0 +1,12 @@
+# List of usernames who may use /lgtm
+reviewers:
+  - acsoto
+  - t2wang
+  - tjucoder
+  - YaoZengzeng
+
+# List of usernames who may use /approve
+approvers:
+  - acsoto
+  - tjucoder
+  - YaoZengzeng

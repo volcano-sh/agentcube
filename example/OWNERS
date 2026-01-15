@@ -1,0 +1,10 @@
+# List of usernames who may use /lgtm
+reviewers:
+  - YaoZengzeng
+  - LeslieKuo
+  - acsoto
+
+# List of usernames who may use /approve
+approvers:
+  - YaoZengzeng
+  - LeslieKuo

@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/volcano-sh/agentcube/pkg/api"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	"github.com/volcano-sh/agentcube/pkg/store"
 )
@@ -83,7 +84,7 @@ func (m *manager) GetSandboxBySession(ctx context.Context, sessionID string, nam
 	sandbox, err := m.storeClient.GetSandboxBySessionID(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, NewSessionNotFoundError(sessionID)
+			return nil, api.NewSessionNotFoundError(sessionID)
 		}
 		return nil, fmt.Errorf("failed to get sandbox from store: %w", err)
 	}
@@ -126,7 +127,7 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 	// Send the request
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
-		return nil, NewInternalError(fmt.Errorf("failed calling workload manager: %w", err))
+		return nil, api.NewInternalError(fmt.Errorf("failed calling workload manager: %w", err))
 	}
 	defer resp.Body.Close()
 
@@ -139,24 +140,24 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, NewSandboxTemplateNotFoundError(namespace, name, kind)
+			return nil, api.NewSandboxTemplateNotFoundError(namespace, name, kind)
 		}
 		// Also check for BadRequest with "not found" message (for backward compatibility)
 		if resp.StatusCode == http.StatusBadRequest && strings.Contains(string(respBody), "not found") {
-			return nil, NewSandboxTemplateNotFoundError(namespace, name, kind)
+			return nil, api.NewSandboxTemplateNotFoundError(namespace, name, kind)
 		}
-		return nil, NewInternalError(fmt.Errorf("workload manager returned status %d", resp.StatusCode))
+		return nil, api.NewInternalError(fmt.Errorf("workload manager returned status %d", resp.StatusCode))
 	}
 
 	// Parse response
 	var res types.CreateSandboxResponse
 	if err := json.Unmarshal(respBody, &res); err != nil {
-		return nil, NewInternalError(fmt.Errorf("failed to unmarshal response: %w", err))
+		return nil, api.NewInternalError(fmt.Errorf("failed to unmarshal response: %w", err))
 	}
 
 	// Validate response
 	if res.SessionID == "" {
-		return nil, NewInternalError(fmt.Errorf("response with empty session id from workload manager"))
+		return nil, api.NewInternalError(fmt.Errorf("response with empty session id from workload manager"))
 	}
 
 	// Construct Sandbox Info from response

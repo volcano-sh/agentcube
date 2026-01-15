@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/volcano-sh/agentcube/pkg/api"
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	corev1 "k8s.io/api/core/v1"
@@ -230,7 +231,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 		return nil, nil, fmt.Errorf("get agent runtime %s from informer failed: %v", agentRuntimeKey, err)
 	}
 	if !exists {
-		return nil, nil, fmt.Errorf("%w: %s", ErrAgentRuntimeNotFound, agentRuntimeKey)
+		return nil, nil, fmt.Errorf("%w: %s", api.ErrAgentRuntimeNotFound, agentRuntimeKey)
 	}
 
 	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
@@ -290,7 +291,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 
 	if !exists {
-		return nil, nil, nil, fmt.Errorf("%w: %s", ErrCodeInterpreterNotFound, codeInterpreterKey)
+		return nil, nil, nil, fmt.Errorf("%w: %s", api.ErrCodeInterpreterNotFound, codeInterpreterKey)
 	}
 
 	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
@@ -307,7 +308,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	// Check if public key is cached before creating pods that require it
 	// Skip this check if authMode is "none" (custom images that don't use PicoD auth)
 	if codeInterpreterObj.Spec.AuthMode != runtimev1alpha1.AuthModeNone && !IsPublicKeyCached() {
-		return nil, nil, nil, fmt.Errorf("public key not yet cached from Router Secret, cannot create PicoD pod")
+		return nil, nil, nil, fmt.Errorf("%w: cannot create PicoD pod", api.ErrPublicKeyMissing)
 	}
 
 	sessionID := uuid.New().String()

@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/agent-sandbox/controllers"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 
+	"github.com/volcano-sh/agentcube/pkg/api"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	"github.com/volcano-sh/agentcube/pkg/store"
 )
@@ -104,7 +105,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	if err != nil {
 		klog.Errorf("build sandbox failed: %v", err)
 		// Check if it's a "not found" error and return 404
-		if errors.Is(err, ErrAgentRuntimeNotFound) || errors.Is(err, ErrCodeInterpreterNotFound) {
+		if errors.Is(err, api.ErrAgentRuntimeNotFound) || errors.Is(err, api.ErrCodeInterpreterNotFound) {
 			respondError(c, http.StatusNotFound, "NOT_FOUND", err.Error())
 		} else {
 			respondError(c, http.StatusBadRequest, "SANDBOX_BUILD_FAILED", err.Error())

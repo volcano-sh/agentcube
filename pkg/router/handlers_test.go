@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/volcano-sh/agentcube/pkg/api"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 )
 
@@ -201,22 +202,22 @@ func TestHandleInvoke_ErrorPaths(t *testing.T) {
 		},
 		{
 			name:         "session not found",
-			err:          NewSessionNotFoundError("missing-session"),
+			err:          api.NewSessionNotFoundError("missing-session"),
 			expectedCode: http.StatusNotFound,
 		},
 		{
 			name:         "agent runtime not found",
-			err:          NewSandboxTemplateNotFoundError("default", "test-agent", types.AgentRuntimeKind),
+			err:          api.NewSandboxTemplateNotFoundError("default", "test-agent", types.AgentRuntimeKind),
 			expectedCode: http.StatusNotFound,
 		},
 		{
 			name:         "upstream unavailable",
-			err:          NewUpstreamUnavailableError(errors.New("upstream unavailable")),
+			err:          api.NewUpstreamUnavailableError(errors.New("upstream unavailable")),
 			expectedCode: http.StatusServiceUnavailable,
 		},
 		{
 			name:         "internal error",
-			err:          NewInternalError(fmt.Errorf("unexpected")),
+			err:          api.NewInternalError(fmt.Errorf("unexpected")),
 			expectedCode: http.StatusInternalServerError,
 		},
 	}

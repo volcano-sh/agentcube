@@ -88,13 +88,13 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 
 	var sandbox *sandboxv1alpha1.Sandbox
 	var sandboxClaim *extensionsv1alpha1.SandboxClaim
-	var externalInfo *sandboxExternalInfo
+	var sandboxEntry *sandboxEntry
 	var err error
 	switch sandboxReq.Kind {
 	case types.AgentRuntimeKind:
-		sandbox, externalInfo, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers)
+		sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers)
 	case types.CodeInterpreterKind:
-		sandbox, sandboxClaim, externalInfo, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers)
+		sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers)
 	default:
 		klog.Errorf("invalid request kind: %v", sandboxReq.Kind)
 		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("invalid request kind: %v", sandboxReq.Kind))
@@ -136,7 +136,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	defer s.sandboxController.UnWatchSandbox(namespace, sandboxName)
 
 	// Store placeholder before creating, make sandbox/sandboxClaim GarbageCollection possible
-	sandboxStorePlaceHolder := buildSandboxStoreCachePlaceHolder(sandbox, externalInfo)
+	sandboxStorePlaceHolder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
 	if err = s.storeClient.StoreSandbox(c.Request.Context(), sandboxStorePlaceHolder); err != nil {
 		errMessage := fmt.Sprintf("store sandbox place holder into store failed: %v", err)
 		klog.Error(errMessage)
@@ -177,6 +177,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	}
 
 	needRollbackSandbox := true
+	// TODO(hzxuzhonghu): in some case we need to rollback sandboxClaim
 	sandboxRollbackFunc := func() {
 		ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -205,10 +206,10 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		return
 	}
 
-	storeCacheInfo := convertSandboxToStoreCache(createdSandbox, podIP, externalInfo)
+	storeCacheInfo := buildSandboxInfo(createdSandbox, podIP, sandboxEntry)
 
 	response := &types.CreateSandboxResponse{
-		SessionID:   externalInfo.SessionID,
+		SessionID:   sandboxEntry.SessionID,
 		SandboxID:   storeCacheInfo.SandboxID,
 		SandboxName: sandboxName,
 		EntryPoints: storeCacheInfo.EntryPoints,
@@ -223,7 +224,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	// init successful, no need to rollback
 	needRollbackSandbox = false
 	klog.Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
-		createdSandbox.Name, createdSandbox.Kind, externalInfo.SessionID)
+		createdSandbox.Name, createdSandbox.Kind, sandboxEntry.SessionID)
 	respondJSON(c, http.StatusOK, response)
 }
 

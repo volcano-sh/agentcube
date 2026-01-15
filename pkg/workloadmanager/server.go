@@ -35,7 +35,6 @@ type Server struct {
 	httpServer        *http.Server
 	k8sClient         *K8sClient
 	sandboxController *SandboxReconciler
-	sandboxStore      *SandboxStore
 	tokenCache        *TokenCache
 	informers         *Informers
 	storeClient       store.Store
@@ -72,16 +71,12 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 	// This will retry until successful (handles case where Router isn't ready yet)
 	InitPublicKeyCache(k8sClient.clientset)
 
-	// Create sandbox store
-	sandboxStore := NewSandboxStore()
-
 	// Create token cache (cache up to 1000 tokens, 5min TTL)
 	tokenCache := NewTokenCache(1000, 5*time.Minute)
 
 	server := &Server{
 		config:            config,
 		k8sClient:         k8sClient,
-		sandboxStore:      sandboxStore,
 		sandboxController: sandboxController,
 		tokenCache:        tokenCache,
 		informers:         NewInformers(k8sClient),
@@ -92,12 +87,6 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 	server.setupRoutes()
 
 	return server, nil
-}
-
-// InitializeStore initializes the sandbox store with Kubernetes informer
-func (s *Server) InitializeStore(ctx context.Context) error {
-	informer := s.k8sClient.GetSandboxInformer()
-	return s.sandboxStore.InitializeWithInformer(ctx, informer, s.k8sClient)
 }
 
 // setupRoutes configures HTTP routes
@@ -124,9 +113,6 @@ func (s *Server) setupRoutes() {
 // Start starts the API server
 func (s *Server) Start(ctx context.Context) error {
 	// Initialize store with informer before starting server
-	if err := s.InitializeStore(ctx); err != nil {
-		return fmt.Errorf("failed to initialize sandbox store: %w", err)
-	}
 
 	if err := s.informers.RunAndWaitForCacheSync(ctx); err != nil {
 		return fmt.Errorf("failed to wait for caches to sync: %w", err)
@@ -151,8 +137,6 @@ func (s *Server) Start(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 		klog.Info("Shutting down server...")
-		// Stop the sandbox store informer
-		s.sandboxStore.Stop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {

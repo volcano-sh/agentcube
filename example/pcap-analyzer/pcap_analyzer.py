@@ -15,7 +15,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import os
-import sys
 import re
 import json
 import time
@@ -34,6 +33,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 
 from agentcube.code_interpreter import CodeInterpreterClient  # type: ignore
+from agentcube.exceptions import CommandExecutionError  # type: ignore
 
 # =========================
 # Logging configuration
@@ -80,12 +80,10 @@ API_BASE_URL = os.environ.get("OPENAI_API_BASE", "https://api.siliconflow.cn/v1"
 MODEL_NAME = os.environ.get("OPENAI_MODEL", "Qwen/QwQ-32B")
 MODEL_PROVIDER = "openai"
 
-SANDBOX_NAMESPACE = "default"
-SANDBOX_PUBLIC_KEY = os.environ.get("SANDBOX_PUBLIC_KEY")
-SANDBOX_PRIVATE_KEY = os.environ.get("SANDBOX_PRIVATE_KEY")
-SANDBOX_CPU = os.environ.get("SANDBOX_CPU", "200m")
-SANDBOX_MEMORY = os.environ.get("SANDBOX_MEMORY", "256Mi")
-SANDBOX_WARMUP_SEC = int(os.environ.get("SANDBOX_WARMUP_SEC", "20"))
+# Sandbox / CodeInterpreter configuration
+CODEINTERPRETER_NAME = os.environ.get("CODEINTERPRETER_NAME", "simple-codeinterpreter")
+SANDBOX_NAMESPACE = os.environ.get("SANDBOX_NAMESPACE", "default")
+SANDBOX_WARMUP_SEC = int(os.environ.get("SANDBOX_WARMUP_SEC", "5"))
 
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 8000
@@ -183,13 +181,21 @@ Produce Markdown report.
 
 # ---------------- Sandbox ----------------
 class SandboxRunner:
-    def __init__(self, namespace: str, public_key: str, private_key: str,
-                 cpu: str = "200m", memory: str = "256Mi", warmup_sec: int = 6):
+    def __init__(
+        self,
+        name: str = "simple-codeinterpreter",
+        namespace: str = "default",
+        warmup_sec: int = 5
+    ):
         _sep("SANDBOX CREATE", char="=")
-        log.info("Creating sandbox (namespace=%s, cpu=%s, memory=%s)", namespace, cpu, memory)
-        self.sdk = CodeInterpreterClient(image="swr.cn-north-4.myhuaweicloud.com/hcie-lab-wp/sandbox-with-ssh-arm:v2")
-        self.sandbox_id = self.sdk.id
-        log.info("Sandbox created: id=%s", self.sandbox_id)
+        log.info("Creating sandbox (name=%s, namespace=%s)", name, namespace)
+        self.sdk = CodeInterpreterClient(
+            name=name,
+            namespace=namespace,
+            verbose=True
+        )
+        self.sandbox_id = self.sdk.session_id
+        log.info("Sandbox created: session_id=%s", self.sandbox_id)
         if warmup_sec > 0:
             log.info("Warming up sandbox for %ss ...", warmup_sec)
             time.sleep(warmup_sec)
@@ -222,20 +228,22 @@ class SandboxRunner:
     def run(self, command: str) -> Dict[str, Any]:
         log.info("Executing command in sandbox: %s", command)
         try:
-            res = self.sdk.execute_command(
-                command=command,
-            )
-            if isinstance(res, dict):
-                code = int(res.get("exitCode", res.get("exit_code", 0)))
-                log.info("Command finished (exitCode=%s)", code)
-                return {
-                    "stdout": res.get("stdout", res.get("output", "")) or "",
-                    "stderr": res.get("stderr", "") or "",
-                    "exitCode": code,
-                    "isError": bool(res.get("isError", False)) or code != 0,
-                }
-            log.info("Command finished (non-dict response, assuming success)")
-            return {"stdout": str(res), "stderr": "", "exitCode": 0, "isError": False}
+            stdout = self.sdk.execute_command(command=command)
+            log.info("Command finished (exitCode=0)")
+            return {
+                "stdout": stdout if stdout else "",
+                "stderr": "",
+                "exitCode": 0,
+                "isError": False,
+            }
+        except CommandExecutionError as e:
+            log.warning("Command failed (exitCode=%s)", e.exit_code)
+            return {
+                "stdout": "",
+                "stderr": e.stderr if e.stderr else "",
+                "exitCode": e.exit_code,
+                "isError": True,
+            }
         except Exception as e:
             log.exception("Unexpected error during command: %s", command)
             return {"stdout": "", "stderr": f"Unexpected: {e}", "exitCode": 1, "isError": True}
@@ -288,7 +296,8 @@ CODE_BLOCK_RE = re.compile(r"```(?:bash|sh)?\s*(.*?)```", re.DOTALL | re.IGNOREC
 
 def _extract_script(text: str) -> str:
     try:
-        obj = json.loads(text); s = obj.get("script")
+        obj = json.loads(text)
+        s = obj.get("script")
         if isinstance(s, str) and s.strip():
             log.info("Script extracted from JSON")
             return s
@@ -372,9 +381,11 @@ def _execute_once_in_runner(runner: SandboxRunner, pcap_local_path: str, script:
 def _analyze_with_retries(
     planner_agent,
     reporter_agent,
-    namespace: str, public_key: str, private_key: str,
-    pcap_local_path: str, initial_script: str,
-    cpu: str = "200m", memory: str = "256Mi", warmup_sec: int = 20,
+    name: str,
+    namespace: str,
+    pcap_local_path: str,
+    initial_script: str,
+    warmup_sec: int = 5,
     max_retries: int = 2
 ) -> Dict[str, Any]:
     """
@@ -391,11 +402,11 @@ def _analyze_with_retries(
     start_all = time.time()
     _sep("ANALYZE WITH RETRIES - START", char="=")
     log.info(
-        "max_retries=%d, cpu=%s, memory=%s, warmup=%ss, pcap=%s",
-        max_retries, cpu, memory, warmup_sec, os.path.abspath(pcap_local_path)
+        "max_retries=%d, warmup=%ss, pcap=%s",
+        max_retries, warmup_sec, os.path.abspath(pcap_local_path)
     )
 
-    runner = SandboxRunner(namespace, public_key, private_key, cpu=cpu, memory=memory, warmup_sec=warmup_sec)
+    runner = SandboxRunner(name=name, namespace=namespace, warmup_sec=warmup_sec)
     try:
         all_results: List[Dict[str, Any]] = []
         script = initial_script
@@ -478,16 +489,18 @@ def _analyze_with_retries(
 
 # ---------------- Legacy single-run execution helper (not recommended) ----------------
 def _execute_script(
-    namespace: str, public_key: str, private_key: str,
-    pcap_local_path: str, script: str,
-    cpu: str = "200m", memory: str = "256Mi", warmup_sec: int = 20
+    name: str,
+    namespace: str,
+    pcap_local_path: str,
+    script: str,
+    warmup_sec: int = 5
 ) -> List[Dict[str, Any]]:
     _sep("LEGACY EXECUTE (SINGLE RUN)", char="=")
     log.info("Executing planned script in sandbox (legacy path)")
     if not os.path.exists(pcap_local_path):
         log.error("PCAP not found: %s", pcap_local_path)
         raise HTTPException(status_code=404, detail=f"PCAP not found: {pcap_local_path}")
-    runner = SandboxRunner(namespace, public_key, private_key, cpu=cpu, memory=memory, warmup_sec=warmup_sec)
+    runner = SandboxRunner(name=name, namespace=namespace, warmup_sec=warmup_sec)
     try:
         if not runner.upload_file(pcap_local_path, "/workspace/pocket.pcap"):
             raise HTTPException(status_code=500, detail="PCAP upload failed")
@@ -575,7 +588,8 @@ async def analyze_endpoint(
     tmp_path = None
     try:
         if pcap_file is not None:
-            tmp_path = _save_upload_to_tmp(pcap_file); src_path = tmp_path
+            tmp_path = _save_upload_to_tmp(pcap_file)
+            src_path = tmp_path
         elif pcap_path:
             src_path = pcap_path
         else:
@@ -590,10 +604,11 @@ async def analyze_endpoint(
         out = _analyze_with_retries(
             planner_agent=PLANNER,
             reporter_agent=REPORTER,
-            namespace=SANDBOX_NAMESPACE, public_key=SANDBOX_PUBLIC_KEY, private_key=SANDBOX_PRIVATE_KEY,
+            name=CODEINTERPRETER_NAME,
+            namespace=SANDBOX_NAMESPACE,
             pcap_local_path=src_path,
             initial_script=script,
-            cpu=SANDBOX_CPU, memory=SANDBOX_MEMORY, warmup_sec=SANDBOX_WARMUP_SEC,
+            warmup_sec=SANDBOX_WARMUP_SEC,
             max_retries=int(os.environ.get("PLANNER_MAX_RETRIES", "2"))
         )
 

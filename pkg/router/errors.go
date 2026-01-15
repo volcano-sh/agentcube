@@ -17,7 +17,6 @@ limitations under the License.
 package router
 
 import (
-	"errors"
 	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -38,9 +37,6 @@ var (
 	agentRuntimeResource    = schema.GroupResource{Group: resourceGroup, Resource: agentRuntimeResourceName}
 	codeInterpreterResource = schema.GroupResource{Group: resourceGroup, Resource: codeInterpreterResourceName}
 
-	// ErrSessionNotFound indicates that the session does not exist in store.
-	ErrSessionNotFound = apierrors.NewNotFound(sessionResource, "")
-
 	// ErrUpstreamUnavailable indicates that the workload manager is unavailable.
 	ErrUpstreamUnavailable = apierrors.NewServiceUnavailable("sessionmgr: workload manager unavailable")
 
@@ -51,8 +47,8 @@ var (
 	ErrAgentRuntimeNotFound = apierrors.NewNotFound(agentRuntimeResource, "")
 )
 
-func sessionNotFoundError(sessionID string) error {
-	return errors.Join(ErrSessionNotFound, apierrors.NewNotFound(sessionResource, sessionID))
+func NewSessionNotFoundError(sessionID string) error {
+	return apierrors.NewNotFound(sessionResource, sessionID)
 }
 
 func workloadResource(kind string) schema.GroupResource {
@@ -64,19 +60,15 @@ func workloadResource(kind string) schema.GroupResource {
 	}
 }
 
-func sandboxNotFoundError(namespace, name, kind string) error {
+func NewSandboxTemplateNotFoundError(namespace, name, kind string) error {
 	gr := workloadResource(kind)
-	return errors.Join(ErrAgentRuntimeNotFound, apierrors.NewNotFound(gr, fmt.Sprintf("%s/%s", namespace, name)))
+	return apierrors.NewNotFound(gr, fmt.Sprintf("%s/%s", namespace, name))
 }
 
-func upstreamUnavailableError(err error) error {
-	return errors.Join(ErrUpstreamUnavailable, apierrors.NewServiceUnavailable(err.Error()))
+func NewUpstreamUnavailableError(err error) error {
+	return apierrors.NewServiceUnavailable(err.Error())
 }
 
-func createSandboxFailedStatusError(statusCode int, respBody []byte) error {
-	return errors.Join(ErrCreateSandboxFailed, apierrors.NewInternalError(fmt.Errorf("status code %d, body: %s", statusCode, string(respBody))))
-}
-
-func createSandboxFailedError(err error) error {
-	return errors.Join(ErrCreateSandboxFailed, apierrors.NewInternalError(err))
+func NewInternalError(err error) error {
+	return apierrors.NewInternalError(err)
 }

@@ -19,20 +19,21 @@ Math Agent - An example AI agent using LangChain and LangGraph.
 This agent provides an HTTP API for solving math problems using Python code.
 """
 
-import os
-import json
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import Dict, Any
 import datetime
+import json
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any, Dict
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
-from langchain.chat_models import init_chat_model
-from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.tools import tool
 from langchain.agents import create_agent
-from agentcube import CodeInterpreterClient
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
+from langgraph.checkpoint.memory import MemorySaver
 from pydantic import BaseModel, Field
+
+from agentcube import CodeInterpreterClient
 
 # Load environment variables from .env file
 load_dotenv()
@@ -56,7 +57,7 @@ def run_python_code(code: str) -> str:
         # Initialize the client for each call, as requested.
         # This will create a new session for each tool invocation.
         ci_client = CodeInterpreterClient()
-        
+
         # Run the code
         return ci_client.run_code("python", code)
 
@@ -139,17 +140,17 @@ class MathAgentHandler(BaseHTTPRequestHandler):
 
             query = data.get("query", "")
             thread_id = data.get("thread_id", "default_thread")
-            
+
             print(f"Received query: {query} (thread_id: {thread_id})")
-            
+
             config = {"configurable": {"thread_id": thread_id}}
-            
+
             # Invoke the agent synchronously
             result = agent_graph.invoke(
                 {"messages": [HumanMessage(content=query)]},
                 config=config
             )
-            
+
             # Result contains 'messages' key with the conversation history
             # The last message is the AI's response
             last_message = result["messages"][-1]
@@ -211,7 +212,7 @@ def main():
         print(f"Math Agent is running on port {port}")
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print(f"\nShutting down Math Agent")
+        print("\nShutting down Math Agent")
         httpd.server_close()
 
 

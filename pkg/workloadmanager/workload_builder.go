@@ -83,21 +83,17 @@ func IsPublicKeyCached() bool {
 // Router hasn't started yet when WorkloadManager starts.
 func InitPublicKeyCache(clientset kubernetes.Interface) {
 	go func() {
-		retryInterval := 5 * time.Second
-		maxRetryInterval := 60 * time.Second
+		retryInterval := 100 * time.Millisecond
+		maxRetryInterval := 10 * time.Second
 
 		for {
-			if IsPublicKeyCached() {
-				return
-			}
-
 			err := loadPublicKeyFromSecret(clientset)
 			if err == nil {
-				klog.Infof("Public key cached from Secret %s/%s", IdentitySecretNamespace, IdentitySecretName)
+				klog.Infof("loaded public key from secret %s/%s", IdentitySecretNamespace, IdentitySecretName)
 				return
 			}
 
-			klog.Warningf("Failed to load public key from Router Secret: %v. Retrying in %v...", err, retryInterval)
+			klog.V(2).Infof("Failed to load public key from secret %s/%s: %v. Retrying in %v...", IdentitySecretNamespace, IdentitySecretName, err, retryInterval)
 			time.Sleep(retryInterval)
 
 			// Exponential backoff with max limit
@@ -117,8 +113,7 @@ func loadPublicKeyFromSecret(clientset kubernetes.Interface) error {
 		metav1.GetOptions{},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to get Router identity secret %s/%s: %w",
-			IdentitySecretNamespace, IdentitySecretName, err)
+		return err
 	}
 
 	publicKeyData, ok := secret.Data[PublicKeyDataKey]
@@ -226,12 +221,10 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 
 func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
 	agentRuntimeKey := namespace + "/" + name
-	runtimeObj, exists, err := ifm.AgentRuntimeInformer.GetStore().GetByKey(agentRuntimeKey)
-	if err != nil {
-		return nil, nil, fmt.Errorf("get agent runtime %s from informer failed: %v", agentRuntimeKey, err)
-	}
+	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type convertion below
+	runtimeObj, exists, _ := ifm.AgentRuntimeInformer.GetStore().GetByKey(agentRuntimeKey)
 	if !exists {
-		return nil, nil, fmt.Errorf("%w: %s", api.ErrAgentRuntimeNotFound, agentRuntimeKey)
+		return nil, nil, api.ErrAgentRuntimeNotFound
 	}
 
 	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
@@ -285,15 +278,11 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 
 func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
 	codeInterpreterKey := namespace + "/" + codeInterpreterName
-	runtimeObj, exists, err := informer.CodeInterpreterInformer.GetStore().GetByKey(codeInterpreterKey)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("get code interpreter %s from informer failed: %v", codeInterpreterKey, err)
-	}
-
+	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type convertion below
+	runtimeObj, exists, _ := informer.CodeInterpreterInformer.GetStore().GetByKey(codeInterpreterKey)
 	if !exists {
-		return nil, nil, nil, fmt.Errorf("%w: %s", api.ErrCodeInterpreterNotFound, codeInterpreterKey)
+		return nil, nil, nil, api.ErrCodeInterpreterNotFound
 	}
-
 	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
 	if !ok {
 		klog.Errorf("code interpreter %s type asserting unstructured.Unstructured failed", codeInterpreterKey)
@@ -305,10 +294,9 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		return nil, nil, nil, fmt.Errorf("failed to convert unstructured to CodeInterpreter: %w", err)
 	}
 
-	// Check if public key is cached before creating pods that require it
-	// Skip this check if authMode is "none" (custom images that don't use PicoD auth)
-	if codeInterpreterObj.Spec.AuthMode != runtimev1alpha1.AuthModeNone && !IsPublicKeyCached() {
-		return nil, nil, nil, fmt.Errorf("%w: cannot create PicoD pod", api.ErrPublicKeyMissing)
+	// Check public key available if authMode is picod
+	if codeInterpreterObj.Spec.AuthMode == runtimev1alpha1.AuthModePicoD && !IsPublicKeyCached() {
+		return nil, nil, nil, api.ErrPublicKeyMissing
 	}
 
 	sessionID := uuid.New().String()
@@ -360,7 +348,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	envVars := make([]corev1.EnvVar, len(codeInterpreterObj.Spec.Template.Environment))
 	copy(envVars, codeInterpreterObj.Spec.Template.Environment)
 	// Only inject public key for picod auth mode (default behavior)
-	if codeInterpreterObj.Spec.AuthMode != runtimev1alpha1.AuthModeNone {
+	if codeInterpreterObj.Spec.AuthMode == runtimev1alpha1.AuthModePicoD {
 		envVars = append(envVars, corev1.EnvVar{
 			Name:  "PICOD_AUTH_PUBLIC_KEY",
 			Value: GetCachedPublicKey(),
@@ -390,9 +378,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		podSpec:        podSpec,
 		podLabels:      codeInterpreterObj.Spec.Template.Labels,
 		podAnnotations: codeInterpreterObj.Spec.Template.Annotations,
-	}
-	if codeInterpreterObj.Spec.MaxSessionDuration != nil {
-		buildParams.ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration
+		ttl:            codeInterpreterObj.Spec.MaxSessionDuration.Duration,
 	}
 	sandbox := buildSandboxObject(buildParams)
 	return sandbox, nil, sandboxEntry, nil

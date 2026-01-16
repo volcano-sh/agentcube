@@ -24,7 +24,6 @@ import (
 
 // ErrorResponse represents an API error response
 type ErrorResponse struct {
-	Error   string `json:"error"`
 	Message string `json:"message"`
 }
 
@@ -34,9 +33,8 @@ func respondJSON(c *gin.Context, statusCode int, data interface{}) {
 }
 
 // respondError sends an error response
-func respondError(c *gin.Context, statusCode int, errorCode, message string) {
+func respondError(c *gin.Context, statusCode int, message string) {
 	response := ErrorResponse{
-		Error:   errorCode,
 		Message: message,
 	}
 	respondJSON(c, statusCode, response)

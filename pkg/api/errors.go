@@ -50,7 +50,7 @@ var (
 	ErrTemplateMissing = errors.New("resource has no pod template")
 
 	// ErrPublicKeyMissing indicates that the Router public key is not yet available.
-	ErrPublicKeyMissing = errors.New("public key not yet cached from Router Secret")
+	ErrPublicKeyMissing = errors.New("public key not yet loaded from Router Secret")
 )
 
 func NewSessionNotFoundError(sessionID string) error {

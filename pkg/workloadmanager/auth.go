@@ -51,7 +51,6 @@ import (
 //
 // GET /v1/sandboxes (ListSandboxes):
 //   - Users can only list sandboxes they created
-//   - Results are filtered based on CreatorServiceAccount field
 //
 // GET /v1/sandboxes/{sandboxId} (GetSandbox):
 //   - Users can only access sandboxes they created

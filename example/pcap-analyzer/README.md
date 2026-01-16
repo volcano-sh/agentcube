@@ -191,9 +191,11 @@ for attempt in range(max_retries + 1):
 | `OPENAI_API_KEY` | LLM API key | *Required* |
 | `OPENAI_MODEL` | Model name | `Qwen/QwQ-32B` |
 | `OPENAI_API_BASE` | Model API endpoint | `https://api.siliconflow.cn/v1` |
-| `SANDBOX_NAMESPACE` | Sandbox namespace | `default` |
-| `SANDBOX_CPU` / `SANDBOX_MEMORY` | Resource allocation | `200m` / `256Mi` |
-| `SANDBOX_WARMUP_SEC` | Sandbox warm-up time (seconds) | `20` |
+| `WORKLOAD_MANAGER_URL` | AgentCube Control Plane URL | *Required in cluster* |
+| `ROUTER_URL` | AgentCube Data Plane (Router) URL | *Required* |
+| `CODEINTERPRETER_NAME` | Name of CodeInterpreter CRD | `simple-codeinterpreter` |
+| `SANDBOX_NAMESPACE` | Kubernetes namespace for sandbox | `default` |
+| `SANDBOX_WARMUP_SEC` | Sandbox warm-up time (seconds) | `5` |
 | `PLANNER_MAX_RETRIES` | Maximum auto-repair attempts | `2` |
 | `DEBUG_SAVE_DIR` | Debug artifact output directory | `./debug_artifacts` |
 
@@ -238,7 +240,14 @@ kubectl apply -f deployment.yaml
 #### request
 Obtain the pod IP by running the command "kubectl get pod -owide | grep pcap-analyzer". "./samples/pocket.pcap" need change to your file path.
 ```bash
-curl -X POST "http://{pod_ip}:8000/analyze"   -H "Content-Type: application/x-www-form-urlencoded"   -d "pcap_file=@./samples/pocket.pcap"
+curl -X POST "http://{pod_ip}:8000/analyze" \
+  -F "pcap_file=@./samples/pocket.pcap"
+```
+
+Alternatively, you can use `pcap_path` form field for local file path:
+```bash
+curl -X POST "http://{pod_ip}:8000/analyze" \
+  -F "pcap_path=/path/to/your/file.pcap"
 ```
 
 Response:

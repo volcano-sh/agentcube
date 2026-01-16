@@ -27,6 +27,7 @@ This proposal outlines a design for introducing a declarative API to manage runt
 - Ensure seamless integration with existing AgentCube components and workflows.
 
 #### Non-Goals
+
 - This proposal does not cover the entire workflow of sandbox lifecycle management, focusing solely on the declarative API design.
 - It does not address `Function` runtimes.
 - It does not include implementation details for the automatic creation mechanism triggered by first invocation.
@@ -49,10 +50,10 @@ As an agentic AI developer, I want to deploy my agents on the serverless platfor
 
 #### Why do we need separate api rather than existing SandboxTemplate?
 
-There is a existing [`SandboxTemplate`](http://github.com/kubernetes-sigs/agent-sandbox/blob/main/extensions/api/v1alpha1/sandboxtemplate_types.go#L57) in the kubernetes-sigs/agent-sandbox project. However, it is designed to be a generic template for various sandbox types and may not cater specifically to the unique requirements of Agent and CodeInterpreter runtimes. 
+There is an existing [`SandboxTemplate`](http://github.com/kubernetes-sigs/agent-sandbox/blob/main/extensions/api/v1alpha1/sandboxtemplate_types.go#L57) in the kubernetes-sigs/agent-sandbox project. However, it is designed to be a generic template for various sandbox types and may not cater specifically to the unique requirements of Agent and CodeInterpreter runtimes.
 
 - SandboxTemplate simply reuses pod template, making it hard to express multi-version runtimes. As it is common to have multiple versions of Agent or CodeInterpreter runtimes, a more specialized template is needed to manage these variations effectively.
-- Different runtimes may have distinct configuration needs that are not adequately addressed by a generic pod template. Likely we need to support a warmpool for code  interpreter runtime, but not for agent runtime. Because code interpreter needs very low latency for cold start, while agent runtime can afford longer cold start time.
+- Different runtimes may have distinct configuration needs that are not adequately addressed by a generic pod template. Likely we need to support a warmpool for code interpreter runtime, but not for agent runtime. Because code interpreter needs very low latency for cold start, while agent runtime can afford longer cold start time.
 - Different runtimes may serve different protocols or endpoints that require specific handling not covered by a generic template.
 
 By introducing a dedicated runtime template, we can tailor the API to better suit the specific needs of these runtimes, such as specialized configuration options, lifecycle management, and integration points.
@@ -192,7 +193,6 @@ spec:
 
 With the `AgentRuntime` published, callers can access the agent runtime through the endpoint `https://<agent-frontend>:<frontend-port>/v1/namespaces/{agentNamespace}/agent-runtimes/{agentName}/invocations/<agent specific path>`.
 
-
 #### CodeInterpreter CRD
 
 ```go
@@ -246,11 +246,6 @@ type CodeInterpreterSpec struct {
     // latency for new sessions at the cost of additional resource usage.
     // +optional
     WarmPoolSize *int32 `json:"warmPoolSize,omitempty" protobuf:"varint,5,opt,name=warmPoolSize"`
-
-    // NeedInitialization specifies if CodeInterpreter need initialization
-    // default true if NeedInitialization is nil
-    // +optional
-    NeedInitialization *bool `json:"needInitialization,omitempty"`
 }
 
 // CodeInterpreterSandboxTemplate mirrors SandboxTemplate but is kept separate in case

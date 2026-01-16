@@ -56,9 +56,6 @@ func TestNewServer(t *testing.T) {
 			config: &Config{
 				Port:                  "9090",
 				MaxConcurrentRequests: 500,
-				RequestTimeout:        60,
-				MaxIdleConns:          200,
-				MaxConnsPerHost:       20,
 				Debug:                 true,
 			},
 			wantErr: false,
@@ -106,27 +103,9 @@ func TestNewServer(t *testing.T) {
 					t.Error("Store client was not created")
 				}
 
-				// Verify semaphore was created with correct capacity
-				expectedCapacity := tt.config.MaxConcurrentRequests
-				if expectedCapacity <= 0 {
-					expectedCapacity = 1000 // Default value
-				}
-				if cap(server.semaphore) != expectedCapacity {
-					t.Errorf("Expected semaphore capacity %d, got %d", expectedCapacity, cap(server.semaphore))
-				}
-
 				// Verify default values were set
 				if server.config.MaxConcurrentRequests <= 0 {
 					t.Error("MaxConcurrentRequests should have been set to default")
-				}
-				if server.config.RequestTimeout <= 0 {
-					t.Error("RequestTimeout should have been set to default")
-				}
-				if server.config.MaxIdleConns <= 0 {
-					t.Error("MaxIdleConns should have been set to default")
-				}
-				if server.config.MaxConnsPerHost <= 0 {
-					t.Error("MaxConnsPerHost should have been set to default")
 				}
 			}
 		})
@@ -157,18 +136,6 @@ func TestServer_DefaultValues(t *testing.T) {
 	// Test default values
 	if server.config.MaxConcurrentRequests != 1000 {
 		t.Errorf("Expected default MaxConcurrentRequests 1000, got %d", server.config.MaxConcurrentRequests)
-	}
-
-	if server.config.RequestTimeout != 30 {
-		t.Errorf("Expected default RequestTimeout 30, got %d", server.config.RequestTimeout)
-	}
-
-	if server.config.MaxIdleConns != 100 {
-		t.Errorf("Expected default MaxIdleConns 100, got %d", server.config.MaxIdleConns)
-	}
-
-	if server.config.MaxConnsPerHost != 10 {
-		t.Errorf("Expected default MaxConnsPerHost 10, got %d", server.config.MaxConnsPerHost)
 	}
 }
 

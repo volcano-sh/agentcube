@@ -35,8 +35,8 @@ type Server struct {
 	httpServer     *http.Server
 	sessionManager SessionManager
 	storeClient    store.Store
-	semaphore      chan struct{}   // For limiting concurrent requests
 	httpTransport  *http.Transport // Reusable HTTP transport for connection pooling
+	jwtManager     *JWTManager     // JWT manager for signing requests to sandboxes
 }
 
 // NewServer creates a new Router API server instance
@@ -48,15 +48,6 @@ func NewServer(config *Config) (*Server, error) {
 	// Set default values for concurrency settings
 	if config.MaxConcurrentRequests <= 0 {
 		config.MaxConcurrentRequests = 1000 // Default limit
-	}
-	if config.RequestTimeout <= 0 {
-		config.RequestTimeout = 30 // Default 30 seconds
-	}
-	if config.MaxIdleConns <= 0 {
-		config.MaxIdleConns = 100 // Default 100 idle connections
-	}
-	if config.MaxConnsPerHost <= 0 {
-		config.MaxConnsPerHost = 10 // Default 10 connections per host
 	}
 
 	// Create session manager with store client
@@ -74,20 +65,30 @@ func NewServer(config *Config) (*Server, error) {
 
 	// Create a reusable HTTP transport for connection pooling
 	httpTransport := &http.Transport{
-		MaxIdleConns:        config.MaxIdleConns,
-		MaxIdleConnsPerHost: config.MaxConnsPerHost,
-		IdleConnTimeout:     0,
-		DisableCompression:  false,
-		ForceAttemptHTTP2:   true,
+		IdleConnTimeout:    0,
+		DisableCompression: false,
 	}
 
 	server := &Server{
 		config:         config,
 		sessionManager: sessionManager,
 		storeClient:    store.Storage(),
-		semaphore:      make(chan struct{}, config.MaxConcurrentRequests),
 		httpTransport:  httpTransport,
 	}
+
+	// Initialize JWT manager for signing requests to sandboxes
+	jwtManager, err := NewJWTManager()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create JWT manager: %w", err)
+	}
+
+	// Try to load existing keys from secret or store new ones
+	if err := jwtManager.TryStoreOrLoadJWTKeySecret(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to store/load JWT key secret: %w", err)
+	}
+
+	server.jwtManager = jwtManager
+	klog.Info("JWT manager initialized successfully")
 
 	// Setup routes
 	server.setupRoutes()
@@ -97,14 +98,15 @@ func NewServer(config *Config) (*Server, error) {
 
 // concurrencyLimitMiddleware limits the number of concurrent requests
 func (s *Server) concurrencyLimitMiddleware() gin.HandlerFunc {
+	concurrency := make(chan struct{}, s.config.MaxConcurrentRequests)
 	return func(c *gin.Context) {
 		// Try to acquire a slot in the semaphore
 		select {
-		case s.semaphore <- struct{}{}:
+		case concurrency <- struct{}{}:
 			// Successfully acquired a slot, continue processing
 			defer func() {
 				// Release the slot when done
-				<-s.semaphore
+				<-concurrency
 			}()
 			c.Next()
 		default:
@@ -134,10 +136,12 @@ func (s *Server) setupRoutes() {
 
 	v1.Use(s.concurrencyLimitMiddleware()) // Apply concurrency limit to API routes
 
-	// Agent invoke requests
+	// Agent invoke requests (support GET/POST, since downstream uses these methods)
+	v1.GET("/namespaces/:namespace/agent-runtimes/:name/invocations/*path", s.handleAgentInvoke)
 	v1.POST("/namespaces/:namespace/agent-runtimes/:name/invocations/*path", s.handleAgentInvoke)
 
-	// Code interpreter invoke requests
+	// Code interpreter invoke requests (support GET/POST, since downstream uses GET for file download)
+	v1.GET("/namespaces/:namespace/code-interpreters/:name/invocations/*path", s.handleCodeInterpreterInvoke)
 	v1.POST("/namespaces/:namespace/code-interpreters/:name/invocations/*path", s.handleCodeInterpreterInvoke)
 }
 
@@ -146,11 +150,10 @@ func (s *Server) Start(ctx context.Context) error {
 	addr := ":" + s.config.Port
 
 	s.httpServer = &http.Server{
-		Addr:         addr,
-		Handler:      s.engine,
-		ReadTimeout:  30 * time.Second, // Longer timeout for potential long-running requests
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:        addr,
+		Handler:     s.engine,
+		ReadTimeout: 30 * time.Second, // Longer timeout for potential long-running requests
+		IdleTimeout: 90 * time.Second, // golang http default transport's idletimeout is 90s
 	}
 
 	// Listen for shutdown signal in goroutine

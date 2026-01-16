@@ -1,0 +1,27 @@
+{
+    "include": [
+        "sdk-python",
+        "test/e2e"
+    ],
+    "exclude": [
+        "**/node_modules",
+        "**/__pycache__",
+        "**/.git",
+        "**/client-go",
+        "**/cmd",
+        "**/pkg",
+        "**/docker",
+        "**/docs",
+        "**/hack",
+        "**/k8s",
+        "**/manifests"
+    ],
+    "extraPaths": [
+        "sdk-python"
+    ],
+    "reportMissingImports": "warning",
+    "reportMissingTypeStubs": "warning",
+    "pythonVersion": "3.8",
+    "pythonPlatform": "Linux",
+    "typeCheckingMode": "basic"
+}

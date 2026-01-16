@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	redisv9 "github.com/redis/go-redis/v9"
@@ -57,15 +58,17 @@ func makeRedisOptions() (*redisv9.Options, error) {
 	if redisAddr == "" {
 		return nil, fmt.Errorf("missing env var REDIS_ADDR")
 	}
+
 	redisPassword := os.Getenv("REDIS_PASSWORD")
-	if redisPassword == "" {
-		return nil, fmt.Errorf("missing env var REDIS_PASSWORD")
+	// Secure-by-default: require non-empty password unless explicitly disabled via REDIS_PASSWORD_REQUIRED=false.
+	if strings.ToLower(os.Getenv("REDIS_PASSWORD_REQUIRED")) != "false" && redisPassword == "" {
+		return nil, fmt.Errorf("REDIS_PASSWORD is required but not set")
 	}
-	redisOptions := &redisv9.Options{
+
+	return &redisv9.Options{
 		Addr:     redisAddr,
 		Password: redisPassword,
-	}
-	return redisOptions, nil
+	}, nil
 }
 
 // sessionKey make sessionKey by sessionID

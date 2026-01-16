@@ -18,12 +18,10 @@ import time
 import os
 import ast
 import shlex
-from typing import Dict, Optional, Any, List, Union
+from typing import Optional, Any, List, Union
 from urllib.parse import urljoin
 
 import requests
-import jwt
-from cryptography.hazmat.primitives.asymmetric import rsa
 
 from agentcube.utils.log import get_logger
 from agentcube.utils.http import create_session
@@ -32,12 +30,14 @@ from agentcube.exceptions import CommandExecutionError
 class DataPlaneClient:
     """Client for AgentCube Data Plane (Router -> PicoD).
     Handles command execution and file operations via the Router.
+    
+    Note: JWT authentication is now handled by the Router. The SDK no longer
+    needs to generate keys or sign requests.
     """
 
     def __init__(
         self,
         session_id: str,
-        private_key: rsa.RSAPrivateKey,
         router_url: Optional[str] = None,
         namespace: Optional[str] = None,
         cr_name: Optional[str] = None,
@@ -51,7 +51,6 @@ class DataPlaneClient:
 
         Args:
             session_id: Session ID (for x-agentcube-session-id header).
-            private_key: RSA Private Key for signing JWTs.
             router_url: Base URL of the Router service (optional if base_url is provided).
             namespace: Kubernetes namespace (optional if base_url is provided).
             cr_name: Code Interpreter resource name (optional if base_url is provided).
@@ -62,7 +61,6 @@ class DataPlaneClient:
             pool_maxsize: Maximum connections per pool (default: 10).
         """
         self.session_id = session_id
-        self.private_key = private_key
         self.timeout = timeout
         self.connect_timeout = connect_timeout
         self.pool_connections = pool_connections
@@ -87,38 +85,21 @@ class DataPlaneClient:
             pool_maxsize=pool_maxsize,
         )
         
-        # Set default headers
+        # Add the routing header - Router will add JWT auth
         self.session.headers.update({
             "x-agentcube-session-id": self.session_id
         })
 
-    def _create_jwt(self, payload_extra: Dict[str, Any] = None) -> str:
-        """Create a signed JWT for authentication."""
-        now = int(time.time())
-        claims = {
-            "iss": "sdk-client",
-            "iat": now,
-            "exp": now + 300, # 5 mins expiry
-        }
-        if payload_extra:
-            claims.update(payload_extra)
-            
-        return jwt.encode(
-            payload=claims,
-            key=self.private_key,
-            algorithm="RS256"
-        )
-
-    def _request(self, method: str, endpoint: str, body: bytes = None, **kwargs) -> requests.Response:
-        """Make an authenticated request to the Data Plane."""
+    def _request(self, method: str, endpoint: str, body: Optional[bytes] = None, **kwargs) -> requests.Response:
+        """Make a request to the Data Plane via Router.
+        
+        Note: Router handles JWT authentication, so we don't add Authorization header here.
+        """
         url = urljoin(self.base_url, endpoint)
         
         headers = {}
         if body:
             headers["Content-Type"] = "application/json"
-
-        token = self._create_jwt()
-        headers["Authorization"] = f"Bearer {token}"
         
         # Set timeout as (connect_timeout, read_timeout) tuple if not provided
         if "timeout" not in kwargs:
@@ -239,19 +220,8 @@ class DataPlaneClient:
             files = {'file': f}
             data = {'path': remote_path, 'mode': '0644'}
             
-            # Note: For multipart, we typically don't hash the body for JWT in this simple client
-            # unless strictly required by server. PicoD server logic usually checks body_sha256 
-            # if body is raw, but for multipart it might skip or handle differently.
-            # Looking at previous PicoDClient, it skipped body_sha256 for multipart.
-            
-            # We use _request but we need to bypass the body hashing logic and let requests handle multipart
-            # So we construct headers manually here or modify _request.
-            # Easier to just do specific logic here.
-            
             url = urljoin(self.base_url, "api/files")
-            token = self._create_jwt() # No body hash
             headers = {
-                "Authorization": f"Bearer {token}",
                 "x-agentcube-session-id": self.session_id
             }
             
@@ -261,7 +231,6 @@ class DataPlaneClient:
 
     def download_file(self, remote_path: str, local_path: str) -> None:
         """Download a file."""
-        # GET request, no body, no body_hash claim
         clean_path = remote_path.lstrip("/")
         resp = self._request("GET", f"api/files/{clean_path}", stream=True)
         resp.raise_for_status()

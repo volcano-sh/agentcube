@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -43,14 +44,6 @@ type CodeInterpreterReconciler struct {
 	mgr    ctrl.Manager
 }
 
-//+kubebuilder:rbac:groups=runtime.agentcube.volcano.sh,resources=codeinterpreters,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=runtime.agentcube.volcano.sh,resources=codeinterpreters/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=runtime.agentcube.volcano.sh,resources=codeinterpreters/finalizers,verbs=update
-//+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=extensions.agents.x-k8s.io,resources=sandboxtemplates,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=extensions.agents.x-k8s.io,resources=sandboxwarmpools,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=extensions.agents.x-k8s.io,resources=sandboxwarmpools/status,verbs=get;update;patch
-
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *CodeInterpreterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -67,9 +60,13 @@ func (r *CodeInterpreterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// Manage SandboxTemplate and SandboxWarmPool if configured
 	if codeInterpreter.Spec.WarmPoolSize != nil && *codeInterpreter.Spec.WarmPoolSize > 0 {
 		// Ensure SandboxTemplate exists (required for SandboxWarmPool)
-		if err := r.ensureSandboxTemplate(ctx, codeInterpreter); err != nil {
+		result, err := r.ensureSandboxTemplate(ctx, codeInterpreter)
+		if err != nil {
 			logger.Error(err, "failed to ensure SandboxTemplate")
 			return ctrl.Result{}, err
+		}
+		if result.RequeueAfter > 0 {
+			return result, nil
 		}
 		// Ensure SandboxWarmPool exists
 		if err := r.ensureSandboxWarmPool(ctx, codeInterpreter); err != nil {
@@ -132,10 +129,19 @@ func (r *CodeInterpreterReconciler) updateStatus(ctx context.Context, ci *runtim
 }
 
 // ensureSandboxTemplate ensures that a SandboxTemplate exists for this CodeInterpreter
-func (r *CodeInterpreterReconciler) ensureSandboxTemplate(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) error {
+func (r *CodeInterpreterReconciler) ensureSandboxTemplate(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	// Check if public key is cached before creating SandboxTemplate that requires it
+	// Skip this check if authMode is "none" (custom images that don't use PicoD auth)
+	if ci.Spec.AuthMode != runtimev1alpha1.AuthModeNone && !IsPublicKeyCached() {
+		logger.Info("waiting for public key to be cached from Router Secret; ensure Router has started and created the identity Secret")
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
 	template := ci.Spec.Template
 	if template == nil {
-		return fmt.Errorf("template is required")
+		return ctrl.Result{}, fmt.Errorf("template is required")
 	}
 
 	templateName := ci.Name
@@ -159,28 +165,28 @@ func (r *CodeInterpreterReconciler) ensureSandboxTemplate(ctx context.Context, c
 
 		// Set owner reference
 		if err := controllerutil.SetControllerReference(ci, sandboxTemplate, r.Scheme); err != nil {
-			return fmt.Errorf("failed to set controller reference: %w", err)
+			return ctrl.Result{}, fmt.Errorf("failed to set controller reference: %w", err)
 		}
 
 		if err := r.Create(ctx, sandboxTemplate); err != nil {
 			if !errors.IsAlreadyExists(err) {
-				return fmt.Errorf("failed to create SandboxTemplate: %w", err)
+				return ctrl.Result{}, fmt.Errorf("failed to create SandboxTemplate: %w", err)
 			}
 		}
-		return nil
+		return ctrl.Result{}, nil
 	} else if err != nil {
-		return fmt.Errorf("failed to get SandboxTemplate: %w", err)
+		return ctrl.Result{}, fmt.Errorf("failed to get SandboxTemplate: %w", err)
 	}
 
 	// Update existing SandboxTemplate if needed
 	if !r.podTemplateEqual(sandboxTemplate.Spec.PodTemplate, podTemplate) {
 		sandboxTemplate.Spec.PodTemplate = podTemplate
 		if err := r.Update(ctx, sandboxTemplate); err != nil {
-			return fmt.Errorf("failed to update SandboxTemplate: %w", err)
+			return ctrl.Result{}, fmt.Errorf("failed to update SandboxTemplate: %w", err)
 		}
 	}
 
-	return nil
+	return ctrl.Result{}, nil
 }
 
 // ensureSandboxWarmPool ensures that a SandboxWarmPool exists for this CodeInterpreter
@@ -285,11 +291,22 @@ func (r *CodeInterpreterReconciler) deleteSandboxTemplate(ctx context.Context, c
 }
 
 // convertToPodTemplate converts CodeInterpreterSandboxTemplate to sandboxv1alpha1.PodTemplate
-func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alpha1.CodeInterpreterSandboxTemplate, _ *runtimev1alpha1.CodeInterpreter) sandboxv1alpha1.PodTemplate {
+func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alpha1.CodeInterpreterSandboxTemplate, ci *runtimev1alpha1.CodeInterpreter) sandboxv1alpha1.PodTemplate {
 	// Normalize RuntimeClassName: if it's an empty string, set it to nil
 	runtimeClassName := template.RuntimeClassName
 	if runtimeClassName != nil && *runtimeClassName == "" {
 		runtimeClassName = nil
+	}
+
+	// Build environment variables - create a copy to avoid mutating the cached object
+	envVars := make([]corev1.EnvVar, len(template.Environment))
+	copy(envVars, template.Environment)
+	// Only inject public key for picod auth mode (default behavior)
+	if ci.Spec.AuthMode != runtimev1alpha1.AuthModeNone {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "PICOD_AUTH_PUBLIC_KEY",
+			Value: GetCachedPublicKey(),
+		})
 	}
 
 	// Build pod spec
@@ -302,28 +319,11 @@ func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alph
 				ImagePullPolicy: template.ImagePullPolicy,
 				Command:         template.Command,
 				Args:            template.Args,
-				Env:             template.Environment,
+				Env:             envVars,
 				Resources:       template.Resources,
-				VolumeMounts: []corev1.VolumeMount{
-					{
-						Name:      JWTKeyVolumeName,
-						MountPath: "/etc/picod",
-						ReadOnly:  true,
-					},
-				},
 			},
 		},
 		RuntimeClassName: runtimeClassName,
-		Volumes: []corev1.Volume{
-			{
-				Name: JWTKeyVolumeName,
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName: JWTKeySecretName,
-					},
-				},
-			},
-		},
 	}
 
 	return sandboxv1alpha1.PodTemplate{

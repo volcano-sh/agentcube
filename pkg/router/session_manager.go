@@ -25,6 +25,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
@@ -40,6 +41,9 @@ var (
 
 	// ErrCreateSandboxFailed indicates that the workload manager returned an error.
 	ErrCreateSandboxFailed = errors.New("sessionmgr: create sandbox failed")
+
+	// ErrAgentRuntimeNotFound indicates that the AgentRuntime does not exist.
+	ErrAgentRuntimeNotFound = errors.New("sessionmgr: agent runtime not found")
 )
 
 // SessionManager defines the session management behavior on top of Store and the workload manager.
@@ -70,7 +74,12 @@ func NewSessionManager(storeClient store.Store) (SessionManager, error) {
 		storeClient:     storeClient,
 		workloadMgrAddr: workloadMgrAddr,
 		httpClient: &http.Client{
-			Timeout: time.Minute, // 1-minute for createSandbox requests
+			Timeout: 2 * time.Minute, // consistent with manager setting
+			Transport: &http.Transport{
+				ForceAttemptHTTP2:   true,
+				MaxIdleConnsPerHost: 100,
+				DisableCompression:  false,
+			},
 		},
 	}, nil
 }
@@ -143,6 +152,13 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("%w: %s", ErrAgentRuntimeNotFound, string(respBody))
+		}
+		// Also check for BadRequest with "not found" message (for backward compatibility)
+		if resp.StatusCode == http.StatusBadRequest && strings.Contains(string(respBody), "not found") {
+			return nil, fmt.Errorf("%w: %s", ErrAgentRuntimeNotFound, string(respBody))
+		}
 		return nil, fmt.Errorf("%w: status code %d, body: %s", ErrCreateSandboxFailed, resp.StatusCode, string(respBody))
 	}
 

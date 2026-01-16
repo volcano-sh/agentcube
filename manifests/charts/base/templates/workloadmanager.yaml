@@ -29,10 +29,17 @@ spec:
               containerPort: {{ .Values.workloadmanager.service.port }}
               protocol: TCP
           env:
+            - name: AGENTCUBE_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: REDIS_ADDR
               value: {{ .Values.redis.addr | quote }}
             - name: REDIS_PASSWORD
               value: {{ .Values.redis.password | quote }}
+            {{- with .Values.workloadmanager.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           args:
             - --port={{ .Values.workloadmanager.service.port }}
             - --runtime-class-name=

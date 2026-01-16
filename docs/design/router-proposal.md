@@ -66,9 +66,9 @@ sequenceDiagram
         Apiserver->>Client: Bad request
     else Sandbox is not empty
         Apiserver->>Sandbox: Forward request
-        Apiserver->>Cache: Update sandbox last activte time
+        Apiserver->>Cache: Update sandbox last activate time
         Sandbox->>Apiserver: invoke result
-        Apiserver->>Cache: Update sandbox last activte time
+        Apiserver->>Cache: Update sandbox last activate time
         Apiserver->>Client: invoke result
     end
     deactivate Apiserver

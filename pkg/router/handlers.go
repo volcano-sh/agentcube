@@ -17,6 +17,7 @@ limitations under the License.
 package router
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
@@ -64,43 +65,19 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	sandbox, err := s.sessionManager.GetSandboxBySession(c.Request.Context(), sessionID, namespace, name, kind)
 	if err != nil {
 		klog.Errorf("Failed to get sandbox info: %v, session id %s", err, sessionID)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("Invalid session id %s", sessionID),
-			"code":  "BadRequest",
-		})
+		s.handleSandboxLookupError(c, err, sessionID, namespace, name, kind)
 		return
 	}
 
 	// Extract endpoint from sandbox - find matching entry point by path
-	var endpoint string
-	for _, ep := range sandbox.EntryPoints {
-		if strings.HasPrefix(path, ep.Path) {
-			// Only add protocol if not already present
-			if ep.Protocol != "" && !strings.Contains(ep.Endpoint, "://") {
-				endpoint = strings.ToLower(ep.Protocol) + "://" + ep.Endpoint
-			} else {
-				endpoint = ep.Endpoint
-			}
-			break
-		}
-	}
-
-	// If no matching endpoint found, use the first one as fallback
-	if endpoint == "" {
-		if len(sandbox.EntryPoints) == 0 {
-			klog.Warningf("No entry points found for sandbox: %s", sandbox.SandboxID)
-			c.JSON(http.StatusNotFound, gin.H{
-				"error": "no entry points found for sandbox",
-				"code":  "Service not found",
-			})
-			return
-		}
-		// Only add protocol if not already present
-		if sandbox.EntryPoints[0].Protocol != "" && !strings.Contains(sandbox.EntryPoints[0].Endpoint, "://") {
-			endpoint = strings.ToLower(sandbox.EntryPoints[0].Protocol) + "://" + sandbox.EntryPoints[0].Endpoint
-		} else {
-			endpoint = sandbox.EntryPoints[0].Endpoint
-		}
+	endpoint, err := selectSandboxEndpoint(sandbox, path)
+	if err != nil {
+		klog.Warningf("Failed to select endpoint for sandbox %s: %v", sandbox.SandboxID, err)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+			"code":  "Service not found",
+		})
+		return
 	}
 
 	klog.Infof("The selected entrypoint for session-id %s to sandbox is %s", sandbox.SessionID, endpoint)
@@ -113,11 +90,54 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	}
 
 	// Forward request to sandbox with session ID
+	klog.Infof("Forwarding to sandbox: sessionID=%s namespace=%s name=%s path=%s endpoint=%s", sandbox.SessionID, namespace, name, path, endpoint)
 	s.forwardToSandbox(c, endpoint, path, sandbox.SessionID)
 
 	if err := s.storeClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
 		klog.Warningf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
 	}
+}
+
+func (s *Server) handleSandboxLookupError(c *gin.Context, err error, sessionID, namespace, name, kind string) {
+	switch {
+	case errors.Is(err, ErrSessionNotFound):
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Invalid session id %s", sessionID),
+			"code":  "BadRequest",
+		})
+	case errors.Is(err, ErrAgentRuntimeNotFound):
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("%s '%s' not found in namespace '%s'", kind, name, namespace),
+			"code":  "NotFound",
+		})
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid session or request",
+			"code":  "BadRequest",
+		})
+	}
+}
+
+func selectSandboxEndpoint(sandbox *types.SandboxInfo, path string) (string, error) {
+	// prefer matched entrypoint by path
+	for _, ep := range sandbox.EntryPoints {
+		if strings.HasPrefix(path, ep.Path) {
+			return prependProtocol(ep.Protocol, ep.Endpoint), nil
+		}
+	}
+	// fallback to first entrypoint
+	if len(sandbox.EntryPoints) == 0 {
+		return "", fmt.Errorf("no entry points found for sandbox")
+	}
+	ep := sandbox.EntryPoints[0]
+	return prependProtocol(ep.Protocol, ep.Endpoint), nil
+}
+
+func prependProtocol(protocol, endpoint string) string {
+	if protocol != "" && !strings.Contains(endpoint, "://") {
+		return strings.ToLower(protocol) + "://" + endpoint
+	}
+	return endpoint
 }
 
 // handleAgentInvoke handles agent invocation requests
@@ -141,7 +161,7 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 	// Parse the target URL
 	targetURL, err := url.Parse(endpoint)
 	if err != nil {
-		klog.Errorf("Invalid sandbox endpoint: %s, error: %v", endpoint, err)
+		klog.Errorf("Invalid sandbox endpoint: %s (session: %s), error: %v", endpoint, sessionID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "internal server error",
 			"code":  "INTERNAL_ERROR",
@@ -154,6 +174,25 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 
 	// Use the shared HTTP transport for connection pooling
 	proxy.Transport = s.httpTransport
+
+	// Generate JWT token before setting up Director
+	// Include session ID in claims for debugging and request tracking
+	var jwtToken string
+	if s.jwtManager != nil {
+		claims := map[string]interface{}{
+			"session_id": sessionID,
+		}
+		token, err := s.jwtManager.GenerateToken(claims)
+		if err != nil {
+			klog.Errorf("Failed to generate JWT token (session: %s): %v", sessionID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "failed to sign request",
+				"code":  "JWT_SIGNING_FAILED",
+			})
+			return
+		}
+		jwtToken = token
+	}
 
 	// Customize the director to modify the request
 	originalDirector := proxy.Director
@@ -184,12 +223,17 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 		}
 		req.Header.Set("X-Forwarded-For", clientIP)
 
-		klog.Infof("Forwarding request to: %s%s", targetURL.String(), path)
+		// Add JWT authorization header using pre-generated token
+		if jwtToken != "" {
+			req.Header.Set("Authorization", "Bearer "+jwtToken)
+		}
+
+		klog.Infof("Forwarding request to: %s%s (session: %s)", targetURL.String(), path, sessionID)
 	}
 
 	// Customize error handler
 	proxy.ErrorHandler = func(_ http.ResponseWriter, _ *http.Request, err error) {
-		klog.Errorf("Proxy error: %v", err)
+		klog.Errorf("Proxy error (session: %s): %v", sessionID, err)
 
 		// Determine error type and return appropriate response
 		switch {

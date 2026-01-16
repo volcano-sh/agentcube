@@ -1,0 +1,39 @@
+name: Codespell
+
+on:
+  push:
+    branches:
+      - main
+      - 'release-*'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  codespell:
+    name: Check for spelling errors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Backup and remove problematic TOML files
+        run: |
+          # Backup TOML files
+          mkdir -p /tmp/toml_backup
+          find . -name "pyproject.toml" -exec cp {} /tmp/toml_backup/ \;
+          # Remove TOML files temporarily
+          find . -name "pyproject.toml" -delete
+          
+      - name: Run codespell
+        run: |
+          pip install codespell
+          codespell \
+            --check-filenames \
+            --skip .git,go.sum,*.png,*.jpg,*.svg,*.gif,*.sum,bin,vendor \
+            --ignore-words-list fo,nam,te,notin,NotIn \
+            .
+            
+      - name: Restore TOML files
+        run: |
+          # Restore backed up files
+          find /tmp/toml_backup -name "pyproject.toml" -exec cp {} . \;

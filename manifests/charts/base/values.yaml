@@ -30,6 +30,10 @@ router:
       cpu: 100m
       memory: 128Mi
   config: {}
+  extraEnv: []
+  serviceAccountName: ""
+  rbac:
+    create: false
 
 # AgentCube Workload Manager
 workloadmanager:
@@ -48,6 +52,7 @@ workloadmanager:
     requests:
       cpu: 100m
       memory: 128Mi
+  extraEnv: []
 
 # Volcano Agent Scheduler
 volcano:

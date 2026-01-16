@@ -14,6 +14,11 @@ This SDK creates a seamless bridge between your application and the AgentCube ru
 * **Flexible**: Supports both short-lived (ephemeral) and long-running sessions.
 * **Kubernetes Native**: Automatically authenticates using Service Account tokens when running in-cluster.
 
+## Prerequisites
+
+* A running AgentCube cluster with Workload Manager and Router
+* A `CodeInterpreter` CR in your cluster (see [example/code-interpreter/code-interpreter.yaml](../example/code-interpreter/code-interpreter.yaml))
+
 ## Installation
 
 ```bash
@@ -44,9 +49,9 @@ client = CodeInterpreterClient(ttl=3600)
 try:
     client.run_code("python", "print('Session started')")
     # ... perform operations ...
-    # You can continue using the same client for multiple operations
-    client.run_code("python", "x = 42")
-    client.run_code("python", "print(f'x = {x}')")  # x persists within session
+    # File system state persists within session
+    client.write_file("42", "/tmp/value.txt")
+    client.run_code("python", "print(open('/tmp/value.txt').read())")
 finally:
     client.stop()  # CRITICAL: Ensure resources are released
 ```
@@ -96,18 +101,20 @@ CodeInterpreterClient(
 
 ## Advanced: Session Reuse
 
-For workflows requiring state persistence across multiple client instances:
+For workflows requiring **file system** state persistence across multiple client instances:
+
+> **Note**: Each `run_code` call spawns a new process. Python variables do NOT persist. Only file system state is preserved.
 
 ```python
-# Step 1: Create session
+# Step 1: Create session and save state to file
 client1 = CodeInterpreterClient()
-client1.run_code("python", "x = 42")
 session_id = client1.session_id  # Save for reuse
+client1.write_file("42", "/tmp/value.txt")
 # Don't call stop() - let session persist
 
 # Step 2: Reuse session with new client
 client2 = CodeInterpreterClient(session_id=session_id)
-client2.run_code("python", "print(x)")  # x still exists
+client2.run_code("python", "print(open('/tmp/value.txt').read())")  # File persists
 client2.stop()  # Cleanup when done
 ```
 

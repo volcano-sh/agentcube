@@ -11,11 +11,6 @@ description = "AgentCube Python SDK and E2E Tests"
 readme = "README.md"
 
 [tool.setuptools.packages.find]
-where = ["sdk-python"]
-include = ["agentcube*"]
-namespaces = false
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["test*"]
+where = ["sdk-python", "."]
+include = ["agentcube*", "test*"]
 namespaces = false

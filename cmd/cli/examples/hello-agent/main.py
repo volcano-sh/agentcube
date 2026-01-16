@@ -19,10 +19,10 @@ Hello Agent - A simple example AI agent.
 This agent provides a basic HTTP API for greeting users.
 """
 
-import os
-from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
-from typing import Dict, Any
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any, Dict
 
 from agentcube import CodeInterpreterClient
 
@@ -185,7 +185,7 @@ def main():
         print(f"Hello Agent is running on port {port}")
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print(f"\nShutting down Hello Agent")
+        print("\nShutting down Hello Agent")
         httpd.server_close()
 
 

@@ -1,3 +1,19 @@
+/*
+Copyright The Volcano Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package workloadmanager
 
 import (
@@ -19,11 +35,9 @@ type Server struct {
 	httpServer        *http.Server
 	k8sClient         *K8sClient
 	sandboxController *SandboxReconciler
-	sandboxStore      *SandboxStore
 	tokenCache        *TokenCache
 	informers         *Informers
 	storeClient       store.Store
-	jwtManager        *JWTManager
 }
 
 type Config struct {
@@ -53,39 +67,26 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
-	// Create sandbox store
-	sandboxStore := NewSandboxStore()
+	// Initialize public key cache from Router's Secret in background
+	// This will retry until successful (handles case where Router isn't ready yet)
+	InitPublicKeyCache(k8sClient.clientset)
 
 	// Create token cache (cache up to 1000 tokens, 5min TTL)
 	tokenCache := NewTokenCache(1000, 5*time.Minute)
 
-	// Create JWT manager for signing sandbox init requests
-	jwtManager, err := NewJWTManager()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create JWT manager: %w", err)
-	}
-
 	server := &Server{
 		config:            config,
 		k8sClient:         k8sClient,
-		sandboxStore:      sandboxStore,
 		sandboxController: sandboxController,
 		tokenCache:        tokenCache,
 		informers:         NewInformers(k8sClient),
 		storeClient:       store.Storage(),
-		jwtManager:        jwtManager,
 	}
 
 	// Setup routes
 	server.setupRoutes()
 
 	return server, nil
-}
-
-// InitializeStore initializes the sandbox store with Kubernetes informer
-func (s *Server) InitializeStore(ctx context.Context) error {
-	informer := s.k8sClient.GetSandboxInformer()
-	return s.sandboxStore.InitializeWithInformer(ctx, informer, s.k8sClient)
 }
 
 // setupRoutes configures HTTP routes
@@ -111,14 +112,7 @@ func (s *Server) setupRoutes() {
 
 // Start starts the API server
 func (s *Server) Start(ctx context.Context) error {
-	if err := s.TryStoreOrLoadJWTKeySecret(ctx); err != nil {
-		return fmt.Errorf("failed to store or load JWT key: %w", err)
-	}
-
 	// Initialize store with informer before starting server
-	if err := s.InitializeStore(ctx); err != nil {
-		return fmt.Errorf("failed to initialize sandbox store: %w", err)
-	}
 
 	if err := s.informers.RunAndWaitForCacheSync(ctx); err != nil {
 		return fmt.Errorf("failed to wait for caches to sync: %w", err)
@@ -133,19 +127,16 @@ func (s *Server) Start(ctx context.Context) error {
 	addr := ":" + s.config.Port
 
 	s.httpServer = &http.Server{
-		Addr:         addr,
-		Handler:      s.router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:        addr,
+		Handler:     s.router,
+		ReadTimeout: 15 * time.Second,
+		IdleTimeout: 90 * time.Second, // golang http default transport's idletimeout is 90s
 	}
 
 	// Listen for shutdown signal in goroutine
 	go func() {
 		<-ctx.Done()
 		klog.Info("Shutting down server...")
-		// Stop the sandbox store informer
-		s.sandboxStore.Stop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {

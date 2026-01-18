@@ -48,6 +48,16 @@ spec:
           spec:
             description: Spec defines the desired state of the CodeInterpreter.
             properties:
+              authMode:
+                default: picod
+                description: |-
+                  AuthMode specifies the authentication mode for the sandbox runtime.
+                  - "picod" (default): Inject PICOD_AUTH_PUBLIC_KEY from Router Secret, requires Router to be running
+                  - "none": No authentication injection (for custom images that handle auth differently)
+                enum:
+                - picod
+                - none
+                type: string
               maxSessionDuration:
                 default: 8h
                 description: |-
@@ -396,11 +406,6 @@ spec:
                   latency for new sessions at the cost of additional resource usage.
                 format: int32
                 type: integer
-              needInitialization:
-                description: |-
-                  NeedInitialization specifies if CodeInterpreter need initialization
-                  default true if NeedInitialization not specified
-                type: boolean
             required:
             - template
             type: object

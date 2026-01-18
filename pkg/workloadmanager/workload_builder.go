@@ -1,7 +1,26 @@
+/*
+Copyright The Volcano Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package workloadmanager
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,11 +30,107 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 )
+
+// Constants for Router's identity resources
+// WorkloadManager uses these to inject the public key into PicoD containers
+const (
+	// IdentitySecretName is the name of the Secret storing Router's keys
+	IdentitySecretName = "picod-router-identity" //nolint:gosec // This is a name reference, not a credential
+	// PublicKeyDataKey is the key in the Secret data map for the public key
+	PublicKeyDataKey = "public.pem"
+)
+
+// IdentitySecretNamespace is the namespace where the identity secret is stored
+// This is read from AGENTCUBE_NAMESPACE env var
+var IdentitySecretNamespace = "default"
+
+func init() {
+	if ns := os.Getenv("AGENTCUBE_NAMESPACE"); ns != "" {
+		IdentitySecretNamespace = ns
+	}
+}
+
+// cachedPublicKey stores the public key loaded from Router's Secret
+// This allows PicoD pods to be created in any namespace without cross-namespace Secret references
+var (
+	cachedPublicKey     string
+	publicKeyCacheMutex sync.RWMutex
+)
+
+// GetCachedPublicKey returns the cached public key, or empty string if not loaded
+func GetCachedPublicKey() string {
+	publicKeyCacheMutex.RLock()
+	defer publicKeyCacheMutex.RUnlock()
+	return cachedPublicKey
+}
+
+// IsPublicKeyCached returns true if the public key has been successfully loaded
+func IsPublicKeyCached() bool {
+	publicKeyCacheMutex.RLock()
+	defer publicKeyCacheMutex.RUnlock()
+	return cachedPublicKey != ""
+}
+
+// InitPublicKeyCache starts a background goroutine that continuously tries to load
+// the public key from Router's Secret until successful. This handles the case where
+// Router hasn't started yet when WorkloadManager starts.
+func InitPublicKeyCache(clientset kubernetes.Interface) {
+	go func() {
+		retryInterval := 5 * time.Second
+		maxRetryInterval := 60 * time.Second
+
+		for {
+			if IsPublicKeyCached() {
+				return
+			}
+
+			err := loadPublicKeyFromSecret(clientset)
+			if err == nil {
+				klog.Infof("Public key cached from Secret %s/%s", IdentitySecretNamespace, IdentitySecretName)
+				return
+			}
+
+			klog.Warningf("Failed to load public key from Router Secret: %v. Retrying in %v...", err, retryInterval)
+			time.Sleep(retryInterval)
+
+			// Exponential backoff with max limit
+			retryInterval = retryInterval * 2
+			if retryInterval > maxRetryInterval {
+				retryInterval = maxRetryInterval
+			}
+		}
+	}()
+}
+
+// loadPublicKeyFromSecret reads the public key from Router's Secret
+func loadPublicKeyFromSecret(clientset kubernetes.Interface) error {
+	secret, err := clientset.CoreV1().Secrets(IdentitySecretNamespace).Get(
+		context.Background(),
+		IdentitySecretName,
+		metav1.GetOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to get Router identity secret %s/%s: %w",
+			IdentitySecretNamespace, IdentitySecretName, err)
+	}
+
+	publicKeyData, ok := secret.Data[PublicKeyDataKey]
+	if !ok {
+		return fmt.Errorf("public key not found in secret %s/%s (key: %s)",
+			IdentitySecretNamespace, IdentitySecretName, PublicKeyDataKey)
+	}
+
+	publicKeyCacheMutex.Lock()
+	cachedPublicKey = string(publicKeyData)
+	publicKeyCacheMutex.Unlock()
+	return nil
+}
 
 type buildSandboxParams struct {
 	namespace      string
@@ -108,14 +223,14 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 	return sandboxClaim
 }
 
-func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxExternalInfo, error) {
+func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
 	agentRuntimeKey := namespace + "/" + name
 	runtimeObj, exists, err := ifm.AgentRuntimeInformer.GetStore().GetByKey(agentRuntimeKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get agent runtime %s from informer failed: %v", agentRuntimeKey, err)
 	}
 	if !exists {
-		return nil, nil, fmt.Errorf("agent runtime %s not found", agentRuntimeKey)
+		return nil, nil, fmt.Errorf("%w: %s", ErrAgentRuntimeNotFound, agentRuntimeKey)
 	}
 
 	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
@@ -130,7 +245,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	}
 
 	if agentRuntimeObj.Spec.Template == nil {
-		return nil, nil, fmt.Errorf("agent runtime %s has no template", agentRuntimeKey)
+		return nil, nil, fmt.Errorf("%w: %s", ErrTemplateMissing, agentRuntimeKey)
 	}
 
 	sessionID := uuid.New().String()
@@ -149,6 +264,13 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 		sessionID:    sessionID,
 		podSpec:      *podSpec,
 	}
+	// Apply labels and annotations from AgentRuntime template
+	if agentRuntimeObj.Spec.Template.Labels != nil {
+		buildParams.podLabels = agentRuntimeObj.Spec.Template.Labels
+	}
+	if agentRuntimeObj.Spec.Template.Annotations != nil {
+		buildParams.podAnnotations = agentRuntimeObj.Spec.Template.Annotations
+	}
 	if agentRuntimeObj.Spec.MaxSessionDuration != nil {
 		buildParams.ttl = agentRuntimeObj.Spec.MaxSessionDuration.Duration
 	}
@@ -156,24 +278,23 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 		buildParams.idleTimeout = agentRuntimeObj.Spec.SessionTimeout.Duration
 	}
 	sandbox := buildSandboxObject(buildParams)
-	externalInfo := &sandboxExternalInfo{
-		Kind:               types.SandboxKind,
-		Ports:              agentRuntimeObj.Spec.Ports,
-		SessionID:          sessionID,
-		NeedInitialization: false,
+	entry := &sandboxEntry{
+		Kind:      types.SandboxKind,
+		Ports:     agentRuntimeObj.Spec.Ports,
+		SessionID: sessionID,
 	}
-	return sandbox, externalInfo, nil
+	return sandbox, entry, nil
 }
 
-func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxExternalInfo, error) {
+func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
 	codeInterpreterKey := namespace + "/" + codeInterpreterName
-	runtimeObj, exists, err := ifm.CodeInterpreterInformer.GetStore().GetByKey(codeInterpreterKey)
+	runtimeObj, exists, err := informer.CodeInterpreterInformer.GetStore().GetByKey(codeInterpreterKey)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("get code interpreter %s from informer failed: %v", codeInterpreterKey, err)
 	}
 
 	if !exists {
-		return nil, nil, nil, fmt.Errorf("code interpreter %s not found", codeInterpreterKey)
+		return nil, nil, nil, fmt.Errorf("%w: %s", ErrCodeInterpreterNotFound, codeInterpreterKey)
 	}
 
 	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
@@ -187,17 +308,29 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		return nil, nil, nil, fmt.Errorf("failed to convert unstructured to CodeInterpreter: %w", err)
 	}
 
-	sessionID := uuid.New().String()
-	sandboxName := fmt.Sprintf("%s-%s", codeInterpreterName, RandString(8))
-	externalInfo := &sandboxExternalInfo{
-		Kind:               types.SandboxKind,
-		Ports:              codeInterpreterObj.Spec.Ports,
-		SessionID:          sessionID,
-		NeedInitialization: true,
+	// Check if public key is cached before creating pods that require it
+	// Skip this check if authMode is "none" (custom images that don't use PicoD auth)
+	if codeInterpreterObj.Spec.AuthMode != runtimev1alpha1.AuthModeNone && !IsPublicKeyCached() {
+		return nil, nil, nil, fmt.Errorf("public key not yet cached from Router Secret, cannot create PicoD pod")
 	}
 
-	if codeInterpreterObj.Spec.NeedInitialization != nil {
-		externalInfo.NeedInitialization = *codeInterpreterObj.Spec.NeedInitialization
+	sessionID := uuid.New().String()
+	sandboxName := fmt.Sprintf("%s-%s", codeInterpreterName, RandString(8))
+	sandboxEntry := &sandboxEntry{
+		Kind:      types.SandboxKind,
+		Ports:     codeInterpreterObj.Spec.Ports,
+		SessionID: sessionID,
+	}
+
+	// Set default port for code interpreter if not configured
+	if len(sandboxEntry.Ports) == 0 {
+		sandboxEntry.Ports = []runtimev1alpha1.TargetPort{
+			{
+				Port:       8080,
+				Protocol:   runtimev1alpha1.ProtocolTypeHTTP,
+				PathPrefix: "/",
+			},
+		}
 	}
 
 	if codeInterpreterObj.Spec.WarmPoolSize != nil && *codeInterpreterObj.Spec.WarmPoolSize > 0 {
@@ -216,18 +349,29 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				},
 			},
 		}
-		externalInfo.Kind = types.SandboxClaimsKind
-		return simpleSandbox, sandboxClaim, externalInfo, nil
+		sandboxEntry.Kind = types.SandboxClaimsKind
+		return simpleSandbox, sandboxClaim, sandboxEntry, nil
 	}
 
 	if codeInterpreterObj.Spec.Template == nil {
-		return nil, nil, nil, fmt.Errorf("code interpreter %s has no template", codeInterpreterKey)
+		return nil, nil, nil, fmt.Errorf("%w: %s", ErrTemplateMissing, codeInterpreterKey)
 	}
 
 	// Normalize RuntimeClassName: if it's an empty string, set it to nil
 	runtimeClassName := codeInterpreterObj.Spec.Template.RuntimeClassName
 	if runtimeClassName != nil && *runtimeClassName == "" {
 		runtimeClassName = nil
+	}
+
+	// Build environment variables - create a copy to avoid mutating the informer cached object
+	envVars := make([]corev1.EnvVar, len(codeInterpreterObj.Spec.Template.Environment))
+	copy(envVars, codeInterpreterObj.Spec.Template.Environment)
+	// Only inject public key for picod auth mode (default behavior)
+	if codeInterpreterObj.Spec.AuthMode != runtimev1alpha1.AuthModeNone {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "PICOD_AUTH_PUBLIC_KEY",
+			Value: GetCachedPublicKey(),
+		})
 	}
 
 	podSpec := corev1.PodSpec{
@@ -238,27 +382,10 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				Name:            "code-interpreter",
 				Image:           codeInterpreterObj.Spec.Template.Image,
 				ImagePullPolicy: codeInterpreterObj.Spec.Template.ImagePullPolicy,
-				Env:             codeInterpreterObj.Spec.Template.Environment,
+				Env:             envVars,
 				Command:         codeInterpreterObj.Spec.Template.Command,
 				Args:            codeInterpreterObj.Spec.Template.Args,
 				Resources:       codeInterpreterObj.Spec.Template.Resources,
-				VolumeMounts: []corev1.VolumeMount{
-					{
-						Name:      JWTKeyVolumeName,
-						MountPath: "/etc/picod",
-						ReadOnly:  true,
-					},
-				},
-			},
-		},
-		Volumes: []corev1.Volume{
-			{
-				Name: JWTKeyVolumeName,
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName: JWTKeySecretName,
-					},
-				},
 			},
 		},
 	}
@@ -275,5 +402,5 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		buildParams.ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration
 	}
 	sandbox := buildSandboxObject(buildParams)
-	return sandbox, nil, externalInfo, nil
+	return sandbox, nil, sandboxEntry, nil
 }

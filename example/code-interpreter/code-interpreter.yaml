@@ -4,9 +4,22 @@ metadata:
   name: simple-codeinterpreter
   namespace: default
 spec:
+  ports:
+    - pathPrefix: "/"
+      port: 8080
+      protocol: "HTTP"
   template:
-    image: busybox
-    command: ["/bin/sh", "-c", "sleep 36000"]
+    image: picod:latest
+    imagePullPolicy: IfNotPresent
+    args:
+      - --workspace=/workspace
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
   sessionTimeout: "15m"
   maxSessionDuration: "8h"
   warmPoolSize: 2

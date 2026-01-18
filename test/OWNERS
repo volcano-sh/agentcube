@@ -1,0 +1,12 @@
+# List of usernames who may use /lgtm
+reviewers:
+  - acsoto
+  - LiZhenCheng9527
+  - MahaoAlex
+  - tjucoder
+  - YaoZengzeng
+
+# List of usernames who may use /approve
+approvers:
+  - MahaoAlex
+  - YaoZengzeng

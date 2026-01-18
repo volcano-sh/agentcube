@@ -45,7 +45,7 @@ help: ## Display this help.
 
 .PHONY: gen-crd
 gen-crd: controller-gen ## Generate CRD manifests
-	$(CONTROLLER_GEN) crd paths="./pkg/apis/runtime/v1alpha1/..." output:crd:artifacts:config=crds
+	$(CONTROLLER_GEN) crd paths="./pkg/apis/runtime/v1alpha1/..." output:crd:artifacts:config=manifests/charts/base/crds
 
 .PHONY: generate
 generate: controller-gen gen-crd ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -143,6 +143,12 @@ vet: ## Run go vet against code.
 lint: golangci-lint ## Run golangci-lint
 	$(GOLANGCI_LINT) run ./...
 
+# Generate copyright headers
+.PHONY: gen-copyright
+gen-copyright:
+	@echo "Adding copyright headers..."
+	@hack/update-copyright.sh
+
 # Install to system
 install: build
 	@echo "Installing workloadmanager..."
@@ -184,18 +190,6 @@ docker-push: docker-build
 	docker tag $(WORKLOAD_MANAGER_IMAGE) $(IMAGE_REGISTRY)/$(WORKLOAD_MANAGER_IMAGE)
 	docker push $(IMAGE_REGISTRY)/$(WORKLOAD_MANAGER_IMAGE)
 
-k8s-deploy:
-	@echo "Deploying to Kubernetes..."
-	kubectl apply -f k8s/workloadmanager.yaml
-
-k8s-delete:
-	@echo "Deleting from Kubernetes..."
-	kubectl delete -f k8s/workloadmanager.yaml
-
-k8s-logs:
-	@echo "Showing logs..."
-	kubectl logs -n agentcube -l app=workloadmanager -f
-
 # Load image to kind cluster
 kind-load:
 	@echo "Loading image to kind..."
@@ -235,19 +229,6 @@ docker-push-router: docker-build-router
 kind-load-router:
 	@echo "Loading router image to kind..."
 	kind load docker-image $(ROUTER_IMAGE)
-
-# Deploy router to Kubernetes
-k8s-deploy-router:
-	@echo "Deploying router to Kubernetes..."
-	kubectl apply -f k8s/agentcube-router.yaml
-
-k8s-delete-router:
-	@echo "Deleting router from Kubernetes..."
-	kubectl delete -f k8s/agentcube-router.yaml
-
-k8s-logs-router:
-	@echo "Showing router logs..."
-	kubectl logs -n agentcube -l app=agentcube-router -f
 
 # Picod Docker targets
 docker-build-picod:

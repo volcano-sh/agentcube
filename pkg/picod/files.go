@@ -1,3 +1,19 @@
+/*
+Copyright The Volcano Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package picod
 
 import (
@@ -220,6 +236,7 @@ func (s *Server) handleJSONBase64Upload(c *gin.Context) {
 // DownloadFileHandler handles file download requests
 func (s *Server) DownloadFileHandler(c *gin.Context) {
 	path := c.Param("path")
+	klog.Infof("DownloadFileHandler: received path param: %q", path)
 	if path == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Missing file path",
@@ -230,7 +247,6 @@ func (s *Server) DownloadFileHandler(c *gin.Context) {
 
 	// Remove leading /
 	path = strings.TrimPrefix(path, "/")
-
 	// Ensure path safety
 	safePath, err := s.sanitizePath(path)
 	if err != nil {
@@ -243,6 +259,7 @@ func (s *Server) DownloadFileHandler(c *gin.Context) {
 
 	fileInfo, err := os.Stat(safePath)
 	if err != nil {
+		klog.Errorf("DownloadFileHandler: file stat failed for %q: %v", safePath, err)
 		if os.IsNotExist(err) {
 			c.JSON(http.StatusNotFound, gin.H{
 				"error": "File not found",
@@ -256,6 +273,8 @@ func (s *Server) DownloadFileHandler(c *gin.Context) {
 		}
 		return
 	}
+
+	klog.Infof("DownloadFileHandler: file found: %q, size: %d", safePath, fileInfo.Size())
 
 	if fileInfo.IsDir() {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -369,12 +388,14 @@ func parseFileMode(modeStr string) os.FileMode {
 
 // setWorkspace sets the global workspace directory
 func (s *Server) setWorkspace(dir string) {
+	klog.Infof("setWorkspace called with dir: %q", dir)
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		klog.Warningf("Failed to resolve absolute path for workspace '%s': %v", dir, err)
 		s.workspaceDir = dir // Fallback to provided path
 	} else {
 		s.workspaceDir = absDir
+		klog.Infof("Resolved workspace to absolute path: %q", s.workspaceDir)
 	}
 }
 

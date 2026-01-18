@@ -1,3 +1,19 @@
+/*
+Copyright The Volcano Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha1
 
 import (
@@ -58,10 +74,13 @@ type CodeInterpreterSpec struct {
 	// +optional
 	WarmPoolSize *int32 `json:"warmPoolSize,omitempty"`
 
-	// NeedInitialization specifies if CodeInterpreter need initialization
-	// default true if NeedInitialization is nil
+	// AuthMode specifies the authentication mode for the sandbox runtime.
+	// - "picod" (default): Inject PICOD_AUTH_PUBLIC_KEY from Router Secret, requires Router to be running
+	// - "none": No authentication injection (for custom images that handle auth differently)
+	// +kubebuilder:default="picod"
+	// +kubebuilder:validation:Enum=picod;none
 	// +optional
-	NeedInitialization *bool `json:"needInitialization,omitempty"`
+	AuthMode AuthModeType `json:"authMode,omitempty"`
 }
 
 // CodeInterpreterStatus represents the observed state of a CodeInterpreter.
@@ -150,6 +169,16 @@ type TargetPort struct {
 	// +kubebuilder:validation:Enum=HTTP;HTTPS;
 	Protocol ProtocolType `json:"protocol"`
 }
+
+// AuthModeType defines the authentication mode for the sandbox runtime.
+type AuthModeType string
+
+const (
+	// AuthModePicoD injects PICOD_AUTH_PUBLIC_KEY from Router Secret
+	AuthModePicoD AuthModeType = "picod"
+	// AuthModeNone disables auth injection for custom images
+	AuthModeNone AuthModeType = "none"
+)
 
 // ProtocolType defines the protocol for a port.
 type ProtocolType string

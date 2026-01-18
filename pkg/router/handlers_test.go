@@ -1,3 +1,19 @@
+/*
+Copyright The Volcano Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package router
 
 import (
@@ -247,8 +263,7 @@ func TestHandleAgentInvoke(t *testing.T) {
 	defer testServer.Close()
 
 	config := &Config{
-		Port:           "8080",
-		RequestTimeout: 30,
+		Port: "8080",
 	}
 
 	server, err := NewServer(config)
@@ -317,8 +332,7 @@ func TestHandleCodeInterpreterInvoke(t *testing.T) {
 	defer testServer.Close()
 
 	config := &Config{
-		Port:           "8080",
-		RequestTimeout: 30,
+		Port: "8080",
 	}
 
 	server, err := NewServer(config)
@@ -376,8 +390,7 @@ func TestForwardToSandbox_InvalidEndpoint(t *testing.T) {
 	}()
 
 	config := &Config{
-		Port:           "8080",
-		RequestTimeout: 30,
+		Port: "8080",
 	}
 
 	server, err := NewServer(config)
@@ -423,7 +436,6 @@ func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 	config := &Config{
 		Port:                  "8080",
 		MaxConcurrentRequests: 1, // Set to 1 to easily trigger overload
-		RequestTimeout:        30,
 	}
 
 	server, err := NewServer(config)

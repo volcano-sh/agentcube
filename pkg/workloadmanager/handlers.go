@@ -1,3 +1,19 @@
+/*
+Copyright The Volcano Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package workloadmanager
 
 import (
@@ -45,54 +61,6 @@ func (s *Server) extractUserK8sClient(c *gin.Context) (dynamic.Interface, error)
 	return userClient.dynamicClient, nil
 }
 
-func (s *Server) codeInterpreterInitialization(ctx context.Context, sandboxReq *types.CreateSandboxRequest, sandboxResp *types.CreateSandboxResponse, storeCacheInfo *types.SandboxInfo, externalInfo *sandboxExternalInfo, podIP string) error {
-	// Check if CodeInterpreter need initialization
-	if externalInfo.NeedInitialization == false {
-		klog.Infof("skipping initialization for sandbox %s/%s", sandboxReq.Namespace, sandboxReq.Name)
-		return nil
-	}
-
-	if len(storeCacheInfo.EntryPoints) == 0 {
-		// Fallback to default http://ip:8080
-		klog.Infof("sandbox %s/%s entryPoints is empty, fallback with default", sandboxReq.Namespace, sandboxReq.Name)
-		defaultEntryPoint := types.SandboxEntryPoints{
-			Path:     "/",
-			Protocol: "http",
-			Endpoint: fmt.Sprintf("%s:8080", podIP),
-		}
-		storeCacheInfo.EntryPoints = []types.SandboxEntryPoints{defaultEntryPoint}
-		sandboxResp.EntryPoints = storeCacheInfo.EntryPoints
-	}
-
-	// Code Interpreter sandbox created, init code interpreter
-	// Find the /init endpoint from entryPoints
-	var initEndpoint string
-	for _, access := range storeCacheInfo.EntryPoints {
-		if access.Path == "/init" {
-			initEndpoint = fmt.Sprintf("%s://%s", access.Protocol, access.Endpoint)
-			break
-		}
-	}
-
-	// If no /init path found, use the first entryPoint endpoint fallback
-	if initEndpoint == "" {
-		initEndpoint = fmt.Sprintf("%s://%s", storeCacheInfo.EntryPoints[0].Protocol,
-			storeCacheInfo.EntryPoints[0].Endpoint)
-	}
-
-	// Call sandbox init endpoint with JWT-signed request
-	err := s.InitCodeInterpreterSandbox(
-		ctx,
-		initEndpoint,
-		externalInfo.SessionID,
-		sandboxReq.PublicKey,
-		sandboxReq.Metadata,
-		sandboxReq.InitTimeoutSeconds,
-	)
-
-	return err
-}
-
 // handleCreateSandbox do create sandbox
 // nolint: gocyclo
 func (s *Server) handleCreateSandbox(c *gin.Context) {
@@ -120,13 +88,13 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 
 	var sandbox *sandboxv1alpha1.Sandbox
 	var sandboxClaim *extensionsv1alpha1.SandboxClaim
-	var externalInfo *sandboxExternalInfo
+	var sandboxEntry *sandboxEntry
 	var err error
 	switch sandboxReq.Kind {
 	case types.AgentRuntimeKind:
-		sandbox, externalInfo, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers)
+		sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers)
 	case types.CodeInterpreterKind:
-		sandbox, sandboxClaim, externalInfo, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers)
+		sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers)
 	default:
 		klog.Errorf("invalid request kind: %v", sandboxReq.Kind)
 		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("invalid request kind: %v", sandboxReq.Kind))
@@ -135,7 +103,14 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 
 	if err != nil {
 		klog.Errorf("build sandbox failed: %v", err)
-		respondError(c, http.StatusBadRequest, "SANDBOX_BUILD_FAILED", err.Error())
+		// Check if it's a "not found" error and return 404
+		if errors.Is(err, ErrAgentRuntimeNotFound) || errors.Is(err, ErrCodeInterpreterNotFound) {
+			respondError(c, http.StatusNotFound, "NOT_FOUND", err.Error())
+		} else if errors.Is(err, ErrTemplateMissing) || errors.Is(err, ErrPublicKeyMissing) {
+			respondError(c, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		} else {
+			respondError(c, http.StatusBadRequest, "SANDBOX_BUILD_FAILED", err.Error())
+		}
 		return
 	}
 
@@ -161,7 +136,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	defer s.sandboxController.UnWatchSandbox(namespace, sandboxName)
 
 	// Store placeholder before creating, make sandbox/sandboxClaim GarbageCollection possible
-	sandboxStorePlaceHolder := buildSandboxStoreCachePlaceHolder(sandbox, externalInfo)
+	sandboxStorePlaceHolder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
 	if err = s.storeClient.StoreSandbox(c.Request.Context(), sandboxStorePlaceHolder); err != nil {
 		errMessage := fmt.Sprintf("store sandbox place holder into store failed: %v", err)
 		klog.Error(errMessage)
@@ -193,7 +168,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		// Successfully received notification, cleanup will be handled by defer
 		createdSandbox = result.Sandbox
 		klog.Infof("sandbox %s/%s running", createdSandbox.Namespace, createdSandbox.Name)
-	case <-time.After(3 * time.Minute):
+	case <-time.After(2 * time.Minute): // consistent with router settings
 		// timeout, Sandbox/SandboxClaim maybe create successfully later,
 		// UnWatchSandbox will be called by defer to prevent memory leak
 		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
@@ -202,6 +177,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	}
 
 	needRollbackSandbox := true
+	// TODO(hzxuzhonghu): in some case we need to rollback sandboxClaim
 	sandboxRollbackFunc := func() {
 		ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -230,21 +206,13 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		return
 	}
 
-	storeCacheInfo := convertSandboxToStoreCache(createdSandbox, podIP, externalInfo)
+	storeCacheInfo := buildSandboxInfo(createdSandbox, podIP, sandboxEntry)
 
 	response := &types.CreateSandboxResponse{
-		SessionID:   externalInfo.SessionID,
+		SessionID:   sandboxEntry.SessionID,
 		SandboxID:   storeCacheInfo.SandboxID,
 		SandboxName: sandboxName,
 		EntryPoints: storeCacheInfo.EntryPoints,
-	}
-
-	err = s.codeInterpreterInitialization(c.Request.Context(), sandboxReq, response, storeCacheInfo, externalInfo, podIP)
-	if err != nil {
-		klog.Infof("init sandbox %s/%s failed: %v", createdSandbox.Namespace, createdSandbox.Name, err)
-		respondError(c, http.StatusInternalServerError, "SANDBOX_INIT_FAILED",
-			fmt.Sprintf("Failed to initialize code interpreter: %v", err))
-		return
 	}
 
 	err = s.storeClient.UpdateSandbox(c.Request.Context(), storeCacheInfo)
@@ -256,7 +224,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	// init successful, no need to rollback
 	needRollbackSandbox = false
 	klog.Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
-		createdSandbox.Name, createdSandbox.Kind, externalInfo.SessionID)
+		createdSandbox.Name, createdSandbox.Kind, sandboxEntry.SessionID)
 	respondJSON(c, http.StatusOK, response)
 }
 

@@ -40,3 +40,9 @@
 
   --docusaurus-highlighted-code-line-bg: rgba(110, 168, 254, 0.25);
 }
+
+.container_lyt7 {
+    max-width: 100%;
+    display: flex;
+    justify-content: space-evenly;
+}

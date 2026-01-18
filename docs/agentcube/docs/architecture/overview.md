@@ -37,6 +37,32 @@ A **Session** represents the lifetime of an agent interaction. In AgentCube, eve
 
 A **Sandbox** is the physical execution environment (a secure microVM or hardened container) where the code actually runs. AgentCube maintains a 1:1 mapping between a Session and a Sandbox.
 
+---
+
+## Sandbox Lifecycle
+
+Every sandbox undergoes a structured lifecycle to ensure resource efficiency and fast response times:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Nonexistent
+    Nonexistent --> Pending: first invocation
+    Pending --> Running: scheduled
+    Running --> Ready: readiness check
+    Ready --> Paused: idle 5 min
+    Paused --> Ready: new invocation
+    Paused --> Deleted: no traffic 10 min
+    Ready --> Deleted: max TTL reached
+    Paused --> Deleted: max TTL reached
+    Deleted --> [*]
+```
+
+1. **Lazy Creation**: Sandboxes are created only when the first request for a session arrives.
+2. **Hibernation**: To save resources, sandboxes transition to a `Paused` state after 5 minutes of inactivity.
+3. **Auto-Cleanup**: Sandboxes are permanently deleted after 10 minutes of being paused or when their maximum Time-to-Live (TTL) is reached.
+
+---
+
 ### AgentRuntime vs. CodeInterpreter
 
 AgentCube provides two primary resource types:
@@ -52,3 +78,9 @@ AgentCube provides two primary resource types:
 - **Scheduler**: [Volcano](https://volcano.sh) (for optimized AI workload placement)
 - **State Store**: Redis / Valkey (for cross-replica session synchronization)
 - **Security**: RSA-2048 Asymmetric Encryption & JWT
+
+---
+
+## Design Proposal
+
+The architectural decisions and motivation behind AgentCube are detailed in the official **[AgentCube Design Proposal](https://github.com/volcano-sh/agentcube/blob/main/docs/design/agentcube-proposal.md)**.

@@ -99,5 +99,5 @@ You can now send requests to your agent via the router!
 ## Next Steps
 
 - Explore the [PCAP Analyzer Example](https://github.com/volcano-sh/agentcube/tree/main/example/pcap-analyzer) for a real-world use case.
-- Read the [Design Docs](../design/agentcube-proposal.md) to understand the architecture.
+- For more details on the architecture, see the **[Architecture Overview](./architecture/overview.md)** or the original **[Design Proposal](https://github.com/volcano-sh/agentcube/blob/main/docs/design/agentcube-proposal.md)**.
 - Check out the [Python SDK](https://github.com/volcano-sh/agentcube/tree/main/sdk-python) to build your own agents.

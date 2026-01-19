@@ -57,19 +57,19 @@ def generate_key_pair():
         key_size=2048,
         backend=default_backend()
     )
-    
+
     pub = private_key.public_key()
     pub_pem = pub.public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
-    
+
     priv_pem = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption()
     )
-    
+
     return private_key, priv_pem, pub_pem
 
 
@@ -79,13 +79,13 @@ def start_picod_container(public_key_pem: bytes):
     This simulates the new architecture where WorkloadManager injects PICOD_AUTH_PUBLIC_KEY.
     """
     logger.info(f"Starting PicoD container {PICOD_CONTAINER_NAME}...")
-    
+
     # Remove existing if any
     subprocess.run(["docker", "rm", "-f", PICOD_CONTAINER_NAME], capture_output=True)
-    
+
     # Decode public key PEM for environment variable
     pub_key_str = public_key_pem.decode('utf-8')
-    
+
     cmd = [
         "docker", "run", "-d",
         "--name", PICOD_CONTAINER_NAME,
@@ -93,12 +93,15 @@ def start_picod_container(public_key_pem: bytes):
         "-e", f"PICOD_AUTH_PUBLIC_KEY={pub_key_str}",
         PICOD_IMAGE
     ]
-    
-    logger.info(f"Running: docker run -d --name {PICOD_CONTAINER_NAME} -p {PICOD_PORT}:8080 -e PICOD_AUTH_PUBLIC_KEY=<key> {PICOD_IMAGE}")
+
+    logger.info(
+        f"Running: docker run -d --name {PICOD_CONTAINER_NAME} "
+        f"-p {PICOD_PORT}:8080 -e PICOD_AUTH_PUBLIC_KEY=<key> {PICOD_IMAGE}"
+    )
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"Failed to start PicoD container: {result.stderr}")
-        
+
     # Wait for health check
     wait_for_health(f"http://localhost:{PICOD_PORT}/health", "PicoD")
 
@@ -116,7 +119,7 @@ def wait_for_health(url: str, service_name: str, retries: int = 15):
             logger.debug(f"Health check attempt {i+1} for {service_name} failed: {e}")
         logger.info(f"Waiting for {service_name}... ({i+1}/{retries})")
         time.sleep(1)
-        
+
     raise RuntimeError(f"{service_name} failed to start or is unhealthy")
 
 
@@ -132,12 +135,12 @@ class RouterSimulator:
     In production, Router would handle this, but for E2E testing,
     we simulate Router by signing JWTs with the same algorithm.
     """
-    
+
     def __init__(self, private_key, picod_url: str):
         self.private_key = private_key
         self.picod_url = picod_url.rstrip("/")
         self.session = requests.Session()
-    
+
     def _sign_jwt(self, claims: dict = None) -> str:
         """Generate a JWT token like Router would."""
         now = datetime.now(timezone.utc)
@@ -148,23 +151,23 @@ class RouterSimulator:
         }
         if claims:
             payload.update(claims)
-        
+
         return jwt.encode(payload, self.private_key, algorithm="RS256")
-    
+
     def request(self, method: str, endpoint: str, **kwargs) -> requests.Response:
         """Make an authenticated request (simulating Router's forwarding)."""
         url = f"{self.picod_url}/{endpoint.lstrip('/')}"
-        
+
         # Sign JWT like Router does
         token = self._sign_jwt({
             "path": endpoint,
         })
-        
+
         headers = kwargs.pop("headers", {})
         headers["Authorization"] = f"Bearer {token}"
-        
+
         return self.session.request(method, url, headers=headers, **kwargs)
-    
+
     def execute_command(self, command: list, timeout: str = "30s") -> dict:
         """Execute a command via PicoD."""
         payload = {
@@ -174,7 +177,7 @@ class RouterSimulator:
         resp = self.request("POST", "/api/execute", json=payload)
         resp.raise_for_status()
         return resp.json()
-    
+
     def upload_file(self, content: str, path: str):
         """Upload a file to PicoD."""
         payload = {
@@ -185,13 +188,13 @@ class RouterSimulator:
         resp = self.request("POST", "/api/files", json=payload)
         resp.raise_for_status()
         return resp.json()
-    
+
     def download_file(self, path: str) -> bytes:
         """Download a file from PicoD."""
         resp = self.request("GET", f"/api/files/{path}")
         resp.raise_for_status()
         return resp.content
-    
+
     def list_files(self, path: str = ".") -> list:
         """List files in a directory."""
         resp = self.request("GET", "/api/files", params={"path": path})
@@ -225,7 +228,7 @@ def test_unauthorized_access():
 def test_invalid_token():
     """Test that requests with invalid JWT are rejected."""
     logger.info(">>> TEST: Invalid Token")
-    
+
     # Generate a different key pair
     wrong_key, _, _ = generate_key_pair()
     wrong_token = jwt.encode(
@@ -233,7 +236,7 @@ def test_invalid_token():
         wrong_key,
         algorithm="RS256"
     )
-    
+
     resp = requests.post(
         f"http://localhost:{PICOD_PORT}/api/execute",
         json={"command": ["echo", "hello"]},
@@ -255,11 +258,11 @@ def test_command_execution(client: RouterSimulator):
 def test_python_execution(client: RouterSimulator):
     """Test Python code execution."""
     logger.info(">>> TEST: Python Execution")
-    
+
     # Upload Python script
     code = "import sys; print(f'Python {sys.version_info.major}.{sys.version_info.minor}')"
     client.upload_file(code, "test_python.py")
-    
+
     # Execute it
     result = client.execute_command(["python3", "test_python.py"])
     assert result["exit_code"] == 0
@@ -270,22 +273,22 @@ def test_python_execution(client: RouterSimulator):
 def test_file_operations(client: RouterSimulator):
     """Test file upload, download, and listing."""
     logger.info(">>> TEST: File Operations")
-    
+
     # Upload
     content = "Hello from Router-PicoD E2E test!"
     client.upload_file(content, "e2e_test.txt")
     logger.info("File uploaded")
-    
+
     # Verify with cat
     result = client.execute_command(["cat", "e2e_test.txt"])
     assert result["stdout"].strip() == content
     logger.info("File content verified via cat")
-    
+
     # Download
     downloaded = client.download_file("e2e_test.txt")
     assert downloaded.decode() == content
     logger.info("File downloaded and verified")
-    
+
     # List
     files = client.list_files(".")
     filenames = [f["name"] for f in files]
@@ -296,11 +299,11 @@ def test_file_operations(client: RouterSimulator):
 def test_timeout(client: RouterSimulator):
     """Test command timeout handling."""
     logger.info(">>> TEST: Timeout Handling")
-    
+
     # Should pass with sufficient timeout
     result = client.execute_command(["sleep", "0.1"], timeout="5s")
     assert result["exit_code"] == 0
-    
+
     # Should timeout
     result = client.execute_command(["sleep", "5"], timeout="0.5s")
     assert result["exit_code"] == 124  # Timeout exit code
@@ -315,18 +318,18 @@ def main():
         # 1. Generate Router's key pair
         logger.info("=== SETUP: Generating Router's JWT key pair ===")
         router_private_key, _, router_public_key_pem = generate_key_pair()
-        
+
         # 2. Start PicoD with public key
         logger.info("=== SETUP: Starting PicoD container ===")
         start_picod_container(router_public_key_pem)
-        
+
         # 3. Create Router simulator
         logger.info("=== SETUP: Creating Router simulator ===")
         client = RouterSimulator(
             private_key=router_private_key,
             picod_url=f"http://localhost:{PICOD_PORT}"
         )
-        
+
         # 4. Run tests
         logger.info("=== RUNNING TESTS ===")
         test_health_check()
@@ -336,9 +339,9 @@ def main():
         test_python_execution(client)
         test_file_operations(client)
         test_timeout(client)
-        
+
         logger.info("=== ALL TESTS PASSED! ===")
-        
+
     except Exception as e:
         logger.error(f"Test failed: {e}")
         # Print container logs on failure
@@ -347,7 +350,7 @@ def main():
         print(logs.stdout)
         print(logs.stderr)
         raise
-        
+
     finally:
         stop_containers()
 

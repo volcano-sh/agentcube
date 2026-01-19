@@ -30,7 +30,7 @@ from agentcube.exceptions import CommandExecutionError
 class DataPlaneClient:
     """Client for AgentCube Data Plane (Router -> PicoD).
     Handles command execution and file operations via the Router.
-    
+
     Note: JWT authentication is now handled by the Router. The SDK no longer
     needs to generate keys or sign requests.
     """
@@ -66,7 +66,7 @@ class DataPlaneClient:
         self.pool_connections = pool_connections
         self.pool_maxsize = pool_maxsize
         self.logger = get_logger(f"{__name__}.DataPlaneClient")
-        
+
         if base_url:
             self.base_url = base_url
             self.cr_name = cr_name # Might be None, but that's fine if base_url is used
@@ -78,13 +78,13 @@ class DataPlaneClient:
             self.base_url = urljoin(router_url, base_path)
         else:
             raise ValueError("Either 'base_url' or all of 'router_url', 'namespace', 'cr_name' must be provided.")
-        
+
         # Create session with connection pooling using shared utility
         self.session = create_session(
             pool_connections=pool_connections,
             pool_maxsize=pool_maxsize,
         )
-        
+
         # Add the routing header - Router will add JWT auth
         self.session.headers.update({
             "x-agentcube-session-id": self.session_id
@@ -92,15 +92,15 @@ class DataPlaneClient:
 
     def _request(self, method: str, endpoint: str, body: Optional[bytes] = None, **kwargs) -> requests.Response:
         """Make a request to the Data Plane via Router.
-        
+
         Note: Router handles JWT authentication, so we don't add Authorization header here.
         """
         url = urljoin(self.base_url, endpoint)
-        
+
         headers = {}
         if body:
             headers["Content-Type"] = "application/json"
-        
+
         # Set timeout as (connect_timeout, read_timeout) tuple if not provided
         if "timeout" not in kwargs:
             kwargs["timeout"] = (self.connect_timeout, self.timeout)
@@ -113,7 +113,7 @@ class DataPlaneClient:
             headers.update(kwargs.pop("headers"))
 
         self.logger.debug(f"{method} {url}")
-        
+
         # Use session for connection pooling
         return self.session.request(
             method=method,
@@ -125,7 +125,7 @@ class DataPlaneClient:
 
     def execute_command(self, command: Union[str, List[str]], timeout: Optional[float] = None) -> str:
         """Execute a shell command.
-        
+
         Args:
             command: The command to execute, either as a single string or a list of arguments.
             timeout: Optional timeout for the command execution.
@@ -141,14 +141,14 @@ class DataPlaneClient:
             "timeout": timeout_str
         }
         body = json.dumps(payload).encode('utf-8')
-        
+
         # Add a buffer to the read timeout to allow PicoD to return the timeout response
         # otherwise requests might raise ReadTimeout before we get the JSON response with exit_code 124
         read_timeout = timeout_value + 2.0 if isinstance(timeout_value, (int, float)) else timeout_value
-        
+
         resp = self._request("POST", "api/execute", body=body, timeout=read_timeout)
         resp.raise_for_status()
-        
+
         result = resp.json()
         if result["exit_code"] != 0:
              raise CommandExecutionError(
@@ -156,7 +156,7 @@ class DataPlaneClient:
                  stderr=result["stderr"],
                  command=command
              )
-        
+
         return result["stdout"]
 
     def run_code(self, language: str, code: str, timeout: Optional[float] = None) -> str:
@@ -193,21 +193,21 @@ class DataPlaneClient:
             cmd = ["bash", filename]
         else:
             raise ValueError(f"Unsupported language: {language}")
-            
+
         return self.execute_command(cmd, timeout)
 
     def write_file(self, content: str, remote_path: str) -> None:
         """Write text content to a file."""
         content_bytes = content.encode('utf-8')
         content_b64 = base64.b64encode(content_bytes).decode('utf-8')
-        
+
         payload = {
             "path": remote_path,
             "content": content_b64,
             "mode": "0644"
         }
         body = json.dumps(payload).encode('utf-8')
-        
+
         resp = self._request("POST", "api/files", body=body)
         resp.raise_for_status()
 
@@ -215,16 +215,16 @@ class DataPlaneClient:
         """Upload a local file using multipart/form-data."""
         if not os.path.exists(local_path):
             raise FileNotFoundError(f"Local file not found: {local_path}")
-            
+
         with open(local_path, 'rb') as f:
             files = {'file': f}
             data = {'path': remote_path, 'mode': '0644'}
-            
+
             url = urljoin(self.base_url, "api/files")
             headers = {
                 "x-agentcube-session-id": self.session_id
             }
-            
+
             self.logger.debug(f"Uploading file {local_path} to {remote_path}")
             resp = self.session.post(url, files=files, data=data, headers=headers, timeout=self.timeout)
             resp.raise_for_status()
@@ -234,7 +234,7 @@ class DataPlaneClient:
         clean_path = remote_path.lstrip("/")
         resp = self._request("GET", f"api/files/{clean_path}", stream=True)
         resp.raise_for_status()
-        
+
         if os.path.dirname(local_path):
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
         with open(local_path, 'wb') as f:

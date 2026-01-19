@@ -24,7 +24,7 @@ class ControlPlaneClient:
     """Client for AgentCube Control Plane (WorkloadManager).
     Handles creation and deletion of Code Interpreter sessions.
     """
-    
+
     def __init__(
         self,
         workload_manager_url: Optional[str] = None,
@@ -35,7 +35,7 @@ class ControlPlaneClient:
         pool_maxsize: int = 10,
     ):
         """Initialize the Control Plane client.
-        
+
         Args:
             workload_manager_url: URL of the WorkloadManager service.
             auth_token: Kubernetes Service Account Token for authentication.
@@ -47,29 +47,32 @@ class ControlPlaneClient:
         # Prioritize argument -> env var
         self.base_url = workload_manager_url or os.getenv("WORKLOAD_MANAGER_URL")
         if not self.base_url:
-            raise ValueError("Workload Manager URL must be provided via 'workload_manager_url' argument or 'WORKLOAD_MANAGER_URL' environment variable.")
-        
+            raise ValueError(
+                "Workload Manager URL must be provided via 'workload_manager_url' argument "
+                "or 'WORKLOAD_MANAGER_URL' environment variable."
+            )
+
         # Prioritize argument -> env var -> k8s service account token file
         token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
         token = auth_token or os.getenv("API_TOKEN") or read_token_from_file(token_path)
         self.timeout = timeout
         self.connect_timeout = connect_timeout
-        
+
         self.logger = get_logger(f"{__name__}.ControlPlaneClient")
-        
+
         # Create session with connection pooling using shared utility
         self.session = create_session(
             pool_connections=pool_connections,
             pool_maxsize=pool_maxsize,
         )
-        
+
         # Set default headers
         self.session.headers.update({
             "Content-Type": "application/json",
         })
         if token:
             self.session.headers["Authorization"] = f"Bearer {token}"
-        
+
     def create_session(
         self,
         name: str = "simple-codeinterpreter",
@@ -97,15 +100,15 @@ class ControlPlaneClient:
 
         url = f"{self.base_url}/v1/code-interpreter"
         self.logger.debug(f"Creating session at {url} with payload: {payload}")
-        
+
         try:
             response = self.session.post(
-                url, 
-                json=payload, 
+                url,
+                json=payload,
                 timeout=(self.connect_timeout, self.timeout)
             )
             response.raise_for_status()
-            
+
             data = response.json()
             if "sessionId" not in data or not data["sessionId"]:
                 self.logger.error("Response JSON missing 'sessionId' in create_session response.")
@@ -129,10 +132,10 @@ class ControlPlaneClient:
         """
         url = f"{self.base_url}/v1/code-interpreter/sessions/{session_id}"
         self.logger.debug(f"Deleting session {session_id} at {url}")
-        
+
         try:
             response = self.session.delete(
-                url, 
+                url,
                 timeout=(self.connect_timeout, self.timeout)
             )
             if response.status_code == 404:

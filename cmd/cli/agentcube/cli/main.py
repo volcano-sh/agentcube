@@ -291,7 +291,7 @@ def publish(
     provider: str = typer.Option(
         "agentcube",
         "--provider",
-        help="Target provider for deployment (agentcube, k8s). 'agentcube' deploys AgentRuntime CR, 'k8s' deploys standard K8s Deployment/Service. [default: agentcube]",
+        help="Target provider: 'agentcube' (AgentRuntime CR) or 'k8s' (Deployment/Service)",
     ),
     node_port: Optional[int] = typer.Option(
         None,
@@ -389,7 +389,7 @@ def invoke(
     provider: str = typer.Option(
         "agentcube",
         "--provider",
-        help="Target provider for deployment (agentcube, k8s). 'agentcube' deploys AgentRuntime CR, 'k8s' deploys standard K8s Deployment/Service. [default: agentcube]",
+        help="Target provider: 'agentcube' (AgentRuntime CR) or 'k8s' (Deployment/Service)",
     ),
     verbose: bool = typer.Option(
         False,
@@ -458,7 +458,7 @@ def status(
     provider: str = typer.Option(
         "agentcube",
         "--provider",
-        help="Target provider for deployment (agentcube, k8s). 'agentcube' deploys AgentRuntime CR, 'k8s' deploys standard K8s Deployment/Service. [default: agentcube]",
+        help="Target provider: 'agentcube' (AgentRuntime CR) or 'k8s' (Deployment/Service)",
     ),
     verbose: bool = typer.Option(
         False,

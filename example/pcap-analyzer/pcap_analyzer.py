@@ -117,7 +117,7 @@ Rules:
                                 -z conv,ip                IP conversation list
                                 -z conv,tcp               TCP conversation summary
                                 -z dns,tree               DNS query/response statistics
-                                -z http,tree    
+                                -z http,tree
 - Non-interactive, idempotent, single-shot; prefer STDOUT; clean up temps in /workspace.
 - Start with: #!/usr/bin/env bash and set -euo pipefail.
 - Assume pcap already at /workspace/pocket.pcap.
@@ -140,8 +140,10 @@ Your job:
 - Still non-interactive, idempotent, single-shot; prefer STDOUT; clean up temps under /workspace.
 - Be robust:
   * Detect tools availability (e.g., command -v tshark || ...).
-  * If you try to install packages, guard with existence checks and handle failure gracefully (network may be restricted).
-  * For optional probes use '|| true' to avoid hard failure; but the main path should fail loudly if absolutely necessary.
+  * If you try to install packages, guard with existence checks and handle failure
+    gracefully (network may be restricted).
+  * For optional probes use '|| true' to avoid hard failure; but the main path should
+    fail loudly if absolutely necessary.
 - Do NOT ask for user input.
 
 Context:
@@ -472,7 +474,11 @@ def _analyze_with_retries(
         report = _report(reporter_agent, all_results)
         total_elapsed = time.time() - start_all
         success = any(
-            (not r.get("isError") and int(r.get("exitCode", 0)) == 0 and r.get("command", "").endswith("/workspace/plan.sh"))
+            (
+                not r.get("isError")
+                and int(r.get("exitCode", 0)) == 0
+                and r.get("command", "").endswith("/workspace/plan.sh")
+            )
             for r in all_results
         )
         _sep("ANALYZE SUMMARY", char="=")

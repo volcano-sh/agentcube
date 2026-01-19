@@ -269,7 +269,7 @@ func TestHandleInvoke_NoEntryPoints(t *testing.T) {
 		sandbox: &types.SandboxInfo{
 			SandboxID:   "test-sandbox",
 			SessionID:   "test-session",
-			EntryPoints: []types.SandboxEntryPoints{},
+			EntryPoints: []types.SandboxEntryPoint{},
 		},
 	}
 
@@ -315,7 +315,7 @@ func TestHandleAgentInvoke(t *testing.T) {
 			SandboxID: "test-sandbox",
 			SessionID: "test-session",
 			Name:      "test-sandbox",
-			EntryPoints: []types.SandboxEntryPoints{
+			EntryPoints: []types.SandboxEntryPoint{
 				{
 					Endpoint: testServer.URL,
 					Path:     "/test",
@@ -384,7 +384,7 @@ func TestHandleCodeInterpreterInvoke(t *testing.T) {
 			SandboxID: "test-sandbox",
 			SessionID: "test-session",
 			Name:      "test-sandbox",
-			EntryPoints: []types.SandboxEntryPoints{
+			EntryPoints: []types.SandboxEntryPoint{
 				{
 					Endpoint: testServer.URL,
 					Path:     "/execute",
@@ -431,7 +431,7 @@ func TestForwardToSandbox_InvalidEndpoint(t *testing.T) {
 			SandboxID: "test-sandbox",
 			SessionID: "test-session",
 			Name:      "test-sandbox",
-			EntryPoints: []types.SandboxEntryPoints{
+			EntryPoints: []types.SandboxEntryPoint{
 				{Endpoint: "://invalid-url", Path: "/test"},
 			},
 		},
@@ -487,7 +487,7 @@ func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 			SandboxID: "test-sandbox",
 			SessionID: "test-session",
 			Name:      "test-sandbox",
-			EntryPoints: []types.SandboxEntryPoints{
+			EntryPoints: []types.SandboxEntryPoint{
 				{
 					Endpoint: slowServer.URL,
 					Path:     "/test",

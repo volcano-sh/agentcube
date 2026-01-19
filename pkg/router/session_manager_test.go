@@ -98,7 +98,7 @@ func TestGetSandboxBySession_Success(t *testing.T) {
 	sb := &types.SandboxInfo{
 		SandboxID: "sandbox-1",
 		Name:      "sandbox-1",
-		EntryPoints: []types.SandboxEntryPoints{
+		EntryPoints: []types.SandboxEntryPoint{
 			{Endpoint: "10.0.0.1:9000"},
 		},
 		SessionID: "sess-1",
@@ -185,7 +185,7 @@ func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
 			SessionID:   "new-session-123",
 			SandboxID:   "sandbox-456",
 			SandboxName: "sandbox-test",
-			EntryPoints: []types.SandboxEntryPoints{
+			EntryPoints: []types.SandboxEntryPoint{
 				{Endpoint: "10.0.0.1:9000", Protocol: "http", Path: "/"},
 			},
 		}
@@ -255,7 +255,7 @@ func TestGetSandboxBySession_CreateSandbox_CodeInterpreter_Success(t *testing.T)
 			SessionID:   "ci-session-789",
 			SandboxID:   "ci-sandbox-101",
 			SandboxName: "ci-sandbox-test",
-			EntryPoints: []types.SandboxEntryPoints{
+			EntryPoints: []types.SandboxEntryPoint{
 				{Endpoint: "10.0.0.2:8080", Protocol: "http", Path: "/"},
 			},
 		}
@@ -390,7 +390,7 @@ func TestGetSandboxBySession_CreateSandbox_EmptySessionID(t *testing.T) {
 			SessionID:   "", // Empty sessionID
 			SandboxID:   "sandbox-456",
 			SandboxName: "sandbox-test",
-			EntryPoints: []types.SandboxEntryPoints{
+			EntryPoints: []types.SandboxEntryPoint{
 				{Endpoint: "10.0.0.1:9000"},
 			},
 		}

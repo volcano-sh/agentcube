@@ -279,7 +279,10 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
 	codeInterpreterKey := namespace + "/" + codeInterpreterName
 	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type convertion below
-	runtimeObj, exists, _ := informer.CodeInterpreterInformer.GetStore().GetByKey(codeInterpreterKey)
+	runtimeObj, exists, err := informer.CodeInterpreterInformer.GetStore().GetByKey(codeInterpreterKey)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to get code interpreter %s from informer cache: %w", codeInterpreterKey, err)
+	}
 	if !exists {
 		return nil, nil, nil, api.ErrCodeInterpreterNotFound
 	}
@@ -378,7 +381,9 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		podSpec:        podSpec,
 		podLabels:      codeInterpreterObj.Spec.Template.Labels,
 		podAnnotations: codeInterpreterObj.Spec.Template.Annotations,
-		ttl:            codeInterpreterObj.Spec.MaxSessionDuration.Duration,
+	}
+	if codeInterpreterObj.Spec.MaxSessionDuration != nil {
+		buildParams.ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration
 	}
 	sandbox := buildSandboxObject(buildParams)
 	return sandbox, nil, sandboxEntry, nil

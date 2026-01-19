@@ -168,7 +168,7 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		klog.V(2).Infof("sandbox %s/%s running", createdSandbox.Namespace, createdSandbox.Name)
 	case <-time.After(2 * time.Minute): // consistent with router settings
 		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
-		return nil, fmt.Errorf("Sandbox creation timed out")
+		return nil, fmt.Errorf("sandbox creation timed out")
 	}
 
 	needRollbackSandbox := true

@@ -225,7 +225,7 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 		// Determine error type and return appropriate response
 		switch {
 		case strings.Contains(err.Error(), "connection refused"):
-			c.JSON(http.StatusServiceUnavailable, gin.H{
+			c.JSON(http.StatusBadGateway, gin.H{
 				"error": "sandbox unreachable",
 			})
 		case strings.Contains(err.Error(), "timeout"):

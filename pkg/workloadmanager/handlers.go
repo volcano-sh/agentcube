@@ -177,16 +177,27 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	}
 
 	needRollbackSandbox := true
-	// TODO(hzxuzhonghu): in some case we need to rollback sandboxClaim
 	sandboxRollbackFunc := func() {
 		ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		err := deleteSandbox(ctxTimeout, dynamicClient, namespace, sandboxName)
-		if err != nil {
-			klog.Infof("sandbox %s/%s rollback failed: %v", namespace, sandboxName, err)
-			return
+		var err error
+		if sandboxClaim != nil {
+			// Rollback SandboxClaim
+			err = deleteSandboxClaim(ctxTimeout, dynamicClient, sandboxClaim.Namespace, sandboxClaim.Name)
+			if err != nil {
+				klog.Infof("sandbox claim %s/%s rollback failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err)
+				return
+			}
+			klog.Infof("sandbox claim %s/%s rollback succeeded", sandboxClaim.Namespace, sandboxClaim.Name)
+		} else {
+			// Rollback Sandbox
+			err = deleteSandbox(ctxTimeout, dynamicClient, namespace, sandboxName)
+			if err != nil {
+				klog.Infof("sandbox %s/%s rollback failed: %v", namespace, sandboxName, err)
+				return
+			}
+			klog.Infof("sandbox %s/%s rollback succeeded", namespace, sandboxName)
 		}
-		klog.Infof("sandbox %s/%s rollback succeeded", namespace, sandboxName)
 	}
 	defer func() {
 		if needRollbackSandbox == false {

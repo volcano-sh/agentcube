@@ -161,7 +161,7 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 	proxy.Transport = s.httpTransport
 
 	var jwtToken string
-	if sandbox.Kind == types.CodeInterpreterKind {
+	if sandbox.Kind == types.SandboxClaimsKind || sandbox.Kind == types.SandboxKind {
 		// Generate JWT token before setting up Director
 		// Include session ID in claims for debugging and request tracking
 		if s.jwtManager != nil {

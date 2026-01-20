@@ -53,7 +53,6 @@ func (s *Server) handleCodeInterpreterCreate(c *gin.Context) {
 	s.handleSandboxCreate(c, types.CodeInterpreterKind)
 }
 
-// handleSandboxCreate handles sandbox creation requests
 // extractUserK8sClient extracts user information from the context and creates a user-specific Kubernetes client.
 // It returns the dynamic client for the user and an error if authentication fails or client creation fails.
 func (s *Server) extractUserK8sClient(c *gin.Context) (dynamic.Interface, error) {
@@ -274,7 +273,7 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 				// Already deleted, consider as success
 				klog.Infof("sandbox %s/%s already deleted", sandbox.SandboxNamespace, sandbox.Name)
 			} else {
-				klog.Infof("failed to delete sandbox %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
+				klog.Errorf("failed to delete sandbox %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
 				respondError(c, http.StatusInternalServerError, "internal server error")
 				return
 			}

@@ -221,7 +221,7 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 
 func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
 	agentRuntimeKey := namespace + "/" + name
-	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type convertion below
+	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
 	runtimeObj, exists, _ := ifm.AgentRuntimeInformer.GetStore().GetByKey(agentRuntimeKey)
 	if !exists {
 		return nil, nil, api.ErrAgentRuntimeNotFound
@@ -278,7 +278,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 
 func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
 	codeInterpreterKey := namespace + "/" + codeInterpreterName
-	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type convertion below
+	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
 	runtimeObj, exists, err := informer.CodeInterpreterInformer.GetStore().GetByKey(codeInterpreterKey)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to get code interpreter %s from informer cache: %w", codeInterpreterKey, err)

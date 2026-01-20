@@ -103,7 +103,7 @@ func (s *Server) handleGetSandboxError(c *gin.Context, err error) {
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 }
 
-func selectSandboxUrl(sandbox *types.SandboxInfo, path string) (*url.URL, error) {
+func determineUpstreamURL(sandbox *types.SandboxInfo, path string) (*url.URL, error) {
 	// prefer matched entrypoint by path
 	for _, ep := range sandbox.EntryPoints {
 		if strings.HasPrefix(path, ep.Path) {
@@ -145,7 +145,7 @@ func (s *Server) handleCodeInterpreterInvoke(c *gin.Context) {
 // forwardToSandbox forwards the request to the specified sandbox endpoint
 func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, path string) {
 	// Extract url from sandbox - find matching entry point by path
-	targetURL, err := selectSandboxUrl(sandbox, path)
+	targetURL, err := determineUpstreamURL(sandbox, path)
 	if err != nil {
 		klog.Errorf("Failed to get sandbox access address %s: %v", sandbox.SandboxID, err)
 		c.JSON(http.StatusNotFound, gin.H{

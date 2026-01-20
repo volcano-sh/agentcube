@@ -1,5 +1,7 @@
-# Root-level configuration for monorepo structure and IDE navigation, 
+# Root-level configuration for monorepo structure and IDE navigation,
 # ensuring cross-package import resolution for both SDK and E2E tests.
+# Also serves as the central tool configuration for ruff.
+
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -9,8 +11,24 @@ name = "agentcube"
 version = "0.1.0"
 description = "AgentCube Python SDK and E2E Tests"
 readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
 
 [tool.setuptools.packages.find]
 where = ["sdk-python", "."]
 include = ["agentcube*", "test*"]
 namespaces = false
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+fixable = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

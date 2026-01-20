@@ -39,7 +39,7 @@ class PublishRuntime:
         self.provider = provider
         self.metadata_service = MetadataService(verbose=verbose)
         self.docker_service = DockerService(verbose=verbose)
-        
+
         # Providers for K8s deployments
         self.agentcube_provider = None         # For agentcube provider (CRD)
         self.k8s_provider = None    # For k8s provider (Deployment/Service)
@@ -67,7 +67,7 @@ class PublishRuntime:
         """
         if self.verbose:
             logger.info(f"Starting publish process for workspace: {workspace_path}")
-            
+
         provider = options.get('provider', self.provider)
         namespace = str(options.get('namespace', 'default'))
 
@@ -88,11 +88,11 @@ class PublishRuntime:
                     "Missing required configuration for AgentCube provider. "
                     "Please ensure 'router_url' and 'workload_manager_url' are set in agent_metadata.yaml."
                 )
-        
+
         # Determine the final image URL for deployment, potentially pushing it
         # This will handle the logic of using metadata registry or explicit --image-url
         final_image_url = self._prepare_image_for_publishing(workspace_path, metadata, options)
-        
+
         # Override options['image_url'] with the resolved final_image_url
         options['image_url'] = final_image_url
 
@@ -190,7 +190,7 @@ class PublishRuntime:
             "status": "deployed",
             "agent_endpoint": endpoint,
         }
-        
+
         if self.verbose:
             logger.info(f"K8s publish (AgentRuntime CR) completed: {result}")
 
@@ -253,11 +253,11 @@ class PublishRuntime:
                 }
             }
             self.metadata_service.update_metadata(workspace_path, updates)
-            
+
             # --- Start readiness check ---
             if self.verbose:
                 logger.info(f"Waiting for deployment '{k8s_info['deployment_name']}' to become ready...")
-            
+
             final_status = "failed"
             try:
                 self.k8s_provider.wait_for_deployment_ready(k8s_info['deployment_name'], timeout=120)
@@ -274,7 +274,7 @@ class PublishRuntime:
                 }
                 self.metadata_service.update_metadata(workspace_path, updates)
                 raise RuntimeError(f"Failed to deploy to standard K8s: {error_message}")
-            
+
             # If readiness succeeds, update metadata with success status
             updates = {
                 "k8s_deployment": {

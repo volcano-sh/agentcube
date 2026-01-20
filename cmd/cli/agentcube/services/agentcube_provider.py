@@ -227,7 +227,7 @@ class AgentCubeProvider:
                 )
                 if self.verbose:
                     logger.info(f"Updated existing AgentRuntime: {k8s_name}")
-                
+
             except ApiException as e:
                 if e.status == 404:
                     # Create new CR

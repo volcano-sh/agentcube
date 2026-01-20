@@ -33,10 +33,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            - name: REDIS_ADDR
-              value: {{ .Values.redis.addr | quote }}
             - name: REDIS_PASSWORD
               value: {{ .Values.redis.password | quote }}
+            - name: REDIS_ADDR
+              value: {{ .Values.redis.addr | quote }}
             {{- with .Values.workloadmanager.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

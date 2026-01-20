@@ -72,7 +72,7 @@ class ControlPlaneClient:
         
     def create_session(
         self,
-        name: str = "simple-codeinterpreter",
+        name: str = "my-interpreter",
         namespace: str = "default",
         metadata: Optional[Dict[str, Any]] = None,
         ttl: int = 3600,

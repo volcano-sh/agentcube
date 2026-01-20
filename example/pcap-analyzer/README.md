@@ -40,11 +40,13 @@ It combines **multi-agent collaboration** with an **automatic repair loop** to a
 - **Role:** Network forensics expert  
 - **Task:** Generate a self-contained Bash script that analyzes `/workspace/pocket.pcap`  
 - **Output Format:**
+
   ```json
   { "script": "..." }
   ```
 
 **Prompt Templates:**
+
 | Template | Description |
 |-----------|--------------|
 | `PLANNER_SYSTEM` | Defines rules and required output format |
@@ -59,6 +61,7 @@ It combines **multi-agent collaboration** with an **automatic repair loop** to a
 - **Task:** Convert raw execution results into a structured Markdown report  
 
 **Report Sections:**
+
 1. Executive Summary  
 2. Capture Overview  
 3. Conversations  
@@ -131,6 +134,7 @@ Within one sandbox session:
 4. Aggregate all results for the Reporter Agent to process.
 
 **Pseudocode:**
+
 ```python
 for attempt in range(max_retries + 1):
     result = execute(script)
@@ -156,10 +160,12 @@ for attempt in range(max_retries + 1):
 
 - **Strict JSON output** — prevents parsing or formatting issues  
 - **Fixed Bash header:**
+
   ```bash
   #!/usr/bin/env bash
   set -euo pipefail
   ```
+
 - **Fault-tolerant logic:**  
   Handles missing tools gracefully (`command -v tshark || true`),  
   uses `|| true` to preserve pipeline stability.
@@ -193,7 +199,7 @@ for attempt in range(max_retries + 1):
 | `OPENAI_API_BASE` | Model API endpoint | `https://api.siliconflow.cn/v1` |
 | `WORKLOAD_MANAGER_URL` | AgentCube Control Plane URL | *Required in cluster* |
 | `ROUTER_URL` | AgentCube Data Plane (Router) URL | *Required* |
-| `CODEINTERPRETER_NAME` | Name of CodeInterpreter CRD | `simple-codeinterpreter` |
+| `CODEINTERPRETER_NAME` | Name of CodeInterpreter CRD | `my-interpreter` |
 | `SANDBOX_NAMESPACE` | Kubernetes namespace for sandbox | `default` |
 | `SANDBOX_WARMUP_SEC` | Sandbox warm-up time (seconds) | `5` |
 | `PLANNER_MAX_RETRIES` | Maximum auto-repair attempts | `2` |
@@ -204,6 +210,7 @@ for attempt in range(max_retries + 1):
 ## 🧩 Summary
 
 **PCAP Analyzer** provides a complete **AI-driven PCAP analysis workflow**, integrating:  
+
 - Autonomous script generation  
 - Sandboxed execution  
 - Intelligent repair and retry cycles  
@@ -225,12 +232,14 @@ This creates a fully automated, fault-tolerant, and self-healing forensic analys
 ### 🧰 Example Run
 
 #### build image
+
 ```bash
 cd example/pcap-analyzer
 docker build -t "pcap-analyzer:latest" -f Dockerfile ../../
 ```
 
 #### build deploy
+
 ```bash
 cd example/pcap-analyzer
 kubectl create secret generic pcap-analyzer-secrets --from-literal=openai-api-key='YOUR_API_KEY'
@@ -238,19 +247,23 @@ kubectl apply -f deployment.yaml
 ```
 
 #### request
+
 Obtain the pod IP by running the command "kubectl get pod -owide | grep pcap-analyzer". "./samples/pocket.pcap" need change to your file path.
+
 ```bash
 curl -X POST "http://{pod_ip}:8000/analyze" \
   -F "pcap_file=@./samples/pocket.pcap"
 ```
 
 Alternatively, you can use `pcap_path` form field for local file path:
+
 ```bash
 curl -X POST "http://{pod_ip}:8000/analyze" \
   -F "pcap_path=/path/to/your/file.pcap"
 ```
 
 Response:
+
 ```json
 {
   "script": "#!/usr/bin/env bash\nset -euo pipefail\n...",

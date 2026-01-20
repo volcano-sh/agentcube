@@ -1,7 +1,7 @@
 apiVersion: runtime.agentcube.volcano.sh/v1alpha1
 kind: CodeInterpreter
 metadata:
-  name: simple-codeinterpreter
+  name: my-interpreter
   namespace: default
 spec:
   ports:
@@ -9,10 +9,10 @@ spec:
       port: 8080
       protocol: "HTTP"
   template:
-    image: picod:latest
+    image: ghcr.io/volcano-sh/picod:latest
     imagePullPolicy: IfNotPresent
     args:
-      - --workspace=/workspace
+      - --workspace=/root
     resources:
       limits:
         cpu: "500m"

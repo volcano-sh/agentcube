@@ -50,7 +50,7 @@ class CodeInterpreterClient:
     
     def __init__(
         self,
-        name: str = "simple-codeinterpreter",
+        name: str = "my-interpreter",
         namespace: str = "default",
         ttl: int = 3600,
         workload_manager_url: Optional[str] = None,

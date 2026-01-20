@@ -63,10 +63,13 @@ helm install agentcube ./manifests/charts/base \
     --namespace agentcube \
     --create-namespace \
     --set redis.addr="redis.agentcube.svc.cluster.local:6379" \
-    --set redis.password=""
+    --set redis.password="''''" \
+    --set router.rbac.create=true \
+    --set router.serviceAccountName="agentcube-router"
 ```
 
 This will install:
+
 - AgentCube CRDs (`CodeInterpreter`, `AgentRuntime`)
 - Workload Manager deployment
 - AgentCube Router deployment
@@ -128,7 +131,7 @@ spec:
   template:
     image: ghcr.io/volcano-sh/picod:latest
     args:
-      - --workspace=/workspace
+      - --workspace=/root
     resources:
       limits:
         cpu: "500m"
@@ -155,6 +158,18 @@ pip install agentcube-sdk
 ```
 
 ### Run Your First Code
+
+You need access to a running AgentCube instance (WorkloadManager and Router).
+
+Set the following environment variables to point to your AgentCube services:
+
+```bash
+export WORKLOAD_MANAGER_URL="http://<your-workload-manager-host>:<port>"
+export ROUTER_URL="http://<your-router-host>:<port>"
+
+# Optional: If your instance requires authentication
+# export API_TOKEN="your-token"
+```
 
 ```python
 from agentcube import CodeInterpreterClient

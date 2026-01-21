@@ -128,7 +128,7 @@ class PackRuntime:
 
             if not pack_options.agent_name:
                 pack_options.agent_name = workspace_path.name
-            
+
             if not pack_options.language:
                 pack_options.language = "python"
 
@@ -139,7 +139,7 @@ class PackRuntime:
                 pack_options.requirements_file = "requirements.txt"
 
             metadata_dict = asdict(pack_options)
-            
+
             # Filter out None values so that pydantic model can use defaults
             metadata_dict = {k: v for k, v in metadata_dict.items() if v is not None}
 
@@ -152,7 +152,7 @@ class PackRuntime:
     def _apply_option_overrides(self, metadata: AgentMetadata, options: Dict[str, Any]) -> AgentMetadata:
         """Apply CLI option overrides to metadata."""
         override_options = MetadataOptions.from_options(options)
-        
+
         # Create a dictionary from the dataclass, excluding None values
         overrides = {k: v for k, v in asdict(override_options).items() if v is not None}
 
@@ -270,8 +270,8 @@ RUN apt-get update && apt-get install -y \\
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
-{f'COPY {metadata.requirements_file} .' if metadata.requirements_file else '# No requirements file specified'}
-{f'RUN pip install --no-cache-dir -r {metadata.requirements_file}' if metadata.requirements_file else '# No dependencies to install'}
+{f'COPY {metadata.requirements_file} .' if metadata.requirements_file else '# No requirements file'}
+{f'RUN pip install --no-cache-dir -r {metadata.requirements_file}' if metadata.requirements_file else '# Skip deps'}
 
 # Copy application code
 COPY . .
@@ -323,7 +323,9 @@ EXPOSE {metadata.port}
 CMD ["java", "-jar", "app.jar"]
 """
 
-    def _update_pack_metadata(self, workspace_path: Path, metadata: AgentMetadata, dockerfile_path: Optional[Path]) -> None:
+    def _update_pack_metadata(
+        self, workspace_path: Path, metadata: AgentMetadata, dockerfile_path: Optional[Path]
+    ) -> None:
         """Update metadata with pack-related information."""
         updates = {}
 
@@ -347,7 +349,11 @@ CMD ["java", "-jar", "app.jar"]
                     logger.debug(f"Copying workspace from {workspace_path} to {output}")
 
                 # Copy workspace contents. This will overwrite existing files.
-                shutil.copytree(workspace_path, output, ignore=shutil.ignore_patterns('.git', '__pycache__'), dirs_exist_ok=True)
+                shutil.copytree(
+                    workspace_path, output,
+                    ignore=shutil.ignore_patterns('.git', '__pycache__'),
+                    dirs_exist_ok=True
+                )
 
                 return output
 

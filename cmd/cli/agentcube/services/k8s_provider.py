@@ -20,9 +20,10 @@ exposing them via NodePort services for testing and development.
 """
 
 import logging
-import time
 import shlex
+import time
 from typing import Any, Dict, Optional
+
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
@@ -134,7 +135,7 @@ class KubernetesProvider:
 
         try:
             # Create or update Deployment
-            deployment_info = self._create_deployment(
+            _deployment_info = self._create_deployment(
                 name=k8s_name,
                 image_url=image_url,
                 port=port,
@@ -228,7 +229,7 @@ class KubernetesProvider:
 
         try:
             # Try to get existing deployment
-            existing = self.apps_api.read_namespaced_deployment(
+            _existing = self.apps_api.read_namespaced_deployment(
                 name=name,
                 namespace=self.namespace
             )
@@ -284,7 +285,7 @@ class KubernetesProvider:
 
         try:
             # Try to get existing service
-            existing = self.core_api.read_namespaced_service(
+            _existing = self.core_api.read_namespaced_service(
                 name=name,
                 namespace=self.namespace
             )

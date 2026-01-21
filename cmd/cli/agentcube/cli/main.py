@@ -19,9 +19,10 @@ This module defines the command-line interface using Typer, providing
 a rich and developer-friendly experience for managing AI agents.
 """
 
-from pathlib import Path
-from typing import Optional, List
+import warnings
 from dataclasses import asdict
+from pathlib import Path
+from typing import List, Optional
 
 import typer
 from rich.console import Console
@@ -34,7 +35,7 @@ from agentcube.runtime.invoke_runtime import InvokeRuntime
 from agentcube.runtime.pack_runtime import PackRuntime
 from agentcube.runtime.publish_runtime import PublishRuntime
 from agentcube.runtime.status_runtime import StatusRuntime
-import warnings
+
 warnings.filterwarnings("ignore")
 
 # Initialize rich console for beautiful output
@@ -57,7 +58,7 @@ def version_callback(value: bool) -> None:
         console.print(f"AgentCube CLI (kubectl agentcube) version: [bold green]{__version__}[/bold green]")
         raise typer.Exit()
 
-# Error handling  
+# Error handling
 def _handle_error(e: Exception, command_name: str, verbose: bool):
     console.print(f"Error {command_name}: [red]{str(e)}[/red]")
     if verbose:
@@ -290,7 +291,7 @@ def publish(
     provider: str = typer.Option(
         "agentcube",
         "--provider",
-        help="Target provider for deployment (agentcube, k8s). 'agentcube' deploys AgentRuntime CR, 'k8s' deploys standard K8s Deployment/Service. [default: agentcube]",
+        help="Target provider: 'agentcube' (AgentRuntime CR) or 'k8s' (Deployment/Service)",
     ),
     node_port: Optional[int] = typer.Option(
         None,
@@ -388,7 +389,7 @@ def invoke(
     provider: str = typer.Option(
         "agentcube",
         "--provider",
-        help="Target provider for deployment (agentcube, k8s). 'agentcube' deploys AgentRuntime CR, 'k8s' deploys standard K8s Deployment/Service. [default: agentcube]",
+        help="Target provider: 'agentcube' (AgentRuntime CR) or 'k8s' (Deployment/Service)",
     ),
     verbose: bool = typer.Option(
         False,
@@ -439,7 +440,7 @@ def invoke(
 
             progress.update(task, description="Invocation completed!")
 
-        console.print(f"Successfully invoked agent")
+        console.print("Successfully invoked agent")
         console.print(f"Response: [green]{result}[/green]")
 
     except Exception as e:
@@ -457,7 +458,7 @@ def status(
     provider: str = typer.Option(
         "agentcube",
         "--provider",
-        help="Target provider for deployment (agentcube, k8s). 'agentcube' deploys AgentRuntime CR, 'k8s' deploys standard K8s Deployment/Service. [default: agentcube]",
+        help="Target provider: 'agentcube' (AgentRuntime CR) or 'k8s' (Deployment/Service)",
     ),
     verbose: bool = typer.Option(
         False,

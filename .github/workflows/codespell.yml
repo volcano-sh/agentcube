@@ -16,24 +16,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Backup and remove problematic TOML files
+      - name: Backup and remove problematic files
         run: |
-          # Backup TOML files
-          mkdir -p /tmp/toml_backup
-          find . -name "pyproject.toml" -exec cp {} /tmp/toml_backup/ \;
-          # Remove TOML files temporarily
+          # Backup files that cause false positives
+          mkdir -p /tmp/skip_backup
+          find . -name "pyproject.toml" -exec cp --parents {} /tmp/skip_backup/ \;
+          find . -name "package-lock.json" -exec cp --parents {} /tmp/skip_backup/ \;
+          find . -name "package.json" -exec cp --parents {} /tmp/skip_backup/ \;
+          # Remove problematic files temporarily
           find . -name "pyproject.toml" -delete
+          find . -name "package-lock.json" -delete
+          find . -name "package.json" -delete
           
       - name: Run codespell
         run: |
           pip install codespell
           codespell \
             --check-filenames \
-            --skip .git,go.sum,*.png,*.jpg,*.svg,*.gif,*.sum,bin,vendor \
+            --skip .git,go.sum,*.png,*.jpg,*.svg,*.gif,*.sum,bin,vendor,node_modules \
             --ignore-words-list fo,nam,te,notin,NotIn \
             .
             
-      - name: Restore TOML files
+      - name: Restore backed up files
         run: |
           # Restore backed up files
-          find /tmp/toml_backup -name "pyproject.toml" -exec cp {} . \;
+          cd /tmp/skip_backup && find . -type f -exec cp --parents {} $GITHUB_WORKSPACE/ \;

@@ -24,30 +24,30 @@ from agentcube.utils.log import get_logger
 class CodeInterpreterClient:
     """
     AgentCube Code Interpreter Client.
-    
+
     Manages the lifecycle of a Code Interpreter session and provides methods
     to execute code and manage files within it.
-    
+
     Session is created upon initialization (or reused if session_id is provided).
     Call stop() to delete the session, or use context manager for automatic cleanup.
-    
+
     Example:
         # Basic usage with context manager (recommended)
         with CodeInterpreterClient() as client:
             client.run_code("python", "print('hello')")
         # Session automatically deleted on exit
-        
+
         # Session reuse for multi-step workflows
         client1 = CodeInterpreterClient()
         session_id = client1.session_id
         client1.run_code("python", "x = 42")
         # Don't call stop() - let session persist
-        
+
         client2 = CodeInterpreterClient(session_id=session_id)
         client2.run_code("python", "print(x)")  # x still exists
         client2.stop()  # Cleanup when done
     """
-    
+
     def __init__(
         self,
         name: str = "simple-codeinterpreter",
@@ -61,10 +61,10 @@ class CodeInterpreterClient:
     ):
         """
         Initialize the Code Interpreter Client.
-        
+
         Creates a new session, or reuses an existing session
         if session_id is provided.
-        
+
         Args:
             name: Name of the CodeInterpreter template (CRD name).
             namespace: Kubernetes namespace.
@@ -79,11 +79,11 @@ class CodeInterpreterClient:
         self.namespace = namespace
         self.ttl = ttl
         self.verbose = verbose
-        
+
         # Configure Logger
         level = logging.DEBUG if verbose else logging.INFO
         self.logger = get_logger(__name__, level=level)
-        
+
         # Initialize Control Plane client
         self.cp_client = ControlPlaneClient(workload_manager_url, auth_token)
         if verbose:
@@ -97,11 +97,11 @@ class CodeInterpreterClient:
                 "'router_url' argument or 'ROUTER_URL' environment variable."
             )
         self.router_url = router_url
-        
+
         # Session state
         self.session_id: Optional[str] = session_id
         self.dp_client: Optional[DataPlaneClient] = None
-        
+
         # Initialize session
         if session_id:
             self.logger.info(f"Reusing existing session: {session_id}")
@@ -146,19 +146,19 @@ class CodeInterpreterClient:
     def stop(self):
         """
         Stop and delete the session.
-        
+
         This terminates the Code Interpreter instance and releases all resources.
         After calling this, the session_id can no longer be reused.
         """
         if self.dp_client:
             self.dp_client.close()
             self.dp_client = None
-            
+
         if self.session_id:
             self.logger.info(f"Deleting session {self.session_id}...")
             self.cp_client.delete_session(self.session_id)
             self.session_id = None
-        
+
         self.cp_client.close()
 
     # --- Data Plane Methods ---

@@ -38,7 +38,7 @@ class InvokeRuntime:
         self.verbose = verbose
         self.provider = provider
         self.metadata_service = MetadataService(verbose=verbose)
-        
+
         # Providers for K8s deployments
         self.agentcube_provider = None         # For agentcube provider (CRD)
         self.k8s_provider = None    # For k8s provider (Deployment/Service)
@@ -91,7 +91,7 @@ class InvokeRuntime:
             # Ensure base_endpoint doesn't have trailing slash
             base = base_endpoint.rstrip("/")
             final_endpoint = f"{base}/v1/namespaces/{namespace}/agent-runtimes/{agent_name}/invocations/"
-            
+
             if self.verbose:
                 logger.info(f"Constructed AgentRuntime invocation URL: {final_endpoint}")
 
@@ -128,7 +128,7 @@ class InvokeRuntime:
             )
 
         endpoint = metadata.agent_endpoint
-        
+
         if not endpoint:
             raise ValueError(
                 "Agent endpoint is not available in metadata. "
@@ -185,7 +185,7 @@ class InvokeRuntime:
                 write=10.0,        # 10 seconds to write request
                 pool=10.0          # 10 seconds to acquire connection from pool
             )
-            
+
             async with httpx.AsyncClient(timeout=timeout) as client:
                 if self.verbose:
                     logger.info(f"Making HTTP POST request to {endpoint}")
@@ -220,7 +220,10 @@ class InvokeRuntime:
 
         except httpx.ConnectError as e:
             if self.verbose:
-                logger.error(f"Could not connect to {endpoint}. Please check if the agent is running and the endpoint is correct.")
+                logger.error(
+                    f"Could not connect to {endpoint}. "
+                    "Please check if the agent is running and the endpoint is correct."
+                )
             raise RuntimeError(f"Could not connect to agent at {endpoint}: {e}")
 
         except httpx.HTTPStatusError as e:

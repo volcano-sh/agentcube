@@ -19,6 +19,7 @@ package router
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/volcano-sh/agentcube/pkg/api"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 )
 
@@ -42,6 +44,18 @@ type mockSessionManager struct {
 
 func (m *mockSessionManager) GetSandboxBySession(_ context.Context, _ string, _ string, _ string, _ string) (*types.SandboxInfo, error) {
 	return m.sandbox, m.err
+}
+
+func setupEnv() {
+	os.Setenv("REDIS_ADDR", "localhost:6379")
+	os.Setenv("REDIS_PASSWORD", "test-password")
+	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
+}
+
+func teardownEnv() {
+	os.Unsetenv("REDIS_ADDR")
+	os.Unsetenv("REDIS_PASSWORD")
+	os.Unsetenv("WORKLOAD_MANAGER_ADDR")
 }
 
 func TestHandleHealth(t *testing.T) {
@@ -172,37 +186,61 @@ func TestHandleHealthReady(t *testing.T) {
 	}
 }
 
-func TestHandleInvoke_SessionManagerError(t *testing.T) {
-	// Set required environment variables
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
-	defer func() {
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
-	}()
+func TestHandleInvoke_ErrorPaths(t *testing.T) {
+	setupEnv()
+	defer teardownEnv()
 
-	config := &Config{
-		Port: "8080",
+	tests := []struct {
+		name         string
+		err          error
+		expectedCode int
+	}{
+		{
+			name:         "session manager generic error",
+			err:          errors.New("session manager error"),
+			expectedCode: http.StatusInternalServerError,
+		},
+		{
+			name:         "session not found",
+			err:          api.NewSessionNotFoundError("missing-session"),
+			expectedCode: http.StatusNotFound,
+		},
+		{
+			name:         "agent runtime not found",
+			err:          api.NewSandboxTemplateNotFoundError("default", "test-agent", types.AgentRuntimeKind),
+			expectedCode: http.StatusNotFound,
+		},
+		{
+			name:         "upstream unavailable",
+			err:          api.NewUpstreamUnavailableError(errors.New("upstream unavailable")),
+			expectedCode: http.StatusServiceUnavailable,
+		},
+		{
+			name:         "internal error",
+			err:          api.NewInternalError(fmt.Errorf("unexpected")),
+			expectedCode: http.StatusInternalServerError,
+		},
 	}
 
-	server, err := NewServer(config)
-	if err != nil {
-		t.Fatalf("Failed to create server: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &Config{Port: "8080"}
+			server, err := NewServer(config)
+			if err != nil {
+				t.Fatalf("Failed to create server: %v", err)
+			}
 
-	// Mock session manager that returns error
-	server.sessionManager = &mockSessionManager{
-		err: errors.New("session manager error"),
-	}
+			server.sessionManager = &mockSessionManager{err: tt.err}
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
-	server.engine.ServeHTTP(w, req)
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("POST", "/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
+			server.engine.ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("Expected status code %d, got %d", http.StatusBadRequest, w.Code)
+			if w.Code != tt.expectedCode {
+				t.Fatalf("expected status %d, got %d", tt.expectedCode, w.Code)
+			}
+			t.Logf("Response body: %s", w.Body.String())
+		})
 	}
 }
 
@@ -231,7 +269,7 @@ func TestHandleInvoke_NoEntryPoints(t *testing.T) {
 		sandbox: &types.SandboxInfo{
 			SandboxID:   "test-sandbox",
 			SessionID:   "test-session",
-			EntryPoints: []types.SandboxEntryPoints{},
+			EntryPoints: []types.SandboxEntryPoint{},
 		},
 	}
 
@@ -277,7 +315,7 @@ func TestHandleAgentInvoke(t *testing.T) {
 			SandboxID: "test-sandbox",
 			SessionID: "test-session",
 			Name:      "test-sandbox",
-			EntryPoints: []types.SandboxEntryPoints{
+			EntryPoints: []types.SandboxEntryPoint{
 				{
 					Endpoint: testServer.URL,
 					Path:     "/test",
@@ -346,7 +384,7 @@ func TestHandleCodeInterpreterInvoke(t *testing.T) {
 			SandboxID: "test-sandbox",
 			SessionID: "test-session",
 			Name:      "test-sandbox",
-			EntryPoints: []types.SandboxEntryPoints{
+			EntryPoints: []types.SandboxEntryPoint{
 				{
 					Endpoint: testServer.URL,
 					Path:     "/execute",
@@ -379,46 +417,39 @@ func TestHandleCodeInterpreterInvoke(t *testing.T) {
 }
 
 func TestForwardToSandbox_InvalidEndpoint(t *testing.T) {
-	// Set required environment variables
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
-	defer func() {
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
-	}()
+	setupEnv()
+	defer teardownEnv()
 
-	config := &Config{
-		Port: "8080",
-	}
-
+	config := &Config{Port: "8080"}
 	server, err := NewServer(config)
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
 
-	// Mock session manager that returns sandbox with invalid endpoint
 	server.sessionManager = &mockSessionManager{
 		sandbox: &types.SandboxInfo{
 			SandboxID: "test-sandbox",
 			SessionID: "test-session",
 			Name:      "test-sandbox",
-			EntryPoints: []types.SandboxEntryPoints{
-				{
-					Endpoint: "://invalid-url",
-					Path:     "/test",
-				},
+			EntryPoints: []types.SandboxEntryPoint{
+				{Endpoint: "://invalid-url", Path: "/test"},
 			},
 		},
 	}
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
-	server.engine.ServeHTTP(w, req)
+	// run via real server to avoid CloseNotifier panic
+	routerServer := httptest.NewServer(server.engine)
+	defer routerServer.Close()
 
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("Expected status code %d, got %d", http.StatusInternalServerError, w.Code)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(routerServer.URL+"/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", "application/json", nil)
+	if err != nil {
+		t.Fatalf("Failed to make request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("Expected status code %d, got %d", http.StatusInternalServerError, resp.StatusCode)
 	}
 }
 
@@ -456,7 +487,7 @@ func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 			SandboxID: "test-sandbox",
 			SessionID: "test-session",
 			Name:      "test-sandbox",
-			EntryPoints: []types.SandboxEntryPoints{
+			EntryPoints: []types.SandboxEntryPoint{
 				{
 					Endpoint: slowServer.URL,
 					Path:     "/test",

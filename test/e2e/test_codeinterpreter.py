@@ -38,7 +38,10 @@ class TestCodeInterpreterE2E(unittest.TestCase):
         if not self.router_url:
             self.fail("ROUTER_URL environment variable not set")
 
-        print(f"Test environment: namespace={self.namespace}, workload_manager={self.workload_manager_url}, router={self.router_url}")
+        print(
+            f"Test environment: namespace={self.namespace}, "
+            f"workload_manager={self.workload_manager_url}, router={self.router_url}"
+        )
 
     def test_case1_simple_code_execution_auto_session(self):
         """
@@ -179,8 +182,11 @@ print("Fibonacci sequence generated and saved to output.json")
                 print(f"Generated JSON content: {json.dumps(result_data, indent=2)}")
 
                 # Assert: Check fibonacci sequence
-                self.assertEqual(result_data["fibonacci_sequence"], expected_fib,
-                               f"Fibonacci sequence mismatch: expected {expected_fib}, got {result_data['fibonacci_sequence']}")
+                self.assertEqual(
+                    result_data["fibonacci_sequence"],
+                    expected_fib,
+                    f"Fibonacci mismatch: expected {expected_fib}, got {result_data['fibonacci_sequence']}"
+                )
 
                 # Assert: Check length
                 self.assertEqual(result_data["length"], len(expected_fib),

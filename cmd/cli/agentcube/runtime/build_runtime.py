@@ -121,7 +121,7 @@ class BuildRuntime:
         # Update metadata
         updates = {"version": new_version}
         self.metadata_service.update_metadata(workspace_path, updates)
-        
+
         # Reload metadata to get the updated object
         return self.metadata_service.load_metadata(workspace_path)
 
@@ -170,7 +170,7 @@ class BuildRuntime:
         # Build the image
         dockerfile_path = workspace_path / "Dockerfile"
         image_name = metadata.agent_name.lower().replace(' ', '-')
-        
+
         # Use version from metadata as default tag, fallback to latest
         default_tag = metadata.version if metadata.version else 'latest'
         tag = options.get('tag', default_tag)

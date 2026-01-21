@@ -29,5 +29,5 @@ def get_logger(name: str, level: Union[int, str] = logging.INFO) -> logging.Logg
         )
         handler.setFormatter(formatter)
         logger.addHandler(handler)
-    
+
     return logger

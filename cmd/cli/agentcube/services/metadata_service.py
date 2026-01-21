@@ -51,7 +51,7 @@ class AgentMetadata(BaseModel):
 
     # Build configuration
     requirements_file: Optional[str] = Field("requirements.txt", description="Python dependency file")
-    
+
     # Registry configuration
     registry_url: Optional[str] = Field("", description="Registry URL for image publishing")
     registry_username: Optional[str] = Field("", description="Registry username")
@@ -234,7 +234,10 @@ class MetadataService:
         # Check for entrypoint file
         entrypoint_parts = metadata.entrypoint.split()
         if entrypoint_parts[0] == "python":
-            entrypoint_file = workspace_path / entrypoint_parts[1] if len(entrypoint_parts) > 1 else workspace_path / "main.py"
+            default_file = workspace_path / "main.py"
+            entrypoint_file = (
+                workspace_path / entrypoint_parts[1] if len(entrypoint_parts) > 1 else default_file
+            )
             if not entrypoint_file.exists():
                 raise ValueError(f"Entrypoint file not found: {entrypoint_file}")
 

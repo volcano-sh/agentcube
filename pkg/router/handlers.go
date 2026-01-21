@@ -17,7 +17,6 @@ limitations under the License.
 package router
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
@@ -26,6 +25,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
@@ -40,7 +40,6 @@ func (s *Server) handleHealthLive(c *gin.Context) {
 
 // handleHealthReady handles readiness probe
 func (s *Server) handleHealthReady(c *gin.Context) {
-	// Check if SessionManager is available
 	if s.sessionManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"status": "not ready",
@@ -48,29 +47,32 @@ func (s *Server) handleHealthReady(c *gin.Context) {
 		})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"status": "ready",
 	})
 }
 
-// handleInvoke is a private helper function that handles invocation requests for both agents and code interpreters
+// handleInvoke handles invocation requests for agents and code interpreters
 func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string) {
-	klog.Infof("%s invoke request: namespace=%s, name=%s, path=%s", kind, namespace, name, path)
+	klog.V(4).Infof("%s invoke request: namespace=%s, name=%s, path=%s", kind, namespace, name, path)
 
-	// Extract session ID from header (may be empty or incorrect)
 	clientSessionID := c.GetHeader("x-agentcube-session-id")
 
-	// Get sandbox info from session manager
-	sandbox, err := s.sessionManager.GetSandboxBySession(c.Request.Context(), clientSessionID, namespace, name, kind)
+	sandbox, err := s.sessionManager.GetSandboxBySession(
+		c.Request.Context(),
+		clientSessionID,
+		namespace,
+		name,
+		kind,
+	)
 	if err != nil {
 		klog.Errorf("Failed to get sandbox info: %v, session id %s", err, clientSessionID)
 		s.handleSandboxLookupError(c, err, clientSessionID, namespace, name, kind)
 		return
 	}
 
-	if sandbox == nil {
-		klog.Error("Session manager returned nil sandbox")
+	if sandbox == nil || sandbox.SessionID == "" {
+		klog.Error("Invalid sandbox returned")
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "internal error",
 			"code":  "INTERNAL_ERROR",
@@ -79,127 +81,82 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	}
 
 	actualSessionID := sandbox.SessionID
-	if actualSessionID == "" {
-		klog.Errorf("Sandbox returned empty SessionID for %s/%s", namespace, name)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "internal error: empty session ID",
-			"code":  "INTERNAL_ERROR",
-		})
-		return
-	}
 
-	// Extract endpoint from sandbox - find matching entry point by path
 	endpoint, err := selectSandboxEndpoint(sandbox, path)
 	if err != nil {
-		klog.Warningf("Failed to select endpoint for sandbox %s: %v", sandbox.SandboxID, err)
+		klog.Warningf("Failed to select endpoint: %v", err)
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": err.Error(),
-			"code":  "Service not found",
+			"code":  "SERVICE_NOT_FOUND",
 		})
 		return
 	}
 
-	klog.Infof("The selected entrypoint for session-id %s to sandbox is %s", actualSessionID, endpoint)
-
-	if err := s.storeClient.UpdateSessionLastActivity(c.Request.Context(), actualSessionID, time.Now()); err != nil {
-		klog.Warningf("Failed to update session activity for %s: %v", actualSessionID, err)
-		// Best-effort — don't fail request
+	if err := s.storeClient.UpdateSessionLastActivity(
+		c.Request.Context(),
+		actualSessionID,
+		time.Now(),
+	); err != nil {
+		klog.Warningf("Failed to update session activity: %v", err)
 	}
 
-	// Generate JWT token before setting up Director
-	// Include session ID in claims for debugging and request tracking
-	var jwtToken string
-	if s.jwtManager != nil {
-		claims := map[string]interface{}{
-			"session_id": actualSessionID,
-		}
-		token, err := s.jwtManager.GenerateToken(claims)
-		if err != nil {
-			klog.Errorf("Failed to generate JWT token (session: %s): %v", actualSessionID, err)
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "failed to sign request",
-				"code":  "JWT_SIGNING_FAILED",
-			})
-			return
-		}
-		jwtToken = token
-	}
+	klog.Infof(
+		"Forwarding to sandbox: sessionID=%s namespace=%s name=%s path=%s endpoint=%s",
+		actualSessionID, namespace, name, path, endpoint,
+	)
 
-	// Forward request to sandbox with session ID
-	klog.Infof("Forwarding to sandbox: sessionID=%s namespace=%s name=%s path=%s endpoint=%s", sandbox.SessionID, namespace, name, path, endpoint)
 	s.forwardToSandbox(c, endpoint, path, actualSessionID)
-
-	if err := s.storeClient.UpdateSessionLastActivity(c.Request.Context(), actualSessionID, time.Now()); err != nil {
-		klog.Warningf("Failed to update session activity (post-forward) for %s: %v", actualSessionID, err)
-	}
 }
 
-func (s *Server) handleSandboxLookupError(c *gin.Context, err error, sessionID, namespace, name, kind string) {
-	switch {
-	case errors.Is(err, ErrSessionNotFound):
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("Invalid session id %s", sessionID),
-			"code":  "BadRequest",
-		})
-	case errors.Is(err, ErrAgentRuntimeNotFound):
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": fmt.Sprintf("%s '%s' not found in namespace '%s'", kind, name, namespace),
-			"code":  "NotFound",
-		})
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid session or request",
-			"code":  "BadRequest",
-		})
-	}
-}
-
-func selectSandboxEndpoint(sandbox *types.SandboxInfo, path string) (string, error) {
-	// prefer matched entrypoint by path
-	for _, ep := range sandbox.EntryPoints {
-		if strings.HasPrefix(path, ep.Path) {
-			return prependProtocol(ep.Protocol, ep.Endpoint), nil
+func (s *Server) handleGetSandboxError(c *gin.Context, err error) {
+	if statusErr, ok := err.(apierrors.APIStatus); ok {
+		code := http.StatusInternalServerError
+		if statusErr.Status().Code != 0 {
+			code = int(statusErr.Status().Code)
 		}
+		message := statusErr.Status().Message
+		if message == "" {
+			message = err.Error()
+		}
+		if code == http.StatusInternalServerError {
+			message = "internal server error"
+		}
+		c.JSON(code, gin.H{"error": message})
+		return
 	}
-	// fallback to first entrypoint
-	if len(sandbox.EntryPoints) == 0 {
-		return "", fmt.Errorf("no entry points found for sandbox")
-	}
-	ep := sandbox.EntryPoints[0]
-	return prependProtocol(ep.Protocol, ep.Endpoint), nil
-}
 
-func prependProtocol(protocol, endpoint string) string {
-	if protocol != "" && !strings.Contains(endpoint, "://") {
-		return strings.ToLower(protocol) + "://" + endpoint
-	}
-	return endpoint
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 }
 
 // handleAgentInvoke handles agent invocation requests
 func (s *Server) handleAgentInvoke(c *gin.Context) {
-	namespace := c.Param("namespace")
-	name := c.Param("name")
-	path := c.Param("path")
-	s.handleInvoke(c, namespace, name, path, types.AgentRuntimeKind)
+	s.handleInvoke(
+		c,
+		c.Param("namespace"),
+		c.Param("name"),
+		c.Param("path"),
+		types.AgentRuntimeKind,
+	)
 }
 
 // handleCodeInterpreterInvoke handles code interpreter invocation requests
 func (s *Server) handleCodeInterpreterInvoke(c *gin.Context) {
-	namespace := c.Param("namespace")
-	name := c.Param("name")
-	path := c.Param("path")
-	s.handleInvoke(c, namespace, name, path, types.CodeInterpreterKind)
+	s.handleInvoke(
+		c,
+		c.Param("namespace"),
+		c.Param("name"),
+		c.Param("path"),
+		types.CodeInterpreterKind,
+	)
 }
 
-// forwardToSandbox forwards the request to the specified sandbox endpoint
+// forwardToSandbox forwards the request to the sandbox endpoint
 func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID string) {
 	targetURL, err := url.Parse(endpoint)
 	if err != nil {
-		klog.Errorf("Invalid sandbox endpoint: %s (session: %s), error: %v", endpoint, sessionID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "internal server error",
-			"code":  "INTERNAL_ERROR",
+		klog.Errorf("Failed to parse sandbox endpoint %s: %v", endpoint, err)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "invalid sandbox endpoint",
 		})
 		return
 	}
@@ -216,7 +173,6 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 		}
 		req.URL.Path = path
 		req.URL.RawPath = ""
-
 		req.Host = targetURL.Host
 
 		req.Header.Set("X-Forwarded-Host", c.Request.Host)
@@ -231,48 +187,30 @@ func (s *Server) forwardToSandbox(c *gin.Context, endpoint, path, sessionID stri
 		}
 		req.Header.Set("X-Forwarded-For", clientIP)
 
-		// Add JWT authorization header using pre-generated token
-		if jwtToken := req.Header.Get("Authorization"); jwtToken == "" {
-			if s.jwtManager != nil {
-				claims := map[string]interface{}{"session_id": sessionID}
-				token, err := s.jwtManager.GenerateToken(claims)
-				if err == nil {
-					req.Header.Set("Authorization", "Bearer "+token)
-				}
+		if s.jwtManager != nil && req.Header.Get("Authorization") == "" {
+			if token, err := s.jwtManager.GenerateToken(
+				map[string]interface{}{"session_id": sessionID},
+			); err == nil {
+				req.Header.Set("Authorization", "Bearer "+token)
 			}
 		}
 
-		klog.Infof("Forwarding request to: %s%s (session: %s)", targetURL.String(), path, sessionID)
+		klog.Infof(
+			"Forwarding request to %s%s (session: %s)",
+			targetURL.String(), path, sessionID,
+		)
 	}
 
 	proxy.ErrorHandler = func(_ http.ResponseWriter, _ *http.Request, err error) {
 		klog.Errorf("Proxy error (session: %s): %v", sessionID, err)
-
-		// Determine error type and return appropriate response
-		switch {
-		case strings.Contains(err.Error(), "connection refused"):
-			c.JSON(http.StatusBadGateway, gin.H{
-				"error": "sandbox unreachable",
-				"code":  "SANDBOX_UNREACHABLE",
-			})
-		case strings.Contains(err.Error(), "timeout"):
-			c.JSON(http.StatusGatewayTimeout, gin.H{
-				"error": "sandbox timeout",
-				"code":  "SANDBOX_TIMEOUT",
-			})
-		default:
-			c.JSON(http.StatusBadGateway, gin.H{
-				"error": "sandbox unreachable",
-				"code":  "SANDBOX_UNREACHABLE",
-			})
-		}
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error": "sandbox unreachable",
+		})
 		c.Abort()
 	}
 
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		if sessionID != "" {
-			resp.Header.Set("x-agentcube-session-id", sessionID)
-		}
+		resp.Header.Set("x-agentcube-session-id", sessionID)
 		return nil
 	}
 

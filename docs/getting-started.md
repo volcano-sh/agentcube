@@ -164,8 +164,17 @@ You need access to a running AgentCube instance (WorkloadManager and Router).
 Set the following environment variables to point to your AgentCube services:
 
 ```bash
-export WORKLOAD_MANAGER_URL="http://<your-workload-manager-host>:<port>"
-export ROUTER_URL="http://<your-router-host>:<port>"
+# To access the services from your local machine, you can use port-forwarding.
+
+# In one terminal, forward the Workload Manager:
+kubectl port-forward -n agentcube svc/workloadmanager 8080:8080
+
+# In another terminal, forward the Router:
+kubectl port-forward -n agentcube svc/agentcube-router 8081:8080
+
+# Then, set your environment variables:
+export WORKLOAD_MANAGER_URL="http://localhost:8080"
+export ROUTER_URL="http://localhost:8081"
 
 # Optional: If your instance requires authentication
 # export API_TOKEN="your-token"

@@ -43,9 +43,9 @@ func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *san
 	if sandbox.Spec.ShutdownTime != nil {
 		expiresAt = sandbox.Spec.ShutdownTime.Time
 	}
-	accesses := make([]types.SandboxEntryPoints, 0, len(entry.Ports))
+	accesses := make([]types.SandboxEntryPoint, 0, len(entry.Ports))
 	for _, port := range entry.Ports {
-		accesses = append(accesses, types.SandboxEntryPoints{
+		accesses = append(accesses, types.SandboxEntryPoint{
 			Path:     port.PathPrefix,
 			Protocol: string(port.Protocol),
 			Endpoint: net.JoinHostPort(podIP, strconv.Itoa(int(port.Port))),

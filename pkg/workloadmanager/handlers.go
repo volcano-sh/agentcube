@@ -21,16 +21,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/klog/v2"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	"sigs.k8s.io/agent-sandbox/controllers"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 
+	"github.com/volcano-sh/agentcube/pkg/api"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	"github.com/volcano-sh/agentcube/pkg/store"
 )
@@ -42,7 +43,16 @@ func (s *Server) handleHealth(c *gin.Context) {
 	})
 }
 
-// handleCreateSandbox handles sandbox creation requests
+// handleAgentRuntimeCreate handles AgentRuntime sandbox creation requests.
+func (s *Server) handleAgentRuntimeCreate(c *gin.Context) {
+	s.handleSandboxCreate(c, types.AgentRuntimeKind)
+}
+
+// handleCodeInterpreterCreate handles CodeInterpreter sandbox creation requests.
+func (s *Server) handleCodeInterpreterCreate(c *gin.Context) {
+	s.handleSandboxCreate(c, types.CodeInterpreterKind)
+}
+
 // extractUserK8sClient extracts user information from the context and creates a user-specific Kubernetes client.
 // It returns the dynamic client for the user and an error if authentication fails or client creation fails.
 func (s *Server) extractUserK8sClient(c *gin.Context) (dynamic.Interface, error) {
@@ -61,28 +71,20 @@ func (s *Server) extractUserK8sClient(c *gin.Context) (dynamic.Interface, error)
 	return userClient.dynamicClient, nil
 }
 
-// handleCreateSandbox do create sandbox
-// nolint: gocyclo
-func (s *Server) handleCreateSandbox(c *gin.Context) {
+// handleSandboxCreate handles sandbox creation given a specific kind.
+func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	sandboxReq := &types.CreateSandboxRequest{}
 	if err := c.ShouldBindJSON(sandboxReq); err != nil {
 		klog.Errorf("parse request body failed: %v", err)
-		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
+		respondError(c, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
-	reqPath := c.Request.URL.Path
-	switch {
-	case strings.HasSuffix(reqPath, "/agent-runtime"):
-		sandboxReq.Kind = types.AgentRuntimeKind
-	case strings.HasSuffix(reqPath, "/code-interpreter"):
-		sandboxReq.Kind = types.CodeInterpreterKind
-	default:
-	}
+	sandboxReq.Kind = kind
 
 	if err := sandboxReq.Validate(); err != nil {
 		klog.Errorf("request body validation failed: %v", err)
-		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		respondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -95,21 +97,14 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers)
 	case types.CodeInterpreterKind:
 		sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers)
-	default:
-		klog.Errorf("invalid request kind: %v", sandboxReq.Kind)
-		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("invalid request kind: %v", sandboxReq.Kind))
-		return
 	}
 
 	if err != nil {
-		klog.Errorf("build sandbox failed: %v", err)
-		// Check if it's a "not found" error and return 404
-		if errors.Is(err, ErrAgentRuntimeNotFound) || errors.Is(err, ErrCodeInterpreterNotFound) {
-			respondError(c, http.StatusNotFound, "NOT_FOUND", err.Error())
-		} else if errors.Is(err, ErrTemplateMissing) || errors.Is(err, ErrPublicKeyMissing) {
-			respondError(c, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		klog.Errorf("build sandbox failed %s/%s: %v", sandboxReq.Namespace, sandboxReq.Name, err)
+		if errors.Is(err, api.ErrAgentRuntimeNotFound) || errors.Is(err, api.ErrCodeInterpreterNotFound) {
+			respondError(c, http.StatusNotFound, err.Error())
 		} else {
-			respondError(c, http.StatusBadRequest, "SANDBOX_BUILD_FAILED", err.Error())
+			respondError(c, http.StatusInternalServerError, "internal server error")
 		}
 		return
 	}
@@ -123,7 +118,7 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 		userDynamicClient, errExtractClient := s.extractUserK8sClient(c)
 		if errExtractClient != nil {
 			klog.Infof("extract user k8s client failed: %v", errExtractClient)
-			respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", errExtractClient.Error())
+			respondError(c, http.StatusUnauthorized, errExtractClient.Error())
 			return
 		}
 		dynamicClient = userDynamicClient
@@ -135,45 +130,44 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	// Ensure cleanup is called when function returns to prevent memory leak
 	defer s.sandboxController.UnWatchSandbox(namespace, sandboxName)
 
-	// Store placeholder before creating, make sandbox/sandboxClaim GarbageCollection possible
-	sandboxStorePlaceHolder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
-	if err = s.storeClient.StoreSandbox(c.Request.Context(), sandboxStorePlaceHolder); err != nil {
-		errMessage := fmt.Sprintf("store sandbox place holder into store failed: %v", err)
-		klog.Error(errMessage)
-		respondError(c, http.StatusInternalServerError, "STORE_SANDBOX_FAILED", errMessage)
+	response, err := s.createSandbox(c.Request.Context(), dynamicClient, sandbox, sandboxClaim, sandboxEntry, resultChan)
+	if err != nil {
+		klog.Errorf("create sandbox failed %s/%s: %v", sandbox.Namespace, sandbox.Name, err)
+		respondError(c, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
+	respondJSON(c, http.StatusOK, response)
+}
+
+// createSandbox performs sandbox creation and returns the response payload or an error with an HTTP status code.
+func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
+	// Store placeholder before creating, make sandbox/sandboxClaim GarbageCollection possible
+	sandboxStorePlaceHolder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
+	if err := s.storeClient.StoreSandbox(ctx, sandboxStorePlaceHolder); err != nil {
+		err = api.NewInternalError(fmt.Errorf("store sandbox placeholder failed: %v", err))
+		return nil, err
+	}
+
 	if sandboxClaim != nil {
-		err = createSandboxClaim(c.Request.Context(), dynamicClient, sandboxClaim)
-		if err != nil {
-			klog.Errorf("create sandbox claim %s/%s failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err)
-			respondError(c, http.StatusForbidden, "SANDBOX_CLAIM_CREATE_FAILED",
-				fmt.Sprintf("Failed to create sandbox claim: %v", err))
-			return
+		if err := createSandboxClaim(ctx, dynamicClient, sandboxClaim); err != nil {
+			err = api.NewInternalError(fmt.Errorf("create sandbox claim %s/%s failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err))
+			return nil, err
 		}
 	} else {
-		_, err = createSandbox(c.Request.Context(), dynamicClient, sandbox)
-		if err != nil {
-			klog.Errorf("create sandbox %s/%s failed: %v", sandbox.Namespace, sandbox.Name, err)
-			respondError(c, http.StatusForbidden, "SANDBOX_CREATE_FAILED",
-				fmt.Sprintf("Failed to create sandbox: %v", err))
-			return
+		if _, err := createSandbox(ctx, dynamicClient, sandbox); err != nil {
+			return nil, api.NewInternalError(fmt.Errorf("failed to create sandbox: %w", err))
 		}
 	}
 
 	var createdSandbox *sandboxv1alpha1.Sandbox
 	select {
 	case result := <-resultChan:
-		// Successfully received notification, cleanup will be handled by defer
 		createdSandbox = result.Sandbox
-		klog.Infof("sandbox %s/%s running", createdSandbox.Namespace, createdSandbox.Name)
+		klog.V(2).Infof("sandbox %s/%s running", createdSandbox.Namespace, createdSandbox.Name)
 	case <-time.After(2 * time.Minute): // consistent with router settings
-		// timeout, Sandbox/SandboxClaim maybe create successfully later,
-		// UnWatchSandbox will be called by defer to prevent memory leak
 		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
-		respondError(c, http.StatusInternalServerError, "SANDBOX_TIMEOUT", "Sandbox creation timed out")
-		return
+		return nil, fmt.Errorf("sandbox creation timed out")
 	}
 
 	needRollbackSandbox := true
@@ -191,16 +185,16 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 			klog.Infof("sandbox claim %s/%s rollback succeeded", sandboxClaim.Namespace, sandboxClaim.Name)
 		} else {
 			// Rollback Sandbox
-			err = deleteSandbox(ctxTimeout, dynamicClient, namespace, sandboxName)
+			err = deleteSandbox(ctxTimeout, dynamicClient, sandbox.Namespace, sandbox.Name)
 			if err != nil {
-				klog.Infof("sandbox %s/%s rollback failed: %v", namespace, sandboxName, err)
+				klog.Infof("sandbox %s/%s rollback failed: %v", sandbox.Namespace, sandbox.Name, err)
 				return
 			}
-			klog.Infof("sandbox %s/%s rollback succeeded", namespace, sandboxName)
+			klog.Infof("sandbox %s/%s rollback succeeded", sandbox.Namespace, sandbox.Name)
 		}
 	}
 	defer func() {
-		if needRollbackSandbox == false {
+		if !needRollbackSandbox {
 			return
 		}
 		sandboxRollbackFunc()
@@ -210,11 +204,10 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	if podName, exists := createdSandbox.Annotations[controllers.SanboxPodNameAnnotation]; exists {
 		sandboxPodName = podName
 	}
-	podIP, err := s.k8sClient.GetSandboxPodIP(c.Request.Context(), namespace, sandboxName, sandboxPodName)
+
+	podIP, err := s.k8sClient.GetSandboxPodIP(ctx, sandbox.Namespace, sandbox.Name, sandboxPodName)
 	if err != nil {
-		klog.Errorf("failed to get sandbox %s/%s pod IP: %v", namespace, sandboxName, err)
-		respondError(c, http.StatusInternalServerError, "SANDBOX_BUILD_FAILED", err.Error())
-		return
+		return nil, fmt.Errorf("failed to get sandbox %s/%s pod IP: %v", sandbox.Namespace, sandbox.Name, err)
 	}
 
 	storeCacheInfo := buildSandboxInfo(createdSandbox, podIP, sandboxEntry)
@@ -222,37 +215,32 @@ func (s *Server) handleCreateSandbox(c *gin.Context) {
 	response := &types.CreateSandboxResponse{
 		SessionID:   sandboxEntry.SessionID,
 		SandboxID:   storeCacheInfo.SandboxID,
-		SandboxName: sandboxName,
+		SandboxName: sandbox.Name,
 		EntryPoints: storeCacheInfo.EntryPoints,
 	}
 
-	err = s.storeClient.UpdateSandbox(c.Request.Context(), storeCacheInfo)
-	if err != nil {
-		klog.Infof("update store cache failed: %v", err)
-		respondError(c, http.StatusInternalServerError, "SANDBOX_UPDATE_STORE_FAILED", err.Error())
-		return
+	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {
+		return nil, fmt.Errorf("update store cache failed: %v", err)
 	}
-	// init successful, no need to rollback
+
 	needRollbackSandbox = false
-	klog.Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
+	klog.V(2).Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
 		createdSandbox.Name, createdSandbox.Kind, sandboxEntry.SessionID)
-	respondJSON(c, http.StatusOK, response)
+	return response, nil
 }
 
 // handleDeleteSandbox handles sandbox deletion requests
 func (s *Server) handleDeleteSandbox(c *gin.Context) {
 	sessionID := c.Param("sessionId")
-
 	// Query sandbox from store
 	sandbox, err := s.storeClient.GetSandboxBySessionID(c.Request.Context(), sessionID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			klog.Infof("sessionID %s not found in store", sessionID)
-			respondError(c, http.StatusNotFound, "SESSION_NOT_FOUND", "Sandbox not found")
+			respondError(c, http.StatusNotFound, fmt.Sprintf("Session ID %s not found, maybe already deleted", sessionID))
 			return
 		}
-		klog.Infof("get sandbox from store by sessionID %s failed: %v", sessionID, err)
-		respondError(c, http.StatusInternalServerError, "FIND_SESSION_FAILED", err.Error())
+		klog.Errorf("get sandbox from store by sessionID %s failed: %v", sessionID, err)
+		respondError(c, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -260,7 +248,7 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 	if s.config.EnableAuth {
 		userDynamicClient, err := s.extractUserK8sClient(c)
 		if err != nil {
-			respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", err.Error())
+			respondError(c, http.StatusUnauthorized, err.Error())
 			return
 		}
 		dynamicClient = userDynamicClient
@@ -269,25 +257,33 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 	if sandbox.Kind == types.SandboxClaimsKind {
 		err = deleteSandboxClaim(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
 		if err != nil {
-			klog.Infof("failed to delete sandbox claim %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
-			respondError(c, http.StatusForbidden, "SANDBOX_CLAIM_DELETE_FAILED",
-				fmt.Sprintf("Failed to delete sandbox claim (namespace: %s): %v", sandbox.SandboxNamespace, err))
-			return
+			if apierrors.IsNotFound(err) {
+				// Already deleted, consider as success
+				klog.Infof("sandbox claim %s/%s already deleted", sandbox.SandboxNamespace, sandbox.Name)
+			} else {
+				klog.Errorf("failed to delete sandbox claim %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
+				respondError(c, http.StatusInternalServerError, "internal server error")
+				return
+			}
 		}
 	} else {
 		err = deleteSandbox(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
 		if err != nil {
-			klog.Infof("failed to delete sandbox %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
-			respondError(c, http.StatusForbidden, "SANDBOX_DELETE_FAILED",
-				fmt.Sprintf("Failed to delete sandbox (namespace: %s): %v", sandbox.SandboxNamespace, err))
-			return
+			if apierrors.IsNotFound(err) {
+				// Already deleted, consider as success
+				klog.Infof("sandbox %s/%s already deleted", sandbox.SandboxNamespace, sandbox.Name)
+			} else {
+				klog.Errorf("failed to delete sandbox %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
+				respondError(c, http.StatusInternalServerError, "internal server error")
+				return
+			}
 		}
 	}
 
 	// Delete sandbox from store
 	err = s.storeClient.DeleteSandboxBySessionID(c.Request.Context(), sessionID)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "STORE_SANDBOX_DELETE_FAILED", err.Error())
+		respondError(c, http.StatusInternalServerError, "internal server error")
 		return
 	}
 

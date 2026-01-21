@@ -85,7 +85,7 @@ func (s *Server) authMiddleware(c *gin.Context) {
 	// Extract token from Authorization header
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
-		respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Missing authorization header")
+		respondError(c, http.StatusUnauthorized, "Missing authorization header")
 		c.Abort()
 		return
 	}
@@ -93,7 +93,7 @@ func (s *Server) authMiddleware(c *gin.Context) {
 	// Check if it's a Bearer token
 	parts := strings.SplitN(authHeader, " ", 2)
 	if len(parts) != 2 || parts[0] != "Bearer" {
-		respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid authorization header format")
+		respondError(c, http.StatusUnauthorized, "Invalid authorization header format")
 		c.Abort()
 		return
 	}
@@ -104,13 +104,13 @@ func (s *Server) authMiddleware(c *gin.Context) {
 	authenticated, serviceAccount, err := s.validateServiceAccountToken(c.Request.Context(), token)
 	if err != nil {
 		klog.Errorf("Token validation error: %v", err)
-		respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Token validation failed")
+		respondError(c, http.StatusUnauthorized, "Token validation failed")
 		c.Abort()
 		return
 	}
 
 	if !authenticated {
-		respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid or expired token")
+		respondError(c, http.StatusUnauthorized, "Invalid or expired token")
 		c.Abort()
 		return
 	}
@@ -125,7 +125,7 @@ func (s *Server) authMiddleware(c *gin.Context) {
 		namespace = saParts[2]
 		serviceAccountName = saParts[3]
 	} else {
-		respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid service account format")
+		respondError(c, http.StatusUnauthorized, "Invalid service account format")
 		c.Abort()
 		return
 	}

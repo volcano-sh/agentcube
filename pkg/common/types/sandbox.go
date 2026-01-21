@@ -22,45 +22,36 @@ import (
 )
 
 type SandboxInfo struct {
-	Kind             string               `json:"kind"`
-	SandboxID        string               `json:"sandboxId"`
-	SandboxNamespace string               `json:"sandboxNamespace"`
-	Name             string               `json:"name"`
-	EntryPoints      []SandboxEntryPoints `json:"entryPoints"`
-	SessionID        string               `json:"sessionId"`
-	CreatedAt        time.Time            `json:"createdAt"`
-	ExpiresAt        time.Time            `json:"expiresAt"`
+	Kind             string              `json:"kind"`
+	SandboxID        string              `json:"sandboxId"`
+	SandboxNamespace string              `json:"sandboxNamespace"`
+	Name             string              `json:"name"`
+	EntryPoints      []SandboxEntryPoint `json:"entryPoints"`
+	SessionID        string              `json:"sessionId"`
+	CreatedAt        time.Time           `json:"createdAt"`
+	ExpiresAt        time.Time           `json:"expiresAt"`
 	// LastActivityAt is intentionally omitted from this type.
 	// Last activity is tracked in Store via a sorted set index.
 	Status string `json:"status"`
 }
 
-type SandboxEntryPoints struct {
+type SandboxEntryPoint struct {
 	Path     string `json:"path"`
 	Protocol string `json:"protocol"`
 	Endpoint string `json:"endpoint"`
 }
 
 type CreateSandboxRequest struct {
-	Kind               string            `json:"kind"`
-	Name               string            `json:"name"`
-	Namespace          string            `json:"namespace"`
-	Auth               Auth              `json:"auth"`
-	Metadata           map[string]string `json:"metadata"`
-	PublicKey          string            `json:"publicKey,omitempty"`
-	InitTimeoutSeconds int               `json:"initTimeoutSeconds,omitempty"`
-}
-
-type Auth struct {
-	Type  string `json:"type"`
-	Token string `json:"token"`
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
 }
 
 type CreateSandboxResponse struct {
-	SessionID   string               `json:"sessionId"`
-	SandboxID   string               `json:"sandboxId"`
-	SandboxName string               `json:"sandboxName"`
-	EntryPoints []SandboxEntryPoints `json:"entryPoints"`
+	SessionID   string              `json:"sessionId"`
+	SandboxID   string              `json:"sandboxId"`
+	SandboxName string              `json:"sandboxName"`
+	EntryPoints []SandboxEntryPoint `json:"entryPoints"`
 }
 
 func (car *CreateSandboxRequest) Validate() error {

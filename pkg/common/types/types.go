@@ -17,8 +17,11 @@ limitations under the License.
 package types
 
 const (
+	// invoke kind
 	AgentRuntimeKind    = "AgentRuntime"
 	CodeInterpreterKind = "CodeInterpreter"
-	SandboxKind         = "Sandbox"
-	SandboxClaimsKind   = "SandboxClaim"
+
+	// indicates what kind of api the underlying sandbox is created by
+	SandboxKind       = "Sandbox"
+	SandboxClaimsKind = "SandboxClaim"
 )

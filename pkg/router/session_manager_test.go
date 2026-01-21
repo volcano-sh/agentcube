@@ -19,12 +19,13 @@ package router
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	"github.com/volcano-sh/agentcube/pkg/store"
@@ -97,7 +98,7 @@ func TestGetSandboxBySession_Success(t *testing.T) {
 	sb := &types.SandboxInfo{
 		SandboxID: "sandbox-1",
 		Name:      "sandbox-1",
-		EntryPoints: []types.SandboxEntryPoints{
+		EntryPoints: []types.SandboxEntryPoint{
 			{Endpoint: "10.0.0.1:9000"},
 		},
 		SessionID: "sess-1",
@@ -142,8 +143,8 @@ func TestGetSandboxBySession_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for not found session")
 	}
-	if !errors.Is(err, ErrSessionNotFound) {
-		t.Fatalf("expected ErrSessionNotFound, got %v", err)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("expected not found error, got %v", err)
 	}
 }
 
@@ -184,7 +185,7 @@ func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
 			SessionID:   "new-session-123",
 			SandboxID:   "sandbox-456",
 			SandboxName: "sandbox-test",
-			EntryPoints: []types.SandboxEntryPoints{
+			EntryPoints: []types.SandboxEntryPoint{
 				{Endpoint: "10.0.0.1:9000", Protocol: "http", Path: "/"},
 			},
 		}
@@ -254,7 +255,7 @@ func TestGetSandboxBySession_CreateSandbox_CodeInterpreter_Success(t *testing.T)
 			SessionID:   "ci-session-789",
 			SandboxID:   "ci-sandbox-101",
 			SandboxName: "ci-sandbox-test",
-			EntryPoints: []types.SandboxEntryPoints{
+			EntryPoints: []types.SandboxEntryPoint{
 				{Endpoint: "10.0.0.2:8080", Protocol: "http", Path: "/"},
 			},
 		}
@@ -328,8 +329,8 @@ func TestGetSandboxBySession_CreateSandbox_WorkloadManagerUnavailable(t *testing
 	if err == nil {
 		t.Fatalf("expected error for unavailable workload manager")
 	}
-	if !errors.Is(err, ErrUpstreamUnavailable) {
-		t.Errorf("expected ErrUpstreamUnavailable, got %v", err)
+	if !apierrors.IsInternalError(err) {
+		t.Errorf("expected internal error, got %v", err)
 	}
 }
 
@@ -352,8 +353,8 @@ func TestGetSandboxBySession_CreateSandbox_NonOKStatus(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for non-OK status")
 	}
-	if !errors.Is(err, ErrCreateSandboxFailed) {
-		t.Errorf("expected ErrCreateSandboxFailed, got %v", err)
+	if !apierrors.IsInternalError(err) {
+		t.Errorf("expected internal error, got %v", err)
 	}
 }
 
@@ -389,7 +390,7 @@ func TestGetSandboxBySession_CreateSandbox_EmptySessionID(t *testing.T) {
 			SessionID:   "", // Empty sessionID
 			SandboxID:   "sandbox-456",
 			SandboxName: "sandbox-test",
-			EntryPoints: []types.SandboxEntryPoints{
+			EntryPoints: []types.SandboxEntryPoint{
 				{Endpoint: "10.0.0.1:9000"},
 			},
 		}
@@ -410,7 +411,7 @@ func TestGetSandboxBySession_CreateSandbox_EmptySessionID(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for empty sessionID in response")
 	}
-	if !errors.Is(err, ErrCreateSandboxFailed) {
-		t.Errorf("expected ErrCreateSandboxFailed, got %v", err)
+	if !apierrors.IsInternalError(err) {
+		t.Errorf("expected internal error, got %v", err)
 	}
 }

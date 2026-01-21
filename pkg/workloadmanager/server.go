@@ -103,10 +103,10 @@ func (s *Server) setupRoutes() {
 	v1Group.Use(s.authMiddleware)
 
 	// agent runtime management endpoints
-	v1Group.POST("/agent-runtime", s.handleCreateSandbox)
+	v1Group.POST("/agent-runtime", s.handleAgentRuntimeCreate)
 	v1Group.DELETE("/agent-runtime/sessions/:sessionId", s.handleDeleteSandbox)
 	// code interpreter management endpoints
-	v1Group.POST("/code-interpreter", s.handleCreateSandbox)
+	v1Group.POST("/code-interpreter", s.handleCodeInterpreterCreate)
 	v1Group.DELETE("/code-interpreter/sessions/:sessionId", s.handleDeleteSandbox)
 }
 

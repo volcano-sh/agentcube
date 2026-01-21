@@ -1,15 +1,15 @@
 ---
 title: AgentCube Design Proposal
 authors:
-- @kevin-wangzefeng
-- @VanderChen
-- @tjucoder
-- @YaoZengzeng 
-- @hzxuzhonghu
+  - "@kevin-wangzefeng"
+  - "@VanderChen"
+  - "@tjucoder"
+  - "@YaoZengzeng"
+  - "@hzxuzhonghu"
 reviewers:
-- TBD
+  - TBD
 approvers:
-- TBD
+  - TBD
 creation-date: 2025-12-18
 ---
 

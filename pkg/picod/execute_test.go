@@ -31,7 +31,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -65,35 +64,6 @@ func setupExecuteTestServer(t *testing.T) (*Server, string) {
 
 	server := NewServer(config)
 	return server, tmpDir
-}
-
-// createValidToken generates a valid JWT token for testing
-func createValidToken(t *testing.T) string {
-	// Generate a key pair for signing
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	// Get the public key from environment (set by setupExecuteTestServer)
-	pubKeyPEM := os.Getenv(PublicKeyEnvVar)
-	require.NotEmpty(t, pubKeyPEM)
-
-	// Parse the public key to verify it matches
-	block, _ := pem.Decode([]byte(pubKeyPEM))
-	require.NotNil(t, block)
-
-	_, err = x509.ParsePKIXPublicKey(block.Bytes)
-	require.NoError(t, err)
-
-	// Create token signed with matching private key
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"exp": time.Now().Add(time.Hour).Unix(),
-		"iat": time.Now().Unix(),
-	})
-
-	tokenString, err := token.SignedString(privateKey)
-	require.NoError(t, err)
-
-	return tokenString
 }
 
 func TestExecuteHandler_InvalidJSON(t *testing.T) {

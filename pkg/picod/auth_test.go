@@ -36,10 +36,10 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-func generateTestRSAKeyPair() (*rsa.PrivateKey, []byte, string, error) {
+func generateTestRSAKeyPair() (*rsa.PrivateKey, string, error) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, "", err
 	}
 
 	publicKey := &privateKey.PublicKey
@@ -47,7 +47,7 @@ func generateTestRSAKeyPair() (*rsa.PrivateKey, []byte, string, error) {
 	// Encode public key to PEM
 	pubKeyBytes, err := x509.MarshalPKIXPublicKey(publicKey)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, "", err
 	}
 
 	pubKeyPEM := pem.EncodeToMemory(&pem.Block{
@@ -55,7 +55,7 @@ func generateTestRSAKeyPair() (*rsa.PrivateKey, []byte, string, error) {
 		Bytes: pubKeyBytes,
 	})
 
-	return privateKey, pubKeyBytes, string(pubKeyPEM), nil
+	return privateKey, string(pubKeyPEM), nil
 }
 
 func TestNewAuthManager(t *testing.T) {
@@ -64,7 +64,7 @@ func TestNewAuthManager(t *testing.T) {
 }
 
 func TestLoadPublicKeyFromEnv_ValidKey(t *testing.T) {
-	_, _, pubKeyPEM, err := generateTestRSAKeyPair()
+	_, pubKeyPEM, err := generateTestRSAKeyPair()
 	assert.NoError(t, err)
 
 	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
@@ -125,7 +125,7 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAinvalid
 }
 
 func TestAuthMiddleware_MissingAuthorizationHeader(t *testing.T) {
-	_, _, pubKeyPEM, err := generateTestRSAKeyPair()
+	_, pubKeyPEM, err := generateTestRSAKeyPair()
 	assert.NoError(t, err)
 
 	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
@@ -147,7 +147,7 @@ func TestAuthMiddleware_MissingAuthorizationHeader(t *testing.T) {
 }
 
 func TestAuthMiddleware_InvalidHeaderFormat(t *testing.T) {
-	_, _, pubKeyPEM, err := generateTestRSAKeyPair()
+	_, pubKeyPEM, err := generateTestRSAKeyPair()
 	assert.NoError(t, err)
 
 	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
@@ -201,7 +201,7 @@ func TestAuthMiddleware_InvalidHeaderFormat(t *testing.T) {
 }
 
 func TestAuthMiddleware_ValidToken(t *testing.T) {
-	privateKey, _, pubKeyPEM, err := generateTestRSAKeyPair()
+	privateKey, pubKeyPEM, err := generateTestRSAKeyPair()
 	assert.NoError(t, err)
 
 	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
@@ -232,7 +232,7 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 }
 
 func TestAuthMiddleware_ExpiredToken(t *testing.T) {
-	privateKey, _, pubKeyPEM, err := generateTestRSAKeyPair()
+	privateKey, pubKeyPEM, err := generateTestRSAKeyPair()
 	assert.NoError(t, err)
 
 	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
@@ -263,7 +263,7 @@ func TestAuthMiddleware_ExpiredToken(t *testing.T) {
 }
 
 func TestAuthMiddleware_InvalidSignature(t *testing.T) {
-	_, _, pubKeyPEM, err := generateTestRSAKeyPair()
+	_, pubKeyPEM, err := generateTestRSAKeyPair()
 	assert.NoError(t, err)
 
 	// Generate a different key pair for signing
@@ -298,7 +298,7 @@ func TestAuthMiddleware_InvalidSignature(t *testing.T) {
 }
 
 func TestAuthMiddleware_WrongSigningMethod(t *testing.T) {
-	_, _, pubKeyPEM, err := generateTestRSAKeyPair()
+	_, pubKeyPEM, err := generateTestRSAKeyPair()
 	assert.NoError(t, err)
 
 	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
@@ -328,7 +328,7 @@ func TestAuthMiddleware_WrongSigningMethod(t *testing.T) {
 }
 
 func TestAuthMiddleware_MaxBodySize(t *testing.T) {
-	privateKey, _, pubKeyPEM, err := generateTestRSAKeyPair()
+	privateKey, pubKeyPEM, err := generateTestRSAKeyPair()
 	assert.NoError(t, err)
 
 	os.Setenv(PublicKeyEnvVar, pubKeyPEM)

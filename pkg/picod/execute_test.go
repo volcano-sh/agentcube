@@ -67,7 +67,8 @@ func setupExecuteTestServer(t *testing.T) (*Server, string) {
 	return server, tmpDir
 }
 
-func createValidToken(t *testing.T) string {
+// createValidToken generates a valid JWT token for testing
+func createValidToken(_ *testing.T) string {
 	// Generate a key pair for signing
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)

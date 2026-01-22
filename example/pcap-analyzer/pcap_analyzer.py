@@ -81,7 +81,7 @@ MODEL_NAME = os.environ.get("OPENAI_MODEL", "Qwen/QwQ-32B")
 MODEL_PROVIDER = "openai"
 
 # Sandbox / CodeInterpreter configuration
-CODEINTERPRETER_NAME = os.environ.get("CODEINTERPRETER_NAME", "simple-codeinterpreter")
+CODEINTERPRETER_NAME = os.environ.get("CODEINTERPRETER_NAME", "my-interpreter")
 SANDBOX_NAMESPACE = os.environ.get("SANDBOX_NAMESPACE", "default")
 SANDBOX_WARMUP_SEC = int(os.environ.get("SANDBOX_WARMUP_SEC", "5"))
 
@@ -185,7 +185,7 @@ Produce Markdown report.
 class SandboxRunner:
     def __init__(
         self,
-        name: str = "simple-codeinterpreter",
+        name: str = "my-interpreter",
         namespace: str = "default",
         warmup_sec: int = 5
     ):

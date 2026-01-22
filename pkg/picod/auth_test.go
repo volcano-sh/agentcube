@@ -36,7 +36,7 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-func generateTestRSAKeyPair() (*rsa.PrivateKey, string, error) {
+func generateTestRSAKeyPair() (*rsa.PrivateKey, []byte, string, error) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, nil, "", err
@@ -55,7 +55,7 @@ func generateTestRSAKeyPair() (*rsa.PrivateKey, string, error) {
 		Bytes: pubKeyBytes,
 	})
 
-	return privateKey, string(pubKeyBytes), nil
+	return privateKey, pubKeyBytes, string(pubKeyPEM), nil
 }
 
 func TestNewAuthManager(t *testing.T) {

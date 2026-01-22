@@ -322,6 +322,43 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
+
+	t.Run("File Error Handling", func(t *testing.T) {
+		getAuthHeaders := func() http.Header {
+			claims := jwt.MapClaims{
+				"iat": time.Now().Unix(),
+				"exp": time.Now().Add(time.Hour * 6).Unix(),
+			}
+			token := createToken(t, routerPriv, claims)
+			h := make(http.Header)
+			h.Set("Authorization", "Bearer "+token)
+			return h
+		}
+
+		// 1. Invalid Base64 in JSON Upload
+		uploadReq := UploadFileRequest{
+			Path:    "bad.txt",
+			Content: "not-base64-!!!",
+		}
+		body, _ := json.Marshal(uploadReq)
+		req, _ := http.NewRequest("POST", ts.URL+"/api/files", bytes.NewBuffer(body))
+		req.Header = getAuthHeaders()
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := ts.Client().Do(req)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+		// 2. Download Non-existent File
+		req, _ = http.NewRequest("GET", ts.URL+"/api/files/noexist.txt", nil)
+		req.Header = getAuthHeaders()
+		resp, _ = ts.Client().Do(req)
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+
+		// 3. List Non-existent Directory
+		req, _ = http.NewRequest("GET", ts.URL+"/api/files?path=/no/exist", nil)
+		req.Header = getAuthHeaders()
+		resp, _ = ts.Client().Do(req)
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
 }
 
 // NOTE: TestPicoD_NoPublicKey was removed because the new architecture

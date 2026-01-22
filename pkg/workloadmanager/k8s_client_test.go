@@ -3,7 +3,7 @@ Copyright The Volcano Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+you may obtain a copy of the License at
 
     http://www.apache.org/licenses/LICENSE-2.0
 
@@ -21,10 +21,16 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/dynamic/fake"
 	listersv1 "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/rest"
+	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 )
 
 // Helper function to create a pod with owner reference
@@ -209,4 +215,96 @@ func TestGetSandboxPodIP_InvalidPodStatus(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.errMsg, "Error message should indicate the issue")
 		})
 	}
+}
+
+func TestK8sClient_CreateDeleteSandbox(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = sandboxv1alpha1.AddToScheme(scheme)
+	
+	fakeDynamic := fake.NewSimpleDynamicClient(scheme)
+	client := &K8sClient{
+		dynamicClient: fakeDynamic,
+	}
+
+	ctx := context.Background()
+	sb := &sandboxv1alpha1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-sb",
+			Namespace: "default",
+		},
+	}
+
+	// Create
+	info, err := createSandbox(ctx, client.dynamicClient, sb)
+	require.NoError(t, err)
+	assert.Equal(t, "test-sb", info.Name)
+
+	// Delete
+	err = deleteSandbox(ctx, client.dynamicClient, "default", "test-sb")
+	require.NoError(t, err)
+
+	// User client wrapper
+	userClient := &UserK8sClient{dynamicClient: fakeDynamic}
+	info, err = userClient.CreateSandbox(ctx, sb)
+	require.NoError(t, err)
+	assert.Equal(t, "test-sb", info.Name)
+	
+	err = userClient.DeleteSandbox(ctx, "default", "test-sb")
+	require.NoError(t, err)
+}
+
+func TestK8sClient_CreateDeleteSandboxClaim(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = extensionsv1alpha1.AddToScheme(scheme)
+	
+	fakeDynamic := fake.NewSimpleDynamicClient(scheme)
+	
+	ctx := context.Background()
+	claim := &extensionsv1alpha1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-claim",
+			Namespace: "default",
+		},
+	}
+
+	// Create
+	err := createSandboxClaim(ctx, fakeDynamic, claim)
+	require.NoError(t, err)
+
+	// Delete
+	err = deleteSandboxClaim(ctx, fakeDynamic, "default", "test-claim")
+	require.NoError(t, err)
+	
+	// User client wrapper
+	userClient := &UserK8sClient{dynamicClient: fakeDynamic}
+	err = userClient.CreateSandboxClaim(ctx, claim)
+	require.NoError(t, err)
+	
+	err = userClient.DeleteSandboxClaim(ctx, "default", "test-claim")
+	require.NoError(t, err)
+}
+
+
+func TestGetOrCreateUserK8sClient(t *testing.T) {
+	// Initialize K8sClient with a cache and a base config
+	client := &K8sClient{
+		clientCache: NewClientCache(10),
+		baseConfig:  &rest.Config{Host: "https://example.com"},
+	}
+
+	// 1. Create new client
+	uc, err := client.GetOrCreateUserK8sClient("token1", "default", "sa-1")
+	require.NoError(t, err)
+	assert.NotNil(t, uc)
+	assert.Equal(t, "default", uc.namespace)
+	
+	// 2. Retrieve from cache
+	uc2, err := client.GetOrCreateUserK8sClient("token1", "default", "sa-1")
+	require.NoError(t, err)
+	assert.Equal(t, uc, uc2) // Should be same instance
+	
+	// 3. Different user
+	uc3, err := client.GetOrCreateUserK8sClient("token2", "default", "sa-2")
+	require.NoError(t, err)
+	assert.NotEqual(t, uc, uc3)
 }

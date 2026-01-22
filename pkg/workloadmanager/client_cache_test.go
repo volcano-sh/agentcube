@@ -27,8 +27,13 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 )
 
+const (
+	jwtHeader = `{"alg":"HS256","typ":"JWT"}`
+	testCacheKey = "default:test-sa"
+)
+
 func createTestJWT(exp int64) string {
-	header := `{"alg":"HS256","typ":"JWT"}`
+	header := jwtHeader
 	claims := map[string]interface{}{
 		"exp": exp,
 		"iat": time.Now().Unix(),
@@ -89,7 +94,7 @@ func TestParseJWTExpiry_InvalidFormat(t *testing.T) {
 }
 
 func TestParseJWTExpiry_NoExpClaim(t *testing.T) {
-	header := `{"alg":"HS256","typ":"JWT"}`
+	header := jwtHeader
 	claims := map[string]interface{}{
 		"iat": time.Now().Unix(),
 		"sub": "test-user",
@@ -108,7 +113,7 @@ func TestParseJWTExpiry_NoExpClaim(t *testing.T) {
 
 func TestParseJWTExpiry_ExpAsFloat64(t *testing.T) {
 	exp := float64(time.Now().Add(1 * time.Hour).Unix())
-	header := `{"alg":"HS256","typ":"JWT"}`
+	header := jwtHeader
 	claims := map[string]interface{}{
 		"exp": exp,
 	}
@@ -127,7 +132,7 @@ func TestParseJWTExpiry_ExpAsFloat64(t *testing.T) {
 
 func TestParseJWTExpiry_ExpAsInt64(t *testing.T) {
 	exp := time.Now().Add(1 * time.Hour).Unix()
-	header := `{"alg":"HS256","typ":"JWT"}`
+	header := jwtHeader
 	claims := map[string]interface{}{
 		"exp": exp,
 	}
@@ -192,7 +197,7 @@ func TestClientCache_Get_NotFound(t *testing.T) {
 func TestClientCache_SetAndGet(t *testing.T) {
 	cache := NewClientCache(10)
 
-	key := "default:test-sa"
+	key := testCacheKey
 	token := createTestJWT(time.Now().Add(1 * time.Hour).Unix())
 	scheme := runtime.NewScheme()
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
@@ -212,7 +217,7 @@ func TestClientCache_SetAndGet(t *testing.T) {
 func TestClientCache_Get_ExpiredToken(t *testing.T) {
 	cache := NewClientCache(10)
 
-	key := "default:test-sa"
+	key := testCacheKey
 	// Token expired 1 hour ago
 	token := createTestJWT(time.Now().Add(-1 * time.Hour).Unix())
 	scheme := runtime.NewScheme()
@@ -233,8 +238,9 @@ func TestClientCache_Get_ExpiredToken(t *testing.T) {
 func TestClientCache_Get_TokenWithoutExpiry(t *testing.T) {
 	cache := NewClientCache(10)
 
-	key := "default:test-sa"
+	key := testCacheKey
 	// Token without exp claim (invalid JWT)
+	//nolint:gosec // G101: This is a test token, not a real credential
 	token := "invalid.jwt.token"
 	scheme := runtime.NewScheme()
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
@@ -254,7 +260,7 @@ func TestClientCache_Get_TokenWithoutExpiry(t *testing.T) {
 func TestClientCache_UpdateExisting(t *testing.T) {
 	cache := NewClientCache(10)
 
-	key := "default:test-sa"
+	key := testCacheKey
 	token1 := createTestJWT(time.Now().Add(1 * time.Hour).Unix())
 	token2 := createTestJWT(time.Now().Add(2 * time.Hour).Unix())
 	scheme := runtime.NewScheme()
@@ -356,7 +362,7 @@ func TestClientCache_LRUBehavior(t *testing.T) {
 func TestClientCache_Remove(t *testing.T) {
 	cache := NewClientCache(10)
 
-	key := "default:test-sa"
+	key := testCacheKey
 	token := createTestJWT(time.Now().Add(1 * time.Hour).Unix())
 	scheme := runtime.NewScheme()
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
@@ -412,7 +418,7 @@ func TestMakeCacheKey(t *testing.T) {
 			name:      "normal values",
 			namespace: "default",
 			saName:    "test-sa",
-			want:      "default:test-sa",
+			want:      testCacheKey,
 		},
 		{
 			name:      "empty namespace",

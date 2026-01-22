@@ -33,9 +33,9 @@ import (
 
 func setupTestReconciler() *CodeInterpreterReconciler {
 	scheme := runtime.NewScheme()
-	runtimev1alpha1.AddToScheme(scheme)
-	sandboxv1alpha1.AddToScheme(scheme)
-	corev1.AddToScheme(scheme)
+	_ = runtimev1alpha1.AddToScheme(scheme)
+	_ = sandboxv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
 
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	// Create a minimal manager for testing

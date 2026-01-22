@@ -28,6 +28,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	testToken = "test-token"
+	testServiceAccount = "system:serviceaccount:default:test-sa"
+)
+
 func init() {
 	gin.SetMode(gin.TestMode)
 }
@@ -112,7 +117,7 @@ func TestAuthMiddleware_InvalidServiceAccountFormat(t *testing.T) {
 	server := setupTestServerWithAuth(true)
 
 	// Test with a token that has invalid username format (not in system:serviceaccount: format)
-	token := "test-token"
+	token := testToken
 	server.tokenCache.Set(token, true, "invalid-format") // Not in system:serviceaccount: format
 
 	w := httptest.NewRecorder()
@@ -132,7 +137,7 @@ func TestValidateServiceAccountToken_CacheHit_Authenticated(t *testing.T) {
 	server := setupTestServerWithAuth(true)
 
 	token := "test-token-123"
-	username := "system:serviceaccount:default:test-sa"
+	username := testServiceAccount
 	server.tokenCache.Set(token, true, username)
 
 	authenticated, serviceAccount, err := server.validateServiceAccountToken(context.Background(), token)
@@ -172,18 +177,18 @@ func TestExtractUserInfo(t *testing.T) {
 			setupContext: func(c *gin.Context) {
 				ctx := context.WithValue(c.Request.Context(), contextKeyUserToken, "token-123")
 				ctx = context.WithValue(ctx, contextKeyNamespace, "default")
-				ctx = context.WithValue(ctx, contextKeyServiceAccount, "system:serviceaccount:default:test-sa")
+				ctx = context.WithValue(ctx, contextKeyServiceAccount, testServiceAccount)
 				ctx = context.WithValue(ctx, contextKeyServiceAccountName, "test-sa")
 				c.Request = c.Request.WithContext(ctx)
 			},
 			expectedToken:     "token-123",
 			expectedNamespace: "default",
-			expectedSA:        "system:serviceaccount:default:test-sa",
+			expectedSA:        testServiceAccount,
 			expectedSAName:    "test-sa",
 		},
 		{
 			name: "empty context",
-			setupContext: func(c *gin.Context) {
+			setupContext: func(_ *gin.Context) {
 				// No context values set
 			},
 			expectedToken:     "",
@@ -227,7 +232,7 @@ func TestAuthMiddleware_ValidToken_ValidFormat(t *testing.T) {
 
 	// Setup token in cache with valid format
 	token := "valid-token"
-	username := "system:serviceaccount:default:test-sa"
+	username := testServiceAccount
 	server.tokenCache.Set(token, true, username)
 
 	w := httptest.NewRecorder()
@@ -272,7 +277,7 @@ func TestAuthMiddleware_ServiceAccountParsing(t *testing.T) {
 	}{
 		{
 			name:           "valid format",
-			username:       "system:serviceaccount:default:test-sa",
+			username:       testServiceAccount,
 			shouldSucceed:  true,
 			expectedNS:     "default",
 			expectedSAName: "test-sa",
@@ -333,7 +338,7 @@ func TestValidateServiceAccountToken_CacheBehavior(t *testing.T) {
 
 	// Test that cache is used on second call
 	token := "cache-test-token"
-	username := "system:serviceaccount:default:test-sa"
+	username := testServiceAccount
 
 	// First call - cache miss, will try API (but we don't have real client)
 	// So we'll set it in cache first

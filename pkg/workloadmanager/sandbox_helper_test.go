@@ -28,6 +28,8 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 )
 
+const testPodIP = "10.0.0.1"
+
 func TestBuildSandboxPlaceHolder(t *testing.T) {
 	sandbox := &sandboxv1alpha1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
@@ -92,7 +94,7 @@ func TestBuildSandboxInfo(t *testing.T) {
 		},
 	}
 
-	podIP := "10.0.0.1"
+	podIP := testPodIP
 	entry := &sandboxEntry{
 		Kind:      types.AgentRuntimeKind,
 		SessionID: "test-session-123",
@@ -126,11 +128,11 @@ func TestBuildSandboxInfo(t *testing.T) {
 	assert.Len(t, result.EntryPoints, 2)
 	assert.Equal(t, "/api", result.EntryPoints[0].Path)
 	assert.Equal(t, "HTTP", result.EntryPoints[0].Protocol)
-	assert.Equal(t, "10.0.0.1:8080", result.EntryPoints[0].Endpoint)
+	assert.Equal(t, testPodIP+":8080", result.EntryPoints[0].Endpoint)
 
 	assert.Equal(t, "/metrics", result.EntryPoints[1].Path)
 	assert.Equal(t, "HTTP", result.EntryPoints[1].Protocol)
-	assert.Equal(t, "10.0.0.1:9090", result.EntryPoints[1].Endpoint)
+	assert.Equal(t, testPodIP+":9090", result.EntryPoints[1].Endpoint)
 }
 
 func TestBuildSandboxInfo_WithShutdownTime(t *testing.T) {
@@ -156,7 +158,7 @@ func TestBuildSandboxInfo_WithShutdownTime(t *testing.T) {
 		},
 	}
 
-	podIP := "10.0.0.1"
+	podIP := testPodIP
 	entry := &sandboxEntry{
 		Kind:      types.AgentRuntimeKind,
 		SessionID: "test-session-123",
@@ -187,7 +189,7 @@ func TestBuildSandboxInfo_NoPorts(t *testing.T) {
 		},
 	}
 
-	podIP := "10.0.0.1"
+	podIP := testPodIP
 	entry := &sandboxEntry{
 		Kind:      types.AgentRuntimeKind,
 		SessionID: "test-session-123",

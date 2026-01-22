@@ -91,7 +91,9 @@ func TestNewServer_WithoutWorkspace(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 	defer func() {
-		os.Chdir(originalWd)
+		if err := os.Chdir(originalWd); err != nil {
+			t.Logf("failed to restore working directory: %v", err)
+		}
 	}()
 
 	pubKeyPEM := generateTestPublicKeyPEM(t)
@@ -320,7 +322,9 @@ func TestNewServer_WorkspacePathResolution(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 	defer func() {
-		os.Chdir(originalWd)
+		if err := os.Chdir(originalWd); err != nil {
+			t.Logf("failed to restore working directory: %v", err)
+		}
 	}()
 
 	server := NewServer(config)

@@ -8,9 +8,10 @@ This guide describes how to install, configure, and use the SDK to build automat
 
 Before you begin, ensure your environment meets the following requirements:
 
-*   **Python**: Version 3.8 or later.
-*   **Network Access**: Access to the Workload Manager (Control Plane) and Router (Data Plane).
-*   **Package Installation**:
+* **Python**: Version 3.8 or later.
+* **Network Access**: Access to the Workload Manager (Control Plane) and Router (Data Plane).
+* **Package Installation**:
+
     ```bash
     pip install agentcube-sdk
     ```
@@ -19,14 +20,28 @@ Before you begin, ensure your environment meets the following requirements:
 
 The `CodeInterpreterClient` is the main entry point. You can initialize it directly or use it as a context manager (recommended) to ensure sessions are automatically cleaned up.
 
-**Configuration Parameters:**
+### Configuration Parameters
 
-*   `name` (Optional): The name of the CodeInterpreter CRD template to use (default: the CRD name).
-*   `namespace` (Optional): The Kubernetes namespace where the agent runs (default: `"default"`).
-*   `ttl` (Optional): Time-to-live for the session in seconds (default: `3600`).
-*   `router_url`: The URL of the Data Plane Router (default from env "ROUTER_URL").
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `name` | `str` | `"simple-codeinterpreter"` | CodeInterpreter CRD template name |
+| `namespace` | `str` | `"default"` | Kubernetes namespace |
+| `ttl` | `int` | `3600` | Session time-to-live (seconds) |
+| `workload_manager_url` | `str` | `None` | Control Plane URL (falls back to env `WORKLOAD_MANAGER_URL`) |
+| `router_url` | `str` | `None` | Data Plane Router URL (falls back to env `ROUTER_URL`) |
+| `auth_token` | `str` | `None` | Auth token (falls back to env `API_TOKEN`, then K8s SA token) |
+| `session_id` | `str` | `None` | Reuse existing session instead of creating new |
+| `verbose` | `bool` | `False` | Enable debug logging |
 
-**Example: Basic Initialization**
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `WORKLOAD_MANAGER_URL` | Control Plane URL (required if not passed as argument) |
+| `ROUTER_URL` | Data Plane Router URL (required if not passed as argument) |
+| `API_TOKEN` | Auth token for Control Plane (optional, falls back to K8s SA token) |
+
+### Example: Basic Initialization
 
 ```python
 from agentcube import CodeInterpreterClient
@@ -53,17 +68,21 @@ output = client.execute_command("whoami && pwd")
 print(output)
 ```
 
-### Run Python Code
+### Run Code
 
-Use `run_code` to execute scripts in a specific language (currently supports `"python"`). This runs inside the secure sandbox.
+Use `run_code` to execute scripts. Supported languages: `"python"` (or `"py"`, `"python3"`) and `"bash"` (or `"sh"`).
 
 ```python
+# Python example
 script = """
 import math
 print(f"The square root of 16 is {math.sqrt(16)}")
 """
-
 result = client.run_code(language="python", code=script)
+print(result)
+
+# Bash example
+result = client.run_code(language="bash", code="echo 'Hello from Bash!'")
 print(result)
 ```
 
@@ -104,6 +123,16 @@ client.write_file(
     content="print('Hello World')", 
     remote_path="/tmp/hello.py"
 )
+```
+
+### List Files
+
+Use `list_files` to list files and directories in a specified path.
+
+```python
+files = client.list_files("/tmp")
+for f in files:
+    print(f"{f['name']} - {f['size']} bytes")
 ```
 
 ## 4. Best Practices: Using Context Managers
@@ -153,4 +182,24 @@ try:
 finally:
     # Critical: Delete the remote Pod and close connections
     client.stop()
+```
+
+## 6. Session Reuse
+
+You can reuse an existing session by passing its `session_id` to a new client. This is useful for multi-step workflows.
+
+> **Important**: Session reuse preserves **file system state only**. Each `run_code` call spawns a new process, so **Python variables do NOT persist** across calls.
+
+```python
+# Step 1: Create session and save a file
+client1 = CodeInterpreterClient()
+session_id = client1.session_id
+client1.write_file("42", "/tmp/value.txt")
+# Don't call stop() - let session persist
+
+# Step 2: Reuse session with new client
+client2 = CodeInterpreterClient(session_id=session_id)
+# File persists across clients
+client2.run_code("python", "print(open('/tmp/value.txt').read())")
+client2.stop()  # Cleanup when done
 ```

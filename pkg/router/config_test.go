@@ -127,7 +127,7 @@ func TestConfigPartialValues(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(_ *testing.T) {  // Changed t to _
 			// Just verify that the config can be created without panicking
 			_ = tt.config
 		})

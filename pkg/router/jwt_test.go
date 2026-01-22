@@ -22,7 +22,6 @@ import (
 	"encoding/pem"
 	"testing"
 
-
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 )
@@ -65,9 +64,9 @@ func TestGenerateToken(t *testing.T) {
 			name: "claims with different types",
 			claims: map[string]interface{}{
 				"session_id": "test-session-123",
-				"count":      float64(42),
+				"count":      42,
 				"active":     true,
-				"tags":       []interface{}{"test", "sandbox"},
+				"tags":       []string{"test", "sandbox"},
 			},
 		},
 	}
@@ -98,7 +97,26 @@ func TestGenerateToken(t *testing.T) {
 
 				// Check custom claims
 				for k, v := range tt.claims {
-					assert.Equal(t, v, claims[k])
+					claimValue := claims[k]
+					// JWT library converts numbers to float64 and arrays to []interface{}
+					switch expected := v.(type) {
+					case int:
+						// Convert int to float64 for comparison
+						actualFloat, ok := claimValue.(float64)
+						assert.True(t, ok, "claim %s should be float64", k)
+						assert.Equal(t, float64(expected), actualFloat)
+					case []string:
+						// Convert []string to []interface{} for comparison
+						actualSlice, ok := claimValue.([]interface{})
+						assert.True(t, ok, "claim %s should be []interface{}", k)
+						assert.Equal(t, len(expected), len(actualSlice))
+						for i, expectedVal := range expected {
+							assert.Equal(t, expectedVal, actualSlice[i])
+						}
+					default:
+						// For other types (string, bool), direct comparison works
+						assert.Equal(t, v, claimValue)
+					}
 				}
 			}
 		})
@@ -112,16 +130,18 @@ func TestGenerateToken_Expiration(t *testing.T) {
 	tokenString, err := manager.GenerateToken(map[string]interface{}{})
 	assert.NoError(t, err)
 
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.Parse(tokenString, func(_ *jwt.Token) (interface{}, error) {
 		return manager.publicKey, nil
 	})
 	assert.NoError(t, err)
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok {
-		exp := int64(claims["exp"].(float64))
-		iat := int64(claims["iat"].(float64))
-		expectedExp := iat + int64(jwtExpiration.Seconds())
-		assert.Equal(t, expectedExp, exp)
+		exp, ok := claims["exp"].(float64)
+		assert.True(t, ok, "exp claim should be float64")
+		iat, ok := claims["iat"].(float64)
+		assert.True(t, ok, "iat claim should be float64")
+		expectedExp := int64(iat) + int64(jwtExpiration.Seconds())
+		assert.Equal(t, expectedExp, int64(exp))
 	}
 }
 
@@ -161,11 +181,7 @@ func TestGetPrivateKeyPEM(t *testing.T) {
 	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 	assert.NoError(t, err)
 	assert.NotNil(t, privateKey)
-	// Verify key components match (not the entire struct due to internal pointers)
-	assert.Equal(t, manager.privateKey.N, privateKey.N)
-	assert.Equal(t, manager.privateKey.E, privateKey.E)
-	assert.Equal(t, manager.privateKey.D, privateKey.D)
-	assert.Equal(t, manager.privateKey.Primes, privateKey.Primes)
+	assert.Equal(t, manager.privateKey, privateKey)
 }
 
 func TestLoadPrivateKeyPEM(t *testing.T) {
@@ -235,7 +251,7 @@ func TestJWTManager_KeyConsistency(t *testing.T) {
 
 	// Verify all tokens can be validated
 	for i, tokenString := range tokens {
-		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		token, err := jwt.Parse(tokenString, func(_ *jwt.Token) (interface{}, error) {
 			return manager.publicKey, nil
 		})
 		assert.NoError(t, err, "Token %d should be valid", i)
@@ -267,7 +283,7 @@ func TestGenerateToken_DifferentExpirationTimes(t *testing.T) {
 
 	// But both should be valid
 	for i, tokenString := range []string{token1, token2} {
-		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		token, err := jwt.Parse(tokenString, func(_ *jwt.Token) (interface{}, error) {
 			return manager.publicKey, nil
 		})
 		assert.NoError(t, err, "Token %d should be valid", i)

@@ -517,7 +517,7 @@ func TestTokenCache_SetAndGet(t *testing.T) {
 	cache := NewTokenCache(10, 5*time.Minute)
 
 	token := "test-token-123"
-	username := "system:serviceaccount:default:test-sa"
+	username := testServiceAccount
 
 	cache.Set(token, true, username)
 
@@ -531,8 +531,8 @@ func TestTokenCache_SetAndGet(t *testing.T) {
 func TestTokenCache_Get_Expired(t *testing.T) {
 	cache := NewTokenCache(10, 1*time.Second) // Very short TTL
 
-	token := "test-token"
-	username := "system:serviceaccount:default:test-sa"
+	token := testToken
+	username := testServiceAccount
 
 	cache.Set(token, true, username)
 
@@ -553,7 +553,7 @@ func TestTokenCache_Get_Expired(t *testing.T) {
 func TestTokenCache_UpdateExisting(t *testing.T) {
 	cache := NewTokenCache(10, 5*time.Minute)
 
-	token := "test-token"
+	token := testToken
 	username1 := "system:serviceaccount:default:sa1"
 	username2 := "system:serviceaccount:default:sa2"
 
@@ -626,7 +626,7 @@ func TestTokenCache_Remove(t *testing.T) {
 	cache := NewTokenCache(10, 5*time.Minute)
 
 	token := "test-token"
-	username := "system:serviceaccount:default:test-sa"
+	username := testServiceAccount
 
 	cache.Set(token, true, username)
 	assert.Equal(t, 1, cache.Size())

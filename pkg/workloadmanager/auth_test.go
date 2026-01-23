@@ -66,34 +66,28 @@ func TestAuthMiddleware_AuthDisabled(t *testing.T) {
 	assert.False(t, c.IsAborted())
 }
 
-func TestAuthMiddleware_MissingAuthorizationHeader(t *testing.T) {
-	server := setupTestServerWithAuth(true)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("GET", "/test", nil)
-
-	server.authMiddleware(c)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-	assert.True(t, c.IsAborted())
-	assert.Contains(t, w.Body.String(), "Missing authorization header")
-}
-
 func TestAuthMiddleware_InvalidHeaderFormat(t *testing.T) {
 	server := setupTestServerWithAuth(true)
 
 	tests := []struct {
-		name   string
-		header string
+		name             string
+		header           string
+		expectedBodyPart string
 	}{
 		{
-			name:   "no Bearer prefix",
-			header: "token123",
+			name:             "missing authorization header",
+			header:           "",
+			expectedBodyPart: "Missing authorization header",
 		},
 		{
-			name:   "wrong prefix",
-			header: "Basic token123",
+			name:             "no Bearer prefix",
+			header:           "token123",
+			expectedBodyPart: "Invalid authorization header format",
+ 		},
+		{
+			name:             "wrong prefix",
+			header:           "Basic token123",
+			expectedBodyPart: "Invalid authorization header format",
 		},
 	}
 
@@ -102,13 +96,16 @@ func TestAuthMiddleware_InvalidHeaderFormat(t *testing.T) {
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 			c.Request, _ = http.NewRequest("GET", "/test", nil)
-			c.Request.Header.Set("Authorization", tt.header)
+
+			if tt.header != "" {
+				c.Request.Header.Set("Authorization", tt.header)
+			}
 
 			server.authMiddleware(c)
 
 			assert.Equal(t, http.StatusUnauthorized, w.Code)
 			assert.True(t, c.IsAborted())
-			assert.Contains(t, w.Body.String(), "Invalid authorization header format")
+			assert.Contains(t, w.Body.String(), tt.expectedBodyPart)
 		})
 	}
 }

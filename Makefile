@@ -61,6 +61,10 @@ gen-client: ## Generate client-go code for CRDs
 .PHONY: gen-all
 gen-all: generate gen-client ## Generate all code (CRDs, DeepCopy methods, and client-go)
 
+.PHONY: generate-charts
+generate-charts: ## Generate Helm charts
+	bash ./hack/generate-charts.sh
+
 .PHONY: gen-check
 gen-check: gen-all ## Check if generated code is up to date
 	git diff --exit-code

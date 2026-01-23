@@ -190,13 +190,7 @@ deploy_redis() {
     kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/redis --timeout=180s
 }
 
-echo "Starting E2E tests..."
-
-if [ "${E2E_SKIP_SETUP}" = "true" ]; then
-    echo "Skipping setup phase (E2E_SKIP_SETUP=true)"
-    echo "Assuming cluster '${E2E_CLUSTER_NAME}' is already running with deployed services..."
-    echo "Using namespace: ${AGENTCUBE_NAMESPACE}"
-else
+run_setup() {
     require_cmd kind
     require_cmd kubectl
     require_cmd docker
@@ -301,6 +295,16 @@ else
     kubectl get agentruntime echo-agent-short-ttl -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.name}{"\n"}' || echo "echo-agent-short-ttl may still be starting..."
     echo "AgentRuntimes created, waiting for pods to be ready..."
     sleep 10
+}
+
+echo "Starting E2E tests..."
+
+if [ "${E2E_SKIP_SETUP}" = "true" ]; then
+    echo "Skipping setup phase (E2E_SKIP_SETUP=true)"
+    echo "Assuming cluster '${E2E_CLUSTER_NAME}' is already running with deployed services..."
+    echo "Using namespace: ${AGENTCUBE_NAMESPACE}"
+else
+    run_setup
 fi
 
 step "Pre-cleanup"

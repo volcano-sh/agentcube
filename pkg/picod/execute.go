@@ -102,6 +102,16 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 			})
 			return
 		}
+		
+		// Verify working directory exists
+		if _, err := os.Stat(safeWorkingDir); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("working directory does not exist: %v", err),
+				"code":  http.StatusBadRequest,
+			})
+			return
+		}
+		
 		cmd.Dir = safeWorkingDir
 	}
 

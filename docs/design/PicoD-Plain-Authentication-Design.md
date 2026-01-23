@@ -40,7 +40,7 @@ To ensure **High Availability (HA)** across multiple Router replicas and enfor
     
     - It provisions sandboxes by injecting the Public Key into the picod container as an Environment Variable (PICOD_AUTH_PUBLIC_KEY).
     - **Preferred Method**: The public key can be provided via the `AGENTCUBE_ROUTER_PUBLIC_KEY` environment variable during WorkloadManager deployment, avoiding the need to read from Kubernetes Secrets.
-    - **Fallback Method**: If the environment variable is not set, WorkloadManager will read the public key from the Kubernetes Secret (picod-router-public-key) for backward compatibility.
+    - **Fallback Method**: If the environment variable is not set, WorkloadManager will read the public key from the Kubernetes Secret (`picod-router-identity`) for backward compatibility.
         
 3. **Local Verification (PicoD)**:
     

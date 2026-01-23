@@ -2,7 +2,13 @@
 
 Author: Layne Peng
 
-## Motivation
+##### 2. Provisioning Phase
+
+- The **Router** sends a sandbox allocation request to the **WorkloadManager**. Crucially, this request **does not** contain key data.
+- The **WorkloadManager** constructs the Pod specification. It defines an environment variable `PICOD_AUTH_PUBLIC_KEY` that is populated with the Router's public key.
+  - **Preferred Method**: If the `AGENTCUBE_ROUTER_PUBLIC_KEY` environment variable is set in the WorkloadManager deployment, this value is used directly.
+  - **Fallback Method**: Otherwise, the key is sourced from the `picod-router-public-key` ConfigMap using `valueFrom: configMapKeyRef`.
+- **PicoD** starts, reads the key from the **environment**, and initializes its JWT verifier.ivation
 
 Currently, AgentCube’s `picod` daemon enforces authentication and authorization using a client self-signed key-pair mechanism. This design binds a specific client (agent) directly to a `picod` instance, ensuring a secure, one-to-one relationship. Details of this existing implementation can be found in the [PicoD Authentication & Authorization Design](https://github.com/volcano-sh/agentcube/blob/main/docs/design/picod-proposal.md#3-authentication--authorization).
 
@@ -33,6 +39,8 @@ To ensure **High Availability (HA)** across multiple Router replicas and enfor
 2. **Decoupled Provisioning (WorkloadManager)**:
     
     - It provisions sandboxes by injecting the Public Key into the picod container as an Environment Variable (PICOD_AUTH_PUBLIC_KEY).
+    - **Preferred Method**: The public key can be provided via the `AGENTCUBE_ROUTER_PUBLIC_KEY` environment variable during WorkloadManager deployment, avoiding the need to read from Kubernetes Secrets.
+    - **Fallback Method**: If the environment variable is not set, WorkloadManager will read the public key from the Kubernetes Secret (picod-router-public-key) for backward compatibility.
         
 3. **Local Verification (PicoD)**:
     
@@ -162,6 +170,25 @@ data:
 ### 2. WorkloadManager Pod Spec
 
 When creating the picod Pod, the WorkloadManager injects the key as follows:
+
+**Preferred Method (Environment Variable):**
+
+If `AGENTCUBE_ROUTER_PUBLIC_KEY` is set in the WorkloadManager deployment:
+
+```yaml
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+    - name: picod
+      env:
+        - name: PICOD_AUTH_PUBLIC_KEY
+          value: <router-public-key-from-env>
+```
+
+**Fallback Method (ConfigMap Reference):**
+
+If the environment variable is not set, the ConfigMap reference is used:
 
 ```yaml
 apiVersion: v1

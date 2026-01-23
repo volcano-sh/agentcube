@@ -52,6 +52,16 @@ workloadmanager:
     requests:
       cpu: 100m
       memory: 128Mi
+  # routerPublicKey: Pass Router's public key to WorkloadManager via environment variable.
+  # If set, WorkloadManager will use this instead of reading from the Secret.
+  # This is the preferred method for security and operational simplicity.
+  # Example:
+  #   routerPublicKey: |
+  #     -----BEGIN PUBLIC KEY-----
+  #     MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
+  #     -----END PUBLIC KEY-----
+  routerPublicKey: ""
+  # extraEnv allows passing additional environment variables to WorkloadManager
   extraEnv: []
 
 # Volcano Agent Scheduler

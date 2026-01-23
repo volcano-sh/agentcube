@@ -45,6 +45,9 @@ const (
 	IdentitySecretName = "picod-router-identity" //nolint:gosec // This is a name reference, not a credential
 	// PublicKeyDataKey is the key in the Secret data map for the public key
 	PublicKeyDataKey = "public.pem"
+	// RouterPublicKeyEnvVar is the environment variable for Router's public key
+	// When set, WorkloadManager will use this instead of reading from Secret
+	RouterPublicKeyEnvVar = "AGENTCUBE_ROUTER_PUBLIC_KEY"
 )
 
 // IdentitySecretNamespace is the namespace where the identity secret is stored
@@ -78,22 +81,30 @@ func IsPublicKeyCached() bool {
 	return cachedPublicKey != ""
 }
 
-// InitPublicKeyCache starts a background goroutine that continuously tries to load
-// the public key from Router's Secret until successful. This handles the case where
-// Router hasn't started yet when WorkloadManager starts.
+// InitPublicKeyCache attempts to load the public key from environment variable first,
+// then falls back to loading from Router's Secret. It starts a background goroutine
+// that continuously tries to load the public key until successful. This handles the
+// case where Router hasn't started yet when WorkloadManager starts.
 func InitPublicKeyCache(clientset kubernetes.Interface) {
 	go func() {
+		// Try to load from environment variable first
+		if err := loadPublicKeyFromEnv(); err == nil {
+			klog.Infof("loaded router public key from environment variable %s", RouterPublicKeyEnvVar)
+			return
+		}
+
+		// Fall back to loading from Secret with retries
 		retryInterval := 100 * time.Millisecond
 		maxRetryInterval := 10 * time.Second
 
 		for {
 			err := loadPublicKeyFromSecret(clientset)
 			if err == nil {
-				klog.Infof("loaded public key from secret %s/%s", IdentitySecretNamespace, IdentitySecretName)
+				klog.Infof("loaded router public key from secret %s/%s", IdentitySecretNamespace, IdentitySecretName)
 				return
 			}
 
-			klog.V(2).Infof("Failed to load public key from secret %s/%s: %v. Retrying in %v...", IdentitySecretNamespace, IdentitySecretName, err, retryInterval)
+			klog.V(2).Infof("failed to load router public key from secret %s/%s: %v. retrying in %v...", IdentitySecretNamespace, IdentitySecretName, err, retryInterval)
 			time.Sleep(retryInterval)
 
 			// Exponential backoff with max limit
@@ -103,6 +114,19 @@ func InitPublicKeyCache(clientset kubernetes.Interface) {
 			}
 		}
 	}()
+}
+
+// loadPublicKeyFromEnv reads the public key from environment variable
+func loadPublicKeyFromEnv() error {
+	publicKeyData := os.Getenv(RouterPublicKeyEnvVar)
+	if publicKeyData == "" {
+		return fmt.Errorf("environment variable %s not set", RouterPublicKeyEnvVar)
+	}
+
+	publicKeyCacheMutex.Lock()
+	cachedPublicKey = publicKeyData
+	publicKeyCacheMutex.Unlock()
+	return nil
 }
 
 // loadPublicKeyFromSecret reads the public key from Router's Secret

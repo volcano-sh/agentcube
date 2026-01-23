@@ -26,6 +26,8 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/store"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
 
 // Server is the main structure for workload manager
@@ -126,9 +128,15 @@ func (s *Server) Start(ctx context.Context) error {
 
 	addr := ":" + s.config.Port
 
+	// Create HTTP/2 server for better performance
+	h2s := &http2.Server{}
+	
+	// Wrap handler with h2c for HTTP/2 cleartext support
+	h2cHandler := h2c.NewHandler(s.router, h2s)
+
 	s.httpServer = &http.Server{
 		Addr:        addr,
-		Handler:     s.router,
+		Handler:     h2cHandler,
 		ReadTimeout: 15 * time.Second,
 		IdleTimeout: 90 * time.Second, // golang http default transport's idletimeout is 90s
 	}
@@ -147,6 +155,7 @@ func (s *Server) Start(ctx context.Context) error {
 	klog.Infof("Server listening on %s", addr)
 
 	gc := newGarbageCollector(s.k8sClient, s.storeClient, 15*time.Second)
+	klog.Info("HTTP/2 support enabled (h2c for cleartext, native for TLS)")
 	go gc.run(ctx.Done())
 
 	// Start HTTP or HTTPS server

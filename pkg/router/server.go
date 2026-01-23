@@ -26,6 +26,8 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/store"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
 
 // Server is the main structure for Router apiserver
@@ -149,9 +151,15 @@ func (s *Server) setupRoutes() {
 func (s *Server) Start(ctx context.Context) error {
 	addr := ":" + s.config.Port
 
+	// Create HTTP/2 server for better performance
+	h2s := &http2.Server{}
+	
+	// Wrap handler with h2c for HTTP/2 cleartext support
+	h2cHandler := h2c.NewHandler(s.engine, h2s)
+
 	s.httpServer = &http.Server{
 		Addr:        addr,
-		Handler:     s.engine,
+		Handler:     h2cHandler,
 		ReadTimeout: 30 * time.Second, // Longer timeout for potential long-running requests
 		IdleTimeout: 90 * time.Second, // golang http default transport's idletimeout is 90s
 	}
@@ -169,6 +177,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	klog.Infof("Router server listening on %s", addr)
 
+	klog.Info("HTTP/2 support enabled (h2c for cleartext, native for TLS)")
 	// Start HTTP or HTTPS server
 	if s.config.EnableTLS {
 		if s.config.TLSCert == "" || s.config.TLSKey == "" {

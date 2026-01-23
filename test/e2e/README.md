@@ -55,6 +55,9 @@ The `run_e2e.sh` script performs the following steps:
 
 # Skip cluster recreation (faster for re-runs)
 E2E_CLEAN_CLUSTER=false ./test/e2e/run_e2e.sh
+
+# Skip all setup and run tests directly (assumes cluster is already set up)
+E2E_SKIP_SETUP=true ./test/e2e/run_e2e.sh
 ```
 
 ## Test Cases
@@ -81,6 +84,7 @@ E2E_CLEAN_CLUSTER=false ./test/e2e/run_e2e.sh
 |----------|---------|-------------|
 | `E2E_CLUSTER_NAME` | `agentcube-e2e` | Kind cluster name |
 | `E2E_CLEAN_CLUSTER` | `true` | Delete and recreate cluster before tests |
+| `E2E_SKIP_SETUP` | `false` | Skip all setup steps (cluster creation, image building, deployments) and run tests directly against existing cluster |
 | `AGENTCUBE_NAMESPACE` | `agentcube` | Kubernetes namespace for deployments |
 | `E2E_VENV_DIR` | `/tmp/agentcube-e2e-venv` | Python virtual environment path |
 | `WORKLOAD_MANAGER_LOCAL_PORT` | `8080` | Local port for WorkloadManager |

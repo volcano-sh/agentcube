@@ -7,8 +7,8 @@ Author: Layne Peng
 - The **Router** sends a sandbox allocation request to the **WorkloadManager**. Crucially, this request **does not** contain key data.
 - The **WorkloadManager** constructs the Pod specification. It defines an environment variable `PICOD_AUTH_PUBLIC_KEY` that is populated with the Router's public key.
   - **Preferred Method**: If the `AGENTCUBE_ROUTER_PUBLIC_KEY` environment variable is set in the WorkloadManager deployment, this value is used directly.
-  - **Fallback Method**: Otherwise, the key is sourced from the `picod-router-public-key` ConfigMap using `valueFrom: configMapKeyRef`.
-- **PicoD** starts, reads the key from the **environment**, and initializes its JWT verifier.ivation
+  - **Fallback Method**: Otherwise, the key is sourced from the `picod-router-identity` Secret.
+- **PicoD** starts, reads the key from the **environment**, and initializes its JWT verifier.
 
 Currently, AgentCube’s `picod` daemon enforces authentication and authorization using a client self-signed key-pair mechanism. This design binds a specific client (agent) directly to a `picod` instance, ensuring a secure, one-to-one relationship. Details of this existing implementation can be found in the [PicoD Authentication & Authorization Design](https://github.com/volcano-sh/agentcube/blob/main/docs/design/picod-proposal.md#3-authentication--authorization).
 

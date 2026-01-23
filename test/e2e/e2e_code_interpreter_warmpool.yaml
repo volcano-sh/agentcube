@@ -1,0 +1,29 @@
+apiVersion: runtime.agentcube.volcano.sh/v1alpha1
+kind: CodeInterpreter
+metadata:
+  name: e2e-code-interpreter-warmpool
+  namespace: agentcube
+spec:
+  ports:
+    - pathPrefix: "/"
+      port: 8080
+      protocol: "HTTP"
+  template:
+    image: picod:latest
+    imagePullPolicy: IfNotPresent
+    args:
+      - --workspace=/root
+    labels:
+      app: e2e-code-interpreter-warmpool
+      test: e2e
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+  sessionTimeout: "15m"
+  maxSessionDuration: "8h"
+  warmPoolSize: 2
+status: {}

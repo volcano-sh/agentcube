@@ -186,9 +186,9 @@ spec:
           value: <router-public-key-from-env>
 ```
 
-**Fallback Method (ConfigMap Reference):**
+**Fallback Method (Programmatic Injection):**
 
-If the environment variable is not set, the ConfigMap reference is used:
+If the environment variable is not set, the WorkloadManager reads the key from the `picod-router-identity` Secret and injects it directly:
 
 ```yaml
 apiVersion: v1

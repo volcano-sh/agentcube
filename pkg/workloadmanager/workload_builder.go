@@ -118,9 +118,9 @@ func InitPublicKeyCache(clientset kubernetes.Interface) {
 
 // loadPublicKeyFromEnv reads the public key from environment variable
 func loadPublicKeyFromEnv() error {
-	publicKeyData := os.Getenv(RouterPublicKeyEnvVar)
+	publicKeyData := strings.TrimSpace(os.Getenv(RouterPublicKeyEnvVar))
 	if publicKeyData == "" {
-		return fmt.Errorf("environment variable %s not set", RouterPublicKeyEnvVar)
+		return fmt.Errorf("environment variable %s not set or is empty", RouterPublicKeyEnvVar)
 	}
 
 	publicKeyCacheMutex.Lock()

@@ -389,18 +389,6 @@ func parseFileMode(modeStr string) os.FileMode {
 // setWorkspace sets the global workspace directory
 func (s *Server) setWorkspace(dir string) {
 	klog.Infof("setWorkspace called with dir: %q", dir)
-
-	// Save original working directory before changing it (only once)
-	if s.originalWorkingDir == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			klog.Warningf("failed to get current working directory: %v", err)
-		} else {
-			s.originalWorkingDir = cwd
-		}
-	}
-
-	// Resolve to absolute path
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		klog.Fatalf("failed to resolve absolute path for workspace %q: %v", dir, err)

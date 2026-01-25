@@ -178,25 +178,55 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		assert.Equal(t, 124, resp.ExitCode)
 		assert.Contains(t, resp.Stderr, "Command timed out")
 
-		// 5. Working Directory Escape (Should Fail)
+		// 5. Non-existent Working Directory (Should Create It)
+		nonExistReq := ExecuteRequest{
+			Command:    []string{"sh", "-c", "pwd"},
+			WorkingDir: "subdir/nested",
+		}
+		nonExistBody, _ := json.Marshal(nonExistReq)
+		nonExistClaims := jwt.MapClaims{
+			"iat": time.Now().Unix(),
+			"exp": time.Now().Add(time.Hour * 6).Unix(),
+		}
+		nonExistToken := createToken(t, routerPriv, nonExistClaims)
+
+		nonExistReqHTTP, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(nonExistBody))
+		nonExistReqHTTP.Header.Set("Authorization", "Bearer "+nonExistToken)
+		nonExistReqHTTP.Header.Set("Content-Type", "application/json")
+
+		httpResp, err := client.Do(nonExistReqHTTP)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, httpResp.StatusCode)
+
+		var nonExistResp ExecuteResponse
+		err = json.NewDecoder(httpResp.Body).Decode(&nonExistResp)
+		require.NoError(t, err)
+		assert.Equal(t, 0, nonExistResp.ExitCode)
+		assert.NotEmpty(t, nonExistResp.Stdout)
+
+		// Verify directory was created
+		_, err = os.Stat("subdir/nested")
+		assert.NoError(t, err)
+
+		// 6. Working Directory Escape (Should Fail)
 		escapeReq := ExecuteRequest{
 			Command:    []string{"ls"},
 			WorkingDir: "../",
 		}
 		escapeBody, _ := json.Marshal(escapeReq)
-		claims := jwt.MapClaims{
+		escapeClaims := jwt.MapClaims{
 			"iat": time.Now().Unix(),
 			"exp": time.Now().Add(time.Hour * 6).Unix(),
 		}
-		token := createToken(t, routerPriv, claims)
+		escapeToken := createToken(t, routerPriv, escapeClaims)
 
-		req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(escapeBody))
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Content-Type", "application/json")
+		escapeReqHTTP, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(escapeBody))
+		escapeReqHTTP.Header.Set("Authorization", "Bearer "+escapeToken)
+		escapeReqHTTP.Header.Set("Content-Type", "application/json")
 
-		httpResp, err := client.Do(req)
+		escapeResp, err := client.Do(escapeReqHTTP)
 		require.NoError(t, err)
-		assert.Equal(t, http.StatusBadRequest, httpResp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, escapeResp.StatusCode)
 	})
 
 	t.Run("File Operations", func(t *testing.T) {

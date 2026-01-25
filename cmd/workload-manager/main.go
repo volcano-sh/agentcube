@@ -74,6 +74,11 @@ func main() {
 
 	// Setup controller manager with filtered cache for Pods
 	// Only cache pods that have the "sandbox-name" label to reduce memory usage
+	labelSelector, err := labels.Parse("sandbox-name")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "unable to parse label selector: %v\n", err)
+		os.Exit(1)
+	}
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: schemeBuilder,
 		Metrics: metricsserver.Options{
@@ -83,7 +88,7 @@ func main() {
 		Cache: cache.Options{
 			ByObject: map[client.Object]cache.ByObject{
 				&corev1.Pod{}: {
-					Label: labels.Must(labels.Parse("sandbox-name")),
+					Label: labelSelector,
 				},
 			},
 		},

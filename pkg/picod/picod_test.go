@@ -82,6 +82,15 @@ func setupTestServer(t *testing.T, pubPEM string) (*Server, *httptest.Server, st
 }
 
 func TestPicoD_EndToEnd(t *testing.T) {
+	// Capture current working directory and restore it in cleanup
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := os.Chdir(originalWd); err != nil {
+			t.Logf("failed to restore working directory: %v", err)
+		}
+	})
+
 	// 1. Setup Keys - single key pair for Router-style auth
 	routerPriv, routerPubStr := generateRSAKeys(t)
 
@@ -92,11 +101,8 @@ func TestPicoD_EndToEnd(t *testing.T) {
 	defer os.Unsetenv(PublicKeyEnvVar)
 
 	// Switch to temp dir for relative path tests
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, os.Chdir(originalWd)) }()
 
 	client := ts.Client()
 
@@ -328,17 +334,23 @@ func TestPicoD_EndToEnd(t *testing.T) {
 // requires public key at startup. Without it, PicoD will fail to start.
 
 func TestPicoD_DefaultWorkspace(t *testing.T) {
+	// Capture current working directory and restore it in cleanup
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := os.Chdir(originalWd); err != nil {
+			t.Logf("failed to restore working directory: %v", err)
+		}
+	})
+
 	// Setup temporary directory for test
 	tmpDir, err := os.MkdirTemp("", "picod_default_workspace_test")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
 	// Switch to temp dir
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, os.Chdir(originalWd)) }()
 
 	// Set public key env
 	_, pubStr := generateRSAKeys(t)
@@ -352,6 +364,7 @@ func TestPicoD_DefaultWorkspace(t *testing.T) {
 	}
 
 	server := NewServer(config)
+	defer server.RestoreWorkingDirectory()
 
 	// Verify workspaceDir is set to current working directory
 	cwd, err := os.Getwd()
@@ -364,6 +377,15 @@ func TestPicoD_DefaultWorkspace(t *testing.T) {
 }
 
 func TestPicoD_SetWorkspace(t *testing.T) {
+	// Capture current working directory and restore it in cleanup
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := os.Chdir(originalWd); err != nil {
+			t.Logf("failed to restore working directory: %v", err)
+		}
+	})
+
 	// Setup temp dir
 	tmpDir, err := os.MkdirTemp("", "picod_setworkspace_test")
 	require.NoError(t, err)
@@ -401,11 +423,8 @@ func TestPicoD_SetWorkspace(t *testing.T) {
 	assert.Equal(t, resolve(absPath), resolve(server.workspaceDir))
 
 	// Case 2: Relative Path
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, os.Chdir(originalWd)) }()
 
 	server.setWorkspace("real")
 	assert.Equal(t, resolve(absPath), resolve(server.workspaceDir))

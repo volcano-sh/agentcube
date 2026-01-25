@@ -25,6 +25,8 @@ import (
 	"syscall"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -32,6 +34,8 @@ import (
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
@@ -68,13 +72,23 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 
-	// Setup controller manager
+	// Setup controller manager with filtered cache for Pods
+	// Only cache pods that have the "sandbox-name" label to reduce memory usage
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: schemeBuilder,
 		Metrics: metricsserver.Options{
 			BindAddress: "0", // Disable metrics server
 		},
 		HealthProbeBindAddress: "0", // Disable health probe server
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&corev1.Pod{}: {
+					Label: labels.SelectorFromSet(labels.Set{
+						"sandbox-name": "", // Only cache pods with this label (any value)
+					}),
+				},
+			},
+		},
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "unable to start manager: %v\n", err)

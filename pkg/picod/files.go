@@ -389,18 +389,28 @@ func parseFileMode(modeStr string) os.FileMode {
 // setWorkspace sets the global workspace directory
 func (s *Server) setWorkspace(dir string) {
 	klog.Infof("setWorkspace called with dir: %q", dir)
-	
+
+	// Save original working directory before changing it (only once)
+	if s.originalWorkingDir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			klog.Warningf("failed to get current working directory: %v", err)
+		} else {
+			s.originalWorkingDir = cwd
+		}
+	}
+
 	// Resolve to absolute path
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		klog.Fatalf("failed to resolve absolute path for workspace %q: %v", dir, err)
 	}
-	
+
 	// Create directory if it doesn't exist
 	if err := os.MkdirAll(absDir, 0755); err != nil {
 		klog.Fatalf("failed to create workspace directory %q: %v", absDir, err)
 	}
-	
+
 	// Verify path exists and is a directory
 	stat, err := os.Stat(absDir)
 	if err != nil {
@@ -409,10 +419,16 @@ func (s *Server) setWorkspace(dir string) {
 	if !stat.IsDir() {
 		klog.Fatalf("workspace path %q is not a directory", absDir)
 	}
-	
-	// Set workspace directory and log success
+
+	// Set workspace directory
 	s.workspaceDir = absDir
-	klog.Infof("workspace directory initialized successfully: %q", s.workspaceDir)
+
+	// Change process working directory to workspace
+	if err := os.Chdir(absDir); err != nil {
+		klog.Fatalf("failed to change working directory to %q: %v", absDir, err)
+	}
+
+	klog.Infof("workspace directory initialized and working directory changed to: %q", s.workspaceDir)
 }
 
 // sanitizePath ensures path is within allowed scope, preventing directory traversal attacks

@@ -34,11 +34,12 @@ type Config struct {
 
 // Server defines the PicoD HTTP server
 type Server struct {
-	engine       *gin.Engine
-	config       Config
-	authManager  *AuthManager
-	startTime    time.Time
-	workspaceDir string
+	engine             *gin.Engine
+	config             Config
+	authManager        *AuthManager
+	startTime          time.Time
+	workspaceDir       string
+	originalWorkingDir string
 }
 
 // NewServer creates a new PicoD server instance
@@ -108,6 +109,17 @@ func (s *Server) Run() error {
 	}
 
 	return server.ListenAndServe()
+}
+
+// RestoreWorkingDirectory restores the process working directory to its original state
+func (s *Server) RestoreWorkingDirectory() {
+	if s.originalWorkingDir != "" {
+		if err := os.Chdir(s.originalWorkingDir); err != nil {
+			klog.Warningf("failed to restore working directory to %q: %v", s.originalWorkingDir, err)
+		} else {
+			klog.Infof("restored working directory to: %q", s.originalWorkingDir)
+		}
+	}
 }
 
 // HealthCheckHandler handles health check requests

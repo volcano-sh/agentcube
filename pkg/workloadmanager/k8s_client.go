@@ -118,7 +118,16 @@ func NewK8sClient() (*K8sClient, error) {
 	}
 
 	// Create informer factory for core resources (Pods, etc.)
-	informerFactory := informers.NewSharedInformerFactory(clientset, 0)
+	// Use filtered factory to only cache pods with sandbox-name label
+	informerFactory := informers.NewFilteredSharedInformerFactory(
+		clientset,
+		0, // resync period
+		metav1.NamespaceAll,
+		func(opts *metav1.ListOptions) {
+			// Filter to only watch pods with sandbox-name label
+			opts.LabelSelector = "sandbox-name"
+		},
+	)
 
 	// Get pod informer and lister
 	podInformer := informerFactory.Core().V1().Pods().Informer()

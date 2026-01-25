@@ -83,9 +83,7 @@ func main() {
 		Cache: cache.Options{
 			ByObject: map[client.Object]cache.ByObject{
 				&corev1.Pod{}: {
-					Label: labels.SelectorFromSet(labels.Set{
-						"sandbox-name": "", // Only cache pods with this label (any value)
-					}),
+					Label: labels.Must(labels.Parse("sandbox-name")),
 				},
 			},
 		},

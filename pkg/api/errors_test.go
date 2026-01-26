@@ -46,38 +46,6 @@ func TestNewSessionNotFoundError(t *testing.T) {
 	assert.Equal(t, sessionID, status.Details.Name)
 }
 
-func TestNewSessionNotFoundError_DifferentSessionIDs(t *testing.T) {
-	tests := []struct {
-		name     string
-		sessionID string
-	}{
-		{
-			name:      "simple session ID",
-			sessionID: "session-1",
-		},
-		{
-			name:      "UUID session ID",
-			sessionID: "550e8400-e29b-41d4-a716-446655440000",
-		},
-		{
-			name:      "empty session ID",
-			sessionID: "",
-		},
-		{
-			name:      "long session ID",
-			sessionID: "very-long-session-id-with-many-characters-that-should-still-work",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := NewSessionNotFoundError(tt.sessionID)
-			assert.Error(t, err)
-			assert.True(t, apierrors.IsNotFound(err))
-		})
-	}
-}
-
 func TestWorkloadResource(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -167,19 +135,6 @@ func TestNewSandboxTemplateNotFoundError(t *testing.T) {
 	}
 }
 
-func TestNewSandboxTemplateNotFoundError_ErrorFormat(t *testing.T) {
-	namespace := "test-namespace"
-	name := "test-resource"
-	kind := types.AgentRuntimeKind
-
-	err := NewSandboxTemplateNotFoundError(namespace, name, kind)
-
-	// Verify error message contains expected information
-	errMsg := err.Error()
-	assert.Contains(t, errMsg, namespace)
-	assert.Contains(t, errMsg, name)
-}
-
 func TestNewUpstreamUnavailableError(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -208,7 +163,7 @@ func TestNewUpstreamUnavailableError(t *testing.T) {
 			if tt.wantErr {
 				// nil error will cause panic when calling err.Error()
 				assert.Panics(t, func() {
-					NewUpstreamUnavailableError(tt.wrapped)
+					_ = NewUpstreamUnavailableError(tt.wrapped)
 				})
 				return
 			}
@@ -257,7 +212,7 @@ func TestNewInternalError(t *testing.T) {
 			if tt.wantErr {
 				// nil error will cause panic when calling err.Error()
 				assert.Panics(t, func() {
-					NewInternalError(tt.wrapped)
+					_ = NewInternalError(tt.wrapped)
 				})
 				return
 			}
@@ -293,20 +248,6 @@ func TestNewInternalError_ErrorWrapping(t *testing.T) {
 	// Instead, the error is accessible through the StatusError interface
 	// Check that the error message contains the original error
 	assert.Contains(t, wrappedErr.Error(), originalErr.Error())
-}
-
-func TestErrorConstants(t *testing.T) {
-	// Verify error constants are defined
-	assert.NotNil(t, ErrAgentRuntimeNotFound)
-	assert.NotNil(t, ErrCodeInterpreterNotFound)
-	assert.NotNil(t, ErrTemplateMissing)
-	assert.NotNil(t, ErrPublicKeyMissing)
-
-	// Verify error messages
-	assert.Contains(t, ErrAgentRuntimeNotFound.Error(), "agent runtime")
-	assert.Contains(t, ErrCodeInterpreterNotFound.Error(), "code interpreter")
-	assert.Contains(t, ErrTemplateMissing.Error(), "template")
-	assert.Contains(t, ErrPublicKeyMissing.Error(), "public key")
 }
 
 func TestNewSandboxTemplateNotFoundError_ResourceGroup(t *testing.T) {

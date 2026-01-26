@@ -220,13 +220,13 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		}
 		escapeToken := createToken(t, routerPriv, escapeClaims)
 
-		escapeReqHTTP, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(escapeBody))
-		escapeReqHTTP.Header.Set("Authorization", "Bearer "+escapeToken)
-		escapeReqHTTP.Header.Set("Content-Type", "application/json")
+		req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(escapeBody))
+		req.Header.Set("Authorization", "Bearer "+escapeToken)
+		req.Header.Set("Content-Type", "application/json")
 
-		escapeResp, err := client.Do(escapeReqHTTP)
+		resp, err := client.Do(req)
 		require.NoError(t, err)
-		assert.Equal(t, http.StatusBadRequest, escapeResp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
 
 	t.Run("File Operations", func(t *testing.T) {
@@ -394,7 +394,6 @@ func TestPicoD_DefaultWorkspace(t *testing.T) {
 	}
 
 	server := NewServer(config)
-	defer server.RestoreWorkingDirectory()
 
 	// Verify workspaceDir is set to current working directory
 	cwd, err := os.Getwd()

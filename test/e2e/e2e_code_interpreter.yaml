@@ -23,6 +23,9 @@ spec:
       requests:
         cpu: "100m"
         memory: "128Mi"
+  volumes:
+    - name: workspace
+      emptyDir: {}
   sessionTimeout: "15m"
   maxSessionDuration: "8h"
 status: {}

@@ -65,8 +65,10 @@ Upon startup, every Router replica executes an **Atomic Initialization Routine*
 #### 2. Provisioning Phase
 
 - The **Router** sends a sandbox allocation request to the **WorkloadManager**. Crucially, this request **does not** contain key data.
-- The **WorkloadManager** constructs the Pod specification. It defines an environment variable `PICOD_AUTH_PUBLIC_KEY` that sources its value from the `picod-router-public-key` ConfigMap (using `valueFrom: configMapKeyRef`).
-- **PicoD** starts, reads the key from the **environment**, and initializes its JWT verifier.
+- The **WorkloadManager** constructs the Pod specification. It reads the Router's public key from the `picod-router-identity` Secret and defines an environment variable `AGENTCUBE_ROUTER_PUBLIC_KEY` in the Pod.
+  - **Primary Method**: WorkloadManager reads the public key from the Kubernetes Secret (`picod-router-identity`), which is maintained and updated by the Router.
+  - **Override Method** (dev/testing): If the `AGENTCUBE_ROUTER_PUBLIC_KEY` environment variable is explicitly set in the WorkloadManager deployment, it takes precedence over the Secret source. This is intended only for development and testing scenarios.
+- **PicoD** starts, reads the key from the **environment variable**, and initializes its JWT verifier.
 
 #### 3. Runtime Access Phase
 

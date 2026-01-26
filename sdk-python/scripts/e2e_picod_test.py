@@ -22,7 +22,7 @@ This test validates the new single-stage JWT verification flow where:
 
 Test Flow:
 1. Generate RSA key pair (simulating Router's key generation)
-2. Start PicoD container with PICOD_AUTH_PUBLIC_KEY env var
+2. Start PicoD container with AGENTCUBE_ROUTER_PUBLIC_KEY env var (simulating WorkloadManager injection)
 3. Start Router container (or simulate Router by signing JWTs locally)
 4. Test command execution, file operations through the authenticated flow
 """
@@ -32,6 +32,7 @@ import logging
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional
 
 import jwt
 import requests
@@ -76,7 +77,7 @@ def generate_key_pair():
 def start_picod_container(public_key_pem: bytes):
     """
     Start PicoD container with public key injected via environment variable.
-    This simulates the new architecture where WorkloadManager injects PICOD_AUTH_PUBLIC_KEY.
+    This simulates the new architecture where WorkloadManager injects AGENTCUBE_ROUTER_PUBLIC_KEY.
     """
     logger.info(f"Starting PicoD container {PICOD_CONTAINER_NAME}...")
 
@@ -90,13 +91,13 @@ def start_picod_container(public_key_pem: bytes):
         "docker", "run", "-d",
         "--name", PICOD_CONTAINER_NAME,
         "-p", f"{PICOD_PORT}:8080",
-        "-e", f"PICOD_AUTH_PUBLIC_KEY={pub_key_str}",
+        "-e", f"AGENTCUBE_ROUTER_PUBLIC_KEY={pub_key_str}",
         PICOD_IMAGE
     ]
 
     logger.info(
         f"Running: docker run -d --name {PICOD_CONTAINER_NAME} "
-        f"-p {PICOD_PORT}:8080 -e PICOD_AUTH_PUBLIC_KEY=<key> {PICOD_IMAGE}"
+        f"-p {PICOD_PORT}:8080 -e AGENTCUBE_ROUTER_PUBLIC_KEY=<key> {PICOD_IMAGE}"
     )
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -141,13 +142,13 @@ class RouterSimulator:
         self.picod_url = picod_url.rstrip("/")
         self.session = requests.Session()
 
-    def _sign_jwt(self, claims: dict = None) -> str:
+    def _sign_jwt(self, claims: Optional[Dict[str, Any]] = None) -> str:
         """Generate a JWT token like Router would."""
         now = datetime.now(timezone.utc)
         payload = {
             "iss": "agentcube-router",
-            "iat": now,
-            "exp": now + timedelta(minutes=5),
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(minutes=5)).timestamp()),
         }
         if claims:
             payload.update(claims)
@@ -168,7 +169,7 @@ class RouterSimulator:
 
         return self.session.request(method, url, headers=headers, **kwargs)
 
-    def execute_command(self, command: list, timeout: str = "30s") -> dict:
+    def execute_command(self, command: list, timeout: str = "30s") -> Dict[str, Any]:
         """Execute a command via PicoD."""
         payload = {
             "command": command if isinstance(command, list) else [command],
@@ -178,7 +179,7 @@ class RouterSimulator:
         resp.raise_for_status()
         return resp.json()
 
-    def upload_file(self, content: str, path: str):
+    def upload_file(self, content: str, path: str) -> Dict[str, Any]:
         """Upload a file to PicoD."""
         payload = {
             "path": path,

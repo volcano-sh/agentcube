@@ -304,7 +304,7 @@ func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alph
 	// Only inject public key for picod auth mode (default behavior)
 	if ci.Spec.AuthMode != runtimev1alpha1.AuthModeNone {
 		envVars = append(envVars, corev1.EnvVar{
-			Name:  "PICOD_AUTH_PUBLIC_KEY",
+			Name:  RouterPublicKeyEnvVar,
 			Value: GetCachedPublicKey(),
 		})
 	}

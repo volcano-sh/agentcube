@@ -40,14 +40,18 @@ import (
 )
 
 // Constants for Router's identity resources
-// WorkloadManager uses these to inject the public key into PicoD containers
+// WorkloadManager uses these to inject the public key into PicoD containers.
+// The WorkloadManager loads the public key from the Router's Secret (picod-router-identity)
+// as the primary source and caches it for use when creating PicoD pods.
+// The AGENTCUBE_ROUTER_PUBLIC_KEY environment variable is available as an optional override
+// for development and testing purposes only.
 const (
 	// IdentitySecretName is the name of the Secret storing Router's keys
 	IdentitySecretName = "picod-router-identity" //nolint:gosec // This is a name reference, not a credential
 	// PublicKeyDataKey is the key in the Secret data map for the public key
 	PublicKeyDataKey = "public.pem"
 	// RouterPublicKeyEnvVar is the environment variable for Router's public key
-	// When set, WorkloadManager will use this instead of reading from Secret
+	// When set, this can be used to override the Secret source (dev/testing only)
 	RouterPublicKeyEnvVar = "AGENTCUBE_ROUTER_PUBLIC_KEY"
 )
 
@@ -82,21 +86,17 @@ func IsPublicKeyCached() bool {
 	return cachedPublicKey != ""
 }
 
-// InitPublicKeyCache attempts to load the public key from environment variable first,
-// then falls back to loading from Router's Secret. It starts a background goroutine
-// that continuously tries to load the public key until successful. This handles the
-// case where Router hasn't started yet when WorkloadManager starts.
+// InitPublicKeyCache attempts to load the public key from Router's Secret (primary source).
+// It starts a background goroutine that continuously tries to load the public key until successful.
+// This handles the case where Router hasn't started yet when WorkloadManager starts.
+// Environment variable AGENTCUBE_ROUTER_PUBLIC_KEY is ONLY used as a dev/testing override
+// AFTER the Secret loading succeeds or after a configurable delay if Secret is unavailable.
 func InitPublicKeyCache(clientset kubernetes.Interface) {
 	go func() {
-		// Try to load from environment variable first
-		if err := loadPublicKeyFromEnv(); err == nil {
-			klog.Infof("loaded router public key from environment variable %s", RouterPublicKeyEnvVar)
-			return
-		}
-
-		// Fall back to loading from Secret with retries
+		// Primary method: Load from Secret with retries
 		retryInterval := 100 * time.Millisecond
 		maxRetryInterval := 10 * time.Second
+		secretLoadAttempts := 0
 
 		for {
 			err := loadPublicKeyFromSecret(clientset)
@@ -105,7 +105,9 @@ func InitPublicKeyCache(clientset kubernetes.Interface) {
 				return
 			}
 
-			klog.V(2).Infof("failed to load router public key from secret %s/%s: %v. retrying in %v...", IdentitySecretNamespace, IdentitySecretName, err, retryInterval)
+			secretLoadAttempts++
+			klog.V(2).Infof("failed to load router public key from secret %s/%s (attempt %d): %v. retrying in %v...",
+				IdentitySecretNamespace, IdentitySecretName, secretLoadAttempts, err, retryInterval)
 			time.Sleep(retryInterval)
 
 			// Exponential backoff with max limit
@@ -113,11 +115,23 @@ func InitPublicKeyCache(clientset kubernetes.Interface) {
 			if retryInterval > maxRetryInterval {
 				retryInterval = maxRetryInterval
 			}
+
+			// After 10 failed attempts (~10 seconds), try env var as fallback for dev/testing
+			if secretLoadAttempts >= 10 {
+				if err := loadPublicKeyFromEnv(); err == nil {
+					klog.Infof("loaded router public key from environment variable %s (dev/testing override after secret load failures)", RouterPublicKeyEnvVar)
+					return
+				}
+				// If env var is not set, continue retrying Secret indefinitely
+				secretLoadAttempts = 0
+			}
 		}
 	}()
 }
 
-// loadPublicKeyFromEnv reads the public key from environment variable
+// loadPublicKeyFromEnv reads the public key from environment variable.
+// This is intended for development and testing only and should NOT be used in production.
+// The environment variable is optional and only checked if explicitly set.
 func loadPublicKeyFromEnv() error {
 	publicKeyData := strings.TrimSpace(os.Getenv(RouterPublicKeyEnvVar))
 	if publicKeyData == "" {
@@ -378,7 +392,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	// Only inject public key for picod auth mode (default behavior)
 	if codeInterpreterObj.Spec.AuthMode == runtimev1alpha1.AuthModePicoD {
 		envVars = append(envVars, corev1.EnvVar{
-			Name:  "PICOD_AUTH_PUBLIC_KEY",
+			Name:  RouterPublicKeyEnvVar,
 			Value: GetCachedPublicKey(),
 		})
 	}

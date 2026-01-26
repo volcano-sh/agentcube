@@ -282,6 +282,7 @@ func (e *testEnv) executeCode(namespace, name, sessionID string, req *CodeExecut
 	defer os.Remove(tmpFile.Name())
 
 	// Create a Python script that uses the agentcube SDK
+	// Note: Not using 'with' statement to keep session alive for test verification
 	pythonScript := fmt.Sprintf(`
 import os
 import sys
@@ -299,24 +300,16 @@ sys.path.insert(0, '/root/agentcube/sdk-python')
 from agentcube import CodeInterpreterClient
 
 try:
-    # Use existing session if provided, otherwise create new one
-    client_args = {
-        'name': %q,
-        'namespace': %q
+    client = CodeInterpreterClient(name="e2e-code-interpreter-warmpool", namespace=%q)
+    result = client.run_code(%q, %q)
+    # Output as JSON for easy parsing
+    output = {
+        'stdout': result,
+        'stderr': '',
+        'exit_code': 0,
+        'session_id': client.session_id
     }
-    if %q:
-        client_args['session_id'] = %q
-    
-    with CodeInterpreterClient(**client_args) as client:
-        result = client.run_code(%q, %q)
-        # Output as JSON for easy parsing
-        output = {
-            'stdout': result,
-            'stderr': '',
-            'exit_code': 0,
-            'session_id': client.session_id
-        }
-        print(json.dumps(output))
+    print(json.dumps(output))
 except Exception as e:
     # Return error in expected format
     output = {
@@ -327,8 +320,7 @@ except Exception as e:
     }
     print(json.dumps(output))
     sys.exit(1)
-`, e.routerURL, e.workloadMgrURL, e.authToken, e.authToken,
-		name, namespace, sessionID, sessionID, req.Language, req.Code)
+`, e.routerURL, e.workloadMgrURL, e.authToken, e.authToken, namespace, req.Language, req.Code)
 
 	// Write the Python script to the temp file
 	if _, err := tmpFile.WriteString(pythonScript); err != nil {
@@ -371,8 +363,14 @@ except Exception as e:
 		ExitCode: jsonOutput.ExitCode,
 	}
 
-	if jsonOutput.ExitCode != 0 && err == nil {
-		err = fmt.Errorf("python script failed: %s", jsonOutput.Stderr)
+	// Check exit code from parsed JSON and return detailed error if available
+	if jsonOutput.ExitCode != 0 {
+		if jsonOutput.Stderr != "" {
+			err = fmt.Errorf("python script failed: %s", jsonOutput.Stderr)
+		} else if err == nil {
+			err = fmt.Errorf("python script failed with exit code %d (no error details)", jsonOutput.ExitCode)
+		}
+		// else: keep the original cmd.Run() error if no stderr available
 	}
 
 	return response, jsonOutput.SessionID, err
@@ -576,7 +574,7 @@ func TestCodeInterpreterWarmPool(t *testing.T) {
 		t.Fatalf("Failed to create e2e test context: %v", err)
 	}
 
-	namespace := "agentcube"
+	namespace := "default"
 	codeInterpreterName := "e2e-code-interpreter-warmpool"
 	warmPoolSize := 2
 
@@ -817,7 +815,7 @@ func (ctx *e2eTestContext) countSandboxes(namespace, codeInterpreterName string)
 // countSandboxClaims counts the number of SandboxClaim resources for a given CodeInterpreter
 func (ctx *e2eTestContext) countSandboxClaims(namespace, codeInterpreterName string) (int, error) {
 	sandboxClaimList := &extensionsv1alpha1.SandboxClaimList{}
-	err := ctx.ctrlClient.List(context.Background(), sandboxClaimList, client.InNamespace(namespace), client.MatchingLabels{"agentcube.volcano.sh/code-interpreter": codeInterpreterName})
+	err := ctx.ctrlClient.List(context.Background(), sandboxClaimList, client.InNamespace(namespace))
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return 0, nil

@@ -2,7 +2,7 @@ apiVersion: runtime.agentcube.volcano.sh/v1alpha1
 kind: CodeInterpreter
 metadata:
   name: e2e-code-interpreter-warmpool
-  namespace: agentcube
+  namespace: default
 spec:
   ports:
     - pathPrefix: "/"

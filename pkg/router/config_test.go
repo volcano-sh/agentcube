@@ -185,30 +185,3 @@ func TestConfig(t *testing.T) {
 		})
 	}
 }
-
-func TestConfigUsage(t *testing.T) {
-	// This test documents that Config is a simple data structure (DTO pattern).
-	// Actual validation and default value handling occurs in:
-	// - server.go: NewServer() function (validates nil, sets defaults for MaxConcurrentRequests)
-	// - server_test.go: TestNewServer tests (tests validation logic)
-	//
-	// Config itself has no validation logic, which is intentional.
-	// This keeps Config as a pure data transfer object, allowing validation
-	// to be handled at the appropriate layer (server initialization).
-
-	t.Run("config is a simple data transfer object", func(t *testing.T) {
-		// Verify Config can be created without any initialization
-		config := Config{
-			Port:                  "8080",
-			Debug:                 true,
-			EnableTLS:             false,
-			MaxConcurrentRequests: 100,
-		}
-
-		// Verify it can be used in common scenarios (e.g., passed to functions)
-		_ = config
-
-		// This test documents that Config is intentionally simple.
-		// Complex validation logic belongs in server.go where Config is consumed.
-	})
-}

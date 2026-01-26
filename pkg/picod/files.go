@@ -413,12 +413,7 @@ func (s *Server) setWorkspace(dir string) {
 	// Set workspace directory
 	s.workspaceDir = absDir
 
-	// Change process working directory to workspace
-	if err := os.Chdir(absDir); err != nil {
-		klog.Fatalf("failed to change working directory to %q: %v", absDir, err)
-	}
-
-	klog.Infof("workspace directory initialized and working directory changed to: %q", s.workspaceDir)
+	klog.Infof("workspace directory initialized: %q", s.workspaceDir)
 }
 
 // sanitizePath ensures path is within allowed scope, preventing directory traversal attacks

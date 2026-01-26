@@ -155,7 +155,6 @@ func (s *Server) Start(ctx context.Context) error {
 	klog.Infof("Server listening on %s", addr)
 
 	gc := newGarbageCollector(s.k8sClient, s.storeClient, 15*time.Second)
-	klog.Info("HTTP/2 support enabled (h2c for cleartext, native for TLS)")
 	go gc.run(ctx.Done())
 
 	// Start HTTP or HTTPS server

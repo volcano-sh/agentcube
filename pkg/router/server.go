@@ -177,7 +177,6 @@ func (s *Server) Start(ctx context.Context) error {
 
 	klog.Infof("Router server listening on %s", addr)
 
-	klog.Info("HTTP/2 support enabled (h2c for cleartext, native for TLS)")
 	// Start HTTP or HTTPS server
 	if s.config.EnableTLS {
 		if s.config.TLSCert == "" || s.config.TLSKey == "" {

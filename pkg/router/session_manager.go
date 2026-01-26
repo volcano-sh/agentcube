@@ -31,6 +31,7 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/api"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	"github.com/volcano-sh/agentcube/pkg/store"
+	"golang.org/x/net/http2"
 )
 
 // SessionManager defines the session management behavior on top of Store and the workload manager.
@@ -57,16 +58,23 @@ func NewSessionManager(storeClient store.Store) (SessionManager, error) {
 		return nil, fmt.Errorf("WORKLOAD_MANAGER_ADDR environment variable is not set")
 	}
 
+	// Create HTTP transport with HTTP/2 support
+	transport := &http.Transport{
+		MaxIdleConnsPerHost: 100,
+		DisableCompression:  false,
+	}
+	
+	// Configure transport for HTTP/2 support (including h2c for cleartext)
+	if err := http2.ConfigureTransport(transport); err != nil {
+		return nil, fmt.Errorf("failed to configure HTTP/2 transport: %w", err)
+	}
+
 	return &manager{
 		storeClient:     storeClient,
 		workloadMgrAddr: workloadMgrAddr,
 		httpClient: &http.Client{
-			Timeout: 2 * time.Minute, // consistent with manager setting
-			Transport: &http.Transport{
-				ForceAttemptHTTP2:   true,
-				MaxIdleConnsPerHost: 100,
-				DisableCompression:  false,
-			},
+			Timeout:   2 * time.Minute, // consistent with manager setting
+			Transport: transport,
 		},
 	}, nil
 }

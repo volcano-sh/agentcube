@@ -220,13 +220,13 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		}
 		escapeToken := createToken(t, routerPriv, escapeClaims)
 
-		req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(escapeBody))
-		req.Header.Set("Authorization", "Bearer "+escapeToken)
-		req.Header.Set("Content-Type", "application/json")
+		escapeReqHTTP, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(escapeBody))
+		escapeReqHTTP.Header.Set("Authorization", "Bearer "+escapeToken)
+		escapeReqHTTP.Header.Set("Content-Type", "application/json")
 
-		resp, err := client.Do(req)
+		escapeHTTPResp, err := client.Do(escapeReqHTTP)
 		require.NoError(t, err)
-		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, escapeHTTPResp.StatusCode)
 	})
 
 	t.Run("File Operations", func(t *testing.T) {

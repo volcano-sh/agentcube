@@ -63,11 +63,19 @@ func NewSessionManager(storeClient store.Store) (SessionManager, error) {
 		MaxIdleConnsPerHost: 100,
 		DisableCompression:  false,
 	}
-	
+
 	// Configure transport for HTTP/2 support (including h2c for cleartext)
-	if err := http2.ConfigureTransport(transport); err != nil {
+	// ConfigureTransports returns the HTTP/2 transport for further configuration
+	t2, err := http2.ConfigureTransports(transport)
+	if err != nil {
 		return nil, fmt.Errorf("failed to configure HTTP/2 transport: %w", err)
 	}
+
+	// Configure HTTP/2 ping settings for connection health checks
+	// ReadIdleTimeout: time to wait before sending a ping if no data is received
+	// PingTimeout: time to wait for a ping response before considering connection dead
+	t2.ReadIdleTimeout = 30 * time.Second
+	t2.PingTimeout = 15 * time.Second
 
 	return &manager{
 		storeClient:     storeClient,

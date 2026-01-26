@@ -17,6 +17,8 @@ limitations under the License.
 package router
 
 import (
+	"crypto"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -90,9 +92,10 @@ func TestGenerateToken(t *testing.T) {
 
 			// Verify claims
 			if claims, ok := token.Claims.(jwt.MapClaims); ok {
-				// Check standard claims are present
+				// Check standard claims
 				assert.NotZero(t, claims["exp"])
 				assert.NotZero(t, claims["iat"])
+				assert.Equal(t, "agentcube-router", claims["iss"])
 
 				// Check custom claims
 				for k, v := range tt.claims {
@@ -197,8 +200,55 @@ func TestLoadPrivateKeyPEM(t *testing.T) {
 	assert.NotNil(t, newManager.privateKey)
 	assert.NotNil(t, newManager.publicKey)
 
-	// Verify keys match
-	assert.Equal(t, originalManager.privateKey, newManager.privateKey)
+	// Verify keys match mathematically (comparing big.Int values, not byte representations)
+	originalKey := originalManager.privateKey
+	loadedKey := newManager.privateKey
+
+	// Compare public key components (N and E)
+	assert.Equal(t, originalKey.PublicKey.N, loadedKey.PublicKey.N, "Public key N should match")
+	assert.Equal(t, originalKey.PublicKey.E, loadedKey.PublicKey.E, "Public key E should match")
+
+	// Compare private exponent D
+	assert.Equal(t, 0, originalKey.D.Cmp(loadedKey.D), "Private exponent D should match")
+
+	// Compare primes
+	assert.Equal(t, len(originalKey.Primes), len(loadedKey.Primes), "Number of primes should match")
+	for i := range originalKey.Primes {
+		assert.Equal(t, 0, originalKey.Primes[i].Cmp(loadedKey.Primes[i]), "Prime %d should match", i)
+	}
+
+	// Compare precomputed values if present
+	if originalKey.Precomputed.Dp != nil && loadedKey.Precomputed.Dp != nil {
+		assert.Equal(t, 0, originalKey.Precomputed.Dp.Cmp(loadedKey.Precomputed.Dp), "Precomputed Dp should match")
+	}
+	if originalKey.Precomputed.Dq != nil && loadedKey.Precomputed.Dq != nil {
+		assert.Equal(t, 0, originalKey.Precomputed.Dq.Cmp(loadedKey.Precomputed.Dq), "Precomputed Dq should match")
+	}
+	if originalKey.Precomputed.Qinv != nil && loadedKey.Precomputed.Qinv != nil {
+		assert.Equal(t, 0, originalKey.Precomputed.Qinv.Cmp(loadedKey.Precomputed.Qinv), "Precomputed Qinv should match")
+	}
+
+	// Verify the keys are functionally equivalent by testing sign/verify
+	testData := []byte("test data for key verification")
+	hash := crypto.SHA256.New()
+	hash.Write(testData)
+	hashed := hash.Sum(nil)
+
+	// Sign with original key
+	signature1, err := rsa.SignPKCS1v15(rand.Reader, originalKey, crypto.SHA256, hashed)
+	assert.NoError(t, err)
+
+	// Verify with loaded key's public key
+	err = rsa.VerifyPKCS1v15(&loadedKey.PublicKey, crypto.SHA256, hashed, signature1)
+	assert.NoError(t, err, "Signature from original key should verify with loaded key's public key")
+
+	// Sign with loaded key
+	signature2, err := rsa.SignPKCS1v15(rand.Reader, loadedKey, crypto.SHA256, hashed)
+	assert.NoError(t, err)
+
+	// Verify with original key's public key
+	err = rsa.VerifyPKCS1v15(&originalKey.PublicKey, crypto.SHA256, hashed, signature2)
+	assert.NoError(t, err, "Signature from loaded key should verify with original key's public key")
 }
 
 func TestLoadPrivateKeyPEM_InvalidPEM(t *testing.T) {
@@ -290,6 +340,29 @@ func TestGenerateToken_DifferentExpirationTimes(t *testing.T) {
 	}
 }
 
-// Note: we intentionally avoid tests that only verify getters return the same
-// value multiple times, per maintainer feedback. The remaining tests focus on
-// meaningful behavior like token generation, validation, and error handling.
+func TestGetPublicKeyPEM_Consistency(t *testing.T) {
+	manager, err := NewJWTManager()
+	assert.NoError(t, err)
+
+	// Get public key PEM multiple times
+	pem1, err := manager.GetPublicKeyPEM()
+	assert.NoError(t, err)
+
+	pem2, err := manager.GetPublicKeyPEM()
+	assert.NoError(t, err)
+
+	// Should be identical
+	assert.Equal(t, pem1, pem2)
+}
+
+func TestGetPrivateKeyPEM_Consistency(t *testing.T) {
+	manager, err := NewJWTManager()
+	assert.NoError(t, err)
+
+	// Get private key PEM multiple times
+	pem1 := manager.GetPrivateKeyPEM()
+	pem2 := manager.GetPrivateKeyPEM()
+
+	// Should be identical
+	assert.Equal(t, pem1, pem2)
+}

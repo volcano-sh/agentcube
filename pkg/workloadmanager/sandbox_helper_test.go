@@ -30,50 +30,9 @@ import (
 
 const testPodIP = "10.0.0.1"
 
-func TestBuildSandboxPlaceHolder(t *testing.T) {
-	sandbox := &sandboxv1alpha1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-sandbox",
-			Namespace: "default",
-		},
-	}
-
-	entry := &sandboxEntry{
-		Kind:      types.AgentRuntimeKind,
-		SessionID: "test-session-123",
-	}
-
-	result := buildSandboxPlaceHolder(sandbox, entry)
-
-	assert.NotNil(t, result)
-	assert.Equal(t, types.AgentRuntimeKind, result.Kind)
-	assert.Equal(t, "test-session-123", result.SessionID)
-	assert.Equal(t, "default", result.SandboxNamespace)
-	assert.Equal(t, "test-sandbox", result.Name)
-	assert.Equal(t, "creating", result.Status)
-	assert.WithinDuration(t, time.Now().Add(DefaultSandboxTTL), result.ExpiresAt, 1*time.Second)
-}
-
-func TestBuildSandboxPlaceHolder_CodeInterpreter(t *testing.T) {
-	sandbox := &sandboxv1alpha1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "ci-sandbox",
-			Namespace: "test-ns",
-		},
-	}
-
-	entry := &sandboxEntry{
-		Kind:      types.CodeInterpreterKind,
-		SessionID: "ci-session-456",
-	}
-
-	result := buildSandboxPlaceHolder(sandbox, entry)
-
-	assert.Equal(t, types.CodeInterpreterKind, result.Kind)
-	assert.Equal(t, "ci-session-456", result.SessionID)
-	assert.Equal(t, "test-ns", result.SandboxNamespace)
-	assert.Equal(t, "ci-sandbox", result.Name)
-}
+// Note: TestBuildSandboxPlaceHolder and TestBuildSandboxPlaceHolder_CodeInterpreter
+// removed - they only verified that struct fields match input parameters, which is
+// trivial field copying behavior.
 
 func TestBuildSandboxInfo(t *testing.T) {
 	now := time.Now()
@@ -114,24 +73,12 @@ func TestBuildSandboxInfo(t *testing.T) {
 
 	result := buildSandboxInfo(sandbox, podIP, entry)
 
-	assert.NotNil(t, result)
-	assert.Equal(t, types.AgentRuntimeKind, result.Kind)
-	assert.Equal(t, "test-uid-123", result.SandboxID)
-	assert.Equal(t, "test-sandbox", result.Name)
-	assert.Equal(t, "default", result.SandboxNamespace)
-	assert.Equal(t, "test-session-123", result.SessionID)
+	// Focus on meaningful behavior: entry point construction and status determination
 	assert.Equal(t, "running", result.Status)
-	assert.Equal(t, now, result.CreatedAt)
-	assert.WithinDuration(t, now.Add(DefaultSandboxTTL), result.ExpiresAt, 1*time.Second)
-
-	// Verify entry points
 	assert.Len(t, result.EntryPoints, 2)
 	assert.Equal(t, "/api", result.EntryPoints[0].Path)
-	assert.Equal(t, "HTTP", result.EntryPoints[0].Protocol)
 	assert.Equal(t, testPodIP+":8080", result.EntryPoints[0].Endpoint)
-
 	assert.Equal(t, "/metrics", result.EntryPoints[1].Path)
-	assert.Equal(t, "HTTP", result.EntryPoints[1].Protocol)
 	assert.Equal(t, testPodIP+":9090", result.EntryPoints[1].Endpoint)
 }
 

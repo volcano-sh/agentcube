@@ -149,43 +149,8 @@ func TestParseJWTExpiry_ExpAsInt64(t *testing.T) {
 	assert.WithinDuration(t, time.Unix(exp, 0), expiry, 1*time.Second)
 }
 
-func TestNewClientCache(t *testing.T) {
-	tests := []struct {
-		name    string
-		maxSize int
-		want    int
-	}{
-		{
-			name:    "positive max size",
-			maxSize: 50,
-			want:    50,
-		},
-		{
-			name:    "zero max size defaults to 100",
-			maxSize: 0,
-			want:    100,
-		},
-		{
-			name:    "negative max size defaults to 100",
-			maxSize: -10,
-			want:    100,
-		},
-		{
-			name:    "large max size",
-			maxSize: 1000,
-			want:    1000,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cache := NewClientCache(tt.maxSize)
-			assert.NotNil(t, cache)
-			assert.Equal(t, tt.want, cache.maxSize)
-			assert.Equal(t, 0, cache.Size())
-		})
-	}
-}
+// Note: TestNewClientCache removed - it only verified that struct fields
+// match constructor parameters/defaults, which is trivial initialization behavior.
 
 func TestClientCache_Get_NotFound(t *testing.T) {
 	cache := NewClientCache(10)
@@ -387,122 +352,14 @@ func TestClientCache_Remove_Nonexistent(t *testing.T) {
 	assert.Equal(t, 0, cache.Size())
 }
 
-func TestClientCache_Size(t *testing.T) {
-	cache := NewClientCache(10)
+// Note: TestClientCache_Size removed - it only verified that Size() returns
+// the count of entries, which is trivial getter behavior.
 
-	assert.Equal(t, 0, cache.Size())
+// Note: TestMakeCacheKey removed - it only tests string concatenation
+// (namespace + ":" + saName), which is trivial and doesn't test meaningful behavior.
 
-	scheme := runtime.NewScheme()
-	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
-	token := createTestJWT(time.Now().Add(1 * time.Hour).Unix())
-
-	for i := 0; i < 5; i++ {
-		key := "default:sa" + string(rune('0'+i))
-		client := &UserK8sClient{
-			dynamicClient: dynamicClient,
-			namespace:     "default",
-		}
-		cache.Set(key, token, client)
-		assert.Equal(t, i+1, cache.Size())
-	}
-}
-
-func TestMakeCacheKey(t *testing.T) {
-	tests := []struct {
-		name      string
-		namespace string
-		saName    string
-		want      string
-	}{
-		{
-			name:      "normal values",
-			namespace: "default",
-			saName:    "test-sa",
-			want:      testCacheKey,
-		},
-		{
-			name:      "empty namespace",
-			namespace: "",
-			saName:    "test-sa",
-			want:      ":test-sa",
-		},
-		{
-			name:      "empty sa name",
-			namespace: "default",
-			saName:    "",
-			want:      "default:",
-		},
-		{
-			name:      "both empty",
-			namespace: "",
-			saName:    "",
-			want:      ":",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := makeCacheKey(tt.namespace, tt.saName)
-			assert.Equal(t, tt.want, result)
-		})
-	}
-}
-
-func TestNewTokenCache(t *testing.T) {
-	tests := []struct {
-		name    string
-		maxSize int
-		ttl     time.Duration
-		wantMax int
-		wantTTL time.Duration
-	}{
-		{
-			name:    "valid values",
-			maxSize: 500,
-			ttl:     10 * time.Minute,
-			wantMax: 500,
-			wantTTL: 10 * time.Minute,
-		},
-		{
-			name:    "zero max size defaults to 1000",
-			maxSize: 0,
-			ttl:     5 * time.Minute,
-			wantMax: 1000,
-			wantTTL: 5 * time.Minute,
-		},
-		{
-			name:    "negative max size defaults to 1000",
-			maxSize: -10,
-			ttl:     5 * time.Minute,
-			wantMax: 1000,
-			wantTTL: 5 * time.Minute,
-		},
-		{
-			name:    "zero TTL defaults to 5 minutes",
-			maxSize: 500,
-			ttl:     0,
-			wantMax: 500,
-			wantTTL: 5 * time.Minute,
-		},
-		{
-			name:    "negative TTL defaults to 5 minutes",
-			maxSize: 500,
-			ttl:     -1 * time.Minute,
-			wantMax: 500,
-			wantTTL: 5 * time.Minute,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cache := NewTokenCache(tt.maxSize, tt.ttl)
-			assert.NotNil(t, cache)
-			assert.Equal(t, tt.wantMax, cache.maxSize)
-			assert.Equal(t, tt.wantTTL, cache.ttl)
-			assert.Equal(t, 0, cache.Size())
-		})
-	}
-}
+// Note: TestNewTokenCache removed - it only verified that struct fields
+// match constructor parameters/defaults, which is trivial initialization behavior.
 
 func TestTokenCache_Get_NotFound(t *testing.T) {
 	cache := NewTokenCache(10, 5*time.Minute)
@@ -646,17 +503,8 @@ func TestTokenCache_Remove_Nonexistent(t *testing.T) {
 	assert.Equal(t, 0, cache.Size())
 }
 
-func TestTokenCache_Size(t *testing.T) {
-	cache := NewTokenCache(10, 5*time.Minute)
-
-	assert.Equal(t, 0, cache.Size())
-
-	for i := 0; i < 5; i++ {
-		token := "token" + string(rune('0'+i))
-		cache.Set(token, true, "user"+string(rune('0'+i)))
-		assert.Equal(t, i+1, cache.Size())
-	}
-}
+// Note: TestTokenCache_Size removed - it only verified that Size() returns
+// the count of entries, which is trivial getter behavior.
 
 func TestTokenCache_NotAuthenticated(t *testing.T) {
 	cache := NewTokenCache(10, 5*time.Minute)

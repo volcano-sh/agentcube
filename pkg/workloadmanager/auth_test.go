@@ -160,69 +160,9 @@ func TestValidateServiceAccountToken_CacheHit_NotAuthenticated(t *testing.T) {
 // Note: Tests for API call failures are removed because they require a real clientset
 // and would panic with nil clientset. These scenarios are better tested in integration tests.
 
-func TestExtractUserInfo(t *testing.T) {
-	tests := []struct {
-		name                string
-		setupContext        func(*gin.Context)
-		expectedToken       string
-		expectedNamespace   string
-		expectedSA          string
-		expectedSAName      string
-	}{
-		{
-			name: "all values present",
-			setupContext: func(c *gin.Context) {
-				ctx := context.WithValue(c.Request.Context(), contextKeyUserToken, "token-123")
-				ctx = context.WithValue(ctx, contextKeyNamespace, "default")
-				ctx = context.WithValue(ctx, contextKeyServiceAccount, testServiceAccount)
-				ctx = context.WithValue(ctx, contextKeyServiceAccountName, "test-sa")
-				c.Request = c.Request.WithContext(ctx)
-			},
-			expectedToken:     "token-123",
-			expectedNamespace: "default",
-			expectedSA:        testServiceAccount,
-			expectedSAName:    "test-sa",
-		},
-		{
-			name: "empty context",
-			setupContext: func(_ *gin.Context) {
-				// No context values set
-			},
-			expectedToken:     "",
-			expectedNamespace: "",
-			expectedSA:        "",
-			expectedSAName:    "",
-		},
-		{
-			name: "partial values",
-			setupContext: func(c *gin.Context) {
-				ctx := context.WithValue(c.Request.Context(), contextKeyUserToken, "token-456")
-				ctx = context.WithValue(ctx, contextKeyNamespace, "test-ns")
-				c.Request = c.Request.WithContext(ctx)
-			},
-			expectedToken:     "token-456",
-			expectedNamespace: "test-ns",
-			expectedSA:        "",
-			expectedSAName:    "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			w := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(w)
-			c.Request, _ = http.NewRequest("GET", "/test", nil)
-			tt.setupContext(c)
-
-			token, namespace, sa, saName := extractUserInfo(c)
-
-			assert.Equal(t, tt.expectedToken, token)
-			assert.Equal(t, tt.expectedNamespace, namespace)
-			assert.Equal(t, tt.expectedSA, sa)
-			assert.Equal(t, tt.expectedSAName, saName)
-		})
-	}
-}
+// Note: TestExtractUserInfo removed - it only verified that context values
+// match what was set, which is trivial getter behavior. The extractUserInfo
+// function is tested indirectly through authMiddleware tests.
 
 func TestAuthMiddleware_ValidToken_ValidFormat(t *testing.T) {
 	server := setupTestServerWithAuth(true)

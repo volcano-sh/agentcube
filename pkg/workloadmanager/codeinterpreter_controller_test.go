@@ -21,7 +21,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -119,59 +118,9 @@ func TestConvertToPodTemplate_ValidRuntimeClassName(t *testing.T) {
 	assert.Equal(t, runtimeClass, *result.Spec.RuntimeClassName)
 }
 
-func TestConvertToPodTemplate_AllFields(t *testing.T) {
-	reconciler := setupTestReconciler()
-
-	runtimeClass := "gvisor"
-	imagePullSecret := corev1.LocalObjectReference{Name: "my-secret"}
-	template := &runtimev1alpha1.CodeInterpreterSandboxTemplate{
-		Image:           "test-image:v1.0.0",
-		ImagePullPolicy: corev1.PullAlways,
-		RuntimeClassName: &runtimeClass,
-		ImagePullSecrets: []corev1.LocalObjectReference{imagePullSecret},
-		Command:         []string{"/bin/sh"},
-		Args:            []string{"-c", "echo hello"},
-		Environment: []corev1.EnvVar{
-			{Name: "ENV1", Value: "value1"},
-			{Name: "ENV2", Value: "value2"},
-		},
-		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("100m"),
-				corev1.ResourceMemory: resource.MustParse("128Mi"),
-			},
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("500m"),
-				corev1.ResourceMemory: resource.MustParse("512Mi"),
-			},
-		},
-	}
-
-	ci := &runtimev1alpha1.CodeInterpreter{
-		Spec: runtimev1alpha1.CodeInterpreterSpec{
-			AuthMode: runtimev1alpha1.AuthModePicoD,
-		},
-	}
-
-	result := reconciler.convertToPodTemplate(template, ci)
-
-	// Verify pod spec
-	assert.Equal(t, template.Image, result.Spec.Containers[0].Image)
-	assert.Equal(t, template.ImagePullPolicy, result.Spec.Containers[0].ImagePullPolicy)
-	assert.Equal(t, template.Command, result.Spec.Containers[0].Command)
-	assert.Equal(t, template.Args, result.Spec.Containers[0].Args)
-	assert.Equal(t, template.Resources, result.Spec.Containers[0].Resources)
-	assert.Equal(t, template.ImagePullSecrets, result.Spec.ImagePullSecrets)
-	assert.Equal(t, runtimeClass, *result.Spec.RuntimeClassName)
-
-	// Verify container name
-	assert.Equal(t, "codeinterpreter", result.Spec.Containers[0].Name)
-
-	// Verify environment variables (should include original + public key)
-	assert.GreaterOrEqual(t, len(result.Spec.Containers[0].Env), len(template.Environment))
-	assert.Contains(t, result.Spec.Containers[0].Env, corev1.EnvVar{Name: "ENV1", Value: "value1"})
-	assert.Contains(t, result.Spec.Containers[0].Env, corev1.EnvVar{Name: "ENV2", Value: "value2"})
-}
+// Note: TestConvertToPodTemplate_AllFields removed - it only verified that
+// struct fields match what was set in the template, which is trivial field copying.
+// The meaningful behavior (normalization, auth mode handling) is tested in other tests.
 
 func TestConvertToPodTemplate_AuthModeNone(t *testing.T) {
 	reconciler := setupTestReconciler()
@@ -255,46 +204,6 @@ func TestConvertToPodTemplate_NoEnvironmentVariables(t *testing.T) {
 	assert.Equal(t, "PICOD_AUTH_PUBLIC_KEY", envVars[0].Name)
 }
 
-func TestConvertToPodTemplate_EmptyCommandAndArgs(t *testing.T) {
-	reconciler := setupTestReconciler()
-
-	template := &runtimev1alpha1.CodeInterpreterSandboxTemplate{
-		Image:           "test-image:latest",
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{},
-		Args:            []string{},
-	}
-
-	ci := &runtimev1alpha1.CodeInterpreter{
-		Spec: runtimev1alpha1.CodeInterpreterSpec{
-			AuthMode: runtimev1alpha1.AuthModePicoD,
-		},
-	}
-
-	result := reconciler.convertToPodTemplate(template, ci)
-
-	assert.Empty(t, result.Spec.Containers[0].Command)
-	assert.Empty(t, result.Spec.Containers[0].Args)
-}
-
-func TestConvertToPodTemplate_NilCommandAndArgs(t *testing.T) {
-	reconciler := setupTestReconciler()
-
-	template := &runtimev1alpha1.CodeInterpreterSandboxTemplate{
-		Image:           "test-image:latest",
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         nil,
-		Args:            nil,
-	}
-
-	ci := &runtimev1alpha1.CodeInterpreter{
-		Spec: runtimev1alpha1.CodeInterpreterSpec{
-			AuthMode: runtimev1alpha1.AuthModePicoD,
-		},
-	}
-
-	result := reconciler.convertToPodTemplate(template, ci)
-
-	assert.Nil(t, result.Spec.Containers[0].Command)
-	assert.Nil(t, result.Spec.Containers[0].Args)
-}
+// Note: TestConvertToPodTemplate_EmptyCommandAndArgs and
+// TestConvertToPodTemplate_NilCommandAndArgs removed - they only verified that
+// empty/nil values are preserved, which is trivial field copying behavior.

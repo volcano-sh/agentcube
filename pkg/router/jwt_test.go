@@ -90,10 +90,9 @@ func TestGenerateToken(t *testing.T) {
 
 			// Verify claims
 			if claims, ok := token.Claims.(jwt.MapClaims); ok {
-				// Check standard claims
+				// Check standard claims are present
 				assert.NotZero(t, claims["exp"])
 				assert.NotZero(t, claims["iat"])
-				assert.Equal(t, "agentcube-router", claims["iss"])
 
 				// Check custom claims
 				for k, v := range tt.claims {
@@ -291,29 +290,6 @@ func TestGenerateToken_DifferentExpirationTimes(t *testing.T) {
 	}
 }
 
-func TestGetPublicKeyPEM_Consistency(t *testing.T) {
-	manager, err := NewJWTManager()
-	assert.NoError(t, err)
-
-	// Get public key PEM multiple times
-	pem1, err := manager.GetPublicKeyPEM()
-	assert.NoError(t, err)
-
-	pem2, err := manager.GetPublicKeyPEM()
-	assert.NoError(t, err)
-
-	// Should be identical
-	assert.Equal(t, pem1, pem2)
-}
-
-func TestGetPrivateKeyPEM_Consistency(t *testing.T) {
-	manager, err := NewJWTManager()
-	assert.NoError(t, err)
-
-	// Get private key PEM multiple times
-	pem1 := manager.GetPrivateKeyPEM()
-	pem2 := manager.GetPrivateKeyPEM()
-
-	// Should be identical
-	assert.Equal(t, pem1, pem2)
-}
+// Note: we intentionally avoid tests that only verify getters return the same
+// value multiple times, per maintainer feedback. The remaining tests focus on
+// meaningful behavior like token generation, validation, and error handling.

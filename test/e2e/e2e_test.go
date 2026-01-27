@@ -649,19 +649,40 @@ func (e *testEnv) executeAndVerifyCode(t *testing.T, namespace, name, code, expe
 
 func (ctx *e2eTestContext) verifyWarmPoolStatus(t *testing.T, namespace, name string, warmPoolSize int, initialPods []string) {
 	t.Log("Verifying warmpool post-execution status...")
-	time.Sleep(2 * time.Second)
 
-	claims, err := ctx.countSandboxClaims(namespace, name)
+	// 1. Find the SandboxClaim owned by the CodeInterpreter
+	claim, err := ctx.getSandboxClaimByOwner(namespace, "CodeInterpreter", name)
 	require.NoError(t, err)
-	require.Greater(t, claims, 0)
+	require.NotNil(t, claim, "Should find exactly one SandboxClaim owned by CodeInterpreter")
 
-	currentPodCount, err := ctx.countWarmPoolPods(namespace, name)
+	// 2. Find the Sandbox owned by that SandboxClaim
+	sandbox, err := ctx.getSandboxByOwner(namespace, "SandboxClaim", claim.Name)
 	require.NoError(t, err)
-	require.Equal(t, warmPoolSize, currentPodCount)
+	require.NotNil(t, sandbox, "Should find exactly one Sandbox owned by SandboxClaim")
 
-	claimedPod, err := ctx.findPodWithSandboxClaim(namespace, initialPods)
+	// 3. Find the Pod owned by that Sandbox
+	pod, err := ctx.getPodByOwner(namespace, "Sandbox", sandbox.Name)
 	require.NoError(t, err)
-	require.NotEmpty(t, claimedPod, "One of the initial warmpool pods should be claimed")
+	require.NotNil(t, pod, "Should find exactly one Pod owned by Sandbox")
+
+	// 4. Verify this pod is from the initial warmpool
+	found := false
+	for _, p := range initialPods {
+		if p == pod.Name {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "The claimed pod %s should be one of the initial warmpool pods: %v", pod.Name, initialPods)
+
+	// 5. Verify warmpool still has warmPoolSize pods (re-filled)
+	require.Eventually(t, func() bool {
+		currentPodCount, err := ctx.countWarmPoolPods(namespace, name)
+		if err != nil {
+			return false
+		}
+		return currentPodCount == warmPoolSize
+	}, 30*time.Second, 1*time.Second, "Warmpool should be re-filled to %d pods", warmPoolSize)
 }
 
 // ===== YAML Helper Functions (using controller-runtime client) =====
@@ -904,44 +925,76 @@ func (ctx *e2eTestContext) arePodsReady(namespace, codeInterpreterName string) (
 	return warmPoolPods == readyPods, nil
 }
 
-// findPodWithSandboxClaim finds a pod from the initial list that now has a sandboxclaim owner reference
-func (ctx *e2eTestContext) findPodWithSandboxClaim(namespace string, podNames []string) (string, error) {
-	getCtx := context.Background()
-
-	for _, podName := range podNames {
-		pod, err := ctx.kubeClient.CoreV1().Pods(namespace).Get(
-			getCtx,
-			podName,
-			metav1.GetOptions{},
-		)
-		if err != nil {
-			// Pod might have been deleted, skip it
-			if apierrors.IsNotFound(err) {
-				continue
-			}
-			return "", fmt.Errorf("failed to get pod %s: %w", podName, err)
-		}
-
-		// Check if pod has a SandboxClaim or Sandbox owner reference
-		// Note: The pod doesn't necessarily get a SandboxClaim owner ref, but it definitely loses the SandboxWarmPool owner ref
-		// or gets a Sandbox owner ref.
-		for _, owner := range pod.OwnerReferences {
-			if owner.Kind == "SandboxClaim" || owner.Kind == "Sandbox" {
-				return podName, nil
-			}
-		}
-
-		// Double check: if it's NO LONGER owned by SandboxWarmPool, that's also a strong signal it's claimed or being transitioned?
-		// But let's stick to positive assertion of new owner if possible, or absence of old owner if that's the only change.
-		// User said: "Use 'ownerReferences' to check if the pods belong to a sandbox warmpool or sandbox instead of labels"
-		// If it belongs to Sandbox, it should have Sandbox owner.
-		// If the user's system adds Sandbox owner, we find it.
-
-		// If we can't find positive Sandbox owner, we might check absence of WarmPool owner.
-		// Note: If the pod was in the warmpool list (initialPods) and is now not owned by WarmPool,
-		// it's likely consumed. However, waiting for Sandbox/SandboxClaim owner is safer,
-		// so we return only if we see Sandbox/SandboxClaim owner (checked above).
+// getSandboxClaimByOwner finds exactly one SandboxClaim owned by the specified owner
+func (ctx *e2eTestContext) getSandboxClaimByOwner(namespace, ownerKind, ownerName string) (*extensionsv1alpha1.SandboxClaim, error) {
+	sandboxClaimList := &extensionsv1alpha1.SandboxClaimList{}
+	err := ctx.ctrlClient.List(context.Background(), sandboxClaimList, client.InNamespace(namespace))
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sandboxclaims: %w", err)
 	}
 
-	return "", nil
+	var found *extensionsv1alpha1.SandboxClaim
+	for i := range sandboxClaimList.Items {
+		claim := &sandboxClaimList.Items[i]
+		for _, ownerRef := range claim.OwnerReferences {
+			if ownerRef.Kind == ownerKind && ownerRef.Name == ownerName {
+				if found != nil {
+					return nil, fmt.Errorf("found multiple SandboxClaims owned by %s/%s", ownerKind, ownerName)
+				}
+				found = claim
+				break
+			}
+		}
+	}
+
+	return found, nil
+}
+
+// getSandboxByOwner finds exactly one Sandbox owned by the specified owner
+func (ctx *e2eTestContext) getSandboxByOwner(namespace, ownerKind, ownerName string) (*sandboxv1alpha1.Sandbox, error) {
+	sandboxList := &sandboxv1alpha1.SandboxList{}
+	err := ctx.ctrlClient.List(context.Background(), sandboxList, client.InNamespace(namespace))
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sandboxes: %w", err)
+	}
+
+	var found *sandboxv1alpha1.Sandbox
+	for i := range sandboxList.Items {
+		sandbox := &sandboxList.Items[i]
+		for _, ownerRef := range sandbox.OwnerReferences {
+			if ownerRef.Kind == ownerKind && ownerRef.Name == ownerName {
+				if found != nil {
+					return nil, fmt.Errorf("found multiple Sandboxes owned by %s/%s", ownerKind, ownerName)
+				}
+				found = sandbox
+				break
+			}
+		}
+	}
+
+	return found, nil
+}
+
+// getPodByOwner finds exactly one Pod owned by the specified owner
+func (ctx *e2eTestContext) getPodByOwner(namespace, ownerKind, ownerName string) (*corev1.Pod, error) {
+	podList, err := ctx.kubeClient.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	var found *corev1.Pod
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		for _, ownerRef := range pod.OwnerReferences {
+			if ownerRef.Kind == ownerKind && ownerRef.Name == ownerName {
+				if found != nil {
+					return nil, fmt.Errorf("found multiple Pods owned by %s/%s", ownerKind, ownerName)
+				}
+				found = pod
+				break
+			}
+		}
+	}
+
+	return found, nil
 }

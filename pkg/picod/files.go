@@ -401,15 +401,6 @@ func (s *Server) setWorkspace(dir string) {
 		klog.Fatalf("failed to create workspace directory %q: %v", absDir, err)
 	}
 
-	// Verify path exists and is a directory
-	stat, err := os.Stat(absDir)
-	if err != nil {
-		klog.Fatalf("failed to stat workspace directory %q: %v", absDir, err)
-	}
-	if !stat.IsDir() {
-		klog.Fatalf("workspace path %q is not a directory", absDir)
-	}
-
 	// Set workspace directory
 	s.workspaceDir = absDir
 

@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/selection"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/klog/v2"
@@ -74,11 +75,13 @@ func main() {
 
 	// Setup controller manager with filtered cache for Pods
 	// Only cache pods that have the "sandbox-name" label to reduce memory usage
-	labelSelector, err := labels.Parse("sandbox-name")
+	requirement, err := labels.NewRequirement(workloadmanager.SandboxNameLabelKey, selection.Exists, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "unable to parse label selector: %v\n", err)
+		fmt.Fprintf(os.Stderr, "unable to create label requirement: %v\n", err)
 		os.Exit(1)
 	}
+	labelSelector := labels.NewSelector().Add(*requirement)
+	
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: schemeBuilder,
 		Metrics: metricsserver.Options{

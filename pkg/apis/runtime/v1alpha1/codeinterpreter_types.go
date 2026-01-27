@@ -75,7 +75,7 @@ type CodeInterpreterSpec struct {
 	WarmPoolSize *int32 `json:"warmPoolSize,omitempty"`
 
 	// AuthMode specifies the authentication mode for the sandbox runtime.
-	// - "picod" (default): Inject PICOD_AUTH_PUBLIC_KEY from Router Secret, requires Router to be running
+	// - "picod" (default): Inject AGENTCUBE_ROUTER_PUBLIC_KEY from Router Secret, requires Router to be running
 	// - "none": No authentication injection (for custom images that handle auth differently)
 	// +kubebuilder:default="picod"
 	// +kubebuilder:validation:Enum=picod;none
@@ -174,7 +174,7 @@ type TargetPort struct {
 type AuthModeType string
 
 const (
-	// AuthModePicoD injects PICOD_AUTH_PUBLIC_KEY from Router Secret
+	// AuthModePicoD injects AGENTCUBE_ROUTER_PUBLIC_KEY from Router Secret
 	AuthModePicoD AuthModeType = "picod"
 	// AuthModeNone disables auth injection for custom images
 	AuthModeNone AuthModeType = "none"

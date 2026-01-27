@@ -52,7 +52,7 @@ spec:
                 default: picod
                 description: |-
                   AuthMode specifies the authentication mode for the sandbox runtime.
-                  - "picod" (default): Inject PICOD_AUTH_PUBLIC_KEY from Router Secret, requires Router to be running
+                  - "picod" (default): Inject AGENTCUBE_ROUTER_PUBLIC_KEY from Router Secret, requires Router to be running
                   - "none": No authentication injection (for custom images that handle auth differently)
                 enum:
                 - picod

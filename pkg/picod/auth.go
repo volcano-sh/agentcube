@@ -36,8 +36,8 @@ const (
 	// MaxBodySize limits request body size to prevent memory exhaustion
 	MaxBodySize = 32 << 20 // 32 MB
 
-	// PublicKeyEnvVar is the environment variable name for the public key
-	PublicKeyEnvVar = "PICOD_AUTH_PUBLIC_KEY"
+	// PublicKeyEnvVar is the environment variable name for the Router's public key
+	PublicKeyEnvVar = "AGENTCUBE_ROUTER_PUBLIC_KEY"
 )
 
 // AuthManager manages RSA public key authentication

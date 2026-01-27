@@ -37,6 +37,10 @@ spec:
               value: {{ .Values.redis.password | quote }}
             - name: REDIS_ADDR
               value: {{ .Values.redis.addr | quote }}
+            {{- if .Values.workloadmanager.routerPublicKey }}
+            - name: AGENTCUBE_ROUTER_PUBLIC_KEY
+              value: {{ .Values.workloadmanager.routerPublicKey | quote }}
+            {{- end }}
             {{- with .Values.workloadmanager.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

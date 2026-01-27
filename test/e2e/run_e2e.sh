@@ -364,13 +364,6 @@ for i in $(seq 1 10); do
     sleep 1
 done
 
-# Run tests
-echo "Running Go tests..."
-WORKLOAD_MANAGER_ADDR="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN go test -v ./test/e2e/...
-
-echo "Running Python CodeInterpreter tests..."
-cd "$(dirname "$0")"
-
 # Setup Python virtual environment for testing
 if [ ! -d "$E2E_VENV_DIR" ]; then
     echo "Creating Python virtual environment..."
@@ -382,9 +375,17 @@ source "$E2E_VENV_DIR/bin/activate"
 pip install --upgrade pip
 
 # Install agentcube SDK in development mode
-pip install -e ../../sdk-python
+# We are currently in project root, sdk-python is at ./sdk-python
+pip install -e ./sdk-python
 
 # Check if agentcube package is available after installation
 require_python
+
+# Run tests
+echo "Running Go tests..."
+WORKLOAD_MANAGER_ADDR="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN go test -v ./test/e2e/...
+
+echo "Running Python CodeInterpreter tests..."
+cd "$(dirname "$0")"
 
 WORKLOAD_MANAGER_ADDR="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py

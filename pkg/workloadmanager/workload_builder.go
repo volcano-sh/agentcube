@@ -145,6 +145,8 @@ type buildSandboxClaimParams struct {
 	name                string
 	sandboxTemplateName string
 	sessionID           string
+	// ownerReference is the reference to the CodeInterpreter that creates this SandboxClaim
+	ownerReference *metav1.OwnerReference
 }
 
 // buildSandboxObject builds a Sandbox object from parameters
@@ -215,6 +217,10 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 				Name: params.sandboxTemplateName,
 			},
 		},
+	}
+	// Set owner reference to the CodeInterpreter that creates this SandboxClaim
+	if params.ownerReference != nil {
+		sandboxClaim.ObjectMeta.OwnerReferences = []metav1.OwnerReference{*params.ownerReference}
 	}
 	return sandboxClaim
 }
@@ -327,6 +333,12 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 			name:                sandboxName,
 			sandboxTemplateName: codeInterpreterName,
 			sessionID:           sessionID,
+			ownerReference: &metav1.OwnerReference{
+				APIVersion: codeInterpreterObj.APIVersion,
+				Kind:       codeInterpreterObj.Kind,
+				Name:       codeInterpreterObj.Name,
+				UID:        codeInterpreterObj.UID,
+			},
 		})
 		simpleSandbox := &sandboxv1alpha1.Sandbox{
 			ObjectMeta: metav1.ObjectMeta{

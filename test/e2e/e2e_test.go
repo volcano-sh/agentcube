@@ -18,20 +18,117 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+	agentcubeclientset "github.com/volcano-sh/agentcube/client-go/clientset/versioned"
+	"github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 )
 
 const (
 	defaultRouterURL      = "http://localhost:8081"
 	defaultWorkloadMgrURL = "http://localhost:8080"
+
+	// ownerKindSandboxWarmPool is the owner reference kind for SandboxWarmPool resources
+	ownerKindSandboxWarmPool = "SandboxWarmPool"
 )
+
+var (
+	scheme = runtime.NewScheme()
+)
+
+func init() {
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(sandboxv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(extensionsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(v1alpha1.AddToScheme(scheme))
+}
+
+// e2eTestContext holds the Kubernetes clients needed for e2e tests
+type e2eTestContext struct {
+	kubeClient      *kubernetes.Clientset
+	agentcubeClient *agentcubeclientset.Clientset
+	dynamicClient   dynamic.Interface
+	ctrlClient      client.Client
+	config          *rest.Config
+}
+
+// newE2ETestContext creates a new e2eTestContext with initialized clients
+func newE2ETestContext() (*e2eTestContext, error) {
+	config, err := getKubeConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get kubeconfig: %w", err)
+	}
+
+	kubeClient, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+
+	agentcubeClient, err := agentcubeclientset.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AgentCube client: %w", err)
+	}
+
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	ctrlClient, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create controller-runtime client: %w", err)
+	}
+
+	return &e2eTestContext{
+		kubeClient:      kubeClient,
+		agentcubeClient: agentcubeClient,
+		dynamicClient:   dynamicClient,
+		ctrlClient:      ctrlClient,
+		config:          config,
+	}, nil
+}
+
+// getKubeConfig returns the Kubernetes REST config
+func getKubeConfig() (*rest.Config, error) {
+	// Try in-cluster config first
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		// If not in cluster, use default kubeconfig loading rules
+		loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+		configOverrides := &clientcmd.ConfigOverrides{}
+		kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
+		config, err = kubeConfig.ClientConfig()
+		if err != nil {
+			return nil, fmt.Errorf("failed to load kubeconfig: %w", err)
+		}
+	}
+	return config, nil
+}
 
 type testEnv struct {
 	routerURL      string
@@ -160,6 +257,126 @@ func (e *testEnv) invokeAgentRuntime(namespace, name, sessionID string, req *Age
 	}
 
 	return &invokeResp, responseSessionID, nil
+}
+
+// CodeExecuteRequest represents the request payload for code execution
+type CodeExecuteRequest struct {
+	Language string                 `json:"language"`
+	Code     string                 `json:"code"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// CodeExecuteResponse represents the response from code execution
+type CodeExecuteResponse struct {
+	Output   string                 `json:"stdout,omitempty"`
+	Error    string                 `json:"stderr,omitempty"`
+	ExitCode int                    `json:"exit_code,omitempty"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// executeCode executes code through the CodeInterpreter API using Python SDK
+func (e *testEnv) executeCode(namespace, name string, req *CodeExecuteRequest) (*CodeExecuteResponse, string, error) {
+	// Create a temporary Python file
+	tmpFile, err := os.CreateTemp("", "e2e-code-exec-*.py")
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	// Create a Python script that uses the agentcube SDK
+	// Note: Not using 'with' statement to keep session alive for test verification
+	pythonScript := fmt.Sprintf(`
+import os
+import sys
+import json
+
+# Set environment variables
+os.environ['ROUTER_URL'] = %q
+os.environ['WORKLOAD_MANAGER_URL'] = %q
+if %q:
+    os.environ['API_TOKEN'] = %q
+
+# Add SDK to path
+sys.path.insert(0, '/root/agentcube/sdk-python')
+
+from agentcube import CodeInterpreterClient
+
+try:
+    client = CodeInterpreterClient(name=%q, namespace=%q)
+    result = client.run_code(%q, %q)
+    # Output as JSON for easy parsing
+    output = {
+        'stdout': result,
+        'stderr': '',
+        'exit_code': 0,
+        'session_id': client.session_id
+    }
+    print(json.dumps(output))
+except Exception as e:
+    # Return error in expected format
+    output = {
+        'stdout': '',
+        'stderr': str(e),
+        'exit_code': 1,
+        'session_id': ''
+    }
+    print(json.dumps(output))
+    sys.exit(1)
+`, e.routerURL, e.workloadMgrURL, e.authToken, e.authToken, name, namespace, req.Language, req.Code)
+
+	// Write the Python script to the temp file
+	if _, err := tmpFile.WriteString(pythonScript); err != nil {
+		return nil, "", fmt.Errorf("failed to write temp file: %w", err)
+	}
+	tmpFile.Close()
+
+	// Execute the Python file with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	//nolint:gosec // G204: tmpFile.Name() is controlled by this test, not user input
+	cmd := exec.CommandContext(ctx, "python3", tmpFile.Name())
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
+	output := stdout.String()
+
+	// If stderr has content but stdout is empty, use stderr as output for error info
+	if output == "" && stderr.Len() > 0 {
+		output = stderr.String()
+	}
+
+	// Parse the JSON output
+	var jsonOutput struct {
+		Stdout    string `json:"stdout"`
+		Stderr    string `json:"stderr"`
+		ExitCode  int    `json:"exit_code"`
+		SessionID string `json:"session_id"`
+	}
+
+	if err := json.Unmarshal([]byte(output), &jsonOutput); err != nil {
+		return nil, "", fmt.Errorf("failed to parse python output: %w, output: %s, stderr: %s", err, output, stderr.String())
+	}
+
+	response := &CodeExecuteResponse{
+		Output:   jsonOutput.Stdout,
+		Error:    jsonOutput.Stderr,
+		ExitCode: jsonOutput.ExitCode,
+	}
+
+	// Check exit code from parsed JSON and return detailed error if available
+	if jsonOutput.ExitCode != 0 {
+		if jsonOutput.Stderr != "" {
+			err = fmt.Errorf("python script failed: %s", jsonOutput.Stderr)
+		} else if err == nil {
+			err = fmt.Errorf("python script failed with exit code %d (no error details)", jsonOutput.ExitCode)
+		}
+		// else: keep the original cmd.Run() error if no stderr available
+	}
+
+	return response, jsonOutput.SessionID, err
 }
 
 // TestAgentRuntimeBasicInvocation tests basic echo-agent functionality
@@ -348,4 +565,436 @@ func TestAgentRuntimeSessionTTL(t *testing.T) {
 			t.Logf("Session still active after TTL should have expired - this may indicate TTL implementation needs checking")
 		}
 	})
+}
+
+// TestCodeInterpreterWarmPool tests: Code interpreter with warmpool functionality
+func TestCodeInterpreterWarmPool(t *testing.T) {
+	env := newTestEnv(t)
+	ctx, err := newE2ETestContext()
+	require.NoError(t, err)
+
+	yamlPath := "e2e_code_interpreter_warmpool.yaml"
+	codeInterpreter, err := loadCodeInterpreterYAML(yamlPath)
+	require.NoError(t, err)
+
+	namespace := codeInterpreter.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
+	name := codeInterpreter.Name
+	warmPoolSize := 0
+	if codeInterpreter.Spec.WarmPoolSize != nil {
+		warmPoolSize = int(*codeInterpreter.Spec.WarmPoolSize)
+	}
+
+	t.Logf("Applying %s...", yamlPath)
+	require.NoError(t, ctx.applyYamlFile(yamlPath))
+
+	defer ctx.cleanupCodeInterpreter(t, namespace, name, yamlPath)
+
+	initialPods := ctx.verifyWarmPoolReady(t, namespace, name, warmPoolSize)
+
+	env.executeAndVerifyCode(t, namespace, name, "print('Hello from warmpool!')", "Hello from warmpool!")
+
+	ctx.verifyWarmPoolStatus(t, namespace, name, warmPoolSize, initialPods)
+}
+
+func (ctx *e2eTestContext) cleanupCodeInterpreter(t *testing.T, namespace, name, yamlPath string) {
+	t.Log("Cleaning up code interpreter resources...")
+	if err := ctx.deleteYamlFile(yamlPath); err != nil {
+		t.Logf("Failed to delete yaml file: %v", err)
+	}
+
+	require.Eventually(t, func() bool {
+		claims, err := ctx.countSandboxClaims(namespace, name)
+		if err != nil {
+			return false
+		}
+		return claims == 0
+	}, 30*time.Second, 1*time.Second, "SandboxClaims should be deleted")
+
+	require.Eventually(t, func() bool {
+		pods, err := ctx.countWarmPoolPods(namespace, name)
+		if err != nil {
+			return false
+		}
+		return pods == 0
+	}, 30*time.Second, 1*time.Second, "WarmPool pods should be deleted")
+}
+
+func (ctx *e2eTestContext) verifyWarmPoolReady(t *testing.T, namespace, name string, expectedSize int) []string {
+	t.Logf("Waiting for warmpool to be created with %d pods...", expectedSize)
+	err := ctx.waitForWarmPoolReady(namespace, name, expectedSize, 5*time.Minute)
+	require.NoError(t, err)
+
+	pods, err := ctx.getWarmPoolPodNames(namespace, name)
+	require.NoError(t, err)
+	return pods
+}
+
+func (e *testEnv) executeAndVerifyCode(t *testing.T, namespace, name, code, expectedOutput string) string {
+	t.Log("Executing code command...")
+	codeReq := &CodeExecuteRequest{
+		Language: "python",
+		Code:     code,
+	}
+
+	result, sessionID, err := e.executeCode(namespace, name, codeReq)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessionID)
+	require.Contains(t, result.Output, expectedOutput)
+
+	return sessionID
+}
+
+func (ctx *e2eTestContext) verifyWarmPoolStatus(t *testing.T, namespace, name string, warmPoolSize int, initialPods []string) {
+	t.Log("Verifying warmpool post-execution status...")
+
+	// 1. Find the SandboxClaim owned by the CodeInterpreter
+	claim, err := ctx.getSandboxClaimByOwner(namespace, "CodeInterpreter", name)
+	require.NoError(t, err)
+	require.NotNil(t, claim, "Should find exactly one SandboxClaim owned by CodeInterpreter")
+
+	// 2. Find the Sandbox owned by that SandboxClaim
+	sandbox, err := ctx.getSandboxByOwner(namespace, "SandboxClaim", claim.Name)
+	require.NoError(t, err)
+	require.NotNil(t, sandbox, "Should find exactly one Sandbox owned by SandboxClaim")
+
+	// 3. Find the Pod owned by that Sandbox
+	pod, err := ctx.getPodByOwner(namespace, "Sandbox", sandbox.Name)
+	require.NoError(t, err)
+	require.NotNil(t, pod, "Should find exactly one Pod owned by Sandbox")
+
+	// 4. Verify this pod is from the initial warmpool
+	found := false
+	for _, p := range initialPods {
+		if p == pod.Name {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "The claimed pod %s should be one of the initial warmpool pods: %v", pod.Name, initialPods)
+
+	// 5. Verify warmpool still has warmPoolSize pods (re-filled)
+	require.Eventually(t, func() bool {
+		currentPodCount, err := ctx.countWarmPoolPods(namespace, name)
+		if err != nil {
+			return false
+		}
+		return currentPodCount == warmPoolSize
+	}, 30*time.Second, 1*time.Second, "Warmpool should be re-filled to %d pods", warmPoolSize)
+}
+
+// ===== YAML Helper Functions (using controller-runtime client) =====
+
+// loadCodeInterpreterYAML reads a YAML file and decodes it into a CodeInterpreter object
+func loadCodeInterpreterYAML(path string) (*v1alpha1.CodeInterpreter, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %s: %w", path, err)
+	}
+
+	var codeInterpreter v1alpha1.CodeInterpreter
+	decoder := serializer.NewCodecFactory(scheme).UniversalDeserializer()
+	obj, _, err := decoder.Decode(data, nil, &codeInterpreter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode YAML in %s: %w", path, err)
+	}
+
+	// Type assert to CodeInterpreter
+	ci, ok := obj.(*v1alpha1.CodeInterpreter)
+	if !ok {
+		return nil, fmt.Errorf("object in %s is not a CodeInterpreter", path)
+	}
+
+	return ci, nil
+}
+
+// loadYAML reads a YAML file and decodes it into a client.Object
+func loadYAML(path string) (client.Object, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %s: %w", path, err)
+	}
+
+	// Use universal deserializer to decode YAML to runtime.Object
+	decoder := serializer.NewCodecFactory(scheme).UniversalDeserializer()
+	obj, _, err := decoder.Decode(data, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode YAML in %s: %w", path, err)
+	}
+
+	// Cast to client.Object (which includes metav1.Object and runtime.Object)
+	clientObj, ok := obj.(client.Object)
+	if !ok {
+		return nil, fmt.Errorf("object in %s is not a client.Object", path)
+	}
+
+	return clientObj, nil
+}
+
+// applyYamlFile creates the resource defined in the YAML file using controller-runtime client
+func (ctx *e2eTestContext) applyYamlFile(yamlPath string) error {
+	obj, err := loadYAML(yamlPath)
+	if err != nil {
+		return err
+	}
+
+	// Create resource
+	if err := ctx.ctrlClient.Create(context.Background(), obj); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			// If it already exists, try to update it?
+			// For simplicity in this test setup, we can ignore AlreadyExists or try Patch.
+			// Given it's a test setup, we usually expect clean slate or idempotent create.
+			// Let's log and continue, or fail if we strictly expect it to be new.
+			// But kubectl apply updates.
+			// To emulate update, we can trying to patch.
+			// But creating is safer for "ensure it exists" if we treat e2e tests as fresh.
+			return fmt.Errorf("failed to create resource from %s: %w", yamlPath, err)
+		}
+		return fmt.Errorf("failed to create resource from %s: %w", yamlPath, err)
+	}
+	return nil
+}
+
+// deleteYamlFile deletes the resource defined in the YAML file using controller-runtime client
+func (ctx *e2eTestContext) deleteYamlFile(yamlPath string) error {
+	obj, err := loadYAML(yamlPath)
+	if err != nil {
+		return err
+	}
+
+	// Delete resource
+	// We need to pass the object with Name and Namespace set, which loadYAML does.
+	if err := ctx.ctrlClient.Delete(context.Background(), obj); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to delete resource from %s: %w", yamlPath, err)
+	}
+	return nil
+}
+
+// ===== Kubernetes Client Helper Functions =====
+
+// countSandboxClaims counts the number of SandboxClaim resources owned by a CodeInterpreter
+func (ctx *e2eTestContext) countSandboxClaims(namespace, codeInterpreterName string) (int, error) {
+	sandboxClaimList := &extensionsv1alpha1.SandboxClaimList{}
+	err := ctx.ctrlClient.List(context.Background(), sandboxClaimList, client.InNamespace(namespace))
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("failed to list sandboxclaims: %w", err)
+	}
+
+	// Filter by CodeInterpreter owner reference
+	count := 0
+	for _, claim := range sandboxClaimList.Items {
+		for _, ownerRef := range claim.OwnerReferences {
+			if ownerRef.Kind == "CodeInterpreter" && ownerRef.Name == codeInterpreterName {
+				count++
+				break
+			}
+		}
+	}
+
+	return count, nil
+}
+
+// countWarmPoolPods counts the number of warmpool pods for a given CodeInterpreter
+func (ctx *e2eTestContext) countWarmPoolPods(namespace, codeInterpreterName string) (int, error) {
+	listCtx := context.Background()
+
+	// List all pods in namespace
+	podList, err := ctx.kubeClient.CoreV1().Pods(namespace).List(
+		listCtx,
+		metav1.ListOptions{},
+	)
+	if err != nil {
+		return 0, fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	count := 0
+	for _, pod := range podList.Items {
+		for _, owner := range pod.OwnerReferences {
+			if owner.Kind == ownerKindSandboxWarmPool && owner.Name == codeInterpreterName {
+				count++
+				break
+			}
+		}
+	}
+
+	return count, nil
+}
+
+// getWarmPoolPodNames returns the names of warmpool pods for a given CodeInterpreter
+func (ctx *e2eTestContext) getWarmPoolPodNames(namespace, codeInterpreterName string) ([]string, error) {
+	listCtx := context.Background()
+
+	podList, err := ctx.kubeClient.CoreV1().Pods(namespace).List(
+		listCtx,
+		metav1.ListOptions{},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	podNames := make([]string, 0, len(podList.Items))
+	for _, pod := range podList.Items {
+		isWarmPool := false
+		for _, owner := range pod.OwnerReferences {
+			if owner.Kind == ownerKindSandboxWarmPool && owner.Name == codeInterpreterName {
+				isWarmPool = true
+				break
+			}
+		}
+		if isWarmPool {
+			podNames = append(podNames, pod.Name)
+		}
+	}
+
+	return podNames, nil
+}
+
+// waitForWarmPoolReady waits for the warmpool to have the expected number of ready pods
+func (ctx *e2eTestContext) waitForWarmPoolReady(namespace, codeInterpreterName string, expectedCount int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		count, err := ctx.countWarmPoolPods(namespace, codeInterpreterName)
+		if err != nil {
+			return err
+		}
+
+		if count >= expectedCount {
+			// Verify pods are actually ready
+			ready, err := ctx.arePodsReady(namespace, codeInterpreterName)
+			if err != nil {
+				return err
+			}
+			if ready {
+				return nil
+			}
+		}
+
+		time.Sleep(5 * time.Second)
+	}
+
+	return fmt.Errorf("timeout waiting for warmpool to be ready with %d pods", expectedCount)
+}
+
+// arePodsReady checks if warmpool pods are ready
+func (ctx *e2eTestContext) arePodsReady(namespace, codeInterpreterName string) (bool, error) {
+	listCtx := context.Background()
+
+	podList, err := ctx.kubeClient.CoreV1().Pods(namespace).List(
+		listCtx,
+		metav1.ListOptions{},
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	warmPoolPods := 0
+	readyPods := 0
+	for _, pod := range podList.Items {
+		isWarmPool := false
+		for _, owner := range pod.OwnerReferences {
+			if owner.Kind == "SandboxWarmPool" && owner.Name == codeInterpreterName {
+				isWarmPool = true
+				break
+			}
+		}
+
+		if isWarmPool {
+			warmPoolPods++
+			for _, condition := range pod.Status.Conditions {
+				if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+					readyPods++
+					break
+				}
+			}
+		}
+	}
+
+	if warmPoolPods == 0 {
+		return false, nil
+	}
+
+	return warmPoolPods == readyPods, nil
+}
+
+// getSandboxClaimByOwner finds exactly one SandboxClaim owned by the specified owner
+func (ctx *e2eTestContext) getSandboxClaimByOwner(namespace, ownerKind, ownerName string) (*extensionsv1alpha1.SandboxClaim, error) {
+	sandboxClaimList := &extensionsv1alpha1.SandboxClaimList{}
+	err := ctx.ctrlClient.List(context.Background(), sandboxClaimList, client.InNamespace(namespace))
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sandboxclaims: %w", err)
+	}
+
+	var found *extensionsv1alpha1.SandboxClaim
+	for i := range sandboxClaimList.Items {
+		claim := &sandboxClaimList.Items[i]
+		for _, ownerRef := range claim.OwnerReferences {
+			if ownerRef.Kind == ownerKind && ownerRef.Name == ownerName {
+				if found != nil {
+					return nil, fmt.Errorf("found multiple SandboxClaims owned by %s/%s", ownerKind, ownerName)
+				}
+				found = claim
+				break
+			}
+		}
+	}
+
+	return found, nil
+}
+
+// getSandboxByOwner finds exactly one Sandbox owned by the specified owner
+func (ctx *e2eTestContext) getSandboxByOwner(namespace, ownerKind, ownerName string) (*sandboxv1alpha1.Sandbox, error) {
+	sandboxList := &sandboxv1alpha1.SandboxList{}
+	err := ctx.ctrlClient.List(context.Background(), sandboxList, client.InNamespace(namespace))
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sandboxes: %w", err)
+	}
+
+	var found *sandboxv1alpha1.Sandbox
+	for i := range sandboxList.Items {
+		sandbox := &sandboxList.Items[i]
+		for _, ownerRef := range sandbox.OwnerReferences {
+			if ownerRef.Kind == ownerKind && ownerRef.Name == ownerName {
+				if found != nil {
+					return nil, fmt.Errorf("found multiple Sandboxes owned by %s/%s", ownerKind, ownerName)
+				}
+				found = sandbox
+				break
+			}
+		}
+	}
+
+	return found, nil
+}
+
+// getPodByOwner finds exactly one Pod owned by the specified owner
+func (ctx *e2eTestContext) getPodByOwner(namespace, ownerKind, ownerName string) (*corev1.Pod, error) {
+	podList, err := ctx.kubeClient.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	var found *corev1.Pod
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		for _, ownerRef := range pod.OwnerReferences {
+			if ownerRef.Kind == ownerKind && ownerRef.Name == ownerName {
+				if found != nil {
+					return nil, fmt.Errorf("found multiple Pods owned by %s/%s", ownerKind, ownerName)
+				}
+				found = pod
+				break
+			}
+		}
+	}
+
+	return found, nil
 }

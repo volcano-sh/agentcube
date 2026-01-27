@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	agentcubeclientset "github.com/volcano-sh/agentcube/client-go/clientset/versioned"
 	"github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -51,6 +52,9 @@ import (
 const (
 	defaultRouterURL      = "http://localhost:8081"
 	defaultWorkloadMgrURL = "http://localhost:8080"
+
+	// ownerKindSandboxWarmPool is the owner reference kind for SandboxWarmPool resources
+	ownerKindSandboxWarmPool = "SandboxWarmPool"
 )
 
 var (
@@ -273,7 +277,7 @@ type CodeExecuteResponse struct {
 // executeCode executes code through the CodeInterpreter API using Python SDK
 // This uses the proper flow: WorkloadManager -> init -> Router instead of direct API calls
 // Returns response, session ID from header, and error
-func (e *testEnv) executeCode(namespace, name, sessionID string, req *CodeExecuteRequest) (*CodeExecuteResponse, string, error) {
+func (e *testEnv) executeCode(namespace, _, sessionID string, req *CodeExecuteRequest) (*CodeExecuteResponse, string, error) {
 	// Create a temporary Python file
 	tmpFile, err := os.CreateTemp("", "e2e-code-exec-*.py")
 	if err != nil {
@@ -332,6 +336,7 @@ except Exception as e:
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
+	//nolint:gosec // G204: tmpFile.Name() is controlled by this test, not user input
 	cmd := exec.CommandContext(ctx, "python3", tmpFile.Name())
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -574,53 +579,67 @@ func TestCodeInterpreterWarmPool(t *testing.T) {
 		t.Fatalf("Failed to create e2e test context: %v", err)
 	}
 
-	namespace := "default"
-	codeInterpreterName := "e2e-code-interpreter-warmpool"
-	warmPoolSize := 2
+	// Step 1: Load the code interpreter YAML to get configuration
+	yamlPath := "e2e_code_interpreter_warmpool.yaml"
+	codeInterpreter, err := loadCodeInterpreterYAML(yamlPath)
+	if err != nil {
+		t.Fatalf("Failed to load yaml file: %v", err)
+	}
 
-	// Step 1: Apply the code interpreter with warmpool configuration
-	t.Log("Applying e2e-code-interpreter-warmpool.yaml...")
-	if err := ctx.applyYamlFile("e2e_code_interpreter_warmpool.yaml"); err != nil {
+	// Extract values from the loaded CodeInterpreter
+	namespace := codeInterpreter.Namespace
+	if namespace == "" {
+		namespace = "default" // Use default namespace if not specified in YAML
+	}
+	codeInterpreterName := codeInterpreter.Name
+	warmPoolSize := 0
+	if codeInterpreter.Spec.WarmPoolSize != nil {
+		warmPoolSize = int(*codeInterpreter.Spec.WarmPoolSize)
+	}
+
+	// Step 2: Apply the code interpreter with warmpool configuration
+	t.Logf("Applying %s (namespace=%s, name=%s, warmPoolSize=%d)...", yamlPath, namespace, codeInterpreterName, warmPoolSize)
+	if err := ctx.applyYamlFile(yamlPath); err != nil {
 		t.Fatalf("Failed to apply code interpreter yaml: %v", err)
 	}
 
 	// Cleanup function to delete the code interpreter and related resources
 	defer func() {
 		t.Log("Cleaning up code interpreter resources...")
-		ctx.deleteYamlFile("e2e_code_interpreter_warmpool.yaml")
-
-		// Wait for resources to be deleted
-		time.Sleep(10 * time.Second)
-
-		// Verify sandbox is deleted
-		sandboxes, err := ctx.countSandboxes(namespace, codeInterpreterName)
-		if err != nil {
-			t.Logf("Warning: Failed to verify sandbox deletion: %v", err)
-		} else if sandboxes > 0 {
-			t.Logf("Warning: Expected sandboxes to be deleted, but found %d", sandboxes)
-		} else {
-			t.Log("Verified: Sandboxes deleted successfully")
+		if err := ctx.deleteYamlFile("e2e_code_interpreter_warmpool.yaml"); err != nil {
+			t.Logf("Failed to delete yaml file: %v", err)
 		}
 
 		// Verify sandboxclaims are deleted
-		claims, err := ctx.countSandboxClaims(namespace, codeInterpreterName)
-		if err != nil {
-			t.Logf("Warning: Failed to verify sandboxclaim deletion: %v", err)
-		} else if claims > 0 {
-			t.Logf("Warning: Expected sandboxclaims to be deleted, but found %d", claims)
-		} else {
-			t.Log("Verified: SandboxClaims deleted successfully")
-		}
+		require.Eventually(t, func() bool {
+			claims, err := ctx.countSandboxClaims(namespace, codeInterpreterName)
+			if err != nil {
+				t.Logf("Checking sandboxclaim deletion: %v", err)
+				return false
+			}
+			if claims == 0 {
+				t.Log("Verified: SandboxClaims deleted successfully")
+				return true
+			}
+			t.Logf("Waiting for sandboxclaims to be deleted (current: %d)", claims)
+			return false
+		}, 30*time.Second, 1*time.Second, "SandboxClaims should be deleted")
 
 		// Verify warmpool pods are deleted
-		pods, err := ctx.countWarmPoolPods(namespace, codeInterpreterName)
-		if err != nil {
-			t.Logf("Warning: Failed to verify warmpool pod deletion: %v", err)
-		} else if pods > 0 {
-			t.Logf("Warning: Expected warmpool pods to be deleted, but found %d", pods)
-		} else {
-			t.Log("Verified: WarmPool pods deleted successfully")
-		}
+		require.Eventually(t, func() bool {
+			pods, err := ctx.countWarmPoolPods(namespace, codeInterpreterName)
+			if err != nil {
+				t.Logf("Checking warmpool pod deletion: %v", err)
+				return false
+			}
+			if pods == 0 {
+				t.Log("Verified: WarmPool pods deleted successfully")
+				return true
+			}
+			t.Logf("Waiting for warmpool pods to be deleted (current: %d)", pods)
+			return false
+		}, 30*time.Second, 1*time.Second, "WarmPool pods should be deleted")
+
 	}()
 
 	// Step 2: Wait for warmpool and warmPoolSize pods to be created
@@ -729,6 +748,29 @@ func TestCodeInterpreterWarmPool(t *testing.T) {
 
 // ===== YAML Helper Functions (using controller-runtime client) =====
 
+// loadCodeInterpreterYAML reads a YAML file and decodes it into a CodeInterpreter object
+func loadCodeInterpreterYAML(path string) (*v1alpha1.CodeInterpreter, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %s: %w", path, err)
+	}
+
+	var codeInterpreter v1alpha1.CodeInterpreter
+	decoder := serializer.NewCodecFactory(scheme).UniversalDeserializer()
+	obj, _, err := decoder.Decode(data, nil, &codeInterpreter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode YAML in %s: %w", path, err)
+	}
+
+	// Type assert to CodeInterpreter
+	ci, ok := obj.(*v1alpha1.CodeInterpreter)
+	if !ok {
+		return nil, fmt.Errorf("object in %s is not a CodeInterpreter", path)
+	}
+
+	return ci, nil
+}
+
 // loadYAML reads a YAML file and decodes it into a client.Object
 func loadYAML(path string) (client.Object, error) {
 	data, err := os.ReadFile(path)
@@ -812,7 +854,7 @@ func (ctx *e2eTestContext) countSandboxes(namespace, codeInterpreterName string)
 	return len(sandboxList.Items), nil
 }
 
-// countSandboxClaims counts the number of SandboxClaim resources for a given CodeInterpreter
+// countSandboxClaims counts the number of SandboxClaim resources owned by a CodeInterpreter
 func (ctx *e2eTestContext) countSandboxClaims(namespace, codeInterpreterName string) (int, error) {
 	sandboxClaimList := &extensionsv1alpha1.SandboxClaimList{}
 	err := ctx.ctrlClient.List(context.Background(), sandboxClaimList, client.InNamespace(namespace))
@@ -823,7 +865,18 @@ func (ctx *e2eTestContext) countSandboxClaims(namespace, codeInterpreterName str
 		return 0, fmt.Errorf("failed to list sandboxclaims: %w", err)
 	}
 
-	return len(sandboxClaimList.Items), nil
+	// Filter by CodeInterpreter owner reference
+	count := 0
+	for _, claim := range sandboxClaimList.Items {
+		for _, ownerRef := range claim.OwnerReferences {
+			if ownerRef.Kind == "CodeInterpreter" && ownerRef.Name == codeInterpreterName {
+				count++
+				break
+			}
+		}
+	}
+
+	return count, nil
 }
 
 // countWarmPoolPods counts the number of warmpool pods for a given CodeInterpreter
@@ -842,7 +895,7 @@ func (ctx *e2eTestContext) countWarmPoolPods(namespace, codeInterpreterName stri
 	count := 0
 	for _, pod := range podList.Items {
 		for _, owner := range pod.OwnerReferences {
-			if owner.Kind == "SandboxWarmPool" && owner.Name == codeInterpreterName {
+			if owner.Kind == ownerKindSandboxWarmPool && owner.Name == codeInterpreterName {
 				count++
 				break
 			}
@@ -868,7 +921,7 @@ func (ctx *e2eTestContext) getWarmPoolPodNames(namespace, codeInterpreterName st
 	for _, pod := range podList.Items {
 		isWarmPool := false
 		for _, owner := range pod.OwnerReferences {
-			if owner.Kind == "SandboxWarmPool" && owner.Name == codeInterpreterName {
+			if owner.Kind == ownerKindSandboxWarmPool && owner.Name == codeInterpreterName {
 				isWarmPool = true
 				break
 			}
@@ -983,18 +1036,9 @@ func (ctx *e2eTestContext) findPodWithSandboxClaim(namespace string, podNames []
 		// If the user's system adds Sandbox owner, we find it.
 
 		// If we can't find positive Sandbox owner, we might check absence of WarmPool owner.
-		isWarmPool := false
-		for _, owner := range pod.OwnerReferences {
-			if owner.Kind == "SandboxWarmPool" {
-				isWarmPool = true
-				break
-			}
-		}
-		if !isWarmPool {
-			// If it was in the warmpool list (initialPods), and now it's not owned by WarmPool, it's likely consumed.
-			// However, waiting for Sandbox/SandboxClaim owner is safer.
-			// Let's return only if we see Sandbox/SandboxClaim owner.
-		}
+		// Note: If the pod was in the warmpool list (initialPods) and is now not owned by WarmPool,
+		// it's likely consumed. However, waiting for Sandbox/SandboxClaim owner is safer,
+		// so we return only if we see Sandbox/SandboxClaim owner (checked above).
 	}
 
 	return "", nil

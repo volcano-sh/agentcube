@@ -51,6 +51,8 @@ var (
 	SessionIdLabelKey = "runtime.agentcube.io/session-id" // revive:disable-line:var-naming - keep label backward compatible
 	// WorkloadNameLabelKey labels key for workload name
 	WorkloadNameLabelKey = "runtime.agentcube.io/workload-name"
+	// SandboxNameLabelKey labels key for sandbox name
+	SandboxNameLabelKey = "sandbox-name" // revive:disable-line:var-naming
 	// LastActivityAnnotationKey Annotation key for last activity time
 	LastActivityAnnotationKey = "last-activity-time"
 	// IdleTimeoutAnnotationKey key for idle timeout
@@ -118,7 +120,16 @@ func NewK8sClient() (*K8sClient, error) {
 	}
 
 	// Create informer factory for core resources (Pods, etc.)
-	informerFactory := informers.NewSharedInformerFactory(clientset, 0)
+	// Use filtered factory to only cache pods with sandbox-name label
+	informerFactory := informers.NewFilteredSharedInformerFactory(
+		clientset,
+		0, // resync period
+		metav1.NamespaceAll,
+		func(opts *metav1.ListOptions) {
+			// Filter to only watch pods with sandbox-name label
+			opts.LabelSelector = SandboxNameLabelKey
+		},
+	)
 
 	// Get pod informer and lister
 	podInformer := informerFactory.Core().V1().Pods().Informer()
@@ -299,7 +310,7 @@ func (c *K8sClient) GetSandboxPodIP(_ context.Context, namespace, sandboxName, p
 		klog.Infof("failed to get sandbox pod %s/%s: %v, try get pod by sandbox-name label", namespace, podName, err)
 	}
 	// Find pod through label selector (sandbox-name label we set)
-	pods, err := c.podLister.Pods(namespace).List(labels.SelectorFromSet(map[string]string{"sandbox-name": sandboxName}))
+	pods, err := c.podLister.Pods(namespace).List(labels.SelectorFromSet(map[string]string{SandboxNameLabelKey: sandboxName}))
 	if err != nil {
 		return "", fmt.Errorf("failed to list pods from cache: %w", err)
 	}

@@ -193,7 +193,7 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 		sandbox.Spec.PodTemplate.ObjectMeta.Labels = make(map[string]string, 2)
 	}
 	sandbox.Spec.PodTemplate.ObjectMeta.Labels[SessionIdLabelKey] = params.sessionID
-	sandbox.Spec.PodTemplate.ObjectMeta.Labels["sandbox-name"] = params.sandboxName
+	sandbox.Spec.PodTemplate.ObjectMeta.Labels[SandboxNameLabelKey] = params.sandboxName
 	return sandbox
 }
 
@@ -207,8 +207,8 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 			Name:      params.name,
 			Namespace: params.namespace,
 			Labels: map[string]string{
-				SessionIdLabelKey: params.sessionID,
-				"sandbox-name":    params.name,
+				SessionIdLabelKey:   params.sessionID,
+				SandboxNameLabelKey: params.name,
 			},
 			Annotations: map[string]string{},
 		},

@@ -1,0 +1,281 @@
+diff --git a/pkg/api/errors_test.go b/pkg/api/errors_test.go
+new file mode 100644
+index 0000000..691e113
+--- /dev/null
++++ b/pkg/api/errors_test.go
+@@ -0,0 +1,275 @@
++/*
++Copyright The Volcano Authors.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++    http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++*/
++
++package api
++
++import (
++	"errors"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++
++	"github.com/volcano-sh/agentcube/pkg/common/types"
++)
++
++func TestNewSessionNotFoundError(t *testing.T) {
++	sessionID := "test-session-123"
++	err := NewSessionNotFoundError(sessionID)
++
++	assert.Error(t, err)
++	assert.True(t, apierrors.IsNotFound(err))
++
++	// Verify it's a StatusError
++	statusErr, ok := err.(apierrors.APIStatus)
++	assert.True(t, ok)
++	assert.NotNil(t, statusErr)
++
++	status := statusErr.Status()
++	// Details.Group is a string, not GroupResource
++	assert.Equal(t, sessionResource.Group, status.Details.Group)
++	assert.Equal(t, sessionResource.Resource, status.Details.Kind)
++	assert.Equal(t, sessionID, status.Details.Name)
++}
++
++func TestWorkloadResource(t *testing.T) {
++	tests := []struct {
++		name     string
++		kind     string
++		expected schema.GroupResource
++	}{
++		{
++			name:     "CodeInterpreter kind",
++			kind:     types.CodeInterpreterKind,
++			expected: codeInterpreterResource,
++		},
++		{
++			name:     "AgentRuntime kind",
++			kind:     types.AgentRuntimeKind,
++			expected: agentRuntimeResource,
++		},
++		{
++			name:     "default to AgentRuntime for unknown kind",
++			kind:     "UnknownKind",
++			expected: agentRuntimeResource,
++		},
++		{
++			name:     "empty kind defaults to AgentRuntime",
++			kind:     "",
++			expected: agentRuntimeResource,
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			result := workloadResource(tt.kind)
++			assert.Equal(t, tt.expected, result)
++		})
++	}
++}
++
++func TestNewSandboxTemplateNotFoundError(t *testing.T) {
++	tests := []struct {
++		name      string
++		namespace string
++		nameParam string
++		kind      string
++		expected  schema.GroupResource
++	}{
++		{
++			name:      "AgentRuntime not found",
++			namespace: "default",
++			nameParam: "test-agent",
++			kind:      types.AgentRuntimeKind,
++			expected:  agentRuntimeResource,
++		},
++		{
++			name:      "CodeInterpreter not found",
++			namespace: "default",
++			nameParam: "test-ci",
++			kind:      types.CodeInterpreterKind,
++			expected:  codeInterpreterResource,
++		},
++		{
++			name:      "unknown kind defaults to AgentRuntime",
++			namespace: "default",
++			nameParam: "test",
++			kind:      "UnknownKind",
++			expected:  agentRuntimeResource,
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			err := NewSandboxTemplateNotFoundError(tt.namespace, tt.nameParam, tt.kind)
++
++			assert.Error(t, err)
++			assert.True(t, apierrors.IsNotFound(err))
++
++			// Verify it's a StatusError
++			statusErr, ok := err.(apierrors.APIStatus)
++			assert.True(t, ok)
++			assert.NotNil(t, statusErr)
++
++			status := statusErr.Status()
++			// Details.Group is a string, not GroupResource
++			assert.Equal(t, tt.expected.Group, status.Details.Group)
++			assert.Equal(t, tt.expected.Resource, status.Details.Kind)
++			assert.Contains(t, status.Details.Name, tt.namespace)
++			assert.Contains(t, status.Details.Name, tt.nameParam)
++		})
++	}
++}
++
++func TestNewUpstreamUnavailableError(t *testing.T) {
++	tests := []struct {
++		name    string
++		wrapped error
++		wantErr bool
++	}{
++		{
++			name:    "simple error",
++			wrapped: errors.New("connection refused"),
++			wantErr: false,
++		},
++		{
++			name:    "wrapped error with message",
++			wrapped: errors.New("upstream service temporarily unavailable"),
++			wantErr: false,
++		},
++		{
++			name:    "nil error causes panic",
++			wrapped: nil,
++			wantErr: true,
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			if tt.wantErr {
++				// nil error will cause panic when calling err.Error()
++				assert.Panics(t, func() {
++					NewUpstreamUnavailableError(tt.wrapped)
++				})
++				return
++			}
++
++			err := NewUpstreamUnavailableError(tt.wrapped)
++
++			assert.Error(t, err)
++			assert.True(t, apierrors.IsServiceUnavailable(err))
++
++			// Verify it's a StatusError
++			statusErr, ok := err.(apierrors.APIStatus)
++			assert.True(t, ok)
++			assert.NotNil(t, statusErr)
++
++			status := statusErr.Status()
++			assert.Contains(t, status.Message, tt.wrapped.Error())
++		})
++	}
++}
++
++func TestNewInternalError(t *testing.T) {
++	tests := []struct {
++		name    string
++		wrapped error
++		wantErr bool
++	}{
++		{
++			name:    "simple internal error",
++			wrapped: errors.New("internal server error"),
++			wantErr: false,
++		},
++		{
++			name:    "wrapped error",
++			wrapped: errors.New("failed to process request"),
++			wantErr: false,
++		},
++		{
++			name:    "nil error causes panic",
++			wrapped: nil,
++			wantErr: true,
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			if tt.wantErr {
++				// nil error will cause panic when calling err.Error()
++				assert.Panics(t, func() {
++					NewInternalError(tt.wrapped)
++				})
++				return
++			}
++
++			err := NewInternalError(tt.wrapped)
++
++			assert.Error(t, err)
++			assert.True(t, apierrors.IsInternalError(err))
++
++			// Verify it's a StatusError
++			statusErr, ok := err.(apierrors.APIStatus)
++			assert.True(t, ok)
++			assert.NotNil(t, statusErr)
++		})
++	}
++}
++
++func TestNewInternalError_ErrorWrapping(t *testing.T) {
++	originalErr := errors.New("original error")
++	wrappedErr := NewInternalError(originalErr)
++
++	// Verify it's a StatusError
++	statusErr, ok := wrappedErr.(apierrors.APIStatus)
++	assert.True(t, ok)
++	assert.NotNil(t, statusErr)
++
++	// Verify the original error message is preserved in the status
++	status := statusErr.Status()
++	assert.Contains(t, status.Message, originalErr.Error())
++
++	// apierrors.NewInternalError wraps the error in a StatusError,
++	// which doesn't use the standard errors.Unwrap mechanism
++	// Instead, the error is accessible through the StatusError interface
++	// Check that the error message contains the original error
++	assert.Contains(t, wrappedErr.Error(), originalErr.Error())
++}
++
++func TestNewSandboxTemplateNotFoundError_ResourceGroup(t *testing.T) {
++	err := NewSandboxTemplateNotFoundError("default", "test", types.AgentRuntimeKind)
++
++	statusErr, ok := err.(apierrors.APIStatus)
++	assert.True(t, ok)
++
++	status := statusErr.Status()
++	// Details.Group is a string
++	assert.Equal(t, resourceGroup, status.Details.Group)
++	assert.Equal(t, agentRuntimeResourceName, status.Details.Kind)
++}
++
++func TestNewSandboxTemplateNotFoundError_CodeInterpreterResourceGroup(t *testing.T) {
++	err := NewSandboxTemplateNotFoundError("default", "test", types.CodeInterpreterKind)
++
++	statusErr, ok := err.(apierrors.APIStatus)
++	assert.True(t, ok)
++
++	status := statusErr.Status()
++	// Details.Group is a string
++	assert.Equal(t, resourceGroup, status.Details.Group)
++	assert.Equal(t, codeInterpreterResourceName, status.Details.Kind)
++}

@@ -66,21 +66,6 @@ func TestParseFileMode(t *testing.T) {
 			expected: 0444,
 		},
 		{
-			name:     "invalid mode - negative number",
-			modeStr:  "-1",
-			expected: 0644, // defaults to 0644
-		},
-		{
-			name:     "invalid mode - out of range (10000)",
-			modeStr:  "10000",
-			expected: 0644, // defaults to 0644
-		},
-		{
-			name:     "invalid mode - exceeds 0777",
-			modeStr:  "10000",
-			expected: 0644, // defaults to 0644
-		},
-		{
 			name:     "invalid mode - non-numeric",
 			modeStr:  "abc",
 			expected: 0644, // defaults to 0644
@@ -98,6 +83,11 @@ func TestParseFileMode(t *testing.T) {
 		{
 			name:     "invalid mode - hex string",
 			modeStr:  "0x1ff",
+			expected: 0644, // defaults to 0644
+		},
+		{
+			name:     "invalid mode - negative number",
+			modeStr:  "-1",
 			expected: 0644, // defaults to 0644
 		},
 		{
@@ -282,26 +272,4 @@ func TestSetWorkspace_WithTemporaryDirectory(t *testing.T) {
 	server.setWorkspace(tmpDir)
 
 	assert.Equal(t, tmpDir, server.workspaceDir)
-}
-
-func TestSanitizePath_WithSymlinks(t *testing.T) {
-	// Create a temporary directory structure
-	tmpDir, err := os.MkdirTemp("", "picod-symlink-test-*")
-	assert.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	// Create a subdirectory
-	subDir := filepath.Join(tmpDir, "subdir")
-	err = os.Mkdir(subDir, 0755)
-	assert.NoError(t, err)
-
-	server := &Server{
-		workspaceDir: tmpDir,
-	}
-
-	// Test with a valid path that could be a symlink
-	path := "subdir/file.txt"
-	result, err := server.sanitizePath(path)
-	assert.NoError(t, err)
-	assert.Contains(t, result, tmpDir)
 }

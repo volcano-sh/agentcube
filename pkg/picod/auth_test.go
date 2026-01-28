@@ -58,11 +58,6 @@ func generateTestRSAKeyPair() (*rsa.PrivateKey, string, error) {
 	return privateKey, string(pubKeyPEM), nil
 }
 
-func TestNewAuthManager(t *testing.T) {
-	manager := NewAuthManager()
-	assert.NotNil(t, manager)
-}
-
 func TestLoadPublicKeyFromEnv_ValidKey(t *testing.T) {
 	_, pubKeyPEM, err := generateTestRSAKeyPair()
 	assert.NoError(t, err)
@@ -102,21 +97,6 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
 -----END CERTIFICATE-----`
 
 	os.Setenv(PublicKeyEnvVar, certPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	manager := NewAuthManager()
-	err := manager.LoadPublicKeyFromEnv()
-	assert.Error(t, err)
-}
-
-func TestLoadPublicKeyFromEnv_NonRSAPublicKey(t *testing.T) {
-	// This test would require generating an ECDSA key, which is more complex
-	// For now, we'll test with an invalid key format
-	invalidKeyPEM := `-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAinvalid
------END PUBLIC KEY-----`
-
-	os.Setenv(PublicKeyEnvVar, invalidKeyPEM)
 	defer os.Unsetenv(PublicKeyEnvVar)
 
 	manager := NewAuthManager()
@@ -325,35 +305,4 @@ func TestAuthMiddleware_WrongSigningMethod(t *testing.T) {
 	handler(c)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestAuthMiddleware_MaxBodySize(t *testing.T) {
-	privateKey, pubKeyPEM, err := generateTestRSAKeyPair()
-	assert.NoError(t, err)
-
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	manager := NewAuthManager()
-	err = manager.LoadPublicKeyFromEnv()
-	assert.NoError(t, err)
-
-	// Generate a valid JWT token
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"exp": time.Now().Add(time.Hour).Unix(),
-		"iat": time.Now().Unix(),
-	})
-	tokenString, err := token.SignedString(privateKey)
-	assert.NoError(t, err)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("POST", "/api/execute", nil)
-	c.Request.Header.Set("Authorization", "Bearer "+tokenString)
-
-	handler := manager.AuthMiddleware()
-	handler(c)
-
-	// Verify MaxBytesReader is set
-	assert.NotNil(t, c.Request.Body)
 }

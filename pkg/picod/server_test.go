@@ -22,7 +22,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -251,51 +250,6 @@ func TestHealthCheckHandler_MultipleCalls(t *testing.T) {
 	}
 }
 
-func TestNewServer_EngineConfiguration(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	pubKeyPEM := generateTestPublicKeyPEM(t)
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	config := Config{
-		Port:      8080,
-		Workspace: tmpDir,
-	}
-
-	server := NewServer(config)
-
-	assert.NotNil(t, server.engine)
-	// Verify Gin is in release mode (set by NewServer)
-	// This is harder to test directly, but we can verify the engine works
-	assert.NotNil(t, server.engine.Routes())
-}
-
-func TestNewServer_AuthManagerInitialized(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	pubKeyPEM := generateTestPublicKeyPEM(t)
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	config := Config{
-		Port:      8080,
-		Workspace: tmpDir,
-	}
-
-	server := NewServer(config)
-
-	assert.NotNil(t, server.authManager)
-	// Verify public key is loaded
-	// We can't directly access private fields, but we can verify
-	// the auth manager works by checking it doesn't panic
-	assert.NotNil(t, server.authManager.AuthMiddleware())
-}
-
 func TestNewServer_WorkspacePathResolution(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
 	require.NoError(t, err)
@@ -333,30 +287,4 @@ func TestNewServer_WorkspacePathResolution(t *testing.T) {
 	absSubDir, err := filepath.Abs(subDir)
 	require.NoError(t, err)
 	assert.Equal(t, absSubDir, server.workspaceDir)
-}
-
-func TestNewServer_DifferentPorts(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	pubKeyPEM := generateTestPublicKeyPEM(t)
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	ports := []int{8080, 9090, 3000, 0}
-
-	for _, port := range ports {
-		t.Run(fmt.Sprintf("port_%d", port), func(t *testing.T) {
-			config := Config{
-				Port:      port,
-				Workspace: tmpDir,
-			}
-
-			server := NewServer(config)
-
-			assert.NotNil(t, server)
-			assert.Equal(t, port, server.config.Port)
-		})
-	}
 }

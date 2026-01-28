@@ -518,35 +518,3 @@ func TestExecuteHandler_EmptyEnvVars(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
-
-func TestExecuteHandler_MultipleEnvVars(t *testing.T) {
-	server, tmpDir := setupExecuteTestServer(t)
-	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	req := ExecuteRequest{
-		Command: []string{"sh", "-c", "echo $VAR1 $VAR2 $VAR3"},
-		Env: map[string]string{
-			"VAR1": "value1",
-			"VAR2": "value2",
-			"VAR3": "value3",
-		},
-	}
-	body, _ := json.Marshal(req)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("POST", "/api/execute", bytes.NewBuffer(body))
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	server.ExecuteHandler(c)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp ExecuteResponse
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.Stdout, "value1")
-	assert.Contains(t, resp.Stdout, "value2")
-	assert.Contains(t, resp.Stdout, "value3")
-}

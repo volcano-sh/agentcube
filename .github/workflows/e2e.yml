@@ -32,7 +32,16 @@ jobs:
         install_only: true
 
     - name: Run E2E Tests
-      run: make e2e
+      run: |
+        export ARTIFACTS_PATH=${{ github.workspace }}/e2e-logs
+        make e2e
+
+    - name: Upload E2E Component Logs
+      if: failure() # Only upload logs when tests fail
+      uses: actions/upload-artifact@v4
+      with:
+        name: agentcube_e2e_logs_${{ github.run_id }}_${{ github.run_attempt }}
+        path: ${{ github.workspace }}/e2e-logs*
 
     - name: Clean up E2E Environment
       if: always() # Run even if tests fail

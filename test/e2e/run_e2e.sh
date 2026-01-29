@@ -26,6 +26,9 @@ PRE_PULL_IMAGES=(
 WORKLOAD_MANAGER_LOCAL_PORT=${WORKLOAD_MANAGER_LOCAL_PORT:-8080}
 ROUTER_LOCAL_PORT=${ROUTER_LOCAL_PORT:-8081}
 
+# Artifacts path for collecting logs on test failure
+ARTIFACTS_PATH=${ARTIFACTS_PATH:-"${PWD}/e2e-logs"}
+
 # Function to clean up
 cleanup() {
     echo "Cleaning up..."
@@ -92,6 +95,45 @@ require_python() {
 step() {
     echo
     echo "==> $1"
+}
+
+# Helper function to collect logs for pods by label selector
+collect_pod_logs() {
+    local label_selector=$1
+    local component_name=$2
+    local artifacts_dir=$3
+    
+    echo "Collecting ${component_name} logs..."
+    local pods=$(kubectl -n "${AGENTCUBE_NAMESPACE}" get pods -l "${label_selector}" \
+        -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+    
+    if [ -n "$pods" ]; then
+        for pod in $pods; do
+            echo "  Collecting logs from pod: $pod"
+            kubectl -n "${AGENTCUBE_NAMESPACE}" logs "$pod" --all-containers=true \
+                > "${artifacts_dir}/${component_name}-${pod}.log" 2>&1 || true
+            kubectl -n "${AGENTCUBE_NAMESPACE}" describe pod "$pod" \
+                > "${artifacts_dir}/${component_name}-${pod}-describe.txt" 2>&1 || true
+        done
+    else
+        echo "  No ${component_name} pods found with label selector: ${label_selector}"
+        # List all pods for debugging
+        kubectl -n "${AGENTCUBE_NAMESPACE}" get pods -o wide > "${artifacts_dir}/${component_name}-all-pods.txt" 2>&1 || true
+    fi
+}
+
+# Function to collect logs from Router and Workload Manager pods
+collect_component_logs() {
+    local artifacts_dir="${ARTIFACTS_PATH}"
+    echo "Collecting component logs to ${artifacts_dir}..."
+    mkdir -p "${artifacts_dir}"
+
+    # Collect logs for both components using label selectors
+    collect_pod_logs "app=workloadmanager" "workloadmanager" "${artifacts_dir}"
+    collect_pod_logs "app=agentcube-router" "router" "${artifacts_dir}"
+
+    echo "Component logs collected to ${artifacts_dir}"
+    ls -lah "${artifacts_dir}" || true
 }
 
 pre_pull_images() {
@@ -381,11 +423,26 @@ pip install -e ./sdk-python
 # Check if agentcube package is available after installation
 require_python
 
-# Run tests
+# Run tests with error handling to collect logs on failure
+TEST_FAILED=0
+
 echo "Running Go tests..."
-WORKLOAD_MANAGER_ADDR="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN go test -v ./test/e2e/...
+if ! WORKLOAD_MANAGER_ADDR="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN go test -v ./test/e2e/...; then
+    TEST_FAILED=1
+fi
 
 echo "Running Python CodeInterpreter tests..."
 cd "$(dirname "$0")"
 
-WORKLOAD_MANAGER_ADDR="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py
+if ! WORKLOAD_MANAGER_ADDR="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py; then
+    TEST_FAILED=1
+fi
+
+# Collect logs if tests failed
+if [ $TEST_FAILED -eq 1 ]; then
+    echo "Tests failed, collecting component logs..."
+    collect_component_logs
+    exit 1
+fi
+
+echo "All tests passed!"

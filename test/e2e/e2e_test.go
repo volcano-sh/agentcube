@@ -379,6 +379,12 @@ except Exception as e:
 	return response, jsonOutput.SessionID, err
 }
 
+// TestLogCollectionFailure is a temporary test to verify log collection on failure.
+func TestLogCollectionFailure(t *testing.T) {
+	t.Log("Forcing test failure to verify log collection functionality...")
+	t.Fatal("Forced test failure to verify log collection functionality")
+}
+
 // TestAgentRuntimeBasicInvocation tests basic echo-agent functionality
 func TestAgentRuntimeBasicInvocation(t *testing.T) {
 	env := newTestEnv(t)

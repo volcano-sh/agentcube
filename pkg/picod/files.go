@@ -348,7 +348,7 @@ func (s *Server) ListFilesHandler(c *gin.Context) {
 		return
 	}
 
-	var files []FileEntry
+	files := make([]FileEntry, 0, len(entries))
 	for _, entry := range entries {
 		info, err := entry.Info()
 		if err != nil {

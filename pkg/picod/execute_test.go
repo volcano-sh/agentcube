@@ -66,68 +66,102 @@ func setupExecuteTestServer(t *testing.T) (*Server, string) {
 	return server, tmpDir
 }
 
-func TestExecuteHandler_InvalidJSON(t *testing.T) {
-	server, tmpDir := setupExecuteTestServer(t)
-	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("POST", "/api/execute", bytes.NewBufferString("invalid json"))
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	// Bypass auth for this test by directly calling the handler
-	// In real scenario, auth middleware would reject first
-	server.ExecuteHandler(c)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "error")
-}
-
-func TestExecuteHandler_EmptyCommand(t *testing.T) {
-	server, tmpDir := setupExecuteTestServer(t)
-	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	req := ExecuteRequest{
-		Command: []string{},
-	}
-	body, _ := json.Marshal(req)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("POST", "/api/execute", bytes.NewBuffer(body))
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	server.ExecuteHandler(c)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "command cannot be empty")
-}
-
-func TestExecuteHandler_InvalidTimeoutFormat(t *testing.T) {
+func TestExecuteHandler_RequestValidation(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
 	defer os.Unsetenv(PublicKeyEnvVar)
 
 	tests := []struct {
-		name    string
-		timeout string
+		name          string
+		setupRequest  func() ([]byte, error)
+		expectedCode  int
+		errorContains string
 	}{
 		{
-			name:    "invalid format",
-			timeout: "invalid",
-		},
-		// Note: Go's time.ParseDuration accepts negative durations as valid
-		// So "-10s" is a valid duration (though it will timeout immediately)
-		// We skip this test case as it's not actually invalid
-		{
-			name:    "malformed duration",
-			timeout: "10",
+			name: "invalid JSON",
+			setupRequest: func() ([]byte, error) {
+				return []byte("invalid json"), nil
+			},
+			expectedCode:  http.StatusBadRequest,
+			errorContains: "error",
 		},
 		{
-			name:    "empty string with quotes",
-			timeout: `""`,
+			name: "empty command array",
+			setupRequest: func() ([]byte, error) {
+				req := ExecuteRequest{Command: []string{}}
+				return json.Marshal(req)
+			},
+			expectedCode:  http.StatusBadRequest,
+			errorContains: "command cannot be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := tt.setupRequest()
+			require.NoError(t, err)
+
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request, _ = http.NewRequest("POST", "/api/execute", bytes.NewBuffer(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			server.ExecuteHandler(c)
+
+			assert.Equal(t, tt.expectedCode, w.Code)
+			assert.Contains(t, w.Body.String(), tt.errorContains)
+		})
+	}
+}
+
+func TestExecuteHandler_TimeoutFormats(t *testing.T) {
+	server, tmpDir := setupExecuteTestServer(t)
+	defer os.RemoveAll(tmpDir)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	tests := []struct {
+		name          string
+		timeout       string
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:          "invalid format string",
+			timeout:       "invalid",
+			expectError:   true,
+			errorContains: "Invalid timeout format",
+		},
+		{
+			name:          "malformed duration (no unit)",
+			timeout:       "10",
+			expectError:   true,
+			errorContains: "Invalid timeout format",
+		},
+		{
+			name:          "empty string with quotes",
+			timeout:       `""`,
+			expectError:   true,
+			errorContains: "Invalid timeout format",
+		},
+		{
+			name:        "valid seconds format",
+			timeout:     "30s",
+			expectError: false,
+		},
+		{
+			name:        "valid milliseconds format",
+			timeout:     "500ms",
+			expectError: false,
+		},
+		{
+			name:        "valid minutes format",
+			timeout:     "2m",
+			expectError: false,
+		},
+		{
+			name:        "empty string (uses default)",
+			timeout:     "",
+			expectError: false,
 		},
 	}
 
@@ -146,89 +180,55 @@ func TestExecuteHandler_InvalidTimeoutFormat(t *testing.T) {
 
 			server.ExecuteHandler(c)
 
-			assert.Equal(t, http.StatusBadRequest, w.Code)
-			assert.Contains(t, w.Body.String(), "Invalid timeout format")
+			if tt.expectError {
+				assert.Equal(t, http.StatusBadRequest, w.Code)
+				assert.Contains(t, w.Body.String(), tt.errorContains)
+			} else {
+				if w.Code == http.StatusBadRequest {
+					assert.NotContains(t, w.Body.String(), "Invalid timeout format")
+				}
+			}
 		})
 	}
 }
 
-func TestExecuteHandler_ValidTimeoutFormats(t *testing.T) {
+func TestExecuteHandler_WorkingDirectory(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
 	defer os.Unsetenv(PublicKeyEnvVar)
 
+	subDir := filepath.Join(tmpDir, "subdir")
+	require.NoError(t, os.Mkdir(subDir, 0755))
+
 	tests := []struct {
-		name    string
-		timeout string
+		name          string
+		workingDir    string
+		expectError   bool
+		errorContains string
 	}{
 		{
-			name:    "seconds",
-			timeout: "30s",
+			name:          "path traversal attack (../..)",
+			workingDir:    "../../etc",
+			expectError:   true,
+			errorContains: "Invalid working directory",
 		},
 		{
-			name:    "milliseconds",
-			timeout: "500ms",
+			name:          "multiple path traversals",
+			workingDir:    "../../../root",
+			expectError:   true,
+			errorContains: "Invalid working directory",
 		},
 		{
-			name:    "minutes",
-			timeout: "2m",
-		},
-		{
-			name:    "default when empty",
-			timeout: "",
+			name:        "valid subdirectory",
+			workingDir:  "subdir",
+			expectError: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := ExecuteRequest{
-				Command: []string{"echo", "test"},
-				Timeout: tt.timeout,
-			}
-			body, _ := json.Marshal(req)
-
-			w := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(w)
-			c.Request, _ = http.NewRequest("POST", "/api/execute", bytes.NewBuffer(body))
-			c.Request.Header.Set("Content-Type", "application/json")
-
-			server.ExecuteHandler(c)
-
-			// Should succeed (200) or fail for other reasons, but not timeout format error
-			if w.Code == http.StatusBadRequest {
-				assert.NotContains(t, w.Body.String(), "Invalid timeout format")
-			}
-		})
-	}
-}
-
-func TestExecuteHandler_InvalidWorkingDirectory(t *testing.T) {
-	server, tmpDir := setupExecuteTestServer(t)
-	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	tests := []struct {
-		name       string
-		workingDir string
-	}{
-		{
-			name:       "path traversal attack",
-			workingDir: "../../etc",
-		},
-		// Note: sanitizePath treats absolute paths by stripping leading "/"
-		// and treating them as relative to workspace. So "/tmp" becomes "tmp"
-		// relative to workspace, which may not exist but isn't rejected by sanitizePath.
-		// We skip this test case as the behavior is different than expected.
-		{
-			name:       "multiple path traversals",
-			workingDir: "../../../root",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := ExecuteRequest{
-				Command:    []string{"echo", "test"},
+				Command:    []string{"pwd"},
 				WorkingDir: tt.workingDir,
 			}
 			body, _ := json.Marshal(req)
@@ -240,25 +240,73 @@ func TestExecuteHandler_InvalidWorkingDirectory(t *testing.T) {
 
 			server.ExecuteHandler(c)
 
-			assert.Equal(t, http.StatusBadRequest, w.Code)
-			assert.Contains(t, w.Body.String(), "Invalid working directory")
+			if tt.expectError {
+				assert.Equal(t, http.StatusBadRequest, w.Code)
+				assert.Contains(t, w.Body.String(), tt.errorContains)
+			} else {
+				assert.Equal(t, http.StatusOK, w.Code)
+			}
 		})
 	}
 }
 
-func TestExecuteHandler_ValidWorkingDirectory(t *testing.T) {
+func TestExecuteHandler_ExitCodes(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
 	defer os.Unsetenv(PublicKeyEnvVar)
 
-	// Create a subdirectory
-	subDir := filepath.Join(tmpDir, "subdir")
-	err := os.Mkdir(subDir, 0755)
-	require.NoError(t, err)
+	tests := []struct {
+		name         string
+		command      []string
+		expectedCode int
+	}{
+		{
+			name:         "success (exit 0)",
+			command:      []string{"true"},
+			expectedCode: 0,
+		},
+		{
+			name:         "failure (exit 1)",
+			command:      []string{"false"},
+			expectedCode: 1,
+		},
+		{
+			name:         "custom exit code 42",
+			command:      []string{"sh", "-c", "exit 42"},
+			expectedCode: 42,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := ExecuteRequest{Command: tt.command}
+			body, _ := json.Marshal(req)
+
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request, _ = http.NewRequest("POST", "/api/execute", bytes.NewBuffer(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			server.ExecuteHandler(c)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+
+			var resp ExecuteResponse
+			err := json.Unmarshal(w.Body.Bytes(), &resp)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedCode, resp.ExitCode)
+		})
+	}
+}
+
+func TestExecuteHandler_TimeoutHandling(t *testing.T) {
+	server, tmpDir := setupExecuteTestServer(t)
+	defer os.RemoveAll(tmpDir)
+	defer os.Unsetenv(PublicKeyEnvVar)
 
 	req := ExecuteRequest{
-		Command:    []string{"pwd"},
-		WorkingDir: "subdir",
+		Command: []string{"sleep", "1"},
+		Timeout: "100ms",
 	}
 	body, _ := json.Marshal(req)
 
@@ -269,13 +317,13 @@ func TestExecuteHandler_ValidWorkingDirectory(t *testing.T) {
 
 	server.ExecuteHandler(c)
 
-	// Should succeed
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var resp ExecuteResponse
-	err = json.Unmarshal(w.Body.Bytes(), &resp)
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.Equal(t, 0, resp.ExitCode)
+	assert.Equal(t, TimeoutExitCode, resp.ExitCode)
+	assert.Contains(t, resp.Stderr, "Command timed out")
 }
 
 func TestExecuteHandler_EnvironmentVariables(t *testing.T) {
@@ -306,84 +354,6 @@ func TestExecuteHandler_EnvironmentVariables(t *testing.T) {
 	assert.Contains(t, resp.Stdout, "test-value")
 }
 
-func TestExecuteHandler_ExitCodeHandling(t *testing.T) {
-	server, tmpDir := setupExecuteTestServer(t)
-	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	tests := []struct {
-		name     string
-		command  []string
-		expected int
-	}{
-		{
-			name:     "success exit code 0",
-			command:  []string{"true"},
-			expected: 0,
-		},
-		{
-			name:     "failure exit code 1",
-			command:  []string{"false"},
-			expected: 1,
-		},
-		{
-			name:     "custom exit code",
-			command:  []string{"sh", "-c", "exit 42"},
-			expected: 42,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := ExecuteRequest{
-				Command: tt.command,
-			}
-			body, _ := json.Marshal(req)
-
-			w := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(w)
-			c.Request, _ = http.NewRequest("POST", "/api/execute", bytes.NewBuffer(body))
-			c.Request.Header.Set("Content-Type", "application/json")
-
-			server.ExecuteHandler(c)
-
-			assert.Equal(t, http.StatusOK, w.Code)
-
-			var resp ExecuteResponse
-			err := json.Unmarshal(w.Body.Bytes(), &resp)
-			require.NoError(t, err)
-			assert.Equal(t, tt.expected, resp.ExitCode)
-		})
-	}
-}
-
-func TestExecuteHandler_TimeoutHandling(t *testing.T) {
-	server, tmpDir := setupExecuteTestServer(t)
-	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	req := ExecuteRequest{
-		Command: []string{"sleep", "10"},
-		Timeout: "100ms",
-	}
-	body, _ := json.Marshal(req)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("POST", "/api/execute", bytes.NewBuffer(body))
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	server.ExecuteHandler(c)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp ExecuteResponse
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, TimeoutExitCode, resp.ExitCode)
-	assert.Contains(t, resp.Stderr, "Command timed out")
-}
-
 func TestExecuteHandler_ResponseStructure(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
@@ -409,7 +379,6 @@ func TestExecuteHandler_ResponseStructure(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	// Verify response structure
 	assert.NotEmpty(t, resp.Stdout)
 	assert.Contains(t, resp.Stdout, "hello")
 	assert.Contains(t, resp.Stdout, "world")
@@ -446,33 +415,6 @@ func TestExecuteHandler_StderrCapture(t *testing.T) {
 	assert.Contains(t, resp.Stderr, "error message")
 }
 
-func TestExecuteHandler_DefaultTimeout(t *testing.T) {
-	server, tmpDir := setupExecuteTestServer(t)
-	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	req := ExecuteRequest{
-		Command: []string{"echo", "test"},
-		Timeout: "", // Empty timeout should use default
-	}
-	body, _ := json.Marshal(req)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("POST", "/api/execute", bytes.NewBuffer(body))
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	server.ExecuteHandler(c)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Command should complete successfully with default timeout
-	var resp ExecuteResponse
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, 0, resp.ExitCode)
-}
-
 func TestExecuteHandler_CommandWithArguments(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
@@ -505,7 +447,7 @@ func TestExecuteHandler_EmptyEnvVars(t *testing.T) {
 
 	req := ExecuteRequest{
 		Command: []string{"echo", "test"},
-		Env:     map[string]string{}, // Empty env vars
+		Env:     map[string]string{},
 	}
 	body, _ := json.Marshal(req)
 
@@ -517,4 +459,36 @@ func TestExecuteHandler_EmptyEnvVars(t *testing.T) {
 	server.ExecuteHandler(c)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestExecuteHandler_MultipleEnvVars(t *testing.T) {
+	server, tmpDir := setupExecuteTestServer(t)
+	defer os.RemoveAll(tmpDir)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	req := ExecuteRequest{
+		Command: []string{"sh", "-c", "echo $VAR1 $VAR2 $VAR3"},
+		Env: map[string]string{
+			"VAR1": "value1",
+			"VAR2": "value2",
+			"VAR3": "value3",
+		},
+	}
+	body, _ := json.Marshal(req)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request, _ = http.NewRequest("POST", "/api/execute", bytes.NewBuffer(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	server.ExecuteHandler(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp ExecuteResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Contains(t, resp.Stdout, "value1")
+	assert.Contains(t, resp.Stdout, "value2")
+	assert.Contains(t, resp.Stdout, "value3")
 }

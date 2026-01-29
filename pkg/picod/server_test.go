@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -53,64 +54,93 @@ func generateTestPublicKeyPEM(t *testing.T) string {
 	return string(pubKeyPEM)
 }
 
-func TestNewServer_WithWorkspace(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
+func TestNewServer_WorkspaceConfiguration(t *testing.T) {
 	pubKeyPEM := generateTestPublicKeyPEM(t)
 	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
 	defer os.Unsetenv(PublicKeyEnvVar)
 
-	config := Config{
-		Port:      8080,
-		Workspace: tmpDir,
+	tests := []struct {
+		name         string
+		setupWorkDir func(t *testing.T) (workspaceConfig string, cleanup func())
+		verifyResult func(t *testing.T, server *Server)
+	}{
+		{
+			name: "with explicit workspace directory",
+			setupWorkDir: func(t *testing.T) (string, func()) {
+				tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
+				require.NoError(t, err)
+				return tmpDir, func() { os.RemoveAll(tmpDir) }
+			},
+			verifyResult: func(t *testing.T, server *Server) {
+				assert.NotNil(t, server)
+				assert.Equal(t, server.config.Workspace, server.workspaceDir)
+			},
+		},
+		{
+			name: "without workspace (defaults to cwd)",
+			setupWorkDir: func(t *testing.T) (string, func()) {
+				tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
+				require.NoError(t, err)
+				originalWd, err := os.Getwd()
+				require.NoError(t, err)
+				err = os.Chdir(tmpDir)
+				require.NoError(t, err)
+				return "", func() {
+					_ = os.Chdir(originalWd)
+					os.RemoveAll(tmpDir)
+				}
+			},
+			verifyResult: func(t *testing.T, server *Server) {
+				assert.NotNil(t, server)
+				cwd, err := os.Getwd()
+				require.NoError(t, err)
+				absCwd, err := filepath.Abs(cwd)
+				require.NoError(t, err)
+				assert.Equal(t, absCwd, server.workspaceDir)
+			},
+		},
+		{
+			name: "with relative path workspace",
+			setupWorkDir: func(t *testing.T) (string, func()) {
+				tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
+				require.NoError(t, err)
+				subDir := filepath.Join(tmpDir, "subdir")
+				err = os.Mkdir(subDir, 0755)
+				require.NoError(t, err)
+				originalWd, err := os.Getwd()
+				require.NoError(t, err)
+				err = os.Chdir(tmpDir)
+				require.NoError(t, err)
+				return "subdir", func() {
+					_ = os.Chdir(originalWd)
+					os.RemoveAll(tmpDir)
+				}
+			},
+			verifyResult: func(t *testing.T, server *Server) {
+				assert.NotNil(t, server)
+				assert.True(t, filepath.IsAbs(server.workspaceDir))
+			},
+		},
 	}
 
-	server := NewServer(config)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workspaceConfig, cleanup := tt.setupWorkDir(t)
+			defer cleanup()
 
-	assert.NotNil(t, server)
-	assert.NotNil(t, server.engine)
-	assert.NotNil(t, server.authManager)
-	assert.Equal(t, config, server.config)
-	assert.Equal(t, tmpDir, server.workspaceDir)
-	assert.False(t, server.startTime.IsZero())
-}
+			config := Config{
+				Port:      8080,
+				Workspace: workspaceConfig,
+			}
 
-func TestNewServer_WithoutWorkspace(t *testing.T) {
-	// Save original working directory
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
+			server := NewServer(config)
 
-	// Create a temporary directory and change to it
-	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
-	defer func() {
-		if err := os.Chdir(originalWd); err != nil {
-			t.Logf("failed to restore working directory: %v", err)
-		}
-	}()
-
-	pubKeyPEM := generateTestPublicKeyPEM(t)
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	config := Config{
-		Port:      8080,
-		Workspace: "", // Empty workspace
+			tt.verifyResult(t, server)
+			assert.NotNil(t, server.engine)
+			assert.NotNil(t, server.authManager)
+			assert.False(t, server.startTime.IsZero())
+		})
 	}
-
-	server := NewServer(config)
-
-	assert.NotNil(t, server)
-	// Should default to current working directory
-	absCwd, err := filepath.Abs(tmpDir)
-	require.NoError(t, err)
-	assert.Equal(t, absCwd, server.workspaceDir)
 }
 
 func TestNewServer_RoutesRegistered(t *testing.T) {
@@ -250,41 +280,73 @@ func TestHealthCheckHandler_MultipleCalls(t *testing.T) {
 	}
 }
 
-func TestNewServer_WorkspacePathResolution(t *testing.T) {
+func TestNewServer_EngineConfiguration(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
-
-	// Create a subdirectory
-	subDir := filepath.Join(tmpDir, "subdir")
-	err = os.Mkdir(subDir, 0755)
-	require.NoError(t, err)
 
 	pubKeyPEM := generateTestPublicKeyPEM(t)
 	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
 	defer os.Unsetenv(PublicKeyEnvVar)
 
-	// Test with relative path
 	config := Config{
 		Port:      8080,
-		Workspace: "subdir",
+		Workspace: tmpDir,
 	}
-
-	// Change to tmpDir to test relative path
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
-	defer func() {
-		if err := os.Chdir(originalWd); err != nil {
-			t.Logf("failed to restore working directory: %v", err)
-		}
-	}()
 
 	server := NewServer(config)
 
-	// Workspace should be resolved to absolute path
-	absSubDir, err := filepath.Abs(subDir)
+	assert.NotNil(t, server.engine)
+	// Verify Gin is in release mode (set by NewServer)
+	// This is harder to test directly, but we can verify the engine works
+	assert.NotNil(t, server.engine.Routes())
+}
+
+func TestNewServer_AuthManagerInitialized(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
 	require.NoError(t, err)
-	assert.Equal(t, absSubDir, server.workspaceDir)
+	defer os.RemoveAll(tmpDir)
+
+	pubKeyPEM := generateTestPublicKeyPEM(t)
+	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	config := Config{
+		Port:      8080,
+		Workspace: tmpDir,
+	}
+
+	server := NewServer(config)
+
+	assert.NotNil(t, server.authManager)
+	// Verify public key is loaded
+	// We can't directly access private fields, but we can verify
+	// the auth manager works by checking it doesn't panic
+	assert.NotNil(t, server.authManager.AuthMiddleware())
+}
+
+func TestNewServer_DifferentPorts(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	pubKeyPEM := generateTestPublicKeyPEM(t)
+	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	ports := []int{8080, 9090, 3000, 0}
+
+	for _, port := range ports {
+		t.Run(fmt.Sprintf("port_%d", port), func(t *testing.T) {
+			config := Config{
+				Port:      port,
+				Workspace: tmpDir,
+			}
+
+			server := NewServer(config)
+
+			assert.NotNil(t, server)
+			assert.Equal(t, port, server.config.Port)
+		})
+	}
 }

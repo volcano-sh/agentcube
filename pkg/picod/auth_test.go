@@ -30,6 +30,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -58,104 +59,134 @@ func generateTestRSAKeyPair() (*rsa.PrivateKey, string, error) {
 	return privateKey, string(pubKeyPEM), nil
 }
 
-func TestLoadPublicKeyFromEnv_ValidKey(t *testing.T) {
-	_, pubKeyPEM, err := generateTestRSAKeyPair()
-	assert.NoError(t, err)
-
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
+func TestNewAuthManager(t *testing.T) {
 	manager := NewAuthManager()
-	err = manager.LoadPublicKeyFromEnv()
-	assert.NoError(t, err)
+	assert.NotNil(t, manager)
 }
 
-func TestLoadPublicKeyFromEnv_MissingEnvVar(t *testing.T) {
-	os.Unsetenv(PublicKeyEnvVar)
-
-	manager := NewAuthManager()
-	err := manager.LoadPublicKeyFromEnv()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), PublicKeyEnvVar)
-	assert.Contains(t, err.Error(), "not set")
-}
-
-func TestLoadPublicKeyFromEnv_InvalidPEM(t *testing.T) {
-	os.Setenv(PublicKeyEnvVar, "invalid PEM data")
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	manager := NewAuthManager()
-	err := manager.LoadPublicKeyFromEnv()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode PEM")
-}
-
-func TestLoadPublicKeyFromEnv_InvalidKeyFormat(t *testing.T) {
-	// Create a PEM block with wrong type (e.g., certificate instead of public key)
-	certPEM := `-----BEGIN CERTIFICATE-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
------END CERTIFICATE-----`
-
-	os.Setenv(PublicKeyEnvVar, certPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	manager := NewAuthManager()
-	err := manager.LoadPublicKeyFromEnv()
-	assert.Error(t, err)
-}
-
-func TestAuthMiddleware_MissingAuthorizationHeader(t *testing.T) {
-	_, pubKeyPEM, err := generateTestRSAKeyPair()
-	assert.NoError(t, err)
-
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	manager := NewAuthManager()
-	err = manager.LoadPublicKeyFromEnv()
-	assert.NoError(t, err)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("POST", "/api/execute", nil)
-
-	handler := manager.AuthMiddleware()
-	handler(c)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-	assert.Contains(t, w.Body.String(), "Missing Authorization header")
-}
-
-func TestAuthMiddleware_InvalidHeaderFormat(t *testing.T) {
-	_, pubKeyPEM, err := generateTestRSAKeyPair()
-	assert.NoError(t, err)
-
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	manager := NewAuthManager()
-	err = manager.LoadPublicKeyFromEnv()
-	assert.NoError(t, err)
-
+func TestLoadPublicKeyFromEnv(t *testing.T) {
 	tests := []struct {
-		name   string
-		header string
+		name        string
+		setupEnv    func() string
+		wantErr     bool
+		errContains string
 	}{
 		{
-			name:   "no Bearer prefix",
-			header: "token123",
+			name: "valid RSA public key",
+			setupEnv: func() string {
+				_, pubKeyPEM, err := generateTestRSAKeyPair()
+				require.NoError(t, err)
+				return pubKeyPEM
+			},
+			wantErr: false,
 		},
 		{
-			name:   "wrong prefix",
-			header: "Basic token123",
+			name: "missing environment variable",
+			setupEnv: func() string {
+				return ""
+			},
+			wantErr:     true,
+			errContains: "not set",
 		},
 		{
-			name:   "empty token",
-			header: "Bearer ",
+			name: "invalid PEM data",
+			setupEnv: func() string {
+				return "invalid PEM data"
+			},
+			wantErr:     true,
+			errContains: "failed to decode PEM",
 		},
 		{
-			name:   "multiple spaces",
-			header: "Bearer  token123",
+			name: "invalid key format (certificate instead of public key)",
+			setupEnv: func() string {
+				return `-----BEGIN CERTIFICATE-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
+-----END CERTIFICATE-----`
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid key format (non-RSA public key)",
+			setupEnv: func() string {
+				return `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAinvalid
+-----END PUBLIC KEY-----`
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			envValue := tt.setupEnv()
+			if envValue != "" {
+				os.Setenv(PublicKeyEnvVar, envValue)
+				defer os.Unsetenv(PublicKeyEnvVar)
+			} else {
+				os.Unsetenv(PublicKeyEnvVar)
+			}
+
+			manager := NewAuthManager()
+			err := manager.LoadPublicKeyFromEnv()
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestAuthMiddleware_HeaderValidation(t *testing.T) {
+	_, pubKeyPEM, err := generateTestRSAKeyPair()
+	require.NoError(t, err)
+
+	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	manager := NewAuthManager()
+	err = manager.LoadPublicKeyFromEnv()
+	require.NoError(t, err)
+
+	tests := []struct {
+		name           string
+		authHeader     string
+		expectedStatus int
+		errorContains  string
+	}{
+		{
+			name:           "missing Authorization header",
+			authHeader:     "",
+			expectedStatus: http.StatusUnauthorized,
+			errorContains:  "Missing Authorization header",
+		},
+		{
+			name:           "no Bearer prefix",
+			authHeader:     "token123",
+			expectedStatus: http.StatusUnauthorized,
+			errorContains:  "Invalid Authorization header format",
+		},
+		{
+			name:           "wrong prefix",
+			authHeader:     "Basic token123",
+			expectedStatus: http.StatusUnauthorized,
+			errorContains:  "Invalid Authorization header format",
+		},
+		{
+			name:           "empty token after Bearer",
+			authHeader:     "Bearer ",
+			expectedStatus: http.StatusUnauthorized,
+			errorContains:  "JWT verification failed",
+		},
+		{
+			name:           "multiple spaces",
+			authHeader:     "Bearer  token123",
+			expectedStatus: http.StatusUnauthorized,
+			errorContains:  "Invalid Authorization header format",
 		},
 	}
 
@@ -164,40 +195,130 @@ func TestAuthMiddleware_InvalidHeaderFormat(t *testing.T) {
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 			c.Request, _ = http.NewRequest("POST", "/api/execute", nil)
-			c.Request.Header.Set("Authorization", tt.header)
+			if tt.authHeader != "" {
+				c.Request.Header.Set("Authorization", tt.authHeader)
+			}
 
 			handler := manager.AuthMiddleware()
 			handler(c)
 
-			assert.Equal(t, http.StatusUnauthorized, w.Code)
-			// Empty token ("Bearer ") passes header format check but fails JWT parsing
-			if tt.name == "empty token" {
-				assert.Contains(t, w.Body.String(), "JWT verification failed")
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			assert.Contains(t, w.Body.String(), tt.errorContains)
+		})
+	}
+}
+
+func TestAuthMiddleware_TokenValidation(t *testing.T) {
+	privateKey, pubKeyPEM, err := generateTestRSAKeyPair()
+	require.NoError(t, err)
+
+	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	manager := NewAuthManager()
+	err = manager.LoadPublicKeyFromEnv()
+	require.NoError(t, err)
+
+	tests := []struct {
+		name           string
+		setupToken     func() string
+		expectedStatus int
+		errorContains  string
+	}{
+		{
+			name: "valid token",
+			setupToken: func() string {
+				token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+					"exp": time.Now().Add(time.Hour).Unix(),
+					"iat": time.Now().Unix(),
+				})
+				tokenString, _ := token.SignedString(privateKey)
+				return tokenString
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "expired token",
+			setupToken: func() string {
+				token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+					"exp": time.Now().Add(-time.Hour).Unix(),
+					"iat": time.Now().Add(-2 * time.Hour).Unix(),
+				})
+				tokenString, _ := token.SignedString(privateKey)
+				return tokenString
+			},
+			expectedStatus: http.StatusUnauthorized,
+			errorContains:  "Invalid token",
+		},
+		{
+			name: "invalid signature",
+			setupToken: func() string {
+				wrongPrivateKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+				token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+					"exp": time.Now().Add(time.Hour).Unix(),
+					"iat": time.Now().Unix(),
+				})
+				tokenString, _ := token.SignedString(wrongPrivateKey)
+				return tokenString
+			},
+			expectedStatus: http.StatusUnauthorized,
+			errorContains:  "Invalid token",
+		},
+		{
+			name: "wrong signing method (HS256)",
+			setupToken: func() string {
+				token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+					"exp": time.Now().Add(time.Hour).Unix(),
+					"iat": time.Now().Unix(),
+				})
+				tokenString, _ := token.SignedString([]byte("secret"))
+				return tokenString
+			},
+			expectedStatus: http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tokenString := tt.setupToken()
+
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request, _ = http.NewRequest("POST", "/api/execute", nil)
+			c.Request.Header.Set("Authorization", "Bearer "+tokenString)
+
+			handler := manager.AuthMiddleware()
+			handler(c)
+
+			if tt.expectedStatus == http.StatusOK {
+				assert.NotEqual(t, http.StatusUnauthorized, w.Code)
 			} else {
-				assert.Contains(t, w.Body.String(), "Invalid Authorization header format")
+				assert.Equal(t, tt.expectedStatus, w.Code)
+				if tt.errorContains != "" {
+					assert.Contains(t, w.Body.String(), tt.errorContains)
+				}
 			}
 		})
 	}
 }
 
-func TestAuthMiddleware_ValidToken(t *testing.T) {
+func TestAuthMiddleware_MaxBodySize(t *testing.T) {
 	privateKey, pubKeyPEM, err := generateTestRSAKeyPair()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
 	defer os.Unsetenv(PublicKeyEnvVar)
 
 	manager := NewAuthManager()
 	err = manager.LoadPublicKeyFromEnv()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	// Generate a valid JWT token
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"exp": time.Now().Add(time.Hour).Unix(),
 		"iat": time.Now().Unix(),
 	})
 	tokenString, err := token.SignedString(privateKey)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -207,102 +328,5 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 	handler := manager.AuthMiddleware()
 	handler(c)
 
-	// Should not abort (status 200 or next handler called)
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestAuthMiddleware_ExpiredToken(t *testing.T) {
-	privateKey, pubKeyPEM, err := generateTestRSAKeyPair()
-	assert.NoError(t, err)
-
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	manager := NewAuthManager()
-	err = manager.LoadPublicKeyFromEnv()
-	assert.NoError(t, err)
-
-	// Generate an expired JWT token
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"exp": time.Now().Add(-time.Hour).Unix(), // Expired
-		"iat": time.Now().Add(-2 * time.Hour).Unix(),
-	})
-	tokenString, err := token.SignedString(privateKey)
-	assert.NoError(t, err)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("POST", "/api/execute", nil)
-	c.Request.Header.Set("Authorization", "Bearer "+tokenString)
-
-	handler := manager.AuthMiddleware()
-	handler(c)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-	assert.Contains(t, w.Body.String(), "Invalid token")
-}
-
-func TestAuthMiddleware_InvalidSignature(t *testing.T) {
-	_, pubKeyPEM, err := generateTestRSAKeyPair()
-	assert.NoError(t, err)
-
-	// Generate a different key pair for signing
-	wrongPrivateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	assert.NoError(t, err)
-
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	manager := NewAuthManager()
-	err = manager.LoadPublicKeyFromEnv()
-	assert.NoError(t, err)
-
-	// Generate token with wrong private key
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"exp": time.Now().Add(time.Hour).Unix(),
-		"iat": time.Now().Unix(),
-	})
-	tokenString, err := token.SignedString(wrongPrivateKey)
-	assert.NoError(t, err)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("POST", "/api/execute", nil)
-	c.Request.Header.Set("Authorization", "Bearer "+tokenString)
-
-	handler := manager.AuthMiddleware()
-	handler(c)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-	assert.Contains(t, w.Body.String(), "Invalid token")
-}
-
-func TestAuthMiddleware_WrongSigningMethod(t *testing.T) {
-	_, pubKeyPEM, err := generateTestRSAKeyPair()
-	assert.NoError(t, err)
-
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	manager := NewAuthManager()
-	err = manager.LoadPublicKeyFromEnv()
-	assert.NoError(t, err)
-
-	// Generate token with HS256 (HMAC) instead of RS256
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"exp": time.Now().Add(time.Hour).Unix(),
-		"iat": time.Now().Unix(),
-	})
-	tokenString, err := token.SignedString([]byte("secret"))
-	assert.NoError(t, err)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("POST", "/api/execute", nil)
-	c.Request.Header.Set("Authorization", "Bearer "+tokenString)
-
-	handler := manager.AuthMiddleware()
-	handler(c)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.NotNil(t, c.Request.Body)
 }

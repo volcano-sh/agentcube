@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -93,27 +94,31 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	cmd := exec.CommandContext(ctx, req.Command[0], req.Command[1:]...) //nolint:gosec // This is an agent designed to execute arbitrary commands
 
 	// Set working directory
-	if req.WorkingDir != "" {
-		safeWorkingDir, err := s.sanitizePath(req.WorkingDir)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("Invalid working directory: %v", err),
-				"code":  http.StatusBadRequest,
-			})
-			return
-		}
-
-		// Ensure working directory exists
-		if err := os.MkdirAll(safeWorkingDir, 0755); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": fmt.Sprintf("failed to create working directory: %v", err),
-				"code":  http.StatusInternalServerError,
-			})
-			return
-		}
-
-		cmd.Dir = safeWorkingDir
+	// If req.WorkingDir is empty or whitespace, default to workspace root
+	workingDir := strings.TrimSpace(req.WorkingDir)
+	if workingDir == "" {
+		workingDir = s.workspaceDir
 	}
+
+	safeWorkingDir, err := s.sanitizePath(workingDir)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Invalid working directory: %v", err),
+			"code":  http.StatusBadRequest,
+		})
+		return
+	}
+
+	// Ensure working directory exists
+	if err := os.MkdirAll(safeWorkingDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("failed to create working directory: %v", err),
+			"code":  http.StatusInternalServerError,
+		})
+		return
+	}
+
+	cmd.Dir = safeWorkingDir
 
 	// Set environment variables
 	if len(req.Env) > 0 {
@@ -129,7 +134,7 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	cmd.Stderr = &stderr
 
 	start := time.Now()
-	err := cmd.Run()
+	err = cmd.Run()
 	duration := time.Since(start).Seconds()
 	endTime := time.Now()
 

@@ -107,7 +107,9 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 
 	// Set environment variables
 	if len(req.Env) > 0 {
-		currentEnv := os.Environ()
+		environ := os.Environ()
+		currentEnv := make([]string, len(environ), len(environ)+len(req.Env))
+		copy(currentEnv, environ)
 		for k, v := range req.Env {
 			currentEnv = append(currentEnv, fmt.Sprintf("%s=%s", k, v))
 		}

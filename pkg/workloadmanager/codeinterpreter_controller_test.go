@@ -52,156 +52,141 @@ func setupTestReconciler() *CodeInterpreterReconciler {
 	}
 }
 
-func TestConvertToPodTemplate_EmptyRuntimeClassName(t *testing.T) {
-	reconciler := setupTestReconciler()
-
-	emptyStr := ""
-	template := &runtimev1alpha1.CodeInterpreterSandboxTemplate{
-		Image:           "test-image:latest",
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		RuntimeClassName: &emptyStr,
-	}
-
-	ci := &runtimev1alpha1.CodeInterpreter{
-		Spec: runtimev1alpha1.CodeInterpreterSpec{
-			AuthMode: runtimev1alpha1.AuthModePicoD,
-		},
-	}
-
-	result := reconciler.convertToPodTemplate(template, ci)
-
-	// Empty string RuntimeClassName should be normalized to nil
-	assert.Nil(t, result.Spec.RuntimeClassName)
+func stringPtr(s string) *string {
+	return &s
 }
 
-func TestConvertToPodTemplate_NilRuntimeClassName(t *testing.T) {
+func TestConvertToPodTemplate_RuntimeClassName_TableDriven(t *testing.T) {
 	reconciler := setupTestReconciler()
 
-	template := &runtimev1alpha1.CodeInterpreterSandboxTemplate{
-		Image:           "test-image:latest",
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		RuntimeClassName: nil,
-	}
-
-	ci := &runtimev1alpha1.CodeInterpreter{
-		Spec: runtimev1alpha1.CodeInterpreterSpec{
-			AuthMode: runtimev1alpha1.AuthModePicoD,
+	tests := []struct {
+		name                 string
+		runtimeClassName     *string
+		expectedRuntimeClass *string
+	}{
+		{
+			name:                 "empty string should be normalized to nil",
+			runtimeClassName:     stringPtr(""),
+			expectedRuntimeClass: nil,
+		},
+		{
+			name:                 "nil should remain nil",
+			runtimeClassName:     nil,
+			expectedRuntimeClass: nil,
+		},
+		{
+			name:                 "valid runtime class preserved",
+			runtimeClassName:     stringPtr("gvisor"),
+			expectedRuntimeClass: stringPtr("gvisor"),
 		},
 	}
 
-	result := reconciler.convertToPodTemplate(template, ci)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			template := &runtimev1alpha1.CodeInterpreterSandboxTemplate{
+				Image:            "test-image:latest",
+				ImagePullPolicy:  corev1.PullIfNotPresent,
+				RuntimeClassName: tt.runtimeClassName,
+			}
 
-	// Nil RuntimeClassName should remain nil
-	assert.Nil(t, result.Spec.RuntimeClassName)
-}
+			ci := &runtimev1alpha1.CodeInterpreter{
+				Spec: runtimev1alpha1.CodeInterpreterSpec{
+					AuthMode: runtimev1alpha1.AuthModePicoD,
+				},
+			}
 
-func TestConvertToPodTemplate_ValidRuntimeClassName(t *testing.T) {
-	reconciler := setupTestReconciler()
+			result := reconciler.convertToPodTemplate(template, ci)
 
-	runtimeClass := "gvisor"
-	template := &runtimev1alpha1.CodeInterpreterSandboxTemplate{
-		Image:           "test-image:latest",
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		RuntimeClassName: &runtimeClass,
+			if tt.expectedRuntimeClass == nil {
+				assert.Nil(t, result.Spec.RuntimeClassName)
+			} else {
+				if assert.NotNil(t, result.Spec.RuntimeClassName) {
+					assert.Equal(t, *tt.expectedRuntimeClass, *result.Spec.RuntimeClassName)
+				}
+			}
+		})
 	}
-
-	ci := &runtimev1alpha1.CodeInterpreter{
-		Spec: runtimev1alpha1.CodeInterpreterSpec{
-			AuthMode: runtimev1alpha1.AuthModePicoD,
-		},
-	}
-
-	result := reconciler.convertToPodTemplate(template, ci)
-
-	// Valid RuntimeClassName should be preserved
-	assert.NotNil(t, result.Spec.RuntimeClassName)
-	assert.Equal(t, runtimeClass, *result.Spec.RuntimeClassName)
 }
 
 // Note: TestConvertToPodTemplate_AllFields removed - it only verified that
 // struct fields match what was set in the template, which is trivial field copying.
 // The meaningful behavior (normalization, auth mode handling) is tested in other tests.
 
-func TestConvertToPodTemplate_AuthModeNone(t *testing.T) {
+func TestConvertToPodTemplate_AuthMode(t *testing.T) {
 	reconciler := setupTestReconciler()
 
-	template := &runtimev1alpha1.CodeInterpreterSandboxTemplate{
-		Image:           "test-image:latest",
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Environment: []corev1.EnvVar{
-			{Name: "ENV1", Value: "value1"},
+	tests := []struct {
+		name               string
+		authMode           runtimev1alpha1.AuthModeType
+		environment        []corev1.EnvVar
+		expectedEnvLen     int
+		expectExactEnvLen  bool
+		expectPublicKeyVar bool
+	}{
+		{
+			name:               "auth mode none - no public key injected",
+			authMode:           runtimev1alpha1.AuthModeNone,
+			environment:        []corev1.EnvVar{{Name: "ENV1", Value: "value1"}},
+			expectedEnvLen:     1,
+			expectExactEnvLen:  true,
+			expectPublicKeyVar: false,
+		},
+		{
+			name:               "auth mode PicoD - inject public key and preserve existing env",
+			authMode:           runtimev1alpha1.AuthModePicoD,
+			environment:        []corev1.EnvVar{{Name: "ENV1", Value: "value1"}},
+			expectedEnvLen:     2, // at least original + public key
+			expectExactEnvLen:  false,
+			expectPublicKeyVar: true,
+		},
+		{
+			name:               "auth mode PicoD - only public key when no environment variables",
+			authMode:           runtimev1alpha1.AuthModePicoD,
+			environment:        []corev1.EnvVar{},
+			expectedEnvLen:     1,
+			expectExactEnvLen:  true,
+			expectPublicKeyVar: true,
 		},
 	}
 
-	ci := &runtimev1alpha1.CodeInterpreter{
-		Spec: runtimev1alpha1.CodeInterpreterSpec{
-			AuthMode: runtimev1alpha1.AuthModeNone,
-		},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			template := &runtimev1alpha1.CodeInterpreterSandboxTemplate{
+				Image:           "test-image:latest",
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				Environment:     tt.environment,
+			}
+
+			ci := &runtimev1alpha1.CodeInterpreter{
+				Spec: runtimev1alpha1.CodeInterpreterSpec{
+					AuthMode: tt.authMode,
+				},
+			}
+
+			result := reconciler.convertToPodTemplate(template, ci)
+
+			envVars := result.Spec.Containers[0].Env
+			if tt.expectExactEnvLen {
+				assert.Equal(t, tt.expectedEnvLen, len(envVars))
+			} else {
+				assert.GreaterOrEqual(t, len(envVars), tt.expectedEnvLen)
+			}
+
+			foundPublicKey := false
+			for _, env := range envVars {
+				if env.Name == "PICOD_AUTH_PUBLIC_KEY" {
+					foundPublicKey = true
+					break
+				}
+			}
+
+			if tt.expectPublicKeyVar {
+				assert.True(t, foundPublicKey, "PICOD_AUTH_PUBLIC_KEY should be injected")
+			} else {
+				assert.False(t, foundPublicKey, "PICOD_AUTH_PUBLIC_KEY should not be injected")
+			}
+		})
 	}
-
-	result := reconciler.convertToPodTemplate(template, ci)
-
-	// With AuthModeNone, public key should NOT be injected
-	envVars := result.Spec.Containers[0].Env
-	assert.Equal(t, len(template.Environment), len(envVars))
-	assert.NotContains(t, envVars, corev1.EnvVar{Name: "PICOD_AUTH_PUBLIC_KEY"})
-}
-
-func TestConvertToPodTemplate_AuthModePicoD(t *testing.T) {
-	reconciler := setupTestReconciler()
-
-	template := &runtimev1alpha1.CodeInterpreterSandboxTemplate{
-		Image:           "test-image:latest",
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Environment: []corev1.EnvVar{
-			{Name: "ENV1", Value: "value1"},
-		},
-	}
-
-	ci := &runtimev1alpha1.CodeInterpreter{
-		Spec: runtimev1alpha1.CodeInterpreterSpec{
-			AuthMode: runtimev1alpha1.AuthModePicoD,
-		},
-	}
-
-	result := reconciler.convertToPodTemplate(template, ci)
-
-	// With AuthModePicoD, public key should be injected
-	envVars := result.Spec.Containers[0].Env
-	assert.Greater(t, len(envVars), len(template.Environment))
-	
-	// Find the public key env var
-	found := false
-	for _, env := range envVars {
-		if env.Name == "PICOD_AUTH_PUBLIC_KEY" {
-			found = true
-			break
-		}
-	}
-	assert.True(t, found, "PICOD_AUTH_PUBLIC_KEY should be injected")
-}
-
-func TestConvertToPodTemplate_NoEnvironmentVariables(t *testing.T) {
-	reconciler := setupTestReconciler()
-
-	template := &runtimev1alpha1.CodeInterpreterSandboxTemplate{
-		Image:           "test-image:latest",
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Environment:     []corev1.EnvVar{},
-	}
-
-	ci := &runtimev1alpha1.CodeInterpreter{
-		Spec: runtimev1alpha1.CodeInterpreterSpec{
-			AuthMode: runtimev1alpha1.AuthModePicoD,
-		},
-	}
-
-	result := reconciler.convertToPodTemplate(template, ci)
-
-	// Should only have the public key env var
-	envVars := result.Spec.Containers[0].Env
-	assert.Equal(t, 1, len(envVars))
-	assert.Equal(t, "PICOD_AUTH_PUBLIC_KEY", envVars[0].Name)
 }
 
 // Note: TestConvertToPodTemplate_EmptyCommandAndArgs and

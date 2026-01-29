@@ -28,164 +28,182 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 )
 
-const testPodIP = "10.0.0.1"
+const sandboxHelperTestPodIP = "10.0.0.1"
 
 // Note: TestBuildSandboxPlaceHolder and TestBuildSandboxPlaceHolder_CodeInterpreter
 // removed - they only verified that struct fields match input parameters, which is
 // trivial field copying behavior.
 
-func TestBuildSandboxInfo(t *testing.T) {
+func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 	now := time.Now()
-	sandbox := &sandboxv1alpha1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:              "test-sandbox",
-			Namespace:         "default",
-			UID:               "test-uid-123",
-			CreationTimestamp: metav1.NewTime(now),
-		},
-		Status: sandboxv1alpha1.SandboxStatus{
-			Conditions: []metav1.Condition{
-				{
-					Type:   string(sandboxv1alpha1.SandboxConditionReady),
-					Status: metav1.ConditionTrue,
+
+	tests := []struct {
+		name           string
+		setupSandbox   func() *sandboxv1alpha1.Sandbox
+		podIP          string
+		entry          *sandboxEntry
+		validateResult func(t *testing.T, result *types.SandboxInfo)
+	}{
+		{
+			name: "basic sandbox with ports",
+			setupSandbox: func() *sandboxv1alpha1.Sandbox {
+				return &sandboxv1alpha1.Sandbox{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "test-sandbox",
+						Namespace:         "default",
+						UID:               "test-uid-123",
+						CreationTimestamp: metav1.NewTime(now),
+					},
+					Status: sandboxv1alpha1.SandboxStatus{
+						Conditions: []metav1.Condition{
+							{
+								Type:   string(sandboxv1alpha1.SandboxConditionReady),
+								Status: metav1.ConditionTrue,
+							},
+						},
+					},
+				}
+			},
+			podIP: sandboxHelperTestPodIP,
+			entry: &sandboxEntry{
+				Kind:      types.AgentRuntimeKind,
+				SessionID: "test-session-123",
+				Ports: []runtimev1alpha1.TargetPort{
+					{
+						Port:       8080,
+						Protocol:   runtimev1alpha1.ProtocolTypeHTTP,
+						PathPrefix: "/api",
+					},
+					{
+						Port:       9090,
+						Protocol:   runtimev1alpha1.ProtocolTypeHTTP,
+						PathPrefix: "/metrics",
+					},
 				},
 			},
-		},
-	}
-
-	podIP := testPodIP
-	entry := &sandboxEntry{
-		Kind:      types.AgentRuntimeKind,
-		SessionID: "test-session-123",
-		Ports: []runtimev1alpha1.TargetPort{
-			{
-				Port:       8080,
-				Protocol:   runtimev1alpha1.ProtocolTypeHTTP,
-				PathPrefix: "/api",
-			},
-			{
-				Port:       9090,
-				Protocol:   runtimev1alpha1.ProtocolTypeHTTP,
-				PathPrefix: "/metrics",
+			validateResult: func(t *testing.T, result *types.SandboxInfo) {
+				assert.Equal(t, "running", result.Status)
+				assert.Len(t, result.EntryPoints, 2)
+				assert.Equal(t, "/api", result.EntryPoints[0].Path)
+				assert.Equal(t, sandboxHelperTestPodIP+":8080", result.EntryPoints[0].Endpoint)
+				assert.Equal(t, "/metrics", result.EntryPoints[1].Path)
+				assert.Equal(t, sandboxHelperTestPodIP+":9090", result.EntryPoints[1].Endpoint)
 			},
 		},
-	}
-
-	result := buildSandboxInfo(sandbox, podIP, entry)
-
-	// Focus on meaningful behavior: entry point construction and status determination
-	assert.Equal(t, "running", result.Status)
-	assert.Len(t, result.EntryPoints, 2)
-	assert.Equal(t, "/api", result.EntryPoints[0].Path)
-	assert.Equal(t, testPodIP+":8080", result.EntryPoints[0].Endpoint)
-	assert.Equal(t, "/metrics", result.EntryPoints[1].Path)
-	assert.Equal(t, testPodIP+":9090", result.EntryPoints[1].Endpoint)
-}
-
-func TestBuildSandboxInfo_WithShutdownTime(t *testing.T) {
-	now := time.Now()
-	shutdownTime := now.Add(2 * time.Hour)
-	sandbox := &sandboxv1alpha1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:              "test-sandbox",
-			Namespace:         "default",
-			UID:               "test-uid-123",
-			CreationTimestamp: metav1.NewTime(now),
+		{
+			name: "sandbox with shutdown time",
+			setupSandbox: func() *sandboxv1alpha1.Sandbox {
+				shutdownTime := now.Add(2 * time.Hour)
+				return &sandboxv1alpha1.Sandbox{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "test-sandbox",
+						Namespace:         "default",
+						UID:               "test-uid-123",
+						CreationTimestamp: metav1.NewTime(now),
+					},
+					Spec: sandboxv1alpha1.SandboxSpec{
+						ShutdownTime: &metav1.Time{Time: shutdownTime},
+					},
+					Status: sandboxv1alpha1.SandboxStatus{
+						Conditions: []metav1.Condition{
+							{
+								Type:   string(sandboxv1alpha1.SandboxConditionReady),
+								Status: metav1.ConditionTrue,
+							},
+						},
+					},
+				}
+			},
+			podIP: sandboxHelperTestPodIP,
+			entry: &sandboxEntry{
+				Kind:      types.AgentRuntimeKind,
+				SessionID: "test-session-123",
+				Ports:     []runtimev1alpha1.TargetPort{},
+			},
+			validateResult: func(t *testing.T, result *types.SandboxInfo) {
+				// ShutdownTime is now + 2h in setupSandbox
+				expectedShutdown := now.Add(2 * time.Hour)
+				assert.WithinDuration(t, expectedShutdown, result.ExpiresAt, 1*time.Second)
+			},
 		},
-		Spec: sandboxv1alpha1.SandboxSpec{
-			ShutdownTime: &metav1.Time{Time: shutdownTime},
+		{
+			name: "sandbox with no ports",
+			setupSandbox: func() *sandboxv1alpha1.Sandbox {
+				return &sandboxv1alpha1.Sandbox{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "test-sandbox",
+						Namespace:         "default",
+						UID:               "test-uid-123",
+						CreationTimestamp: metav1.NewTime(now),
+					},
+					Status: sandboxv1alpha1.SandboxStatus{
+						Conditions: []metav1.Condition{
+							{
+								Type:   string(sandboxv1alpha1.SandboxConditionReady),
+								Status: metav1.ConditionTrue,
+							},
+						},
+					},
+				}
+			},
+			podIP: sandboxHelperTestPodIP,
+			entry: &sandboxEntry{
+				Kind:      types.AgentRuntimeKind,
+				SessionID: "test-session-123",
+				Ports:     []runtimev1alpha1.TargetPort{},
+			},
+			validateResult: func(t *testing.T, result *types.SandboxInfo) {
+				assert.Empty(t, result.EntryPoints)
+			},
 		},
-		Status: sandboxv1alpha1.SandboxStatus{
-			Conditions: []metav1.Condition{
-				{
-					Type:   string(sandboxv1alpha1.SandboxConditionReady),
-					Status: metav1.ConditionTrue,
+		{
+			name: "sandbox with empty pod IP",
+			setupSandbox: func() *sandboxv1alpha1.Sandbox {
+				return &sandboxv1alpha1.Sandbox{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "test-sandbox",
+						Namespace:         "default",
+						UID:               "test-uid-123",
+						CreationTimestamp: metav1.NewTime(now),
+					},
+					Status: sandboxv1alpha1.SandboxStatus{
+						Conditions: []metav1.Condition{
+							{
+								Type:   string(sandboxv1alpha1.SandboxConditionReady),
+								Status: metav1.ConditionTrue,
+							},
+						},
+					},
+				}
+			},
+			podIP: "",
+			entry: &sandboxEntry{
+				Kind:      types.AgentRuntimeKind,
+				SessionID: "test-session-123",
+				Ports: []runtimev1alpha1.TargetPort{
+					{
+						Port:       8080,
+						Protocol:   runtimev1alpha1.ProtocolTypeHTTP,
+						PathPrefix: "/api",
+					},
 				},
 			},
-		},
-	}
-
-	podIP := testPodIP
-	entry := &sandboxEntry{
-		Kind:      types.AgentRuntimeKind,
-		SessionID: "test-session-123",
-		Ports:     []runtimev1alpha1.TargetPort{},
-	}
-
-	result := buildSandboxInfo(sandbox, podIP, entry)
-
-	assert.WithinDuration(t, shutdownTime, result.ExpiresAt, 1*time.Second)
-}
-
-func TestBuildSandboxInfo_NoPorts(t *testing.T) {
-	now := time.Now()
-	sandbox := &sandboxv1alpha1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:              "test-sandbox",
-			Namespace:         "default",
-			UID:               "test-uid-123",
-			CreationTimestamp: metav1.NewTime(now),
-		},
-		Status: sandboxv1alpha1.SandboxStatus{
-			Conditions: []metav1.Condition{
-				{
-					Type:   string(sandboxv1alpha1.SandboxConditionReady),
-					Status: metav1.ConditionTrue,
-				},
+			validateResult: func(t *testing.T, result *types.SandboxInfo) {
+				assert.Equal(t, ":8080", result.EntryPoints[0].Endpoint)
 			},
 		},
 	}
 
-	podIP := testPodIP
-	entry := &sandboxEntry{
-		Kind:      types.AgentRuntimeKind,
-		SessionID: "test-session-123",
-		Ports:     []runtimev1alpha1.TargetPort{},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sandbox := tt.setupSandbox()
+			result := buildSandboxInfo(sandbox, tt.podIP, tt.entry)
+			tt.validateResult(t, result)
+		})
 	}
-
-	result := buildSandboxInfo(sandbox, podIP, entry)
-
-	assert.Empty(t, result.EntryPoints)
 }
 
-func TestBuildSandboxInfo_EmptyPodIP(t *testing.T) {
-	now := time.Now()
-	sandbox := &sandboxv1alpha1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:              "test-sandbox",
-			Namespace:         "default",
-			UID:               "test-uid-123",
-			CreationTimestamp: metav1.NewTime(now),
-		},
-		Status: sandboxv1alpha1.SandboxStatus{
-			Conditions: []metav1.Condition{
-				{
-					Type:   string(sandboxv1alpha1.SandboxConditionReady),
-					Status: metav1.ConditionTrue,
-				},
-			},
-		},
-	}
-
-	podIP := ""
-	entry := &sandboxEntry{
-		Kind:      types.AgentRuntimeKind,
-		SessionID: "test-session-123",
-		Ports: []runtimev1alpha1.TargetPort{
-			{
-				Port:       8080,
-				Protocol:   runtimev1alpha1.ProtocolTypeHTTP,
-				PathPrefix: "/api",
-			},
-		},
-	}
-
-	result := buildSandboxInfo(sandbox, podIP, entry)
-
-	assert.Equal(t, ":8080", result.EntryPoints[0].Endpoint)
-}
-
-func TestGetSandboxStatus(t *testing.T) {
+func TestGetSandboxStatus_TableDriven(t *testing.T) {
 	tests := []struct {
 		name     string
 		sandbox  *sandboxv1alpha1.Sandbox

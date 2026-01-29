@@ -130,31 +130,46 @@ func TestAuthMiddleware_InvalidServiceAccountFormat(t *testing.T) {
 	assert.True(t, c.IsAborted())
 }
 
-func TestValidateServiceAccountToken_CacheHit_Authenticated(t *testing.T) {
+func TestValidateServiceAccountToken_CacheHit(t *testing.T) {
 	server := setupTestServerWithAuth(true)
 
-	token := "test-token-123"
-	username := testServiceAccount
-	server.tokenCache.Set(token, true, username)
+	tests := []struct {
+		name           string
+		token          string
+		authenticated  bool
+		serviceAccount string
+		expectAuth     bool
+		expectSA       string
+	}{
+		{
+			name:           "authenticated cache hit",
+			token:          "test-token-123",
+			authenticated:  true,
+			serviceAccount: testServiceAccount,
+			expectAuth:     true,
+			expectSA:       testServiceAccount,
+		},
+		{
+			name:           "unauthenticated cache hit",
+			token:          "invalid-token",
+			authenticated:  false,
+			serviceAccount: "",
+			expectAuth:     false,
+			expectSA:       "",
+		},
+	}
 
-	authenticated, serviceAccount, err := server.validateServiceAccountToken(context.Background(), token)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server.tokenCache.Set(tt.token, tt.authenticated, tt.serviceAccount)
 
-	assert.NoError(t, err)
-	assert.True(t, authenticated)
-	assert.Equal(t, username, serviceAccount)
-}
+			authenticated, serviceAccount, err := server.validateServiceAccountToken(context.Background(), tt.token)
 
-func TestValidateServiceAccountToken_CacheHit_NotAuthenticated(t *testing.T) {
-	server := setupTestServerWithAuth(true)
-
-	token := "invalid-token"
-	server.tokenCache.Set(token, false, "")
-
-	authenticated, serviceAccount, err := server.validateServiceAccountToken(context.Background(), token)
-
-	assert.NoError(t, err)
-	assert.False(t, authenticated)
-	assert.Empty(t, serviceAccount)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectAuth, authenticated)
+			assert.Equal(t, tt.expectSA, serviceAccount)
+		})
+	}
 }
 
 // Note: Tests for API call failures are removed because they require a real clientset

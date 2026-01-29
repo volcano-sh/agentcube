@@ -48,105 +48,120 @@ func createTestJWT(exp int64) string {
 	return headerB64 + "." + claimsB64 + "." + signature
 }
 
-func TestParseJWTExpiry_ValidToken(t *testing.T) {
-	exp := time.Now().Add(1 * time.Hour).Unix()
-	token := createTestJWT(exp)
+func TestParseJWTExpiry(t *testing.T) {
+	// Precompute various token forms used across test cases.
+	validExp := time.Now().Add(1 * time.Hour).Unix()
+	validToken := createTestJWT(validExp)
 
-	expiry := parseJWTExpiry(token)
+	// Token without exp claim.
+	header := jwtHeader
+	noExpClaims := map[string]interface{}{
+		"iat": time.Now().Unix(),
+		"sub": "test-user",
+	}
+	noExpClaimsJSON, _ := json.Marshal(noExpClaims)
 
-	assert.False(t, expiry.IsZero())
-	assert.WithinDuration(t, time.Unix(exp, 0), expiry, 1*time.Second)
-}
+	noExpHeaderB64 := base64.RawURLEncoding.EncodeToString([]byte(header))
+	noExpClaimsB64 := base64.RawURLEncoding.EncodeToString(noExpClaimsJSON)
+	noExpSignature := base64.RawURLEncoding.EncodeToString([]byte("signature"))
+	noExpToken := noExpHeaderB64 + "." + noExpClaimsB64 + "." + noExpSignature
 
-func TestParseJWTExpiry_InvalidFormat(t *testing.T) {
+	// Token with exp as float64.
+	floatExp := float64(time.Now().Add(1 * time.Hour).Unix())
+	floatClaims := map[string]interface{}{
+		"exp": floatExp,
+	}
+	floatClaimsJSON, _ := json.Marshal(floatClaims)
+	floatHeaderB64 := base64.RawURLEncoding.EncodeToString([]byte(header))
+	floatClaimsB64 := base64.RawURLEncoding.EncodeToString(floatClaimsJSON)
+	floatSignature := base64.RawURLEncoding.EncodeToString([]byte("signature"))
+	floatToken := floatHeaderB64 + "." + floatClaimsB64 + "." + floatSignature
+
+	// Token with exp as int64 embedded in claims.
+	intExp := time.Now().Add(1 * time.Hour).Unix()
+	intClaims := map[string]interface{}{
+		"exp": intExp,
+	}
+	intClaimsJSON, _ := json.Marshal(intClaims)
+	intHeaderB64 := base64.RawURLEncoding.EncodeToString([]byte(header))
+	intClaimsB64 := base64.RawURLEncoding.EncodeToString(intClaimsJSON)
+	intSignature := base64.RawURLEncoding.EncodeToString([]byte("signature"))
+	intToken := intHeaderB64 + "." + intClaimsB64 + "." + intSignature
+
+	timePtr := func(t time.Time) *time.Time {
+		return &t
+	}
+
 	tests := []struct {
-		name  string
-		token string
+		name       string
+		token      string
+		wantZero   bool
+		wantApprox *time.Time
 	}{
 		{
-			name:  "empty string",
-			token: "",
+			name:       "valid token helper",
+			token:      validToken,
+			wantZero:   false,
+			wantApprox: timePtr(time.Unix(validExp, 0)),
 		},
 		{
-			name:  "single part",
-			token: "header",
+			name:     "invalid - empty string",
+			token:    "",
+			wantZero: true,
 		},
 		{
-			name:  "two parts",
-			token: "header.payload",
+			name:     "invalid - single part",
+			token:    "header",
+			wantZero: true,
 		},
 		{
-			name:  "four parts",
-			token: "header.payload.signature.extra",
+			name:     "invalid - two parts",
+			token:    "header.payload",
+			wantZero: true,
 		},
 		{
-			name:  "invalid base64",
-			token: "header.payload.invalid!",
+			name:     "invalid - four parts",
+			token:    "header.payload.signature.extra",
+			wantZero: true,
+		},
+		{
+			name:     "invalid - bad base64",
+			token:    "header.payload.invalid!",
+			wantZero: true,
+		},
+		{
+			name:     "no exp claim",
+			token:    noExpToken,
+			wantZero: true,
+		},
+		{
+			name:       "exp as float64",
+			token:      floatToken,
+			wantZero:   false,
+			wantApprox: timePtr(time.Unix(int64(floatExp), 0)),
+		},
+		{
+			name:       "exp as int64",
+			token:      intToken,
+			wantZero:   false,
+			wantApprox: timePtr(time.Unix(intExp, 0)),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			expiry := parseJWTExpiry(tt.token)
-			assert.True(t, expiry.IsZero(), "Invalid token should return zero time")
+			if tt.wantZero {
+				assert.True(t, expiry.IsZero(), "Expected zero time for case %q", tt.name)
+				return
+			}
+
+			assert.False(t, expiry.IsZero(), "Expected non-zero time for case %q", tt.name)
+			if tt.wantApprox != nil {
+				assert.WithinDuration(t, *tt.wantApprox, expiry, 1*time.Second)
+			}
 		})
 	}
-}
-
-func TestParseJWTExpiry_NoExpClaim(t *testing.T) {
-	header := jwtHeader
-	claims := map[string]interface{}{
-		"iat": time.Now().Unix(),
-		"sub": "test-user",
-	}
-	claimsJSON, _ := json.Marshal(claims)
-
-	headerB64 := base64.RawURLEncoding.EncodeToString([]byte(header))
-	claimsB64 := base64.RawURLEncoding.EncodeToString(claimsJSON)
-	signature := base64.RawURLEncoding.EncodeToString([]byte("signature"))
-
-	token := headerB64 + "." + claimsB64 + "." + signature
-
-	expiry := parseJWTExpiry(token)
-	assert.True(t, expiry.IsZero(), "Token without exp claim should return zero time")
-}
-
-func TestParseJWTExpiry_ExpAsFloat64(t *testing.T) {
-	exp := float64(time.Now().Add(1 * time.Hour).Unix())
-	header := jwtHeader
-	claims := map[string]interface{}{
-		"exp": exp,
-	}
-	claimsJSON, _ := json.Marshal(claims)
-
-	headerB64 := base64.RawURLEncoding.EncodeToString([]byte(header))
-	claimsB64 := base64.RawURLEncoding.EncodeToString(claimsJSON)
-	signature := base64.RawURLEncoding.EncodeToString([]byte("signature"))
-
-	token := headerB64 + "." + claimsB64 + "." + signature
-
-	expiry := parseJWTExpiry(token)
-	assert.False(t, expiry.IsZero())
-	assert.WithinDuration(t, time.Unix(int64(exp), 0), expiry, 1*time.Second)
-}
-
-func TestParseJWTExpiry_ExpAsInt64(t *testing.T) {
-	exp := time.Now().Add(1 * time.Hour).Unix()
-	header := jwtHeader
-	claims := map[string]interface{}{
-		"exp": exp,
-	}
-	claimsJSON, _ := json.Marshal(claims)
-
-	headerB64 := base64.RawURLEncoding.EncodeToString([]byte(header))
-	claimsB64 := base64.RawURLEncoding.EncodeToString(claimsJSON)
-	signature := base64.RawURLEncoding.EncodeToString([]byte("signature"))
-
-	token := headerB64 + "." + claimsB64 + "." + signature
-
-	expiry := parseJWTExpiry(token)
-	assert.False(t, expiry.IsZero())
-	assert.WithinDuration(t, time.Unix(exp, 0), expiry, 1*time.Second)
 }
 
 // Note: TestNewClientCache removed - it only verified that struct fields
@@ -325,31 +340,45 @@ func TestClientCache_LRUBehavior(t *testing.T) {
 }
 
 func TestClientCache_Remove(t *testing.T) {
-	cache := NewClientCache(10)
-
-	key := testCacheKey
-	token := createTestJWT(time.Now().Add(1 * time.Hour).Unix())
-	scheme := runtime.NewScheme()
-	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
-	client := &UserK8sClient{
-		dynamicClient: dynamicClient,
-		namespace:     "default",
+	tests := []struct {
+		name        string
+		key         string
+		prepopulate bool
+	}{
+		{
+			name:        "remove existing key",
+			key:         testCacheKey,
+			prepopulate: true,
+		},
+		{
+			name:        "remove non-existent key",
+			key:         "nonexistent",
+			prepopulate: false,
+		},
 	}
 
-	cache.Set(key, token, client)
-	assert.Equal(t, 1, cache.Size())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cache := NewClientCache(10)
 
-	cache.Remove(key)
-	assert.Equal(t, 0, cache.Size())
-	assert.Nil(t, cache.Get(key))
-}
+			if tt.prepopulate {
+				token := createTestJWT(time.Now().Add(1 * time.Hour).Unix())
+				scheme := runtime.NewScheme()
+				dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
+				client := &UserK8sClient{
+					dynamicClient: dynamicClient,
+					namespace:     "default",
+				}
 
-func TestClientCache_Remove_Nonexistent(t *testing.T) {
-	cache := NewClientCache(10)
+				cache.Set(tt.key, token, client)
+				assert.Equal(t, 1, cache.Size())
+			}
 
-	// Removing non-existent key should not panic
-	cache.Remove("nonexistent")
-	assert.Equal(t, 0, cache.Size())
+			cache.Remove(tt.key)
+			assert.Equal(t, 0, cache.Size())
+			assert.Nil(t, cache.Get(tt.key))
+		})
+	}
 }
 
 // Note: TestClientCache_Size removed - it only verified that Size() returns
@@ -386,7 +415,7 @@ func TestTokenCache_SetAndGet(t *testing.T) {
 }
 
 func TestTokenCache_Get_Expired(t *testing.T) {
-	cache := NewTokenCache(10, 1*time.Second) // Very short TTL
+	cache := NewTokenCache(10, 50*time.Millisecond) // Very short TTL
 
 	token := testToken
 	username := testServiceAccount
@@ -399,7 +428,7 @@ func TestTokenCache_Get_Expired(t *testing.T) {
 	assert.True(t, authenticated)
 
 	// Wait for expiration
-	time.Sleep(2 * time.Second)
+	time.Sleep(100 * time.Millisecond)
 
 	// Should not be found after expiration
 	found, authenticated, _ = cache.Get(token)
@@ -480,27 +509,39 @@ func TestTokenCache_LRUBehavior(t *testing.T) {
 }
 
 func TestTokenCache_Remove(t *testing.T) {
-	cache := NewTokenCache(10, 5*time.Minute)
+	tests := []struct {
+		name        string
+		token       string
+		prepopulate bool
+	}{
+		{
+			name:        "remove existing token",
+			token:       "test-token",
+			prepopulate: true,
+		},
+		{
+			name:        "remove non-existent token",
+			token:       "nonexistent",
+			prepopulate: false,
+		},
+	}
 
-	token := "test-token"
-	username := testServiceAccount
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cache := NewTokenCache(10, 5*time.Minute)
 
-	cache.Set(token, true, username)
-	assert.Equal(t, 1, cache.Size())
+			if tt.prepopulate {
+				cache.Set(tt.token, true, testServiceAccount)
+				assert.Equal(t, 1, cache.Size())
+			}
 
-	cache.Remove(token)
-	assert.Equal(t, 0, cache.Size())
+			cache.Remove(tt.token)
+			assert.Equal(t, 0, cache.Size())
 
-	found, _, _ := cache.Get(token)
-	assert.False(t, found)
-}
-
-func TestTokenCache_Remove_Nonexistent(t *testing.T) {
-	cache := NewTokenCache(10, 5*time.Minute)
-
-	// Removing non-existent token should not panic
-	cache.Remove("nonexistent")
-	assert.Equal(t, 0, cache.Size())
+			found, _, _ := cache.Get(tt.token)
+			assert.False(t, found)
+		})
+	}
 }
 
 // Note: TestTokenCache_Size removed - it only verified that Size() returns

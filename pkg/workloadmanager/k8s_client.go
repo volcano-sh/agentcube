@@ -52,7 +52,7 @@ var (
 	// WorkloadNameLabelKey labels key for workload name
 	WorkloadNameLabelKey = "runtime.agentcube.io/workload-name"
 	// SandboxNameLabelKey labels key for sandbox name
-	SandboxNameLabelKey = "sandbox-name" // revive:disable-line:var-naming
+	SandboxNameLabelKey = "runtime.agentcube.io/sandbox-name"
 	// LastActivityAnnotationKey Annotation key for last activity time
 	LastActivityAnnotationKey = "last-activity-time"
 	// IdleTimeoutAnnotationKey key for idle timeout

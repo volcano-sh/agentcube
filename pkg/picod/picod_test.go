@@ -209,6 +209,11 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		_, err = os.Stat("subdir/nested")
 		assert.NoError(t, err)
 
+		// Clean up the created directory
+		t.Cleanup(func() {
+			_ = os.RemoveAll("subdir")
+		})
+
 		// 6. Working Directory Escape (Should Fail)
 		escapeReq := ExecuteRequest{
 			Command:    []string{"ls"},
@@ -278,6 +283,9 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		// 3. Download Directory (Should Fail)
 		err = os.Mkdir("testdir", 0755)
 		require.NoError(t, err)
+		t.Cleanup(func() {
+			_ = os.RemoveAll("testdir")
+		})
 		req, _ = http.NewRequest("GET", ts.URL+"/api/files/testdir", nil)
 		req.Header = getAuthHeaders()
 		resp, err = client.Do(req)

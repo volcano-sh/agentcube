@@ -368,6 +368,69 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
 
+	// Test: No path duplication (avoid /root/root/script.py)
+	// Verify that when executing with a relative script path, we don't get /root/root/script.py
+	t.Run("No Path Duplication in Execute", func(t *testing.T) {
+		// Helper to create auth headers
+		getAuthHeaders := func() http.Header {
+			claims := jwt.MapClaims{
+				"iat": time.Now().Unix(),
+				"exp": time.Now().Add(time.Hour * 6).Unix(),
+			}
+			token := createToken(t, routerPriv, claims)
+
+			h := make(http.Header)
+			h.Set("Authorization", "Bearer "+token)
+			return h
+		}
+
+		// Step 1: Upload script with relative path
+		pythonCode := `print("no duplication test")`
+		scriptFilename := fmt.Sprintf("no_dup_%d.py", time.Now().Unix()*1000)
+		contentB64 := base64.StdEncoding.EncodeToString([]byte(pythonCode))
+
+		uploadReq := UploadFileRequest{
+			Path:    scriptFilename,
+			Content: contentB64,
+			Mode:    "0644",
+		}
+		uploadBody, _ := json.Marshal(uploadReq)
+
+		req, _ := http.NewRequest("POST", ts.URL+"/api/files", bytes.NewBuffer(uploadBody))
+		req.Header = getAuthHeaders()
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// Step 2: Execute with empty working_dir (defaults to workspace)
+		reqBody := ExecuteRequest{
+			Command: []string{"python3", scriptFilename},
+			// WorkingDir is empty - should default to workspace root
+		}
+		bodyBytes, _ := json.Marshal(reqBody)
+
+		execReq, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(bodyBytes))
+		execReq.Header.Set("Authorization", "Bearer "+createToken(t, routerPriv, jwt.MapClaims{
+			"iat": time.Now().Unix(),
+			"exp": time.Now().Add(time.Hour * 6).Unix(),
+		}))
+		execReq.Header.Set("Content-Type", "application/json")
+
+		execResp, err := client.Do(execReq)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, execResp.StatusCode, "Execute should succeed with relative path in default workspace")
+
+		var execResult ExecuteResponse
+		err = json.NewDecoder(execResp.Body).Decode(&execResult)
+		require.NoError(t, err)
+
+		// Most important check: should not fail with /root/root or duplicate paths
+		assert.Equal(t, 0, execResult.ExitCode, "Script should execute successfully without path duplication: stderr=%s", execResult.Stderr)
+		assert.NotContains(t, execResult.Stderr, "/root/root", "Should not have duplicate /root paths")
+		assert.Contains(t, execResult.Stdout, "no duplication test")
+	})
+
 	// Test: Python SDK workflow - create script file then execute it
 	// This simulates the exact flow of the Python SDK:
 	// 1. Write a Python script to a file with a relative path (e.g., "script_1234567890.py")
@@ -455,6 +518,78 @@ print("Script executed successfully")
 		err = json.Unmarshal(outputBytes, &outputData)
 		require.NoError(t, err)
 		assert.Equal(t, float64(5), outputData["length"])
+	})
+
+	// Test: Execute with absolute path argument
+	// Verify that absolute paths in command arguments are handled correctly
+	t.Run("Execute with Absolute Path Argument", func(t *testing.T) {
+		// Helper to create auth headers
+		getAuthHeaders := func() http.Header {
+			claims := jwt.MapClaims{
+				"iat": time.Now().Unix(),
+				"exp": time.Now().Add(time.Hour * 6).Unix(),
+			}
+			token := createToken(t, routerPriv, claims)
+
+			h := make(http.Header)
+			h.Set("Authorization", "Bearer "+token)
+			return h
+		}
+
+		// Step 1: Upload script to a subdirectory
+		pythonCode := `import sys
+print("absolute path test")
+print(f"script location: {__file__}")`
+		scriptFilename := fmt.Sprintf("abs_path_test_%d.py", time.Now().Unix()*1000)
+		contentB64 := base64.StdEncoding.EncodeToString([]byte(pythonCode))
+
+		uploadReq := UploadFileRequest{
+			Path:    scriptFilename,
+			Content: contentB64,
+			Mode:    "0644",
+		}
+		uploadBody, _ := json.Marshal(uploadReq)
+
+		req, _ := http.NewRequest("POST", ts.URL+"/api/files", bytes.NewBuffer(uploadBody))
+		req.Header = getAuthHeaders()
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// Get the absolute path of the uploaded file
+		fileInfo, err := os.Stat(filepath.Join(tmpDir, scriptFilename))
+		require.NoError(t, err)
+		absScriptPath := filepath.Join(tmpDir, scriptFilename)
+
+		// Step 2: Execute with absolute path to the script
+		// When absolute paths are in arguments, cmd.Dir should NOT be set
+		reqBody := ExecuteRequest{
+			Command: []string{"python3", absScriptPath},
+		}
+		bodyBytes, _ := json.Marshal(reqBody)
+
+		execReq, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(bodyBytes))
+		execReq.Header.Set("Authorization", "Bearer "+createToken(t, routerPriv, jwt.MapClaims{
+			"iat": time.Now().Unix(),
+			"exp": time.Now().Add(time.Hour * 6).Unix(),
+		}))
+		execReq.Header.Set("Content-Type", "application/json")
+
+		execResp, err := client.Do(execReq)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, execResp.StatusCode)
+
+		var execResult ExecuteResponse
+		err = json.NewDecoder(execResp.Body).Decode(&execResult)
+		require.NoError(t, err)
+
+		// Should execute successfully with absolute path
+		assert.Equal(t, 0, execResult.ExitCode, "Absolute path execution should succeed: stderr=%s", execResult.Stderr)
+		assert.Contains(t, execResult.Stdout, "absolute path test")
+		// Verify we don't have duplicate paths in the error (if any)
+		assert.NotContains(t, execResult.Stderr, filepath.Join(tmpDir, tmpDir), "Should not have duplicate workspace paths")
+		_ = fileInfo // Use fileInfo to avoid unused variable
 	})
 }
 

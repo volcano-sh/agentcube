@@ -51,18 +51,20 @@ func NewServer(config Config) *Server {
 
 	// Initialize workspace directory
 	klog.Infof("Initializing workspace with config.Workspace: %q", config.Workspace)
-	if config.Workspace != "" {
-		s.setWorkspace(config.Workspace)
-		klog.Infof("Set workspace to configured value: %q", config.Workspace)
-	} else {
+	workspaceDir := config.Workspace
+	if workspaceDir == "" {
 		// Default to current working directory if not specified
+		// In production, /root should be explicitly configured via the Workspace config
 		cwd, err := os.Getwd()
 		if err != nil {
-			klog.Fatalf("Failed to get current working directory: %v", err)
+			klog.Warningf("Failed to get current working directory: %v", err)
+			workspaceDir = "/root"
+		} else {
+			workspaceDir = cwd
 		}
-		s.setWorkspace(cwd)
-		klog.Infof("Set workspace to current working directory: %q", cwd)
+		klog.Infof("Workspace not specified, defaulting to: %q", workspaceDir)
 	}
+	s.setWorkspace(workspaceDir)
 	klog.Infof("Final workspace directory: %q", s.workspaceDir)
 
 	// Disable Gin debug output in production mode

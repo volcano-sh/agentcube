@@ -35,7 +35,7 @@ func createPodWithOwner(name, namespace, sandboxName string, phase corev1.PodPha
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"sandbox-name": sandboxName,
+				SandboxNameLabelKey: sandboxName,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
@@ -143,7 +143,7 @@ func TestGetSandboxPodIP_PodNotFound(t *testing.T) {
 			Name:      "test-pod",
 			Namespace: "test-namespace",
 			Labels: map[string]string{
-				"sandbox-name": "other-sandbox",
+				SandboxNameLabelKey: "other-sandbox",
 			},
 		},
 		Status: corev1.PodStatus{

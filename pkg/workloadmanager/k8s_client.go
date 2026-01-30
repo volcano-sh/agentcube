@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
@@ -51,6 +52,8 @@ var (
 	SessionIdLabelKey = "runtime.agentcube.io/session-id" // revive:disable-line:var-naming - keep label backward compatible
 	// WorkloadNameLabelKey labels key for workload name
 	WorkloadNameLabelKey = "runtime.agentcube.io/workload-name"
+	// SandboxNameLabelKey labels key for sandbox name
+	SandboxNameLabelKey = "runtime.agentcube.io/sandbox-name"
 	// LastActivityAnnotationKey Annotation key for last activity time
 	LastActivityAnnotationKey = "last-activity-time"
 	// IdleTimeoutAnnotationKey key for idle timeout
@@ -118,7 +121,20 @@ func NewK8sClient() (*K8sClient, error) {
 	}
 
 	// Create informer factory for core resources (Pods, etc.)
-	informerFactory := informers.NewSharedInformerFactory(clientset, 0)
+	// Use filtered factory to only cache pods with sandbox-name label
+	requirement, err := labels.NewRequirement(SandboxNameLabelKey, selection.Exists, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create label requirement: %w", err)
+	}
+	informerFactory := informers.NewFilteredSharedInformerFactory(
+		clientset,
+		0, // resync period
+		metav1.NamespaceAll,
+		func(opts *metav1.ListOptions) {
+			// Filter to only watch pods with sandbox-name label
+			opts.LabelSelector = requirement.String()
+		},
+	)
 
 	// Get pod informer and lister
 	podInformer := informerFactory.Core().V1().Pods().Informer()
@@ -299,7 +315,7 @@ func (c *K8sClient) GetSandboxPodIP(_ context.Context, namespace, sandboxName, p
 		klog.Infof("failed to get sandbox pod %s/%s: %v, try get pod by sandbox-name label", namespace, podName, err)
 	}
 	// Find pod through label selector (sandbox-name label we set)
-	pods, err := c.podLister.Pods(namespace).List(labels.SelectorFromSet(map[string]string{"sandbox-name": sandboxName}))
+	pods, err := c.podLister.Pods(namespace).List(labels.SelectorFromSet(map[string]string{SandboxNameLabelKey: sandboxName}))
 	if err != nil {
 		return "", fmt.Errorf("failed to list pods from cache: %w", err)
 	}

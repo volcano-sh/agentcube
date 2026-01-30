@@ -54,6 +54,8 @@ const (
 
 	// ownerKindSandboxWarmPool is the owner reference kind for SandboxWarmPool resources
 	ownerKindSandboxWarmPool = "SandboxWarmPool"
+
+	agentcubeNamespace = "agentcube"
 )
 
 var (
@@ -418,7 +420,7 @@ func (e *testEnv) invokeWithSession(t *testing.T, namespace, name string, req *C
 func TestAgentRuntimeBasicInvocation(t *testing.T) {
 	env := newTestEnv(t)
 
-	namespace := "agentcube"
+	namespace := agentcubeNamespace
 	runtimeName := "echo-agent"
 
 	// Note: AgentRuntime pods are created on-demand when the first invoke request is received
@@ -512,7 +514,7 @@ func TestAgentRuntimeErrorHandling(t *testing.T) {
 		}
 
 		// Call POST on a non-existent runtime name
-		statusCode, body, err := invokeWithStatus("agentcube", "non-existent-runtime", "", req)
+		statusCode, body, err := invokeWithStatus(agentcubeNamespace, "non-existent-runtime", "", req)
 		if err != nil {
 			t.Fatalf("Unexpected network error: %v", err)
 		}
@@ -534,7 +536,7 @@ func TestAgentRuntimeErrorHandling(t *testing.T) {
 func TestAgentRuntimeSessionTTL(t *testing.T) {
 	env := newTestEnv(t)
 
-	namespace := "agentcube"
+	namespace := agentcubeNamespace
 	runtimeName := "echo-agent-short-ttl" // Use special runtime with short TTL for testing
 
 	req := &AgentInvokeRequest{
@@ -638,7 +640,7 @@ func TestCodeInterpreterWarmPool(t *testing.T) {
 func TestCodeInterpreterBasicInvocation(t *testing.T) {
 	env := newTestEnv(t)
 
-	namespace := "agentcube"
+	namespace := agentcubeNamespace
 	name := "e2e-code-interpreter"
 
 	testCases := []struct {

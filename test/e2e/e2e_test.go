@@ -24,7 +24,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -259,124 +258,160 @@ func (e *testEnv) invokeAgentRuntime(namespace, name, sessionID string, req *Age
 	return &invokeResp, responseSessionID, nil
 }
 
-// CodeExecuteRequest represents the request payload for code execution
-type CodeExecuteRequest struct {
-	Language string                 `json:"language"`
-	Code     string                 `json:"code"`
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
+// CodeInterpreterExecuteRequest defines command execution request body, matching picod.ExecuteRequest
+type CodeInterpreterExecuteRequest struct {
+	Command    []string          `json:"command"`
+	Timeout    string            `json:"timeout,omitempty"`
+	WorkingDir string            `json:"working_dir,omitempty"`
+	Env        map[string]string `json:"env,omitempty"`
 }
 
-// CodeExecuteResponse represents the response from code execution
-type CodeExecuteResponse struct {
-	Output   string                 `json:"stdout,omitempty"`
-	Error    string                 `json:"stderr,omitempty"`
-	ExitCode int                    `json:"exit_code,omitempty"`
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
+// CodeInterpreterExecuteResponse defines command execution response body, matching picod.ExecuteResponse
+type CodeInterpreterExecuteResponse struct {
+	Stdout    string    `json:"stdout"`
+	Stderr    string    `json:"stderr"`
+	ExitCode  int       `json:"exit_code"`
+	Duration  float64   `json:"duration"`
+	StartTime time.Time `json:"start_time"`
+	EndTime   time.Time `json:"end_time"`
 }
 
-// executeCode executes code through the CodeInterpreter API using Python SDK
-func (e *testEnv) executeCode(namespace, name string, req *CodeExecuteRequest) (*CodeExecuteResponse, string, error) {
-	// Create a temporary Python file
-	tmpFile, err := os.CreateTemp("", "e2e-code-exec-*.py")
+// invokeCodeInterpreter invokes a CodeInterpreter through the Router API
+func (e *testEnv) invokeCodeInterpreter(namespace, name, sessionID string, req *CodeInterpreterExecuteRequest) (*CodeInterpreterExecuteResponse, error) {
+	jsonData, err := json.Marshal(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create temp file: %w", err)
-	}
-	defer os.Remove(tmpFile.Name())
-
-	// Create a Python script that uses the agentcube SDK
-	// Note: Not using 'with' statement to keep session alive for test verification
-	pythonScript := fmt.Sprintf(`
-import os
-import sys
-import json
-
-# Set environment variables
-os.environ['ROUTER_URL'] = %q
-os.environ['WORKLOAD_MANAGER_URL'] = %q
-if %q:
-    os.environ['API_TOKEN'] = %q
-
-# Add SDK to path
-sys.path.insert(0, '/root/agentcube/sdk-python')
-
-from agentcube import CodeInterpreterClient
-
-try:
-    client = CodeInterpreterClient(name=%q, namespace=%q)
-    result = client.run_code(%q, %q)
-    # Output as JSON for easy parsing
-    output = {
-        'stdout': result,
-        'stderr': '',
-        'exit_code': 0,
-        'session_id': client.session_id
-    }
-    print(json.dumps(output))
-except Exception as e:
-    # Return error in expected format
-    output = {
-        'stdout': '',
-        'stderr': str(e),
-        'exit_code': 1,
-        'session_id': ''
-    }
-    print(json.dumps(output))
-    sys.exit(1)
-`, e.routerURL, e.workloadMgrURL, e.authToken, e.authToken, name, namespace, req.Language, req.Code)
-
-	// Write the Python script to the temp file
-	if _, err := tmpFile.WriteString(pythonScript); err != nil {
-		return nil, "", fmt.Errorf("failed to write temp file: %w", err)
-	}
-	tmpFile.Close()
-
-	// Execute the Python file with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	//nolint:gosec // G204: tmpFile.Name() is controlled by this test, not user input
-	cmd := exec.CommandContext(ctx, "python3", tmpFile.Name())
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
-	output := stdout.String()
-
-	// If stderr has content but stdout is empty, use stderr as output for error info
-	if output == "" && stderr.Len() > 0 {
-		output = stderr.String()
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Parse the JSON output
-	var jsonOutput struct {
-		Stdout    string `json:"stdout"`
-		Stderr    string `json:"stderr"`
-		ExitCode  int    `json:"exit_code"`
-		SessionID string `json:"session_id"`
+	url := fmt.Sprintf("%s/v1/namespaces/%s/code-interpreters/%s/invocations/api/execute",
+		e.routerURL, namespace, name)
+
+	httpReq, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	if err := json.Unmarshal([]byte(output), &jsonOutput); err != nil {
-		return nil, "", fmt.Errorf("failed to parse python output: %w, output: %s, stderr: %s", err, output, stderr.String())
+	httpReq.Header.Set("Content-Type", "application/json")
+	if e.authToken != "" {
+		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.authToken))
+	}
+	if sessionID != "" {
+		httpReq.Header.Set("x-agentcube-session-id", sessionID)
 	}
 
-	response := &CodeExecuteResponse{
-		Output:   jsonOutput.Stdout,
-		Error:    jsonOutput.Stderr,
-		ExitCode: jsonOutput.ExitCode,
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Check exit code from parsed JSON and return detailed error if available
-	if jsonOutput.ExitCode != 0 {
-		if jsonOutput.Stderr != "" {
-			err = fmt.Errorf("python script failed: %s", jsonOutput.Stderr)
-		} else if err == nil {
-			err = fmt.Errorf("python script failed with exit code %d (no error details)", jsonOutput.ExitCode)
-		}
-		// else: keep the original cmd.Run() error if no stderr available
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
-	return response, jsonOutput.SessionID, err
+	var invokeResp CodeInterpreterExecuteResponse
+	if err := json.Unmarshal(body, &invokeResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &invokeResp, nil
+}
+
+// createCodeInterpreterSession creates a session via WorkloadManager
+func (e *testEnv) createCodeInterpreterSession(namespace, name string) (string, error) {
+	payload := map[string]interface{}{
+		"name":      name,
+		"namespace": namespace,
+		"ttl":       3600,
+	}
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/v1/code-interpreter", e.workloadMgrURL)
+	httpReq, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	if e.authToken != "" {
+		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.authToken))
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("create session failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return result.SessionID, nil
+}
+
+// deleteCodeInterpreterSession deletes a session via WorkloadManager
+func (e *testEnv) deleteCodeInterpreterSession(sessionID string) error {
+	url := fmt.Sprintf("%s/v1/code-interpreter/sessions/%s", e.workloadMgrURL, sessionID)
+	httpReq, err := http.NewRequest("DELETE", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if e.authToken != "" {
+		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.authToken))
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("delete session failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// invokeWithSession creates a session, registers cleanup, and invokes the interpreter
+func (e *testEnv) invokeWithSession(t *testing.T, namespace, name string, req *CodeInterpreterExecuteRequest) *CodeInterpreterExecuteResponse {
+	sessionID, err := e.createCodeInterpreterSession(namespace, name)
+	require.NoError(t, err, "Failed to create code interpreter session")
+
+	t.Cleanup(func() {
+		_ = e.deleteCodeInterpreterSession(sessionID)
+	})
+
+	resp, err := e.invokeCodeInterpreter(namespace, name, sessionID, req)
+	require.NoError(t, err, "Failed to invoke code interpreter")
+	require.NotNil(t, resp)
+	return resp
 }
 
 // TestAgentRuntimeBasicInvocation tests basic echo-agent functionality
@@ -594,9 +629,62 @@ func TestCodeInterpreterWarmPool(t *testing.T) {
 
 	initialPods := ctx.verifyWarmPoolReady(t, namespace, name, warmPoolSize)
 
-	env.executeAndVerifyCode(t, namespace, name, "print('Hello from warmpool!')", "Hello from warmpool!")
+	env.executeAndVerifyCode(t, namespace, name, "Hello from warmpool!")
 
 	ctx.verifyWarmPoolStatus(t, namespace, name, warmPoolSize, initialPods)
+}
+
+// TestCodeInterpreterBasicInvocation tests basic code interpreter invocation
+func TestCodeInterpreterBasicInvocation(t *testing.T) {
+	env := newTestEnv(t)
+
+	namespace := "agentcube"
+	name := "e2e-code-interpreter"
+
+	testCases := []struct {
+		name         string
+		req          *CodeInterpreterExecuteRequest
+		expectStdout string
+		expectStderr string
+		expectExit   int
+	}{
+		{
+			name: "basic echo",
+			req: &CodeInterpreterExecuteRequest{
+				Command: []string{"echo", "Hello, World!"},
+			},
+			expectStdout: "Hello, World!\n",
+			expectExit:   0,
+		},
+		{
+			name: "exit code check",
+			req: &CodeInterpreterExecuteRequest{
+				Command: []string{"sh", "-c", "exit 1"},
+			},
+			expectExit: 1,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+
+			resp := env.invokeWithSession(t, namespace, name, tc.req)
+
+			if tc.expectStdout != "" {
+				if resp.Stdout != tc.expectStdout {
+					t.Errorf("Expected stdout %q, got %q", tc.expectStdout, resp.Stdout)
+				}
+			}
+			if tc.expectStderr != "" {
+				if resp.Stderr != tc.expectStderr {
+					t.Errorf("Expected stderr %q, got %q", tc.expectStderr, resp.Stderr)
+				}
+			}
+			if resp.ExitCode != tc.expectExit {
+				t.Errorf("Expected exit code %d, got %d", tc.expectExit, resp.ExitCode)
+			}
+		})
+	}
 }
 
 func (ctx *e2eTestContext) cleanupCodeInterpreter(t *testing.T, namespace, name, yamlPath string) {
@@ -632,19 +720,16 @@ func (ctx *e2eTestContext) verifyWarmPoolReady(t *testing.T, namespace, name str
 	return pods
 }
 
-func (e *testEnv) executeAndVerifyCode(t *testing.T, namespace, name, code, expectedOutput string) string {
-	t.Log("Executing code command...")
-	codeReq := &CodeExecuteRequest{
-		Language: "python",
-		Code:     code,
+func (e *testEnv) executeAndVerifyCode(t *testing.T, namespace, name, expectedOutput string) {
+	t.Log("Executing code command via REST API...")
+
+	// Execute command (simple echo)
+	req := &CodeInterpreterExecuteRequest{
+		Command: []string{"echo", expectedOutput},
 	}
 
-	result, sessionID, err := e.executeCode(namespace, name, codeReq)
-	require.NoError(t, err)
-	require.NotEmpty(t, sessionID)
-	require.Contains(t, result.Output, expectedOutput)
-
-	return sessionID
+	resp := e.invokeWithSession(t, namespace, name, req)
+	require.Contains(t, resp.Stdout, expectedOutput)
 }
 
 func (ctx *e2eTestContext) verifyWarmPoolStatus(t *testing.T, namespace, name string, warmPoolSize int, initialPods []string) {

@@ -167,30 +167,28 @@ func TestParseJWTExpiry(t *testing.T) {
 // Note: TestNewClientCache removed - it only verified that struct fields
 // match constructor parameters/defaults, which is trivial initialization behavior.
 
-func TestClientCache_Get_NotFound(t *testing.T) {
-	cache := NewClientCache(10)
-
-	client := cache.Get("nonexistent-key")
-	assert.Nil(t, client)
-}
-
 func TestClientCache_SetAndGet(t *testing.T) {
 	cache := NewClientCache(10)
 
+	// Test Get on non-existent key
+	client := cache.Get("nonexistent-key")
+	assert.Nil(t, client)
+
+	// Test Set and Get
 	key := testCacheKey
 	token := createTestJWT(time.Now().Add(1 * time.Hour).Unix())
 	scheme := runtime.NewScheme()
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
-	client := &UserK8sClient{
+	newClient := &UserK8sClient{
 		dynamicClient: dynamicClient,
 		namespace:     "default",
 	}
 
-	cache.Set(key, token, client)
+	cache.Set(key, token, newClient)
 
 	retrieved := cache.Get(key)
 	assert.NotNil(t, retrieved)
-	assert.Equal(t, client, retrieved)
+	assert.Equal(t, newClient, retrieved)
 	assert.Equal(t, 1, cache.Size())
 }
 

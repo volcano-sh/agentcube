@@ -179,44 +179,6 @@ func TestValidateServiceAccountToken_CacheHit(t *testing.T) {
 // match what was set, which is trivial getter behavior. The extractUserInfo
 // function is tested indirectly through authMiddleware tests.
 
-func TestAuthMiddleware_ValidToken_ValidFormat(t *testing.T) {
-	server := setupTestServerWithAuth(true)
-
-	// Setup token in cache with valid format
-	token := "valid-token"
-	username := testServiceAccount
-	server.tokenCache.Set(token, true, username)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("GET", "/test", nil)
-	c.Request.Header.Set("Authorization", "Bearer "+token)
-
-	// Create a handler that checks context values
-	handler := func(c *gin.Context) {
-		tokenVal, _ := c.Request.Context().Value(contextKeyUserToken).(string)
-		namespace, _ := c.Request.Context().Value(contextKeyNamespace).(string)
-		sa, _ := c.Request.Context().Value(contextKeyServiceAccount).(string)
-		saName, _ := c.Request.Context().Value(contextKeyServiceAccountName).(string)
-
-		assert.Equal(t, token, tokenVal)
-		assert.Equal(t, "default", namespace)
-		assert.Equal(t, username, sa)
-		assert.Equal(t, "test-sa", saName)
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	}
-
-	// Use router to chain handlers
-	router := gin.New()
-	router.Use(server.authMiddleware)
-	router.GET("/test", handler)
-	router.ServeHTTP(w, c.Request)
-
-	// Should succeed
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.False(t, c.IsAborted())
-}
-
 func TestAuthMiddleware_ServiceAccountParsing(t *testing.T) {
 	server := setupTestServerWithAuth(true)
 
@@ -269,17 +231,34 @@ func TestAuthMiddleware_ServiceAccountParsing(t *testing.T) {
 			c.Request.Header.Set("Authorization", "Bearer "+token)
 
 			server.authMiddleware(c)
+			// Create a handler that checks context values
+			handler := func(c *gin.Context) {
+				if tt.shouldSucceed {
+					tokenVal, _ := c.Request.Context().Value(contextKeyUserToken).(string)
+					namespace, _ := c.Request.Context().Value(contextKeyNamespace).(string)
+					sa, _ := c.Request.Context().Value(contextKeyServiceAccount).(string)
+					saName, _ := c.Request.Context().Value(contextKeyServiceAccountName).(string)
+
+					assert.Equal(t, token, tokenVal)
+					assert.Equal(t, tt.expectedNS, namespace)
+					assert.Equal(t, tt.username, sa)
+					assert.Equal(t, tt.expectedSAName, saName)
+				}
+				c.JSON(http.StatusOK, gin.H{"status": "ok"})
+			}
+
+			// Use router to chain handlers
+			router := gin.New()
+			router.Use(server.authMiddleware)
+			router.GET("/test", handler)
+			router.ServeHTTP(w, c.Request)
 
 			if tt.shouldSucceed {
+				assert.Equal(t, http.StatusOK, w.Code)
 				assert.False(t, c.IsAborted(), "Should not abort for valid format")
-				// Verify context values
-				namespace, _ := c.Request.Context().Value(contextKeyNamespace).(string)
-				saName, _ := c.Request.Context().Value(contextKeyServiceAccountName).(string)
-				assert.Equal(t, tt.expectedNS, namespace)
-				assert.Equal(t, tt.expectedSAName, saName)
 			} else {
-				assert.True(t, c.IsAborted(), "Should abort for invalid format")
 				assert.Equal(t, http.StatusUnauthorized, w.Code)
+				assert.True(t, c.IsAborted(), "Should abort for invalid format")
 			}
 		})
 	}

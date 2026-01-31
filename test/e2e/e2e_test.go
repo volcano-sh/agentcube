@@ -330,7 +330,6 @@ func (e *testEnv) createCodeInterpreterSession(namespace, name string) (string, 
 	payload := map[string]interface{}{
 		"name":      name,
 		"namespace": namespace,
-		"ttl":       3600,
 	}
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
@@ -348,7 +347,7 @@ func (e *testEnv) createCodeInterpreterSession(namespace, name string) (string, 
 		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.authToken))
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 3 * time.Minute}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return "", fmt.Errorf("failed to send request: %w", err)

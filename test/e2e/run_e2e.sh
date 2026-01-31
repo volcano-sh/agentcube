@@ -483,10 +483,6 @@ if ! WORKLOAD_MANAGER_ADDR="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROU
     TEST_FAILED=1
 fi
 
-# TODO: Remove this - Force failure after all tests to verify E2E log collection (agentd/picod pods still present)
-echo "Forcing failure to collect component logs..."
-TEST_FAILED=1
-
 # Collect logs if tests failed
 if [ $TEST_FAILED -eq 1 ]; then
     echo "Tests failed, collecting component logs..."

@@ -2,10 +2,6 @@ name: Test Coverage
 
 on:
   pull_request:
-    paths-ignore:
-      - '**.md'
-      - '**.svg'
-      - '**.png'
   merge_group: # enable merge queue
   workflow_call:
     secrets:
@@ -16,6 +12,26 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Filter paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            coverage:
+              - '**'
+              - '!**/*.md'
+              - '!**/*.svg'
+              - '!**/*.png'
+
+      - name: Exit early when no coverage changes
+        if: steps.changes.outputs.coverage != 'true'
+        run: |
+          echo "No coverage-related changes detected."
+          exit 0
+
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@v1.3.1
         with:
@@ -27,13 +43,10 @@ jobs:
           docker-images: true
           swap-storage: true
 
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: "1.24"
 
       - name: Run tests with coverage
         run: |
@@ -66,4 +79,3 @@ jobs:
         with:
           name: go-coverage
           path: coverage.out
-

@@ -4,34 +4,42 @@ on:
   pull_request:
     branches:
       - main
-    paths-ignore:
-      - '**.md'
-      - '**.svg'
-      - '**.png'
-      - 'docs/**'
-      - '.github/**'
   push:
     branches:
       - main
-    paths-ignore:
-      - 'docs/**'
-      - '.github/**'
 
 jobs:
-
   build:
-    runs-on: ubuntu-22.04
-
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Filter paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            copyright:
+              - '!**/*.md'
+              - '!**/*.svg'
+              - '!**/*.png'
+              - '!docs/**'
+              - '!.github/**'
+      - name: Exit early when no copyright changes
+        if: steps.changes.outputs.copyright != 'true'
+        run: |
+          echo "No copyright-related changes detected."
+          exit 0
       - name: install sponge
         shell: bash
+        if: steps.changes.outputs.copyright == 'true'
         run: sudo apt-get update && sudo apt-get install -y moreutils
       - name: generate copyright
         shell: bash
+        if: steps.changes.outputs.copyright == 'true'
         run: |
           make gen-copyright
       - name: check diff
         shell: bash
+        if: steps.changes.outputs.copyright == 'true'
         run: |
           git diff --exit-code

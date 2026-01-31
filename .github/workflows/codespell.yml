@@ -1,13 +1,10 @@
 name: Codespell
 
 on:
-  push:
-    branches:
-      - main
-      - 'release-*'
   pull_request:
     branches:
       - main
+      - "release-*"
 
 jobs:
   codespell:
@@ -15,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Backup and remove problematic files
         run: |
           # Backup files that cause false positives
@@ -27,7 +24,7 @@ jobs:
           find . -name "pyproject.toml" -delete
           find . -name "package-lock.json" -delete
           find . -name "package.json" -delete
-          
+
       - name: Run codespell
         run: |
           pip install codespell
@@ -36,7 +33,7 @@ jobs:
             --skip .git,go.sum,*.png,*.jpg,*.svg,*.gif,*.sum,bin,vendor,node_modules \
             --ignore-words-list fo,nam,te,notin,NotIn \
             .
-            
+
       - name: Restore backed up files
         run: |
           # Restore backed up files

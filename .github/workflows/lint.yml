@@ -2,15 +2,9 @@ name: Lint
 
 on:
   pull_request:
-    branches: 
+    branches:
       - main
-      - 'release-*'
-    paths:
-      - '**.go'
-      - 'go.mod'
-      - 'go.sum'
-      - '.golangci.yml'
-      - '.github/workflows/lint.yml'
+      - "release-*"
 
 permissions:
   contents: read
@@ -25,10 +19,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Filter paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            lint:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+              - '.golangci.yml'
+              - '.github/workflows/lint.yml'
+
+      - name: Exit early when no lint changes
+        if: steps.changes.outputs.lint != 'true'
+        run: |
+          echo "No lint-related changes detected."
+          exit 0
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: "1.24"
 
       - name: Run golangci-lint
         run: make lint

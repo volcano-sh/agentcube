@@ -2,13 +2,9 @@ name: Python SDK Tests
 
 on:
   pull_request:
-    paths:
-      - 'sdk-python/**'
   push:
     branches:
       - main
-    paths:
-      - 'sdk-python/**'
   merge_group:
 
 jobs:
@@ -22,10 +18,24 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Filter paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            sdk:
+              - 'sdk-python/**'
+
+      - name: Exit early when no SDK changes
+        if: steps.changes.outputs.sdk != 'true'
+        run: |
+          echo "No SDK-related changes detected."
+          exit 0
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |

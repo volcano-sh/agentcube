@@ -98,6 +98,7 @@ step() {
 }
 
 # Helper function to collect logs for pods by label selector
+# Note: script uses IFS=$'\n\t', so jsonpath space-separated names must be split explicitly
 collect_pod_logs() {
     local label_selector=$1
     local component_name=$2
@@ -108,7 +109,7 @@ collect_pod_logs() {
         -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
     
     if [ -n "$pods" ]; then
-        for pod in $pods; do
+        for pod in $(echo "$pods" | tr ' ' '\n' | grep -v '^$'); do
             echo "  Collecting logs from pod: $pod"
             kubectl -n "${AGENTCUBE_NAMESPACE}" logs "$pod" --all-containers=true \
                 > "${artifacts_dir}/${component_name}-${pod}.log" 2>&1 || true
@@ -122,15 +123,59 @@ collect_pod_logs() {
     fi
 }
 
-# Function to collect logs from Router and Workload Manager pods
+# Function to collect logs from all E2E test components
 collect_component_logs() {
     local artifacts_dir="${ARTIFACTS_PATH}"
     echo "Collecting component logs to ${artifacts_dir}..."
     mkdir -p "${artifacts_dir}"
 
-    # Collect logs for both components using label selectors
+    # 1. Collect workloadmanager logs
     collect_pod_logs "app=workloadmanager" "workloadmanager" "${artifacts_dir}"
+    
+    # 2. Collect router logs
     collect_pod_logs "app=agentcube-router" "router" "${artifacts_dir}"
+    
+    # 3. Collect redis logs
+    collect_pod_logs "app=redis" "redis" "${artifacts_dir}"
+    
+    # 4. Collect Sandbox Pods logs (per-container: agentd, picod, etc.)
+    echo "Collecting sandbox pods logs (agentd/picod per container)..."
+    local sandbox_pods=$(kubectl -n "${AGENTCUBE_NAMESPACE}" get pods \
+        -l runtime.agentcube.io/sandbox-name \
+        -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+    for pod in $(echo "$sandbox_pods" | tr ' ' '\n' | grep -v '^$'); do
+        kubectl -n "${AGENTCUBE_NAMESPACE}" describe pod "$pod" \
+            > "${artifacts_dir}/sandbox-${pod}-describe.txt" 2>&1 || true
+        local containers=$(kubectl -n "${AGENTCUBE_NAMESPACE}" get pod "$pod" \
+            -o jsonpath='{.spec.containers[*].name}' 2>/dev/null || echo "")
+        for c in $(echo "$containers" | tr ' ' '\n' | grep -v '^$'); do
+            kubectl -n "${AGENTCUBE_NAMESPACE}" logs "$pod" -c "$c" --tail=10000 \
+                > "${artifacts_dir}/sandbox-${pod}-${c}.log" 2>&1 || true
+            [ -s "${artifacts_dir}/sandbox-${pod}-${c}.log" ] || \
+                kubectl -n "${AGENTCUBE_NAMESPACE}" logs "$pod" -c "$c" --previous --tail=10000 \
+                    > "${artifacts_dir}/sandbox-${pod}-${c}.log" 2>/dev/null || true
+        done
+    done
+    
+    # 5. Collect agent-sandbox-controller logs (deployed in agent-sandbox-system namespace)
+    echo "Collecting agent-sandbox-controller logs..."
+    local controller_pods=$(kubectl get pods --all-namespaces \
+        -l app=agent-sandbox-controller \
+        -o jsonpath='{range .items[*]}{.metadata.namespace}{"\t"}{.metadata.name}{"\n"}{end}' 2>/dev/null || echo "")
+    
+    if [ -n "$controller_pods" ]; then
+        echo "$controller_pods" | while IFS=$'\t' read -r ns pod; do
+            if [ -n "$ns" ] && [ -n "$pod" ]; then
+                echo "  Collecting logs from agent-sandbox-controller pod: $ns/$pod"
+                kubectl -n "$ns" logs "$pod" --all-containers=true \
+                    > "${artifacts_dir}/agent-sandbox-controller-${ns}-${pod}.log" 2>&1 || true
+                kubectl -n "$ns" describe pod "$pod" \
+                    > "${artifacts_dir}/agent-sandbox-controller-${ns}-${pod}-describe.txt" 2>&1 || true
+            fi
+        done
+    else
+        echo "  No agent-sandbox-controller pods found"
+    fi
 
     echo "Component logs collected to ${artifacts_dir}"
     ls -lah "${artifacts_dir}" || true
@@ -437,6 +482,10 @@ cd "$(dirname "$0")"
 if ! WORKLOAD_MANAGER_ADDR="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py; then
     TEST_FAILED=1
 fi
+
+# TODO: Remove this - Force failure after all tests to verify E2E log collection (agentd/picod pods still present)
+echo "Forcing failure to collect component logs..."
+TEST_FAILED=1
 
 # Collect logs if tests failed
 if [ $TEST_FAILED -eq 1 ]; then

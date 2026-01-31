@@ -310,8 +310,9 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 
 	sessionID := uuid.New().String()
 	sandboxName := fmt.Sprintf("%s-%s", codeInterpreterName, RandString(8))
+	klog.Infof("Creating CodeInterpreter sandbox from warm pool: name=%s, sessionID=%s", sandboxName, sessionID)
 	sandboxEntry := &sandboxEntry{
-		Kind:      types.SandboxKind,
+		Kind:      types.CodeInterpreterKind,
 		Ports:     codeInterpreterObj.Spec.Ports,
 		SessionID: sessionID,
 	}

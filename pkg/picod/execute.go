@@ -24,6 +24,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -49,6 +51,16 @@ type ExecuteResponse struct {
 	Duration  float64   `json:"duration"`   // The duration of the command execution in seconds.
 	StartTime time.Time `json:"start_time"` // The start time of the command execution.
 	EndTime   time.Time `json:"end_time"`   // The end time of the command execution.
+}
+
+// hasAbsolutePathArg checks if any command argument (starting from index 1) is an absolute path.
+func hasAbsolutePathArg(args []string) bool {
+	for i := 1; i < len(args); i++ {
+		if filepath.IsAbs(args[i]) {
+			return true
+		}
+	}
+	return false
 }
 
 // ExecuteHandler handles command execution requests
@@ -88,20 +100,42 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeoutDuration)
 	defer cancel()
 
+	// Set working directory
+	// If req.WorkingDir is empty or whitespace, default to workspace root
+	workingDir := strings.TrimSpace(req.WorkingDir)
+	if workingDir == "" {
+		workingDir = s.workspaceDir
+	}
+
+	safeWorkingDir, err := s.sanitizePath(workingDir)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Invalid working directory: %v", err),
+			"code":  http.StatusBadRequest,
+		})
+		return
+	}
+
+	// Ensure working directory exists
+	if err := os.MkdirAll(safeWorkingDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("failed to create working directory: %v", err),
+			"code":  http.StatusInternalServerError,
+		})
+		return
+	}
+
+	// Check if any command argument is an absolute path.
+	// If so, don't set cmd.Dir to avoid issues with absolute paths.
+	// Otherwise, set cmd.Dir to the workspace for relative path resolution.
+	hasAbsolutePath := hasAbsolutePathArg(req.Command)
+
 	// Execute command with context
 	// Use the first element as the command and the rest as arguments
 	cmd := exec.CommandContext(ctx, req.Command[0], req.Command[1:]...) //nolint:gosec // This is an agent designed to execute arbitrary commands
 
-	// Set working directory
-	if req.WorkingDir != "" {
-		safeWorkingDir, err := s.sanitizePath(req.WorkingDir)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("Invalid working directory: %v", err),
-				"code":  http.StatusBadRequest,
-			})
-			return
-		}
+	// Only set cmd.Dir if no absolute paths are in the arguments
+	if !hasAbsolutePath {
 		cmd.Dir = safeWorkingDir
 	}
 
@@ -119,7 +153,7 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	cmd.Stderr = &stderr
 
 	start := time.Now()
-	err := cmd.Run()
+	err = cmd.Run()
 	duration := time.Since(start).Seconds()
 	endTime := time.Now()
 

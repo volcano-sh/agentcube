@@ -389,14 +389,30 @@ func parseFileMode(modeStr string) os.FileMode {
 // setWorkspace sets the global workspace directory
 func (s *Server) setWorkspace(dir string) {
 	klog.Infof("setWorkspace called with dir: %q", dir)
+
+	// Resolve to absolute path
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
-		klog.Warningf("Failed to resolve absolute path for workspace '%s': %v", dir, err)
-		s.workspaceDir = dir // Fallback to provided path
-	} else {
-		s.workspaceDir = absDir
-		klog.Infof("Resolved workspace to absolute path: %q", s.workspaceDir)
+		klog.Fatalf("failed to resolve absolute path for workspace %q: %v", dir, err)
 	}
+
+	// Resolve symlinks to ensure consistent path representation
+	// This is important on macOS where /var is a symlink to /private/var
+	resolvedDir, err := filepath.EvalSymlinks(absDir)
+	if err != nil {
+		klog.Warningf("failed to resolve symlinks for workspace %q, using absolute path: %v", absDir, err)
+		resolvedDir = absDir
+	}
+
+	// Create directory if it doesn't exist
+	if err := os.MkdirAll(resolvedDir, 0755); err != nil {
+		klog.Fatalf("failed to create workspace directory %q: %v", resolvedDir, err)
+	}
+
+	// Set workspace directory to the symlink-resolved path
+	s.workspaceDir = resolvedDir
+
+	klog.Infof("workspace directory initialized: %q", s.workspaceDir)
 }
 
 // sanitizePath ensures path is within allowed scope, preventing directory traversal attacks
@@ -416,13 +432,27 @@ func (s *Server) sanitizePath(p string) (string, error) {
 	// Ensure base workspace path is clean and absolute for reliable comparison with filepath.Rel
 	resolvedWorkspace = filepath.Clean(resolvedWorkspace)
 
-	// Clean the input path; if it's absolute, treat it as relative to the workspace root.
+	// Clean the input path
 	cleanPath := filepath.Clean(p)
+
+	// If the input path is already an absolute path, check if it's within the workspace
+	// If it is, return it as-is. If not, reject it.
 	if filepath.IsAbs(cleanPath) {
-		cleanPath = strings.TrimPrefix(cleanPath, string(os.PathSeparator))
+		// Check if the absolute path is within the workspace
+		relPath, relErr := filepath.Rel(resolvedWorkspace, cleanPath)
+		if relErr != nil {
+			return "", fmt.Errorf("access denied: path '%s' escapes workspace jail (rel error: %w)", p, relErr)
+		}
+		// Also explicitly check for ".." at the start of the relative path, which indicates traversal outside the workspace,
+		// or if the path is ".." itself, both implying an escape.
+		if strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) || relPath == ".." {
+			return "", fmt.Errorf("access denied: path '%s' escapes workspace jail (relative path traversal: %s)", p, relPath)
+		}
+		// Path is valid and within workspace, return it as-is
+		return cleanPath, nil
 	}
 
-	// Construct the full absolute path candidate within the workspace.
+	// For relative paths, construct the full absolute path candidate within the workspace.
 	// filepath.Join handles cases like "a/../b", but we also need to filepath.Clean it afterwards
 	// to normalize any ".." components that might be introduced by `Join` if `cleanPath` itself
 	// contained them.

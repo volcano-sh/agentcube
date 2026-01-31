@@ -32,6 +32,7 @@ import logging
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Optional, Dict, Any
 
 import jwt
 import requests
@@ -141,7 +142,7 @@ class RouterSimulator:
         self.picod_url = picod_url.rstrip("/")
         self.session = requests.Session()
 
-    def _sign_jwt(self, claims: dict = None) -> str:
+    def _sign_jwt(self, claims: Optional[Dict[str, Any]] = None) -> str:
         """Generate a JWT token like Router would."""
         now = datetime.now(timezone.utc)
         payload = {

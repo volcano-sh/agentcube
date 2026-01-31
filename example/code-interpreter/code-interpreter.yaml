@@ -12,7 +12,8 @@ spec:
     image: ghcr.io/volcano-sh/picod:latest
     imagePullPolicy: IfNotPresent
     args:
-      - --workspace=/root
+      # The workspace directory will be created automatically by picod at startup
+      - --workspace=/workspace
     resources:
       limits:
         cpu: "500m"

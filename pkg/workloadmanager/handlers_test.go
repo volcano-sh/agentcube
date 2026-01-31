@@ -99,6 +99,16 @@ func makeEntry() *sandboxEntry {
 	}
 }
 
+func makeCodeInterpreterEntry() *sandboxEntry {
+	return &sandboxEntry{
+		Kind:      types.CodeInterpreterKind,
+		SessionID: "sess-1",
+		Ports: []runtimev1alpha1.TargetPort{
+			{Port: 8080, Protocol: runtimev1alpha1.ProtocolTypeHTTP, PathPrefix: "/api"},
+		},
+	}
+}
+
 func TestServerCreateSandbox(t *testing.T) {
 	tests := []struct {
 		name              string
@@ -210,6 +220,10 @@ func TestServerCreateSandbox(t *testing.T) {
 				return nil
 			})
 
+			patches.ApplyFunc(deleteSandboxClaim, func(_ context.Context, _ dynamic.Interface, _, _ string) error {
+				return nil
+			})
+
 			patches.ApplyMethod(reflect.TypeOf((*K8sClient)(nil)), "GetSandboxPodIP", func(_ *K8sClient, _ context.Context, _, _, _ string) (string, error) {
 				if tt.podIPErr != nil {
 					return "", tt.podIPErr
@@ -217,7 +231,14 @@ func TestServerCreateSandbox(t *testing.T) {
 				return "10.0.0.9", nil
 			})
 
-			resp, err := server.createSandbox(context.Background(), nil, sb, claim, makeEntry(), resultChan)
+			var entry *sandboxEntry
+			if tt.sandboxClaim {
+				entry = makeCodeInterpreterEntry()
+			} else {
+				entry = makeEntry()
+			}
+
+			resp, err := server.createSandbox(context.Background(), nil, sb, claim, entry, resultChan)
 
 			require.Equal(t, tt.expectCreateCalls, createCalls, "createSandbox call count")
 			require.Equal(t, tt.expectClaimCalls, claimCalls, "createSandboxClaim call count")

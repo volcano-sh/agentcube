@@ -49,24 +49,24 @@ func (m *mockSessionManager) GetSandboxBySession(_ context.Context, _ string, _ 
 func setupEnv() {
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
 }
 
 func teardownEnv() {
 	os.Unsetenv("REDIS_ADDR")
 	os.Unsetenv("REDIS_PASSWORD")
-	os.Unsetenv("WORKLOAD_MANAGER_ADDR")
+	os.Unsetenv("WORKLOAD_MANAGER_URL")
 }
 
 func TestHandleHealth(t *testing.T) {
 	// Set required environment variables
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
+		os.Unsetenv("WORKLOAD_MANAGER_URL")
 	}()
 
 	config := &Config{
@@ -96,11 +96,11 @@ func TestHandleHealthLive(t *testing.T) {
 	// Set required environment variables
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
+		os.Unsetenv("WORKLOAD_MANAGER_URL")
 	}()
 
 	config := &Config{
@@ -130,11 +130,11 @@ func TestHandleHealthReady(t *testing.T) {
 	// Set required environment variables
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
+		os.Unsetenv("WORKLOAD_MANAGER_URL")
 	}()
 
 	tests := []struct {
@@ -248,11 +248,11 @@ func TestHandleInvoke_NoEntryPoints(t *testing.T) {
 	// Set required environment variables
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
+		os.Unsetenv("WORKLOAD_MANAGER_URL")
 	}()
 
 	config := &Config{
@@ -286,11 +286,11 @@ func TestHandleAgentInvoke(t *testing.T) {
 	// Set required environment variables
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
+		os.Unsetenv("WORKLOAD_MANAGER_URL")
 	}()
 
 	// Create a test HTTP server to act as the sandbox
@@ -355,11 +355,11 @@ func TestHandleCodeInterpreterInvoke(t *testing.T) {
 	// Set required environment variables
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
+		os.Unsetenv("WORKLOAD_MANAGER_URL")
 	}()
 
 	// Create a test HTTP server to act as the sandbox
@@ -457,11 +457,11 @@ func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 	// Set required environment variables
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
+	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
 	defer func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
+		os.Unsetenv("WORKLOAD_MANAGER_URL")
 	}()
 
 	config := &Config{

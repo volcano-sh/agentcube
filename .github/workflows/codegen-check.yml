@@ -4,32 +4,34 @@ on:
   pull_request:
     branches:
       - main
-      - 'release-*'
-    paths:
-      - 'pkg/apis/**'
-      - 'hack/**'
-      - 'Makefile'
-  push:
-    branches:
-      - main
-    paths:
-      - 'pkg/apis/**'
-      - 'hack/**'
-      - 'Makefile'
+      - "release-*"
 
 jobs:
-  check-codegen:
-    name: Check Generated Code
+  codegen-check:
+    name: Codegen Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Filter paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            codegen:
+              - 'pkg/apis/**'
+              - 'hack/**'
+              - '.github/workflows/**'
+              - 'Makefile'
+
       - name: Set up Go
+        if: steps.changes.outputs.codegen == 'true'
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.4'
+          go-version: "1.24.4"
 
       - name: Verify Generated Code
+        if: steps.changes.outputs.codegen == 'true'
         run: |
           make gen-check

@@ -2,23 +2,25 @@ name: Agentcube CI Workflow
 
 on:
   pull_request:
-    branches: main
+    branches:
+      - main
+      - "release-*"
 
 jobs:
   build:
     runs-on: ubuntu-24.04
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Verify Docker installation
-      run: |
-        docker --version
-        docker buildx version
+      - name: Verify Docker installation
+        run: |
+          docker --version
+          docker buildx version
 
-    - name: Build Agentcube API Server Docker image
-      run: make docker-build
+      - name: Build Agentcube API Server Docker image
+        run: make docker-build

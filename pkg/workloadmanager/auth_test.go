@@ -18,6 +18,7 @@ package workloadmanager
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -232,6 +233,7 @@ func TestAuthMiddleware_ServiceAccountParsing(t *testing.T) {
 
 			server.authMiddleware(c)
 			// Create a handler that checks context values
+			var handlerErr error
 			handler := func(c *gin.Context) {
 				if tt.shouldSucceed {
 					tokenVal, _ := c.Request.Context().Value(contextKeyUserToken).(string)
@@ -239,10 +241,22 @@ func TestAuthMiddleware_ServiceAccountParsing(t *testing.T) {
 					sa, _ := c.Request.Context().Value(contextKeyServiceAccount).(string)
 					saName, _ := c.Request.Context().Value(contextKeyServiceAccountName).(string)
 
-					assert.Equal(t, token, tokenVal)
-					assert.Equal(t, tt.expectedNS, namespace)
-					assert.Equal(t, tt.username, sa)
-					assert.Equal(t, tt.expectedSAName, saName)
+					if tokenVal != token {
+						handlerErr = fmt.Errorf("expected token %s, got %s", token, tokenVal)
+						return
+					}
+					if namespace != tt.expectedNS {
+						handlerErr = fmt.Errorf("expected namespace %s, got %s", tt.expectedNS, namespace)
+						return
+					}
+					if sa != tt.username {
+						handlerErr = fmt.Errorf("expected service account %s, got %s", tt.username, sa)
+						return
+					}
+					if saName != tt.expectedSAName {
+						handlerErr = fmt.Errorf("expected service account name %s, got %s", tt.expectedSAName, saName)
+						return
+					}
 				}
 				c.JSON(http.StatusOK, gin.H{"status": "ok"})
 			}
@@ -252,6 +266,10 @@ func TestAuthMiddleware_ServiceAccountParsing(t *testing.T) {
 			router.Use(server.authMiddleware)
 			router.GET("/test", handler)
 			router.ServeHTTP(w, c.Request)
+
+			if handlerErr != nil {
+				t.Errorf("Handler validation failed: %v", handlerErr)
+			}
 
 			if tt.shouldSucceed {
 				assert.Equal(t, http.StatusOK, w.Code)

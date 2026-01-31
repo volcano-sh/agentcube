@@ -22,6 +22,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -223,6 +225,166 @@ func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
 	}
 	if sandbox.EntryPoints[0].Endpoint != "10.0.0.1:9000" {
 		t.Errorf("expected endpoint 10.0.0.1:9000, got %s", sandbox.EntryPoints[0].Endpoint)
+	}
+}
+
+func TestGetSandboxBySession_CreateSandbox_SetsAuthHeaderFromEnv(t *testing.T) {
+	// #nosec G101 -- test token, not a real credential.
+	const token = "env-token-123"
+
+	if err := os.Setenv("API_TOKEN", token); err != nil {
+		t.Fatalf("failed to set API_TOKEN: %v", err)
+	}
+	defer func() {
+		_ = os.Unsetenv("API_TOKEN")
+	}()
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+token {
+			t.Fatalf("expected Authorization header %q, got %q", "Bearer "+token, got)
+		}
+		resp := types.CreateSandboxResponse{
+			SessionID:   "new-session-123",
+			SandboxID:   "sandbox-456",
+			SandboxName: "sandbox-test",
+			EntryPoints: []types.SandboxEntryPoint{{Endpoint: "10.0.0.1:9000"}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	m := &manager{
+		storeClient:     &fakeStoreClient{},
+		workloadMgrAddr: mockServer.URL,
+		httpClient:      &http.Client{},
+	}
+
+	if _, err := m.GetSandboxBySession(context.Background(), "", "default", "test-runtime", types.AgentRuntimeKind); err != nil {
+		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
+	}
+}
+
+func TestGetSandboxBySession_CreateSandbox_SetsAuthHeaderFromFile(t *testing.T) {
+	// #nosec G101 -- test token, not a real credential.
+	const token = "file-token-456"
+
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenPath, []byte(token+"\n"), 0o600); err != nil {
+		t.Fatalf("failed to write token file: %v", err)
+	}
+
+	origTokenPath := serviceAccountTokenPath
+	serviceAccountTokenPath = tokenPath
+	defer func() {
+		serviceAccountTokenPath = origTokenPath
+	}()
+
+	_ = os.Unsetenv("API_TOKEN")
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+token {
+			t.Fatalf("expected Authorization header %q, got %q", "Bearer "+token, got)
+		}
+		resp := types.CreateSandboxResponse{
+			SessionID:   "new-session-123",
+			SandboxID:   "sandbox-456",
+			SandboxName: "sandbox-test",
+			EntryPoints: []types.SandboxEntryPoint{{Endpoint: "10.0.0.1:9000"}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	m := &manager{
+		storeClient:     &fakeStoreClient{},
+		workloadMgrAddr: mockServer.URL,
+		httpClient:      &http.Client{},
+	}
+
+	if _, err := m.GetSandboxBySession(context.Background(), "", "default", "test-runtime", types.AgentRuntimeKind); err != nil {
+		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
+	}
+}
+
+func TestGetSandboxBySession_CreateSandbox_NoAuthHeaderWhenNoToken(t *testing.T) {
+	dir := t.TempDir()
+	missingPath := filepath.Join(dir, "missing-token")
+
+	origTokenPath := serviceAccountTokenPath
+	serviceAccountTokenPath = missingPath
+	defer func() {
+		serviceAccountTokenPath = origTokenPath
+	}()
+
+	_ = os.Unsetenv("API_TOKEN")
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("expected no Authorization header, got %q", got)
+		}
+		resp := types.CreateSandboxResponse{
+			SessionID:   "new-session-123",
+			SandboxID:   "sandbox-456",
+			SandboxName: "sandbox-test",
+			EntryPoints: []types.SandboxEntryPoint{{Endpoint: "10.0.0.1:9000"}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	m := &manager{
+		storeClient:     &fakeStoreClient{},
+		workloadMgrAddr: mockServer.URL,
+		httpClient:      &http.Client{},
+	}
+
+	if _, err := m.GetSandboxBySession(context.Background(), "", "default", "test-runtime", types.AgentRuntimeKind); err != nil {
+		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
+	}
+}
+
+func TestGetSandboxBySession_CreateSandbox_TokenFileReadError(t *testing.T) {
+	dir := t.TempDir()
+
+	origTokenPath := serviceAccountTokenPath
+	serviceAccountTokenPath = dir // ReadFile on a directory returns an error (not IsNotExist)
+	defer func() {
+		serviceAccountTokenPath = origTokenPath
+	}()
+
+	_ = os.Unsetenv("API_TOKEN")
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("expected no Authorization header, got %q", got)
+		}
+		resp := types.CreateSandboxResponse{
+			SessionID:   "new-session-123",
+			SandboxID:   "sandbox-456",
+			SandboxName: "sandbox-test",
+			EntryPoints: []types.SandboxEntryPoint{{Endpoint: "10.0.0.1:9000"}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	m := &manager{
+		storeClient:     &fakeStoreClient{},
+		workloadMgrAddr: mockServer.URL,
+		httpClient:      &http.Client{},
+	}
+
+	if _, err := m.GetSandboxBySession(context.Background(), "", "default", "test-runtime", types.AgentRuntimeKind); err != nil {
+		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
 	}
 }
 

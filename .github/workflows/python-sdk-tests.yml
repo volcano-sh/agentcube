@@ -2,9 +2,6 @@ name: Python SDK Tests
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
   merge_group:
 
 jobs:
@@ -26,23 +23,20 @@ jobs:
             sdk:
               - 'sdk-python/**'
 
-      - name: Exit early when no SDK changes
-        if: steps.changes.outputs.sdk != 'true'
-        run: |
-          echo "No SDK-related changes detected."
-          exit 0
-
       - name: Setup Python
+        if: steps.changes.outputs.sdk == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
+        if: steps.changes.outputs.sdk == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install pytest
           pip install -e .
 
       - name: Run unit tests
+        if: steps.changes.outputs.sdk == 'true'
         run: |
           python -m pytest tests/ -v

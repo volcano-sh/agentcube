@@ -4,9 +4,7 @@ on:
   pull_request:
     branches:
       - main
-  push:
-    branches:
-      - main
+      - "release-*"
 
 jobs:
   build:
@@ -19,16 +17,12 @@ jobs:
         with:
           filters: |
             copyright:
+              - '**'
               - '!**/*.md'
               - '!**/*.svg'
               - '!**/*.png'
               - '!docs/**'
               - '!.github/**'
-      - name: Exit early when no copyright changes
-        if: steps.changes.outputs.copyright != 'true'
-        run: |
-          echo "No copyright-related changes detected."
-          exit 0
       - name: install sponge
         shell: bash
         if: steps.changes.outputs.copyright == 'true'

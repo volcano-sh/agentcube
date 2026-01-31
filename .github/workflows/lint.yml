@@ -31,16 +31,12 @@ jobs:
               - '.golangci.yml'
               - '.github/workflows/lint.yml'
 
-      - name: Exit early when no lint changes
-        if: steps.changes.outputs.lint != 'true'
-        run: |
-          echo "No lint-related changes detected."
-          exit 0
-
       - name: Set up Go
+        if: steps.changes.outputs.lint == 'true'
         uses: actions/setup-go@v5
         with:
           go-version: "1.24"
 
       - name: Run golangci-lint
+        if: steps.changes.outputs.lint == 'true'
         run: make lint

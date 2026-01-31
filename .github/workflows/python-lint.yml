@@ -25,16 +25,13 @@ jobs:
               - "test/**/*.py"
               - "pyproject.toml"
               - ".github/workflows/python-lint.yml"
-      - name: Exit early when no Python lint changes
-        if: steps.changes.outputs.python != 'true'
-        run: |
-          echo "No Python lint changes detected."
-          exit 0
       - name: Set up Python
+        if: steps.changes.outputs.python == 'true'
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
       - name: Run Lint
+        if: steps.changes.outputs.python == 'true'
         run: |
           python3 -m pip install ruff
           python3 -m ruff check . --config pyproject.toml

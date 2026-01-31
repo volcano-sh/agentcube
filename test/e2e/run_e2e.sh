@@ -102,11 +102,11 @@ collect_pod_logs() {
     local label_selector=$1
     local component_name=$2
     local artifacts_dir=$3
-    
+
     echo "Collecting ${component_name} logs..."
     local pods=$(kubectl -n "${AGENTCUBE_NAMESPACE}" get pods -l "${label_selector}" \
         -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
-    
+
     if [ -n "$pods" ]; then
         for pod in $pods; do
             echo "  Collecting logs from pod: $pod"
@@ -427,14 +427,14 @@ require_python
 TEST_FAILED=0
 
 echo "Running Go tests..."
-if ! WORKLOAD_MANAGER_ADDR="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN go test -v ./test/e2e/...; then
+if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN go test -v ./test/e2e/...; then
     TEST_FAILED=1
 fi
 
 echo "Running Python CodeInterpreter tests..."
 cd "$(dirname "$0")"
 
-if ! WORKLOAD_MANAGER_ADDR="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py; then
+if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py; then
     TEST_FAILED=1
 fi
 

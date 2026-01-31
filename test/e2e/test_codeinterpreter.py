@@ -13,14 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 import sys
-import json
 import unittest
 
 # Import agentcube package (Installed in the virtual environment by run_e2e.sh)
 from agentcube import CodeInterpreterClient
 from agentcube.exceptions import CommandExecutionError
+
 
 class TestCodeInterpreterE2E(unittest.TestCase):
     """E2E tests for CodeInterpreter functionality using Python SDK."""
@@ -28,12 +29,12 @@ class TestCodeInterpreterE2E(unittest.TestCase):
     def setUp(self):
         """Set up test environment."""
         self.namespace = os.getenv("AGENTCUBE_NAMESPACE", "agentcube")
-        self.workload_manager_url = os.getenv("WORKLOAD_MANAGER_ADDR")
+        self.workload_manager_url = os.getenv("WORKLOAD_MANAGER_URL")
         self.router_url = os.getenv("ROUTER_URL")
         self.api_token = os.getenv("API_TOKEN")
 
         if not self.workload_manager_url:
-            self.fail("WORKLOAD_MANAGER_ADDR environment variable not set")
+            self.fail("WORKLOAD_MANAGER_URL environment variable not set")
 
         if not self.router_url:
             self.fail("ROUTER_URL environment variable not set")
@@ -65,7 +66,7 @@ class TestCodeInterpreterE2E(unittest.TestCase):
             workload_manager_url=self.workload_manager_url,
             router_url=self.router_url,
             auth_token=self.api_token,
-            verbose=True
+            verbose=True,
         ) as client:
             print(f"Session created: {client.session_id}")
             self.assertIsNotNone(client.session_id, "Session ID should be created")
@@ -124,7 +125,7 @@ class TestCodeInterpreterE2E(unittest.TestCase):
         """
         try:
             # Create fibonacci.py script content
-            fibonacci_script = '''
+            fibonacci_script = """
 import json
 
 def fibonacci(n):
@@ -144,7 +145,7 @@ with open("output.json", "w") as f:
     json.dump(result, f, indent=2)
 
 print("Fibonacci sequence generated and saved to output.json")
-'''
+"""
 
             # Expected result
             expected_fib = [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
@@ -155,7 +156,7 @@ print("Fibonacci sequence generated and saved to output.json")
                 workload_manager_url=self.workload_manager_url,
                 router_url=self.router_url,
                 auth_token=self.api_token,
-                verbose=True
+                verbose=True,
             ) as client:
                 print(f"Session created: {client.session_id}")
                 self.assertIsNotNone(client.session_id, "Session ID should be created")
@@ -168,8 +169,9 @@ print("Fibonacci sequence generated and saved to output.json")
                 print("Executing fibonacci.py script...")
                 exec_result = client.run_code("python", fibonacci_script)
                 print(f"Script execution result: {repr(exec_result)}")
-                self.assertIn("Fibonacci sequence generated", exec_result,
-                             f"Expected success message, got: {exec_result}")
+                self.assertIn(
+                    "Fibonacci sequence generated", exec_result, f"Expected success message, got: {exec_result}"
+                )
 
                 # Step 3: Download and verify the output.json
                 print("Downloading output.json...")
@@ -185,12 +187,15 @@ print("Fibonacci sequence generated and saved to output.json")
                 self.assertEqual(
                     result_data["fibonacci_sequence"],
                     expected_fib,
-                    f"Fibonacci mismatch: expected {expected_fib}, got {result_data['fibonacci_sequence']}"
+                    f"Fibonacci mismatch: expected {expected_fib}, got {result_data['fibonacci_sequence']}",
                 )
 
                 # Assert: Check length
-                self.assertEqual(result_data["length"], len(expected_fib),
-                               f"Length mismatch: expected {len(expected_fib)}, got {result_data['length']}")
+                self.assertEqual(
+                    result_data["length"],
+                    len(expected_fib),
+                    f"Length mismatch: expected {len(expected_fib)}, got {result_data['length']}",
+                )
         finally:
             # Clean up temporary files
             try:
@@ -199,6 +204,7 @@ print("Fibonacci sequence generated and saved to output.json")
                     print("Cleaned up temporary file: /tmp/test_output.json")
             except Exception as cleanup_error:
                 print(f"Warning: Failed to clean up temporary file: {cleanup_error}")
+
 
 if __name__ == "__main__":
     print("Starting CodeInterpreter E2E Tests...")

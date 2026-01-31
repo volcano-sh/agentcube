@@ -140,7 +140,7 @@ type testEnv struct {
 func newTestEnv(t *testing.T) *testEnv {
 	return &testEnv{
 		routerURL:      getEnv("ROUTER_URL", defaultRouterURL),
-		workloadMgrURL: getEnv("WORKLOAD_MANAGER_ADDR", defaultWorkloadMgrURL),
+		workloadMgrURL: getEnv("WORKLOAD_MANAGER_URL", defaultWorkloadMgrURL),
 		authToken:      os.Getenv("API_TOKEN"),
 		t:              t,
 	}

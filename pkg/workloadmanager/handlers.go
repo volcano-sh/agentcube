@@ -200,7 +200,11 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		sandboxRollbackFunc()
 	}()
 
-	sandboxPodName := ""
+	// agent-sandbox create pod with same name as sandbox if no warmpool is used
+	// so here we try to get pod IP by sandbox name first
+	// if warmpool is used, the pod name is stored in sandbox's annotation `agents.x-k8s.io/sandbox-pod-name`
+	// https://github.com/kubernetes-sigs/agent-sandbox/blob/3ab7fbcd85ad0d75c6e632ecd14bcaeda5e76e1e/controllers/sandbox_controller.go#L465
+	sandboxPodName := sandbox.Name
 	if podName, exists := createdSandbox.Annotations[controllers.SanboxPodNameAnnotation]; exists {
 		sandboxPodName = podName
 	}

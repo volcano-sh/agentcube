@@ -672,19 +672,9 @@ func TestCodeInterpreterBasicInvocation(t *testing.T) {
 
 			resp := env.invokeWithSession(t, namespace, name, tc.req)
 
-			if tc.expectStdout != "" {
-				if resp.Stdout != tc.expectStdout {
-					t.Errorf("Expected stdout %q, got %q", tc.expectStdout, resp.Stdout)
-				}
-			}
-			if tc.expectStderr != "" {
-				if resp.Stderr != tc.expectStderr {
-					t.Errorf("Expected stderr %q, got %q", tc.expectStderr, resp.Stderr)
-				}
-			}
-			if resp.ExitCode != tc.expectExit {
-				t.Errorf("Expected exit code %d, got %d", tc.expectExit, resp.ExitCode)
-			}
+			require.Equal(t, tc.expectStdout, resp.Stdout)
+			require.Equal(t, tc.expectStderr, resp.Stderr)
+			require.Equal(t, tc.expectExit, resp.ExitCode)
 		})
 	}
 }

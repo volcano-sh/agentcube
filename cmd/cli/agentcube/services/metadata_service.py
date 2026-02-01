@@ -263,7 +263,7 @@ class MetadataService:
             )
 
         # Check for atleast one source file
-        has_java_files = any(f.suffix == '.java' for f in src_dir.rglob('*'))
+        has_java_files = any(src_dir.rglob('*.java'))
 
         if not has_java_files:
             raise ValueError(

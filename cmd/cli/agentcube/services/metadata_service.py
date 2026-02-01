@@ -254,4 +254,19 @@ class MetadataService:
         if not pom_file.exists():
             raise ValueError("Maven pom.xml file not found for Java project")
 
-        # TODO: Add more Java-specific validation
+        # Check for standard source directory
+        src_dir = workspace_path / "src" / "main" / "java"
+        if not src_dir.exists() or not src_dir.is_dir():
+            raise ValueError(
+                f"Standard Java source directory not found at: {src_dir}. "
+                "AgentCube expects the standard Maven layout (src/main/java)."
+            )
+
+        # Check for atleast one source file
+        has_java_files = any(f.suffix == '.java' for f in src_dir.rglob('*'))
+
+        if not has_java_files:
+            raise ValueError(
+                f"No .java source files found in {src_dir}. "
+                "Please ensure your agent code exists before validating."
+            )

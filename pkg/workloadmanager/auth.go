@@ -91,7 +91,7 @@ func (s *Server) authMiddleware(c *gin.Context) {
 	}
 
 	// Check if it's a Bearer token
-	parts := strings.SplitN(authHeader, " ", 2)
+	parts := strings.Fields(authHeader)
 	if len(parts) != 2 || parts[0] != "Bearer" {
 		respondError(c, http.StatusUnauthorized, "Invalid authorization header format")
 		c.Abort()

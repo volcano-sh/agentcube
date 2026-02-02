@@ -2,13 +2,6 @@ name: Python SDK Tests
 
 on:
   pull_request:
-    paths:
-      - 'sdk-python/**'
-  push:
-    branches:
-      - main
-    paths:
-      - 'sdk-python/**'
   merge_group:
 
 jobs:
@@ -22,17 +15,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Filter paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            sdk:
+              - 'sdk-python/**'
+
       - name: Setup Python
+        if: steps.changes.outputs.sdk == 'true'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install dependencies
+        if: steps.changes.outputs.sdk == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install pytest
           pip install -e .
 
       - name: Run unit tests
+        if: steps.changes.outputs.sdk == 'true'
         run: |
           python -m pytest tests/ -v

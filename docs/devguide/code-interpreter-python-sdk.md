@@ -29,7 +29,7 @@ The `CodeInterpreterClient` is the main entry point. You can initialize it direc
 | `ttl` | `int` | `3600` | Session time-to-live (seconds) |
 | `workload_manager_url` | `str` | `None` | Control Plane URL (falls back to env `WORKLOAD_MANAGER_URL`) |
 | `router_url` | `str` | `None` | Data Plane Router URL (falls back to env `ROUTER_URL`) |
-| `auth_token` | `str` | `None` | Auth token (falls back to env `API_TOKEN`, then K8s SA token) |
+| `auth_token` | `str` | `None` | Auth token (falls back to K8s SA token) |
 | `session_id` | `str` | `None` | Reuse existing session instead of creating new |
 | `verbose` | `bool` | `False` | Enable debug logging |
 
@@ -39,7 +39,6 @@ The `CodeInterpreterClient` is the main entry point. You can initialize it direc
 |----------|-------------|
 | `WORKLOAD_MANAGER_URL` | Control Plane URL (required if not passed as argument) |
 | `ROUTER_URL` | Data Plane Router URL (required if not passed as argument) |
-| `API_TOKEN` | Auth token for Control Plane (optional, falls back to K8s SA token) |
 
 ### Example: Basic Initialization
 

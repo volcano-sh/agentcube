@@ -21,7 +21,6 @@ This directory contains examples of how to use the AgentCube Python SDK.
     export ROUTER_URL="http://<your-router-host>:<port>"
     
     # Optional: If your instance requires authentication
-    # export API_TOKEN="your-token"
     ```
 
 ## Running the Examples

@@ -195,10 +195,6 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 }
 
 func loadWorkloadManagerAuthToken() string {
-	if token := strings.TrimSpace(os.Getenv("API_TOKEN")); token != "" {
-		return token
-	}
-
 	b, err := os.ReadFile(serviceAccountTokenPath)
 	if err != nil {
 		if !os.IsNotExist(err) {

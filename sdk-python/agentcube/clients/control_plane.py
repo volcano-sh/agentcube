@@ -52,9 +52,9 @@ class ControlPlaneClient:
                 "or 'WORKLOAD_MANAGER_URL' environment variable."
             )
 
-        # Prioritize argument -> env var -> k8s service account token file
+        # Prioritize argument -> k8s service account token file
         token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-        token = auth_token or os.getenv("API_TOKEN") or read_token_from_file(token_path)
+        token = auth_token or read_token_from_file(token_path)
         self.timeout = timeout
         self.connect_timeout = connect_timeout
 
@@ -149,4 +149,3 @@ class ControlPlaneClient:
     def close(self):
         """Close the underlying session and release connection pool resources."""
         self.session.close()
-

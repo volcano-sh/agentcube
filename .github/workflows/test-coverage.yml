@@ -2,10 +2,6 @@ name: Test Coverage
 
 on:
   pull_request:
-    paths-ignore:
-      - '**.md'
-      - '**.svg'
-      - '**.png'
   merge_group: # enable merge queue
   workflow_call:
     secrets:
@@ -16,7 +12,22 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Filter paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            coverage:
+              - '**'
+              - '!**/*.md'
+              - '!**/*.svg'
+              - '!**/*.png'
+
       - name: Free Disk Space
+        if: steps.changes.outputs.coverage == 'true'
         uses: jlumbroso/free-disk-space@v1.3.1
         with:
           tool-cache: false
@@ -27,19 +38,19 @@ jobs:
           docker-images: true
           swap-storage: true
 
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Setup Go
+        if: steps.changes.outputs.coverage == 'true'
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: "1.24"
 
       - name: Run tests with coverage
+        if: steps.changes.outputs.coverage == 'true'
         run: |
           go test -race -v -coverprofile=coverage.out -coverpkg=./pkg/... ./pkg/...
 
       - name: Display coverage summary
+        if: steps.changes.outputs.coverage == 'true'
         run: |
           echo "## Go Test Coverage" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
@@ -50,6 +61,7 @@ jobs:
           go tool cover -func=coverage.out | tail -1 >> $GITHUB_STEP_SUMMARY
 
       - name: Upload coverage reports to Codecov
+        if: steps.changes.outputs.coverage == 'true'
         uses: codecov/codecov-action@v4
         with:
           # Even though token upload token is not required for public repos,
@@ -62,8 +74,8 @@ jobs:
           verbose: true
 
       - name: Upload coverage artifact
+        if: steps.changes.outputs.coverage == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: go-coverage
           path: coverage.out
-

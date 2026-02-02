@@ -135,10 +135,7 @@ collect_component_logs() {
     # 2. Collect router logs
     collect_pod_logs "app=agentcube-router" "router" "${artifacts_dir}"
     
-    # 3. Collect redis logs
-    collect_pod_logs "app=redis" "redis" "${artifacts_dir}"
-    
-    # 4. Collect Sandbox Pods logs (per-container: agentd, picod, etc.)
+    # 3. Collect Sandbox Pods logs (per-container: agentd, picod, etc.)
     echo "Collecting sandbox pods logs (agentd/picod per container)..."
     local sandbox_pods=$(kubectl -n "${AGENTCUBE_NAMESPACE}" get pods \
         -l runtime.agentcube.io/sandbox-name \
@@ -156,26 +153,6 @@ collect_component_logs() {
                     > "${artifacts_dir}/sandbox-${pod}-${c}.log" 2>/dev/null || true
         done
     done
-    
-    # 5. Collect agent-sandbox-controller logs (deployed in agent-sandbox-system namespace)
-    echo "Collecting agent-sandbox-controller logs..."
-    local controller_pods=$(kubectl get pods --all-namespaces \
-        -l app=agent-sandbox-controller \
-        -o jsonpath='{range .items[*]}{.metadata.namespace}{"\t"}{.metadata.name}{"\n"}{end}' 2>/dev/null || echo "")
-    
-    if [ -n "$controller_pods" ]; then
-        echo "$controller_pods" | while IFS=$'\t' read -r ns pod; do
-            if [ -n "$ns" ] && [ -n "$pod" ]; then
-                echo "  Collecting logs from agent-sandbox-controller pod: $ns/$pod"
-                kubectl -n "$ns" logs "$pod" --all-containers=true \
-                    > "${artifacts_dir}/agent-sandbox-controller-${ns}-${pod}.log" 2>&1 || true
-                kubectl -n "$ns" describe pod "$pod" \
-                    > "${artifacts_dir}/agent-sandbox-controller-${ns}-${pod}-describe.txt" 2>&1 || true
-            fi
-        done
-    else
-        echo "  No agent-sandbox-controller pods found"
-    fi
 
     echo "Component logs collected to ${artifacts_dir}"
     ls -lah "${artifacts_dir}" || true

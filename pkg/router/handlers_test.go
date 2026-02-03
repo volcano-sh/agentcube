@@ -431,13 +431,9 @@ func TestForwardToSandbox_InvalidEndpoint(t *testing.T) {
 
 func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 	// Set required environment variables
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
+	setupEnv()
 	defer func() {
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_URL")
+		teardownEnv()
 	}()
 
 	config := &Config{

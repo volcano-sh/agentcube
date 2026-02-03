@@ -226,14 +226,7 @@ func TestServer_StartContext(t *testing.T) {
 
 func TestServer_TLSConfiguration(t *testing.T) {
 	// Set required environment variables for tests
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
-	defer func() {
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_URL")
-	}()
+	setupTestEnv(t)
 
 	tests := []struct {
 		name      string
@@ -305,14 +298,7 @@ func TestServer_TLSConfiguration(t *testing.T) {
 
 func TestServer_RedisIntegration(t *testing.T) {
 	// Set required environment variables for tests
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
-	defer func() {
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_URL")
-	}()
+	setupTestEnv(t)
 
 	config := &Config{
 		Port: "8080",

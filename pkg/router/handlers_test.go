@@ -60,13 +60,9 @@ func teardownEnv() {
 
 func TestHandleHealth(t *testing.T) {
 	// Set required environment variables
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
+	setupEnv()
 	defer func() {
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_URL")
+		teardownEnv()
 	}()
 
 	config := &Config{
@@ -94,13 +90,9 @@ func TestHandleHealth(t *testing.T) {
 
 func TestHandleHealthLive(t *testing.T) {
 	// Set required environment variables
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
+	setupEnv()
 	defer func() {
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_URL")
+		teardownEnv()
 	}()
 
 	config := &Config{
@@ -128,13 +120,9 @@ func TestHandleHealthLive(t *testing.T) {
 
 func TestHandleHealthReady(t *testing.T) {
 	// Set required environment variables
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
+	setupEnv()
 	defer func() {
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_URL")
+		teardownEnv()
 	}()
 
 	tests := []struct {
@@ -246,13 +234,9 @@ func TestHandleInvoke_ErrorPaths(t *testing.T) {
 
 func TestHandleInvoke_NoEntryPoints(t *testing.T) {
 	// Set required environment variables
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
+	setupEnv()
 	defer func() {
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_URL")
+		teardownEnv()
 	}()
 
 	config := &Config{
@@ -284,13 +268,9 @@ func TestHandleInvoke_NoEntryPoints(t *testing.T) {
 
 func TestHandleAgentInvoke(t *testing.T) {
 	// Set required environment variables
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
+	setupEnv()
 	defer func() {
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_URL")
+		teardownEnv()
 	}()
 
 	// Create a test HTTP server to act as the sandbox

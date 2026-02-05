@@ -1,6 +1,6 @@
-version: 0.0.1
+version: 0.0.2
 type: plugin
-author: agentcube
+author: volcano-sh
 name: agentcube
 label:
   en_US: Agentcube
@@ -38,7 +38,7 @@ plugins:
   tools:
     - provider/agentcube.yaml
 meta:
-  version: 0.0.1
+  version: 0.0.2
   arch:
     - amd64
     - arm64

@@ -185,8 +185,10 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 					Annotations: params.podAnnotations,
 				},
 			},
-			ShutdownTime: &shutdownTime,
-			Replicas:     ptr.To[int32](1),
+			Lifecycle: sandboxv1alpha1.Lifecycle{
+				ShutdownTime: &shutdownTime,
+			},
+			Replicas: ptr.To[int32](1),
 		},
 	}
 	if len(sandbox.Spec.PodTemplate.ObjectMeta.Labels) == 0 {

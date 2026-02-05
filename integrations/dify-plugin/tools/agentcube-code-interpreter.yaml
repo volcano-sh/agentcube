@@ -1,0 +1,103 @@
+identity:
+  name: "agentcube-code-interpreter"
+  author: "agentcube"
+  label:
+    en_US: "Agentcube Code Interpreter"
+    zh_Hans: "Agentcube 代码执行器"
+    pt_BR: "Agentcube Code Interpreter"
+    ja_JP: "Agentcube Code Interpreter"
+description:
+  human: 
+    en_US: > 
+      This tool offers an isolated code execution sandbox based on Volcano AgentCube that allows you to perform various code interpreter actions.
+      Supported actions include:
+      (1) execute python code,
+      (2) execute terminal commands.
+      The tool can automatically create code interpreters and sessions if not provided.
+  llm: agentcube code interpreter is a sandbox to execute command and code
+parameters:
+  - name: router_url
+    type: string
+    required: true
+    label:
+      en_US: router_url
+    human_description:
+      en_US: agentcube router url
+    llm_description: agentcube router url.
+    form: llm
+  - name: workload_manager_url
+    type: string
+    required: true
+    label:
+      en_US: workload_manager_url
+    human_description:
+      en_US: agentcube workload manager url
+    llm_description: agentcube workload manager url.
+    form: llm
+  - name: language
+    type: select
+    required: false
+    options:
+      - value: python
+        label:
+          en_US: python
+      - value: javascript
+        label:
+          en_US: javascript
+      - value: typescript
+        label:
+          en_US: typescript 
+    label:
+      en_US: language
+    human_description:
+      en_US: programming language of the code (required if code is provided)
+    llm_description: The programming language of the code. Agentcube supports python by default. If you use javascript or typescript, you must use a custom code interpreter and the code_interpreter_id parameter is required.
+    form: llm
+  - name: code
+    type: string
+    required: false
+    label:
+      en_US: code
+    human_description:
+      en_US: code to be executed
+    llm_description: The code to execute in a code interpreter session. This is the source code in the specified programming language that will be executed by the code interpreter.
+    form: llm
+  - name: command
+    type: string
+    required: false
+    label:
+      en_US: command
+    human_description:
+      en_US: command to be executed
+    llm_description: The terminal command to execute in a code interpreter session. If provided, it will be executed before the code.
+    form: llm
+  - name: session_id
+    type: string
+    required: false
+    label:
+      en_US: session id
+    human_description:
+      en_US: The unique identifier of the code interpreter session to use.
+    llm_description: The unique ID of the code interpreter session to use. If you want to use a existing or past code interpreter session, please specify the session ID. If you do not specify the session ID, the tool will initiate a new session for you.
+    form: form
+  - name: session_reuse
+    type: boolean
+    required: false
+    label:
+      en_US: session_reuse
+    human_description:
+      en_US: Whether to reuse the session for next invocation.
+    llm_description: Whether to reuse the session for next invocation. If true, the session will not be stopped after execution.
+    form: form
+  - name: code_interpreter_id
+    type: string
+    required: false
+    label:
+      en_US: code_interpreter_id
+    human_description:
+      en_US: ID of the Agentcube code interpreter to use
+    llm_description: The ID of the code interpreter to use. Optional for python (defaults to built-in). REQUIRED for javascript or typescript to use your custom code interpreter.
+    form: form 
+extra:
+  python:
+    source: tools/agentcube-code-interpreter.py

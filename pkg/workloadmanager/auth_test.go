@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -223,7 +224,7 @@ func TestAuthMiddleware_ServiceAccountParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			token := "token-" + tt.name
+			token := "token-" + strings.ReplaceAll(tt.name, " ", "-")
 			server.tokenCache.Set(token, true, tt.username)
 
 			w := httptest.NewRecorder()

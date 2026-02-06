@@ -142,6 +142,24 @@ func (s *Server) handleCodeInterpreterInvoke(c *gin.Context) {
 	s.handleInvoke(c, namespace, name, path, types.CodeInterpreterKind)
 }
 
+// recoverProxyAbort treats http.ErrAbortHandler from ReverseProxy as a normal client disconnect.
+func recoverProxyAbort(sandbox *types.SandboxInfo) {
+	if r := recover(); r != nil {
+		if r == http.ErrAbortHandler {
+			if sandbox != nil {
+				klog.V(2).Infof(
+					"Client disconnected, stopping proxy (session: %s)",
+					sandbox.SessionID,
+				)
+			} else {
+				klog.V(2).Info("Client disconnected, stopping proxy (session: unknown)")
+			}
+			return
+		}
+		panic(r)
+	}
+}
+
 // forwardToSandbox forwards the request to the specified sandbox endpoint
 func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, path string) {
 	// Extract url from sandbox - find matching entry point by path
@@ -252,5 +270,6 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 	// c.Request = c.Request.WithContext(ctx)
 
 	// Use the proxy to serve the request
+	defer recoverProxyAbort(sandbox)
 	proxy.ServeHTTP(c.Writer, c.Request)
 }

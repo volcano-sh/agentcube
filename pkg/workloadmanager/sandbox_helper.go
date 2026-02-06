@@ -40,8 +40,8 @@ func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxE
 func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *sandboxEntry) *types.SandboxInfo {
 	createdAt := sandbox.GetCreationTimestamp().Time
 	expiresAt := createdAt.Add(DefaultSandboxTTL)
-	if sandbox.Spec.ShutdownTime != nil {
-		expiresAt = sandbox.Spec.ShutdownTime.Time
+	if sandbox.Spec.Lifecycle.ShutdownTime != nil {
+		expiresAt = sandbox.Spec.Lifecycle.ShutdownTime.Time
 	}
 	accesses := make([]types.SandboxEntryPoint, 0, len(entry.Ports))
 	for _, port := range entry.Ports {

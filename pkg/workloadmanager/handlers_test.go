@@ -79,7 +79,7 @@ func readySandbox() *sandboxv1alpha1.Sandbox {
 			Name:              "sandbox-1",
 			Namespace:         "ns-1",
 			UID:               "uid-123",
-			Annotations:       map[string]string{controllers.SanboxPodNameAnnotation: "pod-1"},
+			Annotations:       map[string]string{controllers.SandboxPodNameAnnotation: "pod-1"},
 			CreationTimestamp: metav1.Now(),
 		},
 		Status: sandboxv1alpha1.SandboxStatus{Conditions: []metav1.Condition{{

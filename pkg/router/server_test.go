@@ -23,17 +23,20 @@ import (
 	"time"
 )
 
-func TestNewServer(t *testing.T) {
-	// Set required environment variables for tests
+func setupTestEnv(t *testing.T) {
+	t.Helper()
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
-	defer func() {
+	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
+	t.Cleanup(func() {
 		os.Unsetenv("REDIS_ADDR")
 		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
-	}()
-
+		os.Unsetenv("WORKLOAD_MANAGER_URL")
+	})
+}
+func TestNewServer(t *testing.T) {
+	// Set required environment variables for tests
+	setupTestEnv(t)
 	tests := []struct {
 		name    string
 		config  *Config
@@ -114,14 +117,7 @@ func TestNewServer(t *testing.T) {
 
 func TestServer_DefaultValues(t *testing.T) {
 	// Set required environment variables for tests
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
-	defer func() {
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
-	}()
+	setupTestEnv(t)
 
 	config := &Config{
 		Port: "8080",
@@ -141,14 +137,7 @@ func TestServer_DefaultValues(t *testing.T) {
 
 func TestServer_ConcurrencyLimitMiddleware(t *testing.T) {
 	// Set required environment variables for tests
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
-	defer func() {
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
-	}()
+	setupTestEnv(t)
 
 	config := &Config{
 		Port:                  "8080",
@@ -174,14 +163,7 @@ func TestServer_ConcurrencyLimitMiddleware(t *testing.T) {
 
 func TestServer_SetupRoutes(t *testing.T) {
 	// Set required environment variables for tests
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
-	defer func() {
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
-	}()
+	setupTestEnv(t)
 
 	config := &Config{
 		Port: "8080",
@@ -203,14 +185,7 @@ func TestServer_SetupRoutes(t *testing.T) {
 
 func TestServer_StartContext(t *testing.T) {
 	// Set required environment variables for tests
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
-	defer func() {
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
-	}()
+	setupTestEnv(t)
 
 	config := &Config{
 		Port: "0", // Use port 0 to let the OS assign a free port
@@ -251,14 +226,7 @@ func TestServer_StartContext(t *testing.T) {
 
 func TestServer_TLSConfiguration(t *testing.T) {
 	// Set required environment variables for tests
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
-	defer func() {
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
-	}()
+	setupTestEnv(t)
 
 	tests := []struct {
 		name      string
@@ -330,14 +298,7 @@ func TestServer_TLSConfiguration(t *testing.T) {
 
 func TestServer_RedisIntegration(t *testing.T) {
 	// Set required environment variables for tests
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
-	os.Setenv("WORKLOAD_MANAGER_ADDR", "http://localhost:8080")
-	defer func() {
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("REDIS_PASSWORD")
-		os.Unsetenv("WORKLOAD_MANAGER_ADDR")
-	}()
+	setupTestEnv(t)
 
 	config := &Config{
 		Port: "8080",

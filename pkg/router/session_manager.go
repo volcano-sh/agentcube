@@ -55,11 +55,11 @@ type manager struct {
 
 // NewSessionManager returns a SessionManager implementation.
 // storeClient is used to query sandbox information from store
-// workloadMgrAddr is read from the environment variable WORKLOAD_MANAGER_ADDR.
+// workloadMgrAddr is read from the environment variable WORKLOAD_MANAGER_URL.
 func NewSessionManager(storeClient store.Store) (SessionManager, error) {
-	workloadMgrAddr := os.Getenv("WORKLOAD_MANAGER_ADDR")
+	workloadMgrAddr := os.Getenv("WORKLOAD_MANAGER_URL")
 	if workloadMgrAddr == "" {
-		return nil, fmt.Errorf("WORKLOAD_MANAGER_ADDR environment variable is not set")
+		return nil, fmt.Errorf("WORKLOAD_MANAGER_URL environment variable is not set")
 	}
 
 	// Create HTTP transport with HTTP/2 support

@@ -98,6 +98,7 @@ step() {
 }
 
 # Helper function to collect logs for pods by label selector
+# Note: script uses IFS=$'\n\t', so jsonpath space-separated names must be split explicitly
 collect_pod_logs() {
     local label_selector=$1
     local component_name=$2
@@ -108,7 +109,7 @@ collect_pod_logs() {
         -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
     
     if [ -n "$pods" ]; then
-        for pod in $pods; do
+        for pod in $(echo "$pods" | tr ' ' '\n' | grep -v '^$'); do
             echo "  Collecting logs from pod: $pod"
             kubectl -n "${AGENTCUBE_NAMESPACE}" logs "$pod" --all-containers=true \
                 > "${artifacts_dir}/${component_name}-${pod}.log" 2>&1 || true
@@ -122,15 +123,36 @@ collect_pod_logs() {
     fi
 }
 
-# Function to collect logs from Router and Workload Manager pods
+# Function to collect logs from all E2E test components
 collect_component_logs() {
     local artifacts_dir="${ARTIFACTS_PATH}"
     echo "Collecting component logs to ${artifacts_dir}..."
     mkdir -p "${artifacts_dir}"
 
-    # Collect logs for both components using label selectors
+    # 1. Collect workloadmanager logs
     collect_pod_logs "app=workloadmanager" "workloadmanager" "${artifacts_dir}"
+    
+    # 2. Collect router logs
     collect_pod_logs "app=agentcube-router" "router" "${artifacts_dir}"
+    
+    # 3. Collect Sandbox Pods logs (per-container: agentd, picod, etc.)
+    echo "Collecting sandbox pods logs (agentd/picod per container)..."
+    local sandbox_pods=$(kubectl -n "${AGENTCUBE_NAMESPACE}" get pods \
+        -l runtime.agentcube.io/sandbox-name \
+        -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+    for pod in $(echo "$sandbox_pods" | tr ' ' '\n' | grep -v '^$'); do
+        kubectl -n "${AGENTCUBE_NAMESPACE}" describe pod "$pod" \
+            > "${artifacts_dir}/sandbox-${pod}-describe.txt" 2>&1 || true
+        local containers=$(kubectl -n "${AGENTCUBE_NAMESPACE}" get pod "$pod" \
+            -o jsonpath='{.spec.containers[*].name}' 2>/dev/null || echo "")
+        for c in $(echo "$containers" | tr ' ' '\n' | grep -v '^$'); do
+            kubectl -n "${AGENTCUBE_NAMESPACE}" logs "$pod" -c "$c" --tail=10000 \
+                > "${artifacts_dir}/sandbox-${pod}-${c}.log" 2>&1 || true
+            [ -s "${artifacts_dir}/sandbox-${pod}-${c}.log" ] || \
+                kubectl -n "${AGENTCUBE_NAMESPACE}" logs "$pod" -c "$c" --previous --tail=10000 \
+                    > "${artifacts_dir}/sandbox-${pod}-${c}.log" 2>/dev/null || true
+        done
+    done
 
     echo "Component logs collected to ${artifacts_dir}"
     ls -lah "${artifacts_dir}" || true

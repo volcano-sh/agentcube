@@ -41,7 +41,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: agentcube_e2e_logs_${{ github.run_id }}_${{ github.run_attempt }}
-          path: ${{ github.workspace }}/e2e-logs*
+          path: ${{ github.workspace }}/e2e-logs/
+          if-no-files-found: ignore
 
       - name: Clean up E2E Environment
         if: always() # Run even if tests fail

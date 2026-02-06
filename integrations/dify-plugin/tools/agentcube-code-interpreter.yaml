@@ -24,7 +24,7 @@ parameters:
     human_description:
       en_US: agentcube router url
     llm_description: agentcube router url.
-    form: llm
+    form: form
   - name: workload_manager_url
     type: string
     required: true
@@ -33,7 +33,7 @@ parameters:
     human_description:
       en_US: agentcube workload manager url
     llm_description: agentcube workload manager url.
-    form: llm
+    form: form
   - name: language
     type: select
     required: false
@@ -79,7 +79,7 @@ parameters:
     human_description:
       en_US: The unique identifier of the code interpreter session to use.
     llm_description: The unique ID of the code interpreter session to use. If you want to use a existing or past code interpreter session, please specify the session ID. If you do not specify the session ID, the tool will initiate a new session for you.
-    form: form
+    form: llm
   - name: session_reuse
     type: boolean
     required: false
@@ -88,7 +88,7 @@ parameters:
     human_description:
       en_US: Whether to reuse the session for next invocation.
     llm_description: Whether to reuse the session for next invocation. If true, the session will not be stopped after execution.
-    form: form
+    form: llm
   - name: code_interpreter_id
     type: string
     required: false
@@ -97,7 +97,7 @@ parameters:
     human_description:
       en_US: ID of the Agentcube code interpreter to use
     llm_description: The ID of the code interpreter to use. Optional for python (defaults to built-in). REQUIRED for javascript or typescript to use your custom code interpreter.
-    form: form 
+    form: llm 
 extra:
   python:
     source: tools/agentcube-code-interpreter.py

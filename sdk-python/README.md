@@ -92,7 +92,6 @@ CodeInterpreterClient(
 
 * `WORKLOAD_MANAGER_URL`: Control Plane URL
 * `ROUTER_URL`: Data Plane URL  
-* `API_TOKEN`: Authentication token
 
 ## Advanced: Session Reuse
 

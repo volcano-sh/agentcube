@@ -32,7 +32,11 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	"github.com/volcano-sh/agentcube/pkg/store"
 	"golang.org/x/net/http2"
+	"k8s.io/klog/v2"
 )
+
+// #nosec G101 -- well-known Kubernetes service account token path, not a credential.
+var serviceAccountTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
 // SessionManager defines the session management behavior on top of Store and the workload manager.
 type SessionManager interface {
@@ -139,6 +143,9 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if token := loadWorkloadManagerAuthToken(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	// Send the request
 	resp, err := m.httpClient.Do(req)
@@ -185,4 +192,15 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 	}
 
 	return sandbox, nil
+}
+
+func loadWorkloadManagerAuthToken() string {
+	b, err := os.ReadFile(serviceAccountTokenPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			klog.Warningf("failed to read service account token: %v", err)
+		}
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }

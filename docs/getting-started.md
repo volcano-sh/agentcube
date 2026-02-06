@@ -177,7 +177,6 @@ export WORKLOAD_MANAGER_URL="http://localhost:8080"
 export ROUTER_URL="http://localhost:8081"
 
 # Optional: If your instance requires authentication
-# export API_TOKEN="your-token"
 ```
 
 ```python

@@ -102,7 +102,9 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 						CreationTimestamp: metav1.NewTime(now),
 					},
 					Spec: sandboxv1alpha1.SandboxSpec{
-						ShutdownTime: &metav1.Time{Time: shutdownTime},
+						Lifecycle: sandboxv1alpha1.Lifecycle{
+							ShutdownTime: &metav1.Time{Time: shutdownTime},
+						},
 					},
 					Status: sandboxv1alpha1.SandboxStatus{
 						Conditions: []metav1.Condition{

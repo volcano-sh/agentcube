@@ -28,12 +28,17 @@ import (
 
 type RuntimeV1alpha1Interface interface {
 	RESTClient() rest.Interface
+	AgentRuntimesGetter
 	CodeInterpretersGetter
 }
 
 // RuntimeV1alpha1Client is used to interact with features provided by the runtime group.
 type RuntimeV1alpha1Client struct {
 	restClient rest.Interface
+}
+
+func (c *RuntimeV1alpha1Client) AgentRuntimes(namespace string) AgentRuntimeInterface {
+	return newAgentRuntimes(c, namespace)
 }
 
 func (c *RuntimeV1alpha1Client) CodeInterpreters(namespace string) CodeInterpreterInterface {

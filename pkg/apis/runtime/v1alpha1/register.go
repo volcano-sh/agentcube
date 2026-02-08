@@ -28,6 +28,14 @@ var (
 	CodeInterpreterGroupVersionKind = GroupVersion.WithKind("CodeInterpreter")
 )
 
+// AgentRuntime type metadata.
+var (
+	AgentRuntimeKind             = "AgentRuntime"
+	AgentRuntimeGroupKind        = GroupVersion.WithKind("AgentRuntime")
+	AgentRuntimeListKind         = "AgentRuntimeList"
+	AgentRuntimeGroupVersionKind = GroupVersion.WithKind("AgentRuntime")
+)
+
 // SchemeGroupVersion is group version used to register these objects
 var SchemeGroupVersion = GroupVersion
 

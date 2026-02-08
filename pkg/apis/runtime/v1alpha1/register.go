@@ -31,7 +31,6 @@ var (
 // AgentRuntime type metadata.
 var (
 	AgentRuntimeKind             = "AgentRuntime"
-	AgentRuntimeGroupKind        = GroupVersion.WithKind("AgentRuntime")
 	AgentRuntimeListKind         = "AgentRuntimeList"
 	AgentRuntimeGroupVersionKind = GroupVersion.WithKind("AgentRuntime")
 )

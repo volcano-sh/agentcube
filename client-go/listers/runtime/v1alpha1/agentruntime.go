@@ -43,7 +43,7 @@ type agentRuntimeLister struct {
 
 // NewAgentRuntimeLister returns a new AgentRuntimeLister.
 func NewAgentRuntimeLister(indexer cache.Indexer) AgentRuntimeLister {
-	return &agentRuntimeLister{listers.New[*runtimev1alpha1.AgentRuntime](indexer, runtimev1alpha1.Resource("agentruntime"))}
+	return &agentRuntimeLister{listers.New[*runtimev1alpha1.AgentRuntime](indexer, runtimev1alpha1.Resource("agentruntime").GroupResource())}
 }
 
 // AgentRuntimes returns an object that can list and get AgentRuntimes.

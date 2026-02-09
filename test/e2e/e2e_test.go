@@ -19,6 +19,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -415,6 +416,147 @@ func (e *testEnv) invokeWithSession(t *testing.T, namespace, name string, req *C
 	return resp
 }
 
+// UploadFileRequest defines the request body for uploading files
+type UploadFileRequest struct {
+	Path    string `json:"path"`
+	Content string `json:"content"` // base64 encoded
+	Mode    string `json:"mode,omitempty"`
+}
+
+// FileInfo represents information about a file
+type FileInfo struct {
+	Name  string `json:"name"`
+	Size  int64  `json:"size"`
+	IsDir bool   `json:"is_dir"`
+	Mode  string `json:"mode"`
+}
+
+// ListFilesResponse defines the response body for listing files
+type ListFilesResponse struct {
+	Files []FileInfo `json:"files"`
+}
+
+// uploadFile uploads a file to the code interpreter sandbox
+func (e *testEnv) uploadFile(namespace, name, sessionID, path, content string) error {
+	// Encode content to base64
+	contentB64 := base64.StdEncoding.EncodeToString([]byte(content))
+
+	uploadReq := UploadFileRequest{
+		Path:    path,
+		Content: contentB64,
+		Mode:    "0644",
+	}
+
+	jsonData, err := json.Marshal(uploadReq)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/v1/namespaces/%s/code-interpreters/%s/invocations/api/files",
+		e.routerURL, namespace, name)
+
+	httpReq, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	if e.authToken != "" {
+		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.authToken))
+	}
+	if sessionID != "" {
+		httpReq.Header.Set("x-agentcube-session-id", sessionID)
+	}
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// downloadFile downloads a file from the code interpreter sandbox
+func (e *testEnv) downloadFile(namespace, name, sessionID, path string) (string, error) {
+	url := fmt.Sprintf("%s/v1/namespaces/%s/code-interpreters/%s/invocations/api/files/%s",
+		e.routerURL, namespace, name, path)
+
+	httpReq, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if e.authToken != "" {
+		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.authToken))
+	}
+	if sessionID != "" {
+		httpReq.Header.Set("x-agentcube-session-id", sessionID)
+	}
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("download failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	return string(body), nil
+}
+
+// listFiles lists files in the specified directory
+func (e *testEnv) listFiles(namespace, name, sessionID, path string) ([]FileInfo, error) {
+	url := fmt.Sprintf("%s/v1/namespaces/%s/code-interpreters/%s/invocations/api/files?path=%s",
+		e.routerURL, namespace, name, path)
+
+	httpReq, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if e.authToken != "" {
+		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.authToken))
+	}
+	if sessionID != "" {
+		httpReq.Header.Set("x-agentcube-session-id", sessionID)
+	}
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list files failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var listResp ListFilesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return listResp.Files, nil
+}
+
 // TestAgentRuntimeBasicInvocation tests basic echo-agent functionality
 func TestAgentRuntimeBasicInvocation(t *testing.T) {
 	env := newTestEnv(t)
@@ -676,6 +818,114 @@ func TestCodeInterpreterBasicInvocation(t *testing.T) {
 			require.Equal(t, tc.expectExit, resp.ExitCode)
 		})
 	}
+}
+
+// TestCodeInterpreterFileOperations tests file upload/download via code interpreter API
+func TestCodeInterpreterFileOperations(t *testing.T) {
+	env := newTestEnv(t)
+
+	namespace := agentcubeNamespace
+	name := "e2e-code-interpreter"
+
+	// Create a session for file operations
+	sessionID, err := env.createCodeInterpreterSession(namespace, name)
+	require.NoError(t, err, "Failed to create code interpreter session")
+
+	t.Cleanup(func() {
+		_ = env.deleteCodeInterpreterSession(sessionID)
+	})
+
+	t.Run("upload and verify file", func(t *testing.T) {
+		// Test data: Create a simple text file content
+		testContent := "Hello from file upload test!\nThis is line 2.\n"
+		testFilePath := "test_upload.txt"
+
+		// Upload file via API
+		err := env.uploadFile(namespace, name, sessionID, testFilePath, testContent)
+		require.NoError(t, err, "Failed to upload file")
+
+		// Verify file exists and has correct content using cat command
+		verifyReq := &CodeInterpreterExecuteRequest{
+			Command: []string{"cat", testFilePath},
+		}
+		resp, err := env.invokeCodeInterpreter(namespace, name, sessionID, verifyReq)
+		require.NoError(t, err, "Failed to execute cat command")
+		require.Equal(t, 0, resp.ExitCode, "cat command should succeed")
+		require.Equal(t, testContent, resp.Stdout, "File content should match uploaded content")
+	})
+
+	t.Run("download file", func(t *testing.T) {
+		// Create a file using Python script to generate Fibonacci sequence
+		pythonCode := `import json
+
+def fibonacci(n):
+    if n <= 1:
+        return n
+    a, b = 0, 1
+    for _ in range(n - 1):
+        a, b = b, a + b
+    return b
+
+# Generate first 10 Fibonacci numbers
+result = [fibonacci(i) for i in range(10)]
+
+# Write to JSON file
+with open('fibonacci.json', 'w') as f:
+    json.dump({"fibonacci": result}, f, indent=2)
+
+print("Fibonacci sequence generated")
+`
+
+		// Upload Python script
+		err := env.uploadFile(namespace, name, sessionID, "generate_fib.py", pythonCode)
+		require.NoError(t, err, "Failed to upload Python script")
+
+		// Execute Python script to generate fibonacci.json
+		execReq := &CodeInterpreterExecuteRequest{
+			Command: []string{"python3", "generate_fib.py"},
+		}
+		execResp, err := env.invokeCodeInterpreter(namespace, name, sessionID, execReq)
+		require.NoError(t, err, "Failed to execute Python script")
+		require.Equal(t, 0, execResp.ExitCode, "Python script should execute successfully")
+		require.Contains(t, execResp.Stdout, "Fibonacci sequence generated")
+
+		// Download the generated JSON file
+		downloadedContent, err := env.downloadFile(namespace, name, sessionID, "fibonacci.json")
+		require.NoError(t, err, "Failed to download file")
+
+		// Verify the JSON content
+		var result map[string]interface{}
+		err = json.Unmarshal([]byte(downloadedContent), &result)
+		require.NoError(t, err, "Downloaded content should be valid JSON")
+
+		fibArray, ok := result["fibonacci"].([]interface{})
+		require.True(t, ok, "JSON should contain fibonacci array")
+		require.Equal(t, 10, len(fibArray), "Should have 10 Fibonacci numbers")
+
+		// Verify first few Fibonacci numbers
+		expectedFib := []float64{0, 1, 1, 2, 3, 5, 8, 13, 21, 34}
+		for i, expected := range expectedFib {
+			actual, ok := fibArray[i].(float64)
+			require.True(t, ok, "Fibonacci number should be numeric")
+			require.Equal(t, expected, actual, "Fibonacci number at index %d should match", i)
+		}
+	})
+
+	t.Run("list files", func(t *testing.T) {
+		// List files in the workspace
+		files, err := env.listFiles(namespace, name, sessionID, ".")
+		require.NoError(t, err, "Failed to list files")
+
+		// Verify our test files are present
+		fileNames := make([]string, len(files))
+		for i, f := range files {
+			fileNames[i] = f.Name
+		}
+
+		require.Contains(t, fileNames, "test_upload.txt", "Should find uploaded text file")
+		require.Contains(t, fileNames, "generate_fib.py", "Should find Python script")
+		require.Contains(t, fileNames, "fibonacci.json", "Should find generated JSON file")
+	})
 }
 
 func (ctx *e2eTestContext) cleanupCodeInterpreter(t *testing.T, namespace, name, yamlPath string) {

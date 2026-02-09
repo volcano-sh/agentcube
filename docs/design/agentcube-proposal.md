@@ -404,13 +404,6 @@ The CodeInterpreter is a component responsible for executing code snippets or co
 
 ### 5.1 API design
 
-Initialization
-
-- POST /init - Initialize sandbox with session public key (one-time only)
-  - Request: JWT signed by bootstrap private key containing session public key
-  - Response: JSON confirmation message
-  - Access: Workload Manager only
-
 Command Execution
 
 - POST /api/execute - Execute command and return output

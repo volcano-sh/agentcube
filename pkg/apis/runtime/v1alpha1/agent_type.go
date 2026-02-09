@@ -60,13 +60,10 @@ type AgentRuntimeSpec struct {
 
 // AgentRuntimeStatus represents the observed state of an AgentRuntime.
 type AgentRuntimeStatus struct {
-	// Conditions represent the latest available observations of the AgentRuntime's state
+	// Conditions represent the latest available observations of the AgentRuntime's state.
+	// Known condition types include "Accepted" to indicate whether the runtime configuration is valid.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
-
-	// Ready indicates whether the AgentRuntime is ready to serve requests
-	// +optional
-	Ready bool `json:"ready,omitempty"`
 }
 
 type SandboxTemplate struct {

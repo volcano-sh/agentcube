@@ -8513,8 +8513,9 @@ spec:
             description: Status represents the current state of the AgentRuntime.
             properties:
               conditions:
-                description: Conditions represent the latest available observations
-                  of the AgentRuntime's state
+                description: |-
+                  Conditions represent the latest available observations of the AgentRuntime's state.
+                  Known condition types include "Accepted" to indicate whether the runtime configuration is valid.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -8570,10 +8571,6 @@ spec:
                   - type
                   type: object
                 type: array
-              ready:
-                description: Ready indicates whether the AgentRuntime is ready to
-                  serve requests
-                type: boolean
             type: object
         required:
         - spec

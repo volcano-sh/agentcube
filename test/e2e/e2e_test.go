@@ -1176,7 +1176,10 @@ func runCodeInterpreterLoadTest(
 	}
 
 	elapsedTime := time.Since(startTime)
-	avgDuration := totalDuration / time.Duration(successCount)
+	var avgDuration time.Duration
+	if successCount > 0 {
+		avgDuration = totalDuration / time.Duration(successCount)
+	}
 
 	t.Logf("Load test results:")
 	t.Logf("  Total requests: %d", totalRequests)
@@ -1184,9 +1187,11 @@ func runCodeInterpreterLoadTest(
 	t.Logf("  Failed: %d", failureCount)
 	t.Logf("  Success rate: %.2f%%", float64(successCount)/float64(totalRequests)*100)
 	t.Logf("  Total elapsed time: %v", elapsedTime)
-	t.Logf("  Average response time: %v", avgDuration)
-	t.Logf("  Min response time: %v", minDuration)
-	t.Logf("  Max response time: %v", maxDuration)
+	if successCount > 0 {
+		t.Logf("  Average response time: %v", avgDuration)
+		t.Logf("  Min response time: %v", minDuration)
+		t.Logf("  Max response time: %v", maxDuration)
+	}
 	t.Logf("  Actual rate: %.2f req/sec", float64(totalRequests)/elapsedTime.Seconds())
 
 	// Verify that most requests succeeded (allow up to 10% failure for network issues)

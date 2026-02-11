@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -476,7 +477,10 @@ func (e *testEnv) uploadFile(namespace, name, sessionID, path, content string) e
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("upload failed with status %d and could not read response body: %w", resp.StatusCode, err)
+		}
 		return fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -486,7 +490,7 @@ func (e *testEnv) uploadFile(namespace, name, sessionID, path, content string) e
 // downloadFile downloads a file from the code interpreter sandbox
 func (e *testEnv) downloadFile(namespace, name, sessionID, path string) (string, error) {
 	url := fmt.Sprintf("%s/v1/namespaces/%s/code-interpreters/%s/invocations/api/files/%s",
-		e.routerURL, namespace, name, path)
+		e.routerURL, namespace, name, url.PathEscape(path))
 
 	httpReq, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -508,7 +512,10 @@ func (e *testEnv) downloadFile(namespace, name, sessionID, path string) (string,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("download failed with status %d and could not read response body: %w", resp.StatusCode, err)
+		}
 		return "", fmt.Errorf("download failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -523,7 +530,7 @@ func (e *testEnv) downloadFile(namespace, name, sessionID, path string) (string,
 // listFiles lists files in the specified directory
 func (e *testEnv) listFiles(namespace, name, sessionID, path string) ([]FileInfo, error) {
 	url := fmt.Sprintf("%s/v1/namespaces/%s/code-interpreters/%s/invocations/api/files?path=%s",
-		e.routerURL, namespace, name, path)
+		e.routerURL, namespace, name, url.QueryEscape(path))
 
 	httpReq, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -545,7 +552,10 @@ func (e *testEnv) listFiles(namespace, name, sessionID, path string) ([]FileInfo
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("list files failed with status %d and could not read response body: %w", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("list files failed with status %d: %s", resp.StatusCode, string(body))
 	}
 

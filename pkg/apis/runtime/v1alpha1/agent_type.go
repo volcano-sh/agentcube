@@ -22,17 +22,22 @@ import (
 )
 
 // AgentRuntime defines the desired state of an agent runtime environment.
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Namespaced
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 type AgentRuntime struct {
-	metav1.TypeMeta `json:",inline"`
-	// metadata is a standard object metadata
-	// +optional
-	metav1.ObjectMeta `json:"metadata,omitempty,omitzero" protobuf:"bytes,1,opt,name=metadata"`
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
 	// Spec defines the desired state of the AgentRuntime.
-	Spec AgentRuntimeSpec `json:"spec" protobuf:"bytes,2,opt,name=spec"`
+	Spec AgentRuntimeSpec `json:"spec"`
 	// Status represents the current state of the AgentRuntime.
-	Status AgentRuntimeStatus `json:"status" protobuf:"bytes,3,opt,name=status"`
+	Status AgentRuntimeStatus `json:"status,omitempty"`
 }
 
+// AgentRuntimeSpec describes how to create and manage agent runtime sandboxes.
 type AgentRuntimeSpec struct {
 	// Ports is a list of ports that the agent runtime will expose.
 	Ports []TargetPort `json:"targetPort"`
@@ -53,7 +58,12 @@ type AgentRuntimeSpec struct {
 	MaxSessionDuration *metav1.Duration `json:"maxSessionDuration,omitempty" protobuf:"bytes,3,opt,name=maxSessionDuration"`
 }
 
+// AgentRuntimeStatus represents the observed state of an AgentRuntime.
 type AgentRuntimeStatus struct {
+	// Conditions represent the latest available observations of the AgentRuntime's state.
+	// Known condition types include "Accepted" to indicate whether the runtime configuration is valid.
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 type SandboxTemplate struct {
@@ -68,4 +78,17 @@ type SandboxTemplate struct {
 	// Spec is the Pod's spec
 	// +kubebuilder:validation:Required
 	Spec corev1.PodSpec `json:"spec" protobuf:"bytes,3,opt,name=spec"`
+}
+
+// AgentRuntimeList contains a list of AgentRuntime
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +kubebuilder:object:root=true
+type AgentRuntimeList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []AgentRuntime `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(&AgentRuntime{}, &AgentRuntimeList{})
 }

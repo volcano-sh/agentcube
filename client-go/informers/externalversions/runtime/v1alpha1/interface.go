@@ -24,6 +24,8 @@ import (
 
 // Interface provides access to all the informers in this group version.
 type Interface interface {
+	// AgentRuntimes returns a AgentRuntimeInformer.
+	AgentRuntimes() AgentRuntimeInformer
 	// CodeInterpreters returns a CodeInterpreterInformer.
 	CodeInterpreters() CodeInterpreterInformer
 }
@@ -37,6 +39,11 @@ type version struct {
 // New returns a new Interface.
 func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakListOptions internalinterfaces.TweakListOptionsFunc) Interface {
 	return &version{factory: f, namespace: namespace, tweakListOptions: tweakListOptions}
+}
+
+// AgentRuntimes returns a AgentRuntimeInformer.
+func (v *version) AgentRuntimes() AgentRuntimeInformer {
+	return &agentRuntimeInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
 // CodeInterpreters returns a CodeInterpreterInformer.

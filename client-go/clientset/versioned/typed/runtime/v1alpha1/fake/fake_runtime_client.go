@@ -28,6 +28,10 @@ type FakeRuntimeV1alpha1 struct {
 	*testing.Fake
 }
 
+func (c *FakeRuntimeV1alpha1) AgentRuntimes(namespace string) v1alpha1.AgentRuntimeInterface {
+	return newFakeAgentRuntimes(c, namespace)
+}
+
 func (c *FakeRuntimeV1alpha1) CodeInterpreters(namespace string) v1alpha1.CodeInterpreterInterface {
 	return newFakeCodeInterpreters(c, namespace)
 }

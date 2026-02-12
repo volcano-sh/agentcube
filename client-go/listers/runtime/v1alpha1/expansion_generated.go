@@ -18,6 +18,14 @@ limitations under the License.
 
 package v1alpha1
 
+// AgentRuntimeListerExpansion allows custom methods to be added to
+// AgentRuntimeLister.
+type AgentRuntimeListerExpansion interface{}
+
+// AgentRuntimeNamespaceListerExpansion allows custom methods to be added to
+// AgentRuntimeNamespaceLister.
+type AgentRuntimeNamespaceListerExpansion interface{}
+
 // CodeInterpreterListerExpansion allows custom methods to be added to
 // CodeInterpreterLister.
 type CodeInterpreterListerExpansion interface{}

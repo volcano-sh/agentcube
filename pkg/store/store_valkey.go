@@ -272,6 +272,12 @@ func (vs *valkeyStore) ListInactiveSandboxes(ctx context.Context, before time.Ti
 	return vs.loadSandboxesBySessionIDs(ctx, ids)
 }
 
+// Close releases all resources held by the valkey store.
+func (vs *valkeyStore) Close() error {
+	vs.cli.Close()
+	return nil
+}
+
 // UpdateSessionLastActivity updates the last-activity index for the given session
 func (vs *valkeyStore) UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error {
 	if sessionID == "" {

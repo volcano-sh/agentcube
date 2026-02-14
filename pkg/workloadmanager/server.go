@@ -130,7 +130,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Create HTTP/2 server for better performance
 	h2s := &http2.Server{}
-	
+
 	// Wrap handler with h2c for HTTP/2 cleartext support
 	h2cHandler := h2c.NewHandler(s.router, h2s)
 
@@ -140,17 +140,6 @@ func (s *Server) Start(ctx context.Context) error {
 		ReadTimeout: 15 * time.Second,
 		IdleTimeout: 90 * time.Second, // golang http default transport's idletimeout is 90s
 	}
-
-	// Listen for shutdown signal in goroutine
-	go func() {
-		<-ctx.Done()
-		klog.Info("Shutting down server...")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
-			klog.Errorf("Server shutdown error: %v", err)
-		}
-	}()
 
 	klog.Infof("Server listening on %s", addr)
 
@@ -166,6 +155,25 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	return s.httpServer.ListenAndServe()
+}
+
+// Shutdown performs graceful shutdown of the server.
+func (s *Server) Shutdown(ctx context.Context) error {
+	klog.Info("Shutting down HTTP server...")
+	if err := s.httpServer.Shutdown(ctx); err != nil {
+		klog.Errorf("HTTP server shutdown error: %v", err)
+		return fmt.Errorf("HTTP server shutdown: %w", err)
+	}
+	klog.Info("HTTP server stopped")
+
+	klog.Info("Closing store connections...")
+	if err := s.storeClient.Close(); err != nil {
+		klog.Errorf("Store close error: %v", err)
+		return fmt.Errorf("store close: %w", err)
+	}
+	klog.Info("Store connections closed")
+
+	return nil
 }
 
 // loggingMiddleware logs each request (except /health)

@@ -269,6 +269,11 @@ func (rs *redisStore) ListInactiveSandboxes(ctx context.Context, before time.Tim
 	return rs.loadSandboxesBySessionIDs(ctx, ids)
 }
 
+// Close releases all resources held by the redis store.
+func (rs *redisStore) Close() error {
+	return rs.cli.Close()
+}
+
 // UpdateSessionLastActivity updates the last-activity index for the given session.
 func (rs *redisStore) UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error {
 	if sessionID == "" {

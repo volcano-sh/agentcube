@@ -94,6 +94,10 @@ func (f *fakeStoreClient) UpdateSandboxLastActivity(_ context.Context, _ string,
 	return nil
 }
 
+func (f *fakeStoreClient) Close() error {
+	return nil
+}
+
 // ---- tests: GetSandboxBySession ----
 
 func TestGetSandboxBySession_Success(t *testing.T) {

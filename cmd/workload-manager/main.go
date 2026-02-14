@@ -139,8 +139,26 @@ func main() {
 	select {
 	case <-sigCh:
 		klog.Info("Received shutdown signal, shutting down gracefully...")
+
+		// Create a shutdown context with a 15-second deadline
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer shutdownCancel()
+
+		// 1. Stop accepting new requests and drain in-flight ones
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			klog.Errorf("Server shutdown error: %v", err)
+		}
+
+		// 2. Cancel root context to stop background workers (GC, informers, controller manager)
 		cancel()
-		time.Sleep(2 * time.Second) // Give server time to shutdown gracefully
+
+		// 3. Allow background workers time to finish their current operations
+		time.Sleep(2 * time.Second)
+
+		// 4. Close store connections after all workers have stopped
+		if err := server.CloseStore(); err != nil {
+			klog.Errorf("Store close error: %v", err)
+		}
 	case err := <-errCh:
 		klog.Fatalf("Server error: %v", err)
 	}

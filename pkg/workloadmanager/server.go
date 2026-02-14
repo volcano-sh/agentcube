@@ -157,7 +157,7 @@ func (s *Server) Start(ctx context.Context) error {
 	return s.httpServer.ListenAndServe()
 }
 
-// Shutdown performs graceful shutdown of the server.
+// Shutdown performs graceful shutdown of the HTTP server.
 func (s *Server) Shutdown(ctx context.Context) error {
 	klog.Info("Shutting down HTTP server...")
 	if err := s.httpServer.Shutdown(ctx); err != nil {
@@ -165,14 +165,17 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return fmt.Errorf("HTTP server shutdown: %w", err)
 	}
 	klog.Info("HTTP server stopped")
+	return nil
+}
 
+// CloseStore releases all resources held by the store (e.g. connection pools).
+func (s *Server) CloseStore() error {
 	klog.Info("Closing store connections...")
 	if err := s.storeClient.Close(); err != nil {
 		klog.Errorf("Store close error: %v", err)
 		return fmt.Errorf("store close: %w", err)
 	}
 	klog.Info("Store connections closed")
-
 	return nil
 }
 

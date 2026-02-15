@@ -41,7 +41,7 @@ pip install -e .
    ```bash
    kubectl agentcube publish \
       -f examples/hello-agent \
-      --image-url "docker.io/username/my-agent" \
+      --image-url "docker.io/username/my-agent"
    ```
 
 4. **Invoke your agent:**

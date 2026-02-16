@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -40,6 +41,7 @@ type Server struct {
 	tokenCache        *TokenCache
 	informers         *Informers
 	storeClient       store.Store
+	wg                sync.WaitGroup
 }
 
 type Config struct {
@@ -130,7 +132,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Create HTTP/2 server for better performance
 	h2s := &http2.Server{}
-	
+
 	// Wrap handler with h2c for HTTP/2 cleartext support
 	h2cHandler := h2c.NewHandler(s.router, h2s)
 
@@ -141,21 +143,14 @@ func (s *Server) Start(ctx context.Context) error {
 		IdleTimeout: 90 * time.Second, // golang http default transport's idletimeout is 90s
 	}
 
-	// Listen for shutdown signal in goroutine
-	go func() {
-		<-ctx.Done()
-		klog.Info("Shutting down server...")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
-			klog.Errorf("Server shutdown error: %v", err)
-		}
-	}()
-
 	klog.Infof("Server listening on %s", addr)
 
 	gc := newGarbageCollector(s.k8sClient, s.storeClient, 15*time.Second)
-	go gc.run(ctx.Done())
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		gc.run(ctx.Done())
+	}()
 
 	// Start HTTP or HTTPS server
 	if s.config.EnableTLS {
@@ -166,6 +161,38 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	return s.httpServer.ListenAndServe()
+}
+
+// Shutdown performs graceful shutdown of the HTTP server.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.httpServer != nil {
+		klog.Info("Shutting down HTTP server...")
+		if err := s.httpServer.Shutdown(ctx); err != nil {
+			klog.Errorf("HTTP server shutdown error: %v", err)
+			return fmt.Errorf("HTTP server shutdown: %w", err)
+		}
+		klog.Info("HTTP server stopped")
+	} else {
+		klog.Info("HTTP server not initialized, skipping HTTP shutdown")
+	}
+	return nil
+}
+
+// WaitForBackgroundWorkers blocks until all background workers (e.g. garbage collector)
+// have finished their current operations and exited.
+func (s *Server) WaitForBackgroundWorkers() {
+	s.wg.Wait()
+}
+
+// CloseStore releases all resources held by the store (e.g. connection pools).
+func (s *Server) CloseStore() error {
+	klog.Info("Closing store connections...")
+	if err := s.storeClient.Close(); err != nil {
+		klog.Errorf("store close error: %v", err)
+		return fmt.Errorf("store close: %w", err)
+	}
+	klog.Info("Store connections closed")
+	return nil
 }
 
 // loggingMiddleware logs each request (except /health)

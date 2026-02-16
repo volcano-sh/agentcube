@@ -72,6 +72,7 @@ func (f *fakeStore) ListInactiveSandboxes(_ context.Context, _ time.Time, _ int6
 func (f *fakeStore) UpdateSessionLastActivity(_ context.Context, _ string, _ time.Time) error {
 	return nil
 }
+func (f *fakeStore) Close() error { return nil }
 
 func readySandbox() *sandboxv1alpha1.Sandbox {
 	return &sandboxv1alpha1.Sandbox{

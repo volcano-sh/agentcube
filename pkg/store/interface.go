@@ -40,4 +40,6 @@ type Store interface {
 	ListInactiveSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error)
 	// UpdateSessionLastActivity updates the last-activity index for the given session
 	UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error
+	// Close releases all resources held by the store (e.g. connection pools)
+	Close() error
 }

@@ -159,12 +159,16 @@ func (s *Server) Start(ctx context.Context) error {
 
 // Shutdown performs graceful shutdown of the HTTP server.
 func (s *Server) Shutdown(ctx context.Context) error {
-	klog.Info("Shutting down HTTP server...")
-	if err := s.httpServer.Shutdown(ctx); err != nil {
-		klog.Errorf("HTTP server shutdown error: %v", err)
-		return fmt.Errorf("HTTP server shutdown: %w", err)
+	if s.httpServer != nil {
+		klog.Info("Shutting down HTTP server...")
+		if err := s.httpServer.Shutdown(ctx); err != nil {
+			klog.Errorf("HTTP server shutdown error: %v", err)
+			return fmt.Errorf("HTTP server shutdown: %w", err)
+		}
+		klog.Info("HTTP server stopped")
+	} else {
+		klog.Info("HTTP server not initialized, skipping HTTP shutdown")
 	}
-	klog.Info("HTTP server stopped")
 	return nil
 }
 

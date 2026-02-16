@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -40,6 +41,7 @@ type Server struct {
 	tokenCache        *TokenCache
 	informers         *Informers
 	storeClient       store.Store
+	wg                sync.WaitGroup
 }
 
 type Config struct {
@@ -144,7 +146,11 @@ func (s *Server) Start(ctx context.Context) error {
 	klog.Infof("Server listening on %s", addr)
 
 	gc := newGarbageCollector(s.k8sClient, s.storeClient, 15*time.Second)
-	go gc.run(ctx.Done())
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		gc.run(ctx.Done())
+	}()
 
 	// Start HTTP or HTTPS server
 	if s.config.EnableTLS {
@@ -172,11 +178,17 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// WaitForBackgroundWorkers blocks until all background workers (e.g. garbage collector)
+// have finished their current operations and exited.
+func (s *Server) WaitForBackgroundWorkers() {
+	s.wg.Wait()
+}
+
 // CloseStore releases all resources held by the store (e.g. connection pools).
 func (s *Server) CloseStore() error {
 	klog.Info("Closing store connections...")
 	if err := s.storeClient.Close(); err != nil {
-		klog.Errorf("Store close error: %v", err)
+		klog.Errorf("store close error: %v", err)
 		return fmt.Errorf("store close: %w", err)
 	}
 	klog.Info("Store connections closed")

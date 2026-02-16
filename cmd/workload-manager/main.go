@@ -146,18 +146,18 @@ func main() {
 
 		// 1. Stop accepting new requests and drain in-flight ones
 		if err := server.Shutdown(shutdownCtx); err != nil {
-			klog.Errorf("Server shutdown error: %v", err)
+			klog.Errorf("server shutdown error: %v", err)
 		}
 
 		// 2. Cancel root context to stop background workers (GC, informers, controller manager)
 		cancel()
 
-		// 3. Allow background workers time to finish their current operations
-		time.Sleep(2 * time.Second)
+		// 3. Wait for background workers to finish their current operations
+		server.WaitForBackgroundWorkers()
 
 		// 4. Close store connections after all workers have stopped
 		if err := server.CloseStore(); err != nil {
-			klog.Errorf("Store close error: %v", err)
+			klog.Errorf("store close error: %v", err)
 		}
 	case err := <-errCh:
 		klog.Fatalf("Server error: %v", err)

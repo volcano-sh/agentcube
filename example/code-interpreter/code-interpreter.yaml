@@ -14,9 +14,6 @@ spec:
     args:
       # The workspace directory will be created automatically by picod at startup
       - --workspace=/workspace
-    volumeMounts:
-      - name: workspace
-        mountPath: /workspace
     resources:
       limits:
         cpu: "500m"
@@ -24,9 +21,6 @@ spec:
       requests:
         cpu: "100m"
         memory: "128Mi"
-  volumes:
-    - name: workspace
-      emptyDir: {}
   sessionTimeout: "15m"
   maxSessionDuration: "8h"
   warmPoolSize: 2

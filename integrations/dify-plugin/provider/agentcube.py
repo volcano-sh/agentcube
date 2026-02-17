@@ -19,7 +19,7 @@ from dify_plugin.errors.tool import ToolProviderCredentialValidationError
 
 
 class AgentcubeCodeInterpreterProvider(ToolProvider):
-    
+
     def _validate_credentials(self, credentials: dict[str, Any]) -> None:
         try:
             """
@@ -43,7 +43,7 @@ class AgentcubeCodeInterpreterProvider(ToolProvider):
     #     except Exception as e:
     #         raise ToolProviderOAuthError(str(e))
     #     return ""
-        
+
     # def _oauth_get_credentials(
     #     self, redirect_uri: str, system_credentials: Mapping[str, Any], request: Request
     # ) -> Mapping[str, Any]:

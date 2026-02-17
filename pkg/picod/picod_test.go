@@ -82,6 +82,15 @@ func setupTestServer(t *testing.T, pubPEM string) (*Server, *httptest.Server, st
 }
 
 func TestPicoD_EndToEnd(t *testing.T) {
+	// Capture current working directory and restore it in cleanup
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := os.Chdir(originalWd); err != nil {
+			t.Logf("failed to restore working directory: %v", err)
+		}
+	})
+
 	// 1. Setup Keys - single key pair for Router-style auth
 	routerPriv, routerPubStr := generateRSAKeys(t)
 
@@ -92,11 +101,8 @@ func TestPicoD_EndToEnd(t *testing.T) {
 	defer os.Unsetenv(PublicKeyEnvVar)
 
 	// Switch to temp dir for relative path tests
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, os.Chdir(originalWd)) }()
 
 	client := ts.Client()
 
@@ -172,25 +178,55 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		assert.Equal(t, 124, resp.ExitCode)
 		assert.Contains(t, resp.Stderr, "Command timed out")
 
-		// 5. Working Directory Escape (Should Fail)
+		// 5. Non-existent Working Directory (Should Create It)
+		nonExistReq := ExecuteRequest{
+			Command:    []string{"sh", "-c", "pwd"},
+			WorkingDir: "subdir/nested",
+		}
+		nonExistBody, _ := json.Marshal(nonExistReq)
+		nonExistClaims := jwt.MapClaims{
+			"iat": time.Now().Unix(),
+			"exp": time.Now().Add(time.Hour * 6).Unix(),
+		}
+		nonExistToken := createToken(t, routerPriv, nonExistClaims)
+
+		nonExistReqHTTP, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(nonExistBody))
+		nonExistReqHTTP.Header.Set("Authorization", "Bearer "+nonExistToken)
+		nonExistReqHTTP.Header.Set("Content-Type", "application/json")
+
+		httpResp, err := client.Do(nonExistReqHTTP)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, httpResp.StatusCode)
+
+		var nonExistResp ExecuteResponse
+		err = json.NewDecoder(httpResp.Body).Decode(&nonExistResp)
+		require.NoError(t, err)
+		assert.Equal(t, 0, nonExistResp.ExitCode)
+		assert.NotEmpty(t, nonExistResp.Stdout)
+
+		// Verify directory was created
+		_, err = os.Stat("subdir/nested")
+		assert.NoError(t, err)
+
+		// 6. Working Directory Escape (Should Fail)
 		escapeReq := ExecuteRequest{
 			Command:    []string{"ls"},
 			WorkingDir: "../",
 		}
 		escapeBody, _ := json.Marshal(escapeReq)
-		claims := jwt.MapClaims{
+		escapeClaims := jwt.MapClaims{
 			"iat": time.Now().Unix(),
 			"exp": time.Now().Add(time.Hour * 6).Unix(),
 		}
-		token := createToken(t, routerPriv, claims)
+		escapeToken := createToken(t, routerPriv, escapeClaims)
 
-		req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(escapeBody))
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Content-Type", "application/json")
+		escapeReqHTTP, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(escapeBody))
+		escapeReqHTTP.Header.Set("Authorization", "Bearer "+escapeToken)
+		escapeReqHTTP.Header.Set("Content-Type", "application/json")
 
-		httpResp, err := client.Do(req)
+		escapeResp, err := client.Do(escapeReqHTTP)
 		require.NoError(t, err)
-		assert.Equal(t, http.StatusBadRequest, httpResp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, escapeResp.StatusCode)
 	})
 
 	t.Run("File Operations", func(t *testing.T) {
@@ -328,17 +364,23 @@ func TestPicoD_EndToEnd(t *testing.T) {
 // requires public key at startup. Without it, PicoD will fail to start.
 
 func TestPicoD_DefaultWorkspace(t *testing.T) {
+	// Capture current working directory and restore it in cleanup
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := os.Chdir(originalWd); err != nil {
+			t.Logf("failed to restore working directory: %v", err)
+		}
+	})
+
 	// Setup temporary directory for test
 	tmpDir, err := os.MkdirTemp("", "picod_default_workspace_test")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
 	// Switch to temp dir
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, os.Chdir(originalWd)) }()
 
 	// Set public key env
 	_, pubStr := generateRSAKeys(t)
@@ -352,6 +394,7 @@ func TestPicoD_DefaultWorkspace(t *testing.T) {
 	}
 
 	server := NewServer(config)
+	defer server.RestoreWorkingDirectory()
 
 	// Verify workspaceDir is set to current working directory
 	cwd, err := os.Getwd()
@@ -364,6 +407,15 @@ func TestPicoD_DefaultWorkspace(t *testing.T) {
 }
 
 func TestPicoD_SetWorkspace(t *testing.T) {
+	// Capture current working directory and restore it in cleanup
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := os.Chdir(originalWd); err != nil {
+			t.Logf("failed to restore working directory: %v", err)
+		}
+	})
+
 	// Setup temp dir
 	tmpDir, err := os.MkdirTemp("", "picod_setworkspace_test")
 	require.NoError(t, err)
@@ -401,11 +453,8 @@ func TestPicoD_SetWorkspace(t *testing.T) {
 	assert.Equal(t, resolve(absPath), resolve(server.workspaceDir))
 
 	// Case 2: Relative Path
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, os.Chdir(originalWd)) }()
 
 	server.setWorkspace("real")
 	assert.Equal(t, resolve(absPath), resolve(server.workspaceDir))

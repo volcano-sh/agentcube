@@ -14,8 +14,11 @@
 
 from .control_plane import ControlPlaneClient
 from .data_plane import DataPlaneClient
+from .agent_runtime_data_plane import AgentRuntimeDataPlaneClient
 
 __all__ = [
     "ControlPlaneClient",
-    "DataPlaneClient"
+    "DataPlaneClient",
+    "AgentRuntimeDataPlaneClient",
 ]
+

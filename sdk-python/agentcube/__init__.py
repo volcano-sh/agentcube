@@ -13,5 +13,6 @@
 # limitations under the License.
 
 from .code_interpreter import CodeInterpreterClient
+from .agent_runtime import AgentRuntimeClient
 
-__all__ = ["CodeInterpreterClient"]
+__all__ = ["CodeInterpreterClient", "AgentRuntimeClient"]

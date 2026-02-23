@@ -16,6 +16,7 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
+from requests.exceptions import JSONDecodeError
 from agentcube.clients.agent_runtime_data_plane import AgentRuntimeDataPlaneClient
 from agentcube.utils.log import get_logger
 
@@ -84,7 +85,7 @@ class AgentRuntimeClient:
 
         try:
             return resp.json()
-        except ValueError:
+        except JSONDecodeError:
             return resp.text
 
     def close(self) -> None:

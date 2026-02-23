@@ -16,7 +16,7 @@ import os
 import unittest
 from unittest.mock import Mock, patch
 
-
+import requests.exceptions
 os.environ.setdefault("ROUTER_URL", "http://mock-router:8080")
 
 from agentcube.agent_runtime import AgentRuntimeClient
@@ -78,7 +78,7 @@ class TestAgentRuntimeClientInvoke(unittest.TestCase):
 
         resp = Mock()
         resp.raise_for_status.return_value = None
-        resp.json.side_effect = ValueError("not json")
+        resp.json.side_effect = requests.exceptions.JSONDecodeError("not json", "", 0)
         resp.text = "plain"
         mock_dp.invoke.return_value = resp
 

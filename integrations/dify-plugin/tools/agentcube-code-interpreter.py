@@ -24,9 +24,11 @@ class AgentcubeCodeInterpreterTool(Tool):
     def _invoke(self, tool_parameters: dict[str, Any]) -> Generator[ToolInvokeMessage]:
         result = self.execute(**tool_parameters)
         yield self.create_json_message(result)
-        
 
-    def execute(self, router_url=None, workload_manager_url=None, language="python", code_interpreter_id=None, session_id=None, code=None, command=None, session_reuse=False, **kwargs):
+
+    def execute(self, router_url=None, workload_manager_url=None, language="python",
+                code_interpreter_id=None, session_id=None, code=None,
+                command=None, session_reuse=False, **kwargs):
         # Validate required URLs
         if not router_url or not workload_manager_url:
             return {"status": "error", "reason": "router_url and workload_manager_url are required"}
@@ -49,11 +51,11 @@ class AgentcubeCodeInterpreterTool(Tool):
             if command:
                 command_result = ci_client.execute_command(command)
                 results.append({"type": "command", "result": command_result})
-            
+
             if language and code:
                 code_result = ci_client.run_code(language, code)
                 results.append({"type": "code", "result": code_result})
-            
+
             if not command and not code:
                 raise ValueError("Either command or code must be provided")
         except Exception as e:
@@ -71,11 +73,11 @@ class AgentcubeCodeInterpreterTool(Tool):
                 result["session_id"] = ci_client.session_id
         else:
             result = {
-                "status": "success", 
-                "session_id": ci_client.session_id, 
+                "status": "success",
+                "session_id": ci_client.session_id,
                 "code_interpreter_id": ci_client.name,
                 "results": results
             }
-        
+
         return result
-    
+

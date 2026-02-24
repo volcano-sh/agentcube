@@ -18,7 +18,7 @@ AgentCube SDK Basic Usage Example
 Demonstrates:
 1. Basic command execution and code running
 2. File operations
-3. Session reuse for state persistence (useful for AI workflows)
+3. Session reuse for file-system state persistence (useful for AI workflows)
 """
 
 from agentcube import CodeInterpreterClient
@@ -61,23 +61,26 @@ def session_reuse_example():
 
     This pattern is essential for low-code/no-code platforms (like Dify)
     where the interpreter is invoked multiple times as a tool within a
-    single workflow, and state needs to persist across invocations.
-    """
-    print("\n=== Session Reuse (State Persistence) ===\n")
+    single workflow, and file state needs to persist across invocations.
 
-    # Step 1: Create session and set variable
-    print("Step 1: Create session, set x = 42")
+    Note: each run_code call starts a new process, so Python variables
+    do not persist across calls.
+    """
+    print("\n=== Session Reuse (File State Persistence) ===\n")
+
+    # Step 1: Create session and write a file
+    print("Step 1: Create session, write /tmp/value.txt = 42")
     client1 = CodeInterpreterClient(verbose=True)
-    client1.run_code("python", "x = 42")
+    client1.write_file("42", "/tmp/value.txt")
     session_id = client1.session_id
     print(f"Session ID saved: {session_id}")
     # Don't call stop() - let session persist
 
-    # Step 2: Reuse session - variable x should still exist
-    print("\nStep 2: Reuse session, access x")
+    # Step 2: Reuse session - file system state should still exist
+    print("\nStep 2: Reuse session, read /tmp/value.txt")
     client2 = CodeInterpreterClient(session_id=session_id, verbose=True)
-    result = client2.run_code("python", "print(f'x = {x}')")
-    print(f"Result: {result.strip()}")  # Should print "x = 42"
+    result = client2.run_code("python", "print(open('/tmp/value.txt').read())")
+    print(f"Result: {result.strip()}")  # Should print "42"
 
     # Step 3: Cleanup
     print("\nStep 3: Delete session")

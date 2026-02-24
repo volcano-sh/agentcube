@@ -291,8 +291,8 @@ readiness_probe_path: /health
 readiness_probe_port: 8080
 
 # AgentCube specific configuration
-router_url: http://router.agentcube.svc
-workload_manager_url: http://workload-manager.agentcube.svc
+router_url: http://agentcube-router.agentcube.svc:8080
+workload_manager_url: http://workloadmanager.agentcube.svc:8080
 
 image:
   repository_url: registry.example.com/weather-agent

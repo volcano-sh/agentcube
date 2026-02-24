@@ -144,6 +144,8 @@ spec:
   maxSessionDuration: "8h"
 ```
 
+**Note:** When picod starts with the `--workspace` flag, it automatically creates the workspace directory if it does not exist. The process working directory is also changed to this workspace, ensuring that relative file paths are resolved correctly within the workspace.
+
 Verify the CodeInterpreter is created:
 
 ```bash

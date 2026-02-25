@@ -22,7 +22,7 @@ from agentcube.utils.log import get_logger
 
 
 class AgentRuntimeDataPlaneClient:
-    SESSION_HEADER = "X-Agentcube-Session-Id"
+    SESSION_HEADER = "x-agentcube-session-id"
 
     def __init__(
         self,

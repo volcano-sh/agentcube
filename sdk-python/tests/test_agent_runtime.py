@@ -96,7 +96,7 @@ class TestAgentRuntimeDataPlaneClient(unittest.TestCase):
         sess = Mock()
         resp = Mock()
         resp.raise_for_status.return_value = None
-        resp.headers = {"X-Agentcube-Session-Id": "abc"}
+        resp.headers = {"x-agentcube-session-id": "abc"}
         sess.get.return_value = resp
         mock_create_session.return_value = sess
 
@@ -130,7 +130,7 @@ class TestAgentRuntimeDataPlaneClient(unittest.TestCase):
 
         sess.post.assert_called_once()
         call_kwargs = sess.post.call_args.kwargs
-        self.assertEqual(call_kwargs["headers"]["X-Agentcube-Session-Id"], "sid")
+        self.assertEqual(call_kwargs["headers"]["x-agentcube-session-id"], "sid")
         self.assertEqual(call_kwargs["json"], {"p": 1})
 
 

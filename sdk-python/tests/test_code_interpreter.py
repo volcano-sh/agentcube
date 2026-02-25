@@ -35,7 +35,7 @@ from agentcube.code_interpreter import CodeInterpreterClient
 class TestCodeInterpreterClientInit(unittest.TestCase):
     """Test client initialization."""
 
-    @patch('agentcube.code_interpreter.DataPlaneClient')
+    @patch('agentcube.code_interpreter.CodeInterpreterDataPlaneClient')
     @patch('agentcube.code_interpreter.ControlPlaneClient')
     def test_init_creates_session(self, mock_cp_class, mock_dp_class):
         """Session should be created on init."""
@@ -50,7 +50,7 @@ class TestCodeInterpreterClientInit(unittest.TestCase):
         mock_cp.create_session.assert_called_once()
         mock_dp_class.assert_called_once()
 
-    @patch('agentcube.code_interpreter.DataPlaneClient')
+    @patch('agentcube.code_interpreter.CodeInterpreterDataPlaneClient')
     @patch('agentcube.code_interpreter.ControlPlaneClient')
     def test_init_with_session_id_reuses_session(self, mock_cp_class, mock_dp_class):
         """Providing session_id should reuse existing session."""
@@ -71,7 +71,7 @@ class TestCodeInterpreterClientInit(unittest.TestCase):
 class TestSessionIdProperty(unittest.TestCase):
     """Test session_id property."""
 
-    @patch('agentcube.code_interpreter.DataPlaneClient')
+    @patch('agentcube.code_interpreter.CodeInterpreterDataPlaneClient')
     @patch('agentcube.code_interpreter.ControlPlaneClient')
     def test_session_id_available_after_init(self, mock_cp_class, mock_dp_class):
         """session_id should be available after init."""
@@ -88,7 +88,7 @@ class TestSessionIdProperty(unittest.TestCase):
 class TestSessionReuse(unittest.TestCase):
     """Test session reuse across multiple client instances."""
 
-    @patch('agentcube.code_interpreter.DataPlaneClient')
+    @patch('agentcube.code_interpreter.CodeInterpreterDataPlaneClient')
     @patch('agentcube.code_interpreter.ControlPlaneClient')
     def test_reuse_session_no_new_creation(self, mock_cp_class, mock_dp_class):
         """Reusing session_id should not create new session."""
@@ -103,7 +103,7 @@ class TestSessionReuse(unittest.TestCase):
 
         # Should NOT create new session
         mock_cp.create_session.assert_not_called()
-        # DataPlaneClient should use the provided session_id
+        # CodeInterpreterDataPlaneClient should use the provided session_id
         mock_dp_class.assert_called_once()
         call_kwargs = mock_dp_class.call_args[1]
         self.assertEqual(call_kwargs['session_id'], "reused-session-789")
@@ -112,7 +112,7 @@ class TestSessionReuse(unittest.TestCase):
 class TestContextManager(unittest.TestCase):
     """Test context manager behavior."""
 
-    @patch('agentcube.code_interpreter.DataPlaneClient')
+    @patch('agentcube.code_interpreter.CodeInterpreterDataPlaneClient')
     @patch('agentcube.code_interpreter.ControlPlaneClient')
     def test_context_manager_calls_stop(self, mock_cp_class, mock_dp_class):
         """Context manager should call stop() on exit."""
@@ -135,15 +135,15 @@ class TestContextManager(unittest.TestCase):
 class TestResourceLeakPrevention(unittest.TestCase):
     """Test that resources are cleaned up on failure."""
 
-    @patch('agentcube.code_interpreter.DataPlaneClient')
+    @patch('agentcube.code_interpreter.CodeInterpreterDataPlaneClient')
     @patch('agentcube.code_interpreter.ControlPlaneClient')
     def test_cleanup_on_dp_init_failure(self, mock_cp_class, mock_dp_class):
-        """Session should be deleted if DataPlaneClient init fails."""
+        """Session should be deleted if CodeInterpreterDataPlaneClient init fails."""
         mock_cp = Mock()
         mock_cp.create_session.return_value = "leaked-session-999"
         mock_cp_class.return_value = mock_cp
 
-        # Make DataPlaneClient init fail
+        # Make CodeInterpreterDataPlaneClient init fail
         mock_dp_class.side_effect = Exception("Connection failed")
 
         with self.assertRaises(Exception) as ctx:

@@ -27,7 +27,7 @@ from agentcube.utils.log import get_logger
 from agentcube.utils.http import create_session
 from agentcube.exceptions import CommandExecutionError
 
-class DataPlaneClient:
+class CodeInterpreterDataPlaneClient:
     """Client for AgentCube Data Plane (Router -> PicoD).
     Handles command execution and file operations via the Router.
 
@@ -65,7 +65,7 @@ class DataPlaneClient:
         self.connect_timeout = connect_timeout
         self.pool_connections = pool_connections
         self.pool_maxsize = pool_maxsize
-        self.logger = get_logger(f"{__name__}.DataPlaneClient")
+        self.logger = get_logger(f"{__name__}.CodeInterpreterDataPlaneClient")
 
         if base_url:
             self.base_url = base_url

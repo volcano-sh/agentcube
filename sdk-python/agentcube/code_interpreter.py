@@ -40,11 +40,11 @@ class CodeInterpreterClient:
         # Session reuse for multi-step workflows (file system persists, NOT variables)
         client1 = CodeInterpreterClient()
         session_id = client1.session_id
-        client1.write_file("42", "/tmp/value.txt")
+        client1.write_file("42", "value.txt")
         # Don't call stop() - let session persist
 
         client2 = CodeInterpreterClient(session_id=session_id)
-        client2.run_code("python", "print(open('/tmp/value.txt').read())")  # File persists
+        client2.run_code("python", "print(open('value.txt').read())")  # File persists
         client2.stop()  # Cleanup when done
     """
 

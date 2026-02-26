@@ -45,8 +45,8 @@ try:
     client.run_code("python", "print('Session started')")
     # ... perform operations ...
     # File system state persists within session
-    client.write_file("42", "/tmp/value.txt")
-    client.run_code("python", "print(open('/tmp/value.txt').read())")
+    client.write_file("42", "value.txt")
+    client.run_code("python", "print(open('value.txt').read())")
 finally:
     client.stop()  # CRITICAL: Ensure resources are released
 ```
@@ -103,12 +103,12 @@ For workflows requiring **file system** state persistence across multiple client
 # Step 1: Create session and save state to file
 client1 = CodeInterpreterClient()
 session_id = client1.session_id  # Save for reuse
-client1.write_file("42", "/tmp/value.txt")
+client1.write_file("42", "value.txt")
 # Don't call stop() - let session persist
 
 # Step 2: Reuse session with new client
 client2 = CodeInterpreterClient(session_id=session_id)
-client2.run_code("python", "print(open('/tmp/value.txt').read())")  # File persists
+client2.run_code("python", "print(open('value.txt').read())")  # File persists
 client2.stop()  # Cleanup when done
 ```
 

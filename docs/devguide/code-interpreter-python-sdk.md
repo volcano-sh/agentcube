@@ -193,12 +193,12 @@ You can reuse an existing session by passing its `session_id` to a new client. T
 # Step 1: Create session and save a file
 client1 = CodeInterpreterClient()
 session_id = client1.session_id
-client1.write_file("42", "/tmp/value.txt")
+client1.write_file("42", "value.txt")
 # Don't call stop() - let session persist
 
 # Step 2: Reuse session with new client
 client2 = CodeInterpreterClient(session_id=session_id)
 # File persists across clients
-client2.run_code("python", "print(open('/tmp/value.txt').read())")
+client2.run_code("python", "print(open('value.txt').read())")
 client2.stop()  # Cleanup when done
 ```

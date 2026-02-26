@@ -17,7 +17,7 @@ import logging
 from typing import Optional
 
 from agentcube.clients.control_plane import ControlPlaneClient
-from agentcube.clients.data_plane import DataPlaneClient
+from agentcube.clients.code_interpreter_data_plane import CodeInterpreterDataPlaneClient
 from agentcube.utils.log import get_logger
 
 
@@ -100,7 +100,7 @@ class CodeInterpreterClient:
 
         # Session state
         self.session_id: Optional[str] = session_id
-        self.dp_client: Optional[DataPlaneClient] = None
+        self.dp_client: Optional[CodeInterpreterDataPlaneClient] = None
 
         # Initialize session
         if session_id:
@@ -117,7 +117,7 @@ class CodeInterpreterClient:
             try:
                 self._init_data_plane()
             except Exception:
-                # Cleanup session if DataPlaneClient initialization fails
+                # Cleanup session if CodeInterpreterDataPlaneClient initialization fails
                 self.logger.warning(
                     f"Failed to initialize data plane client, "
                     f"deleting session {self.session_id} to prevent resource leak"
@@ -128,7 +128,7 @@ class CodeInterpreterClient:
 
     def _init_data_plane(self):
         """Initialize the Data Plane client."""
-        self.dp_client = DataPlaneClient(
+        self.dp_client = CodeInterpreterDataPlaneClient(
             cr_name=self.name,
             router_url=self.router_url,
             namespace=self.namespace,

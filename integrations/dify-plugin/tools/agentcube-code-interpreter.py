@@ -26,9 +26,18 @@ class AgentcubeCodeInterpreterTool(Tool):
         yield self.create_json_message(result)
 
 
-    def execute(self, router_url=None, workload_manager_url=None, language="python",
-                code_interpreter_id=None, session_id=None, code=None,
-                command=None, session_reuse=False, **kwargs):
+    def execute(
+        self,
+        router_url=None,
+        workload_manager_url=None,
+        language="python",
+        code_interpreter_id=None,
+        session_id=None,
+        code=None,
+        command=None,
+        session_reuse=False,
+        **kwargs
+    ):
         # Validate required URLs
         if not router_url or not workload_manager_url:
             return {"status": "error", "reason": "router_url and workload_manager_url are required"}
@@ -80,4 +89,3 @@ class AgentcubeCodeInterpreterTool(Tool):
             }
 
         return result
-

@@ -1,0 +1,87 @@
+#!/bin/bash
+
+#
+# Copyright 2026 The Volcano Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+set -o errexit
+set -o nounset
+set -o pipefail
+
+AC_ROOT=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/..
+BIN_DIR=${BIN_DIR:-bin}
+RELEASE_DIR=${RELEASE_DIR:-_output/release}
+export HELM_BIN_DIR=${AC_ROOT}/${BIN_DIR}
+export RELEASE_FOLDER=${AC_ROOT}/${RELEASE_DIR}
+
+export HELM_VER=${HELM_VER:-v3.6.3}
+export AGENTCUBE_CHART_VERSION=${TAG:-"latest"}
+export AGENTCUBE_IMAGE_TAG=${AGENTCUBE_CHART_VERSION}
+# Add a v prefix to AGENTCUBE_IMAGE_TAG if it doesn't have one
+if [[ ! ${AGENTCUBE_IMAGE_TAG} =~ ^v ]]; then
+    AGENTCUBE_IMAGE_TAG="v${AGENTCUBE_IMAGE_TAG}"
+fi
+
+LOCAL_OS=${OSTYPE}
+case $LOCAL_OS in
+  "linux"*)
+    LOCAL_OS='linux'
+    alias sed_i='sed -i'
+    ;;
+  "darwin"*)
+    LOCAL_OS='darwin'
+    alias sed_i='sed -i ""'
+    ;;
+  *)
+    echo "This system's OS ${LOCAL_OS} isn't recognized/supported"
+    exit 1
+    ;;
+esac
+
+# Enable the alias function in the Shell
+shopt -s expand_aliases 
+ARCH=$(go env GOARCH)
+
+# Step1. install helm binary
+if [[ ! -f "${HELM_BIN_DIR}/version.helm.${HELM_VER}" ]] || [[ ! -f "${HELM_BIN_DIR}/helm" ]] ; then
+    mkdir -p "${HELM_BIN_DIR}"
+    TD=$(mktemp -d)
+    (
+        cd "${TD}"
+        curl -Lo "helm.tgz" "https://get.helm.sh/helm-${HELM_VER}-${LOCAL_OS}-${ARCH}.tar.gz"
+        tar xfz helm.tgz
+        mv "${LOCAL_OS}-${ARCH}/helm" "${HELM_BIN_DIR}/helm-${HELM_VER}"
+    )
+    cp "${HELM_BIN_DIR}/helm-${HELM_VER}" "${HELM_BIN_DIR}/helm"
+    chmod +x "${HELM_BIN_DIR}/helm"
+    rm -rf "${TD}"
+
+        if [[ ! -f "${HELM_BIN_DIR}/version.helm.${HELM_VER}" ]] ; then
+          touch "${HELM_BIN_DIR}/version.helm.${HELM_VER}"
+        fi
+fi
+
+echo "generate chart"
+CHART_ORIGIN_PATH=${AC_ROOT}/manifests/charts/base
+CHART_OUT_PATH=${RELEASE_FOLDER}/chart
+rm -rf ${RELEASE_FOLDER}/chart
+mkdir -p ${CHART_OUT_PATH}
+cp -r "${CHART_ORIGIN_PATH}" "${CHART_OUT_PATH}/agentcube"
+
+# Update image tags in values.yaml
+sed_i "s|tag: \"latest\"|tag: \"${AGENTCUBE_IMAGE_TAG}\"|g" "${CHART_OUT_PATH}/agentcube/values.yaml"
+
+${HELM_BIN_DIR}/helm package --version ${AGENTCUBE_CHART_VERSION} --app-version ${AGENTCUBE_CHART_VERSION} "${CHART_OUT_PATH}/agentcube" -d "${CHART_OUT_PATH}"
+echo "helm package end, charts is in ${CHART_OUT_PATH}"

@@ -13,9 +13,9 @@ Author: Mahil Patel
 
 AgentCube currently has partial, ad-hoc authentication between its internal components but lacks a unified security model. The existing mechanisms are:
 
-1. **Workload Manager Auth** (`pkg/workloadmanager/auth.go`): Optional Kubernetes TokenReview-based validation, gated behind `config.EnableAuth`. Provides binary allow/deny with no fine-grained permissions.
-2. **Router → PicoD Auth** (`PicoD-Plain-Authentication-Design`): A custom RSA key-pair scheme where the Router signs JWTs and PicoD verifies them using a public key injected via ConfigMap. This works for the Router→PicoD channel but leaves other internal channels unauthenticated.
-3. **Router → WorkloadManager**: No authentication. Any pod on the cluster network can call the WorkloadManager API.
+1. **Workload Manager Auth** (`pkg/workloadmanager/auth.go`): Optional Kubernetes TokenReview-based ServiceAccount token validation, gated behind `config.EnableAuth`, plus per-sandbox ownership checks using the extracted user identity (effectively relying on Kubernetes RBAC when using the user-scoped client).
+2. **Router → PicoD Auth** (`PicoD-Plain-Authentication-Design`): A custom RSA key-pair scheme where the Router signs JWTs and PicoD verifies them using a public key exposed via the `PICOD_AUTH_PUBLIC_KEY` environment variable. The key pair (`private.pem`, `public.pem`) is stored in the `picod-router-identity` Secret, and the WorkloadManager reads this Secret to inject the public key into PicoD pods. This works for the Router→PicoD channel but leaves other internal channels unauthenticated.
+3. **Router → WorkloadManager**: Optional, one-sided authentication. `pkg/router/session_manager.go` can attach a `Authorization: Bearer <serviceaccount token>` header, and WorkloadManager can validate it when `--enable-auth` is enabled. This is not mutual workload identity or a zero-trust model, and when auth is disabled any pod on the cluster network can call the WorkloadManager API.
 4. **External Clients → Router**: No authentication. The `handleInvoke` handler in `pkg/router/handlers.go` processes incoming requests without verifying the caller's identity.
 
 These gaps amount to three distinct problems:
@@ -247,7 +247,7 @@ The `go-spiffe` library (`github.com/spiffe/go-spiffe/v2`) provides helpers that
 
 #### Router
 
-Server-side (accepts calls from WorkloadManager and PicoD):
+The Router serves external clients over HTTPS (secured via Keycloak) and acts as an *outbound client* to internal components. Therefore, it does not need a SPIRE mTLS server configuration, only client configurations:
 
 ```go
 source, err := workloadapi.NewX509Source(ctx,
@@ -256,23 +256,20 @@ source, err := workloadapi.NewX509Source(ctx,
     ),
 )
 
-tlsConfig := tlsconfig.MTLSServerConfig(source, source,
-    tlsconfig.AuthorizeOneOf(
-        tlsconfig.AuthorizeID(spiffeid.RequireIDFromString("spiffe://agentcube.local/workload-manager")),
-        tlsconfig.AuthorizeID(spiffeid.RequireIDFromString("spiffe://agentcube.local/picod")),
-    ),
-)
-```
-
-Client-side (calling WorkloadManager):
-
-```go
-tlsConfig := tlsconfig.MTLSClientConfig(source, source,
+// Client config for calling WorkloadManager
+wmTLSConfig := tlsconfig.MTLSClientConfig(source, source,
     tlsconfig.AuthorizeID(spiffeid.RequireIDFromString("spiffe://agentcube.local/workload-manager")),
 )
 
-conn, err := grpc.DialContext(ctx, wmAddr,
-    grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)),
+httpClient := &http.Client{
+    Transport: &http.Transport{
+        TLSClientConfig: wmTLSConfig,
+    },
+}
+
+// Client config for proxying to PicoD
+picodTLSConfig := tlsconfig.MTLSClientConfig(source, source,
+    tlsconfig.AuthorizeID(spiffeid.RequireIDFromString("spiffe://agentcube.local/picod")),
 )
 ```
 
@@ -286,28 +283,19 @@ tlsConfig := tlsconfig.MTLSServerConfig(source, source,
 )
 ```
 
-Client-side (calling PicoD `/init`):
-
-```go
-tlsConfig := tlsconfig.MTLSClientConfig(source, source,
-    tlsconfig.AuthorizeID(spiffeid.RequireIDFromString("spiffe://agentcube.local/picod")),
-)
-```
+*(Note: WorkloadManager manages PicoD pods via the Kubernetes API, so it does not make direct HTTP requests to PicoD and does not need a PicoD client mTLS configuration).*
 
 #### PicoD
 
-Server-side (accepts calls from Router and WorkloadManager):
+Server-side (accepts invocations proxied from the Router):
 
 ```go
 tlsConfig := tlsconfig.MTLSServerConfig(source, source,
-    tlsconfig.AuthorizeOneOf(
-        tlsconfig.AuthorizeID(spiffeid.RequireIDFromString("spiffe://agentcube.local/router")),
-        tlsconfig.AuthorizeID(spiffeid.RequireIDFromString("spiffe://agentcube.local/workload-manager")),
-    ),
+    tlsconfig.AuthorizeID(spiffeid.RequireIDFromString("spiffe://agentcube.local/router")),
 )
 ```
 
-This replaces the existing `PICOD_AUTH_PUBLIC_KEY` environment variable mechanism entirely. Instead of distributing public keys through ConfigMaps, every PicoD instance receives a short-lived certificate from SPIRE and validates callers via the trust bundle.
+This replaces the existing `PICOD_AUTH_PUBLIC_KEY` environment variable mechanism entirely. Instead of distributing public keys through Secrets, every PicoD instance receives a short-lived certificate from SPIRE and validates callers via the trust bundle.
 
 ### 1.7 Communication Channel Summary
 
@@ -315,9 +303,9 @@ This replaces the existing `PICOD_AUTH_PUBLIC_KEY` environment variable mechanis
 
 ```
 SDK → Router:              Plain HTTP, no auth
-Router → WorkloadManager:  Plain HTTP/gRPC, K8s SA token (optional)
+Router → WorkloadManager:  Plain HTTP/gRPC, no auth
 Router → PicoD:            HTTP + custom JWT (PicoD-Plain-Auth)
-WorkloadManager → PicoD:   HTTP + bootstrap JWT (init flow)
+WorkloadManager → PicoD:   (No direct HTTP calls, managed via K8s API)
 ```
 
 **After:**
@@ -326,7 +314,7 @@ WorkloadManager → PicoD:   HTTP + bootstrap JWT (init flow)
 SDK → Router:              HTTPS + Keycloak JWT (see Section 2)
 Router → WorkloadManager:  mTLS (SPIRE SVIDs)
 Router → PicoD:            mTLS (SPIRE SVIDs)
-WorkloadManager → PicoD:   mTLS (SPIRE SVIDs)
+WorkloadManager → PicoD:   (No direct HTTP calls, managed via K8s API)
 ```
 
 ### 1.8 Architecture Overview
@@ -363,8 +351,6 @@ graph LR
     R <-->|mTLS| WM
     R <-->|mTLS| P1
     R <-->|mTLS| P2
-    WM <-->|mTLS| P1
-    WM <-->|mTLS| P2
 ```
 
 ### 1.9 Impact on Existing PicoD-Plain-Authentication
@@ -373,8 +359,8 @@ The SPIRE-based mTLS approach supersedes the PicoD-Plain-Authentication design:
 
 | Current (PicoD-Plain-Auth) | New (SPIRE) |
 |---|---|
-| Router generates RSA key pair, stores private key in `picod-router-identity` Secret | SPIRE issues short-lived X.509 SVIDs automatically |
-| Public key distributed via `picod-router-public-key` ConfigMap | Trust bundle delivered through Workload API socket |
+| Router generates RSA key pair, stores both keys in `picod-router-identity` Secret | SPIRE issues short-lived X.509 SVIDs automatically |
+| Public key read from `picod-router-identity` Secret by WorkloadManager | Trust bundle delivered through Workload API socket |
 | Bootstrap phase with optimistic locking race between Router replicas | No bootstrap race - each replica independently fetches its SVID |
 | `PICOD_AUTH_PUBLIC_KEY` env var injected into PicoD pods | Workload API socket mounted into PicoD pods |
 | Manual key rotation (delete Secret, restart Routers) | Automatic rotation by SPIRE (default: 1 hour TTL) |
@@ -414,7 +400,8 @@ sequenceDiagram
 
     alt Valid token + authorized role
         Router->>WM: Forward (mTLS)
-        WM->>Sandbox: Create/reuse sandbox (mTLS)
+        WM->>WM: Create sandbox via K8s API
+        Router->>Sandbox: Proxy to sandbox (mTLS)
         Sandbox-->>Router: Response
         Router-->>SDK: Response + x-agentcube-session-id
     else Invalid/expired token
@@ -541,15 +528,13 @@ Example JWT payload issued by Keycloak:
 
 ### 3.4 Router Authorization Middleware
 
-The Router enforces authorization after JWT validation. Each endpoint is mapped to a required role:
-
 | Endpoint Pattern | Required Role |
 |---|---|
 | `POST /v1/namespaces/{ns}/agent-runtimes/{name}/invocations/*` | `sandbox:invoke` |
 | `POST /v1/namespaces/{ns}/code-interpreters/{name}/invocations/*` | `sandbox:invoke` |
-| `POST /v1/agent-runtime` (create) | `sandbox:manage` |
-| `DELETE /v1/agent-runtime/sessions/{id}` | `sandbox:manage` |
 | `GET /health/*` | No auth required |
+
+*(Note: CRD lifecycle operations like creating agent runtimes are handled directly via the Kubernetes API, not the Router's external surface).*
 
 ```go
 func AuthzMiddleware(requiredRole string) gin.HandlerFunc {

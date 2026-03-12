@@ -17,8 +17,8 @@ import asyncio
 import base64
 import json
 import os
-import time
 import shlex
+import uuid
 from typing import Any, List, Optional, Union
 from urllib.parse import urljoin
 
@@ -192,11 +192,11 @@ class AsyncCodeInterpreterDataPlaneClient:
             except Exception as e:
                 self.logger.debug(f"AST parsing fallback error: {e}", exc_info=True)
 
-            filename = f"script_{int(time.time() * 1000)}.py"
+            filename = f"script-{uuid.uuid4()}.py"
             await self.write_file(code, filename)
             cmd: List[str] = ["python3", filename]
         elif lang in ["bash", "sh"]:
-            filename = f"script_{int(time.time() * 1000)}.sh"
+            filename = f"script-{uuid.uuid4()}.sh"
             await self.write_file(code, filename)
             cmd = ["bash", filename]
         else:

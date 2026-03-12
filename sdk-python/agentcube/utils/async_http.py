@@ -24,7 +24,7 @@ def create_async_session(
     """Create an httpx AsyncClient with connection pooling.
 
     Args:
-        connector_limit: Total number of simultaneous connections (default: 100).
+        connector_limit: Total number of simultaneous connections (default: 10).
         connector_limit_per_host: Max keepalive connections per host (default: 10).
 
     Returns:

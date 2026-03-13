@@ -1,3 +1,4 @@
 requests
 PyJWT>=2.0.0
 cryptography
+httpx>=0.27.0

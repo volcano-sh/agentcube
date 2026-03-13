@@ -14,5 +14,12 @@
 
 from .code_interpreter import CodeInterpreterClient
 from .agent_runtime import AgentRuntimeClient
+from .async_code_interpreter import AsyncCodeInterpreterClient
+from .async_agent_runtime import AsyncAgentRuntimeClient
 
-__all__ = ["CodeInterpreterClient", "AgentRuntimeClient"]
+__all__ = [
+    "CodeInterpreterClient",
+    "AgentRuntimeClient",
+    "AsyncCodeInterpreterClient",
+    "AsyncAgentRuntimeClient",
+]

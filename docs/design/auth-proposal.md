@@ -59,7 +59,7 @@ The design is structured in four layers, ordered by priority:
 |---|---|---|---|
 | P1 (Urgent) | Internal workload identity | Machine-to-machine trust between Router, WorkloadManager, PicoD | SPIFFE/SPIRE with X.509 mTLS |
 | P2 | External user authentication | Client/SDK identity verification at the Router | Keycloak (OIDC/OAuth2) |
-| P3 | Authorization | Role-based access control for external users | Keycloak Authorization Services |
+| P3 | Authorization | Role-based access control for external users | Keycloak realm roles (JWT claim checking) |
 | P4 (Stretch) | Cloud provider federation | Enterprise SSO via cloud IAM | Keycloak identity brokering |
 
 ---
@@ -107,7 +107,9 @@ Each component receives a unique SPIFFE ID based on its Kubernetes metadata:
 |---|---|---|
 | Router | `spiffe://agentcube.local/router` | `k8s:ns:agentcube-system`, `k8s:sa:agentcube-router` |
 | WorkloadManager | `spiffe://agentcube.local/workload-manager` | `k8s:ns:agentcube-system`, `k8s:sa:agentcube-workload-manager` |
-| PicoD (Sandboxes) | `spiffe://agentcube.local/picod` | `k8s:ns:agentcube-system`, `k8s:pod-label:app:picod` |
+| PicoD (Sandboxes) | `spiffe://agentcube.local/picod` | `k8s:pod-label:app:picod` |
+
+> **Note:** PicoD uses only a pod-label selector without a namespace constraint because sandbox pods are created in the namespace specified by the user's request, not in a fixed namespace.
 
 ### 1.4 SPIRE Deployment
 
@@ -220,11 +222,10 @@ spire-server entry create \
     -selector k8s:ns:agentcube-system \
     -selector k8s:sa:agentcube-workload-manager
 
-# Register PicoD instances
+# Register PicoD instances (namespace-agnostic, sandboxes can run in any namespace)
 spire-server entry create \
     -spiffeID spiffe://agentcube.local/picod \
     -parentID spiffe://agentcube.local/spire-agent \
-    -selector k8s:ns:agentcube-system \
     -selector k8s:pod-label:app:picod
 ```
 
@@ -495,7 +496,7 @@ External auth is opt-in via `--enable-external-auth` (default: `false`):
 
 ### 3.1 Overview
 
-Authentication verifies *who* the user is. Authorization determines *what* that user is allowed to do. This proposal uses Keycloak's built-in Authorization Services for role-based access control rather than building a custom policy engine.
+Authentication verifies *who* the user is. Authorization determines *what* that user is allowed to do. This proposal uses Keycloak's realm roles for role-based access control. Keycloak embeds the user's assigned roles directly into the JWT access token, and the Router checks these roles locally from the validated token - no additional call to Keycloak is needed at request time.
 
 ### 3.2 Role Hierarchy
 
@@ -561,9 +562,7 @@ func AuthzMiddleware(requiredRole string) gin.HandlerFunc {
 
 ### 3.5 Namespace Scoping
 
-For multi-tenant deployments, Keycloak's Authorization Services support fine-grained resource permissions. A user can be granted `sandbox:invoke` only for specific namespaces by attaching namespace attributes to their role assignment. The Router checks the target namespace in the request URL against the user's permitted namespaces from the token claims.
-
-This is configured entirely within Keycloak using resource-based permissions and does not require custom policy code in the Router.
+For multi-tenant deployments where users should only access sandboxes in specific namespaces, Keycloak's protocol mappers can inject custom claims (e.g., `allowed_namespaces`) into the JWT. The Router would then check the target namespace in the request URL against the user's permitted namespaces from the token claims. This is still a local check from the JWT with no additional calls to Keycloak.
 
 ---
 

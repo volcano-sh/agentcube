@@ -88,7 +88,7 @@ When `--tls-cert-source=file` is used, the cert/key/CA files can be populated by
 
 [SPIFFE](https://spiffe.io/) (Secure Production Identity Framework for Everyone) is a CNCF graduated project that provides a standard for service identity. It defines:
 
-- **SPIFFE ID:** A URI-formatted identity, e.g., `spiffe://agentcube.local/router`
+- **SPIFFE ID:** A URI-formatted identity, e.g., `spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-router`
 - **SVID (SPIFFE Verifiable Identity Document):** An X.509 certificate or JWT that proves a workload holds a given SPIFFE ID.
 
 [SPIRE](https://spiffe.io/docs/latest/spire-about/spire-concepts/) is the production implementation of SPIFFE. It has two components:
@@ -97,11 +97,6 @@ When `--tls-cert-source=file` is used, the cert/key/CA files can be populated by
 - **SPIRE Agent:** Runs on every node (DaemonSet). Performs workload attestation, verifying process identity by querying the kernel and kubelet, and delivers SVIDs to local workloads via a Unix domain socket (the Workload API).
 
 SPIRE handles the entire certificate lifecycle (issuance, rotation, revocation) automatically. Workloads never see raw keys on disk; certificates arrive through the Workload API and are rotated before they expire.
-
-<!-- PLACEHOLDER: SPIRE Architecture Diagram -->
-<!-- Diagram from https://spiffe.io/docs/latest/spire-about/spire-concepts/ showing
-     SPIRE Server at top, SPIRE Agents on each node, workloads connecting to
-     agents via the Workload API Unix domain socket. -->
 
 ### 1.2 Why Single-Cluster SPIRE
 
@@ -119,13 +114,15 @@ All AgentCube components operate under a single trust domain:
 spiffe://agentcube.local
 ```
 
-Each component receives a unique SPIFFE ID based on its Kubernetes metadata:
+Each component receives a unique SPIFFE ID following the Istio-convention format `spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>`, which encodes the workload's Kubernetes namespace and service account directly in the URI path.
+
+SPIRE uses **selectors** to verify workload identity during attestation. When a workload requests its certificate, the SPIRE Agent inspects the workload's Kubernetes metadata (namespace, service account, labels) and matches it against registered selectors. A workload only receives its SVID if all registered selectors match.
 
 | Component | SPIFFE ID | Selectors |
 |---|---|---|
-| Router | `spiffe://agentcube.local/router` | `k8s:ns:agentcube-system`, `k8s:sa:agentcube-router` |
-| WorkloadManager | `spiffe://agentcube.local/workload-manager` | `k8s:ns:agentcube-system`, `k8s:sa:agentcube-workload-manager` |
-| PicoD (Sandboxes) | `spiffe://agentcube.local/picod` | `k8s:pod-label:app:picod`, `k8s:sa:agentcube-sandbox` |
+| Router | `spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-router` | `k8s:ns:agentcube-system`, `k8s:sa:agentcube-router` |
+| WorkloadManager | `spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-workload-manager` | `k8s:ns:agentcube-system`, `k8s:sa:agentcube-workload-manager` |
+| PicoD (Sandboxes) | `spiffe://agentcube.local/sa/agentcube-sandbox` | `k8s:pod-label:app:picod`, `k8s:sa:agentcube-sandbox` |
 
 > **Note:** PicoD cannot use a namespace selector because sandbox pods are created in the namespace specified by the user's request, not in a fixed namespace. To prevent identity spoofing in multi-tenant clusters, PicoD registration requires both the `app:picod` pod label and a dedicated `agentcube-sandbox` ServiceAccount. WorkloadManager creates this ServiceAccount in the target namespace as part of sandbox provisioning. Using a specific ServiceAccount requires RBAC permission, preventing arbitrary workloads from obtaining the PicoD SPIFFE ID.
 >
@@ -223,126 +220,154 @@ spec:
             name: spire-agent-config
 ```
 
+#### SPIRE Controller Manager
+
+The [SPIRE Controller Manager](https://github.com/spiffe/spire-controller-manager) is deployed as a `Deployment` alongside the SPIRE Server. It watches for `ClusterSPIFFEID` custom resources and automatically syncs registration entries to the SPIRE Server. This makes workload registration fully declarative and is the recommended approach for production deployments.
+
 ### 1.5 Workload Registration
 
-Registration entries are created via the SPIRE Server CLI:
+Registration entries tell the SPIRE Server which workloads should receive which SPIFFE IDs. There are two approaches depending on the environment:
+
+#### Production: ClusterSPIFFEID CRDs (Recommended)
+
+With the SPIRE Controller Manager deployed, registration entries are defined as Kubernetes CRDs. These are managed declaratively alongside other AgentCube manifests and are automatically synced to the SPIRE Server:
+
+```yaml
+# Router registration
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: agentcube-router
+spec:
+  spiffeIDTemplate: "spiffe://agentcube.local/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app: agentcube-router
+  namespaceSelector:
+    matchNames:
+      - agentcube-system
+---
+# WorkloadManager registration
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: agentcube-workload-manager
+spec:
+  spiffeIDTemplate: "spiffe://agentcube.local/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app: agentcube-workload-manager
+  namespaceSelector:
+    matchNames:
+      - agentcube-system
+---
+# PicoD registration (namespace-agnostic)
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: agentcube-sandbox
+spec:
+  spiffeIDTemplate: "spiffe://agentcube.local/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app: picod
+```
+
+#### Development: Manual CLI
+
+For local development (e.g., `kind` clusters), registration entries can be created manually by exec-ing into the SPIRE Server pod:
 
 ```bash
-# Register the Router
-spire-server entry create \
-    -spiffeID spiffe://agentcube.local/router \
+kubectl exec -n agentcube-system <spire-server-pod> -- \
+  spire-server entry create \
+    -spiffeID spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-router \
     -parentID spiffe://agentcube.local/spire-agent \
     -selector k8s:ns:agentcube-system \
     -selector k8s:sa:agentcube-router
 
-# Register the WorkloadManager
-spire-server entry create \
-    -spiffeID spiffe://agentcube.local/workload-manager \
+kubectl exec -n agentcube-system <spire-server-pod> -- \
+  spire-server entry create \
+    -spiffeID spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-workload-manager \
     -parentID spiffe://agentcube.local/spire-agent \
     -selector k8s:ns:agentcube-system \
     -selector k8s:sa:agentcube-workload-manager
 
-# Register PicoD instances (namespace-agnostic, sandboxes can run in any namespace)
-# Requires both the app:picod label and the dedicated agentcube-sandbox ServiceAccount
-spire-server entry create \
-    -spiffeID spiffe://agentcube.local/picod \
+kubectl exec -n agentcube-system <spire-server-pod> -- \
+  spire-server entry create \
+    -spiffeID spiffe://agentcube.local/sa/agentcube-sandbox \
     -parentID spiffe://agentcube.local/spire-agent \
     -selector k8s:pod-label:app:picod \
     -selector k8s:sa:agentcube-sandbox
 ```
+
+> **Note:** Manual CLI entries do not survive SPIRE Server restarts (unless backed by persistent storage) and are not recommended for production use.
 
 #### Attestation Flow (Example: Router)
 
 1. Router process connects to the local SPIRE Agent via `/run/spire/sockets/agent.sock`
 2. Agent identifies the calling process via PID and queries the kubelet for pod metadata (namespace, service account, labels)
 3. Agent matches the discovered selectors against registration entries fetched from the Server
-4. Match found → Agent issues an X.509 SVID with `spiffe://agentcube.local/router` as URI SAN
+4. Match found → Agent issues an X.509 SVID with `spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-router` as URI SAN
 5. Router receives a TLS certificate, private key, and trust bundle - ready to serve and initiate mTLS
-
-<!-- PLACEHOLDER: Workload Attestation Flow Diagram -->
-<!-- Diagram from https://spiffe.io/docs/latest/spire-about/spire-concepts/#workload-attestation
-     showing: workload calls Workload API → agent queries kernel/kubelet →
-     agent matches selectors → agent returns SVID -->
 
 ### 1.6 mTLS Integration
 
-Each component needs two changes: configure its server to require client certificates, and configure its clients to present its own certificate while verifying the server's. The TLS configuration is sourced differently depending on the certificate mode.
+Each component needs two changes: configure its server to require client certificates, and configure its clients to present its own certificate while verifying the server's. The mTLS implementation uses Go's standard `crypto/tls` package — no external libraries are required.
 
-#### SPIRE Mode
-
-The `go-spiffe` library (`github.com/spiffe/go-spiffe/v2`) provides helpers that make SPIRE-based mTLS integration straightforward:
-
-**Router** (outbound client only — serves external clients over HTTPS via Keycloak, does not need an mTLS server):
+Regardless of the certificate source (SPIRE or file-based), the cert/key/CA files end up on disk and the Go code is identical. When using SPIRE, the [SPIFFE Helper](https://github.com/spiffe/spiffe-helper) sidecar writes SVIDs to disk as PEM files, making them consumable by standard TLS configuration.
 
 ```go
-source, err := workloadapi.NewX509Source(ctx,
-    workloadapi.WithClientOptions(
-        workloadapi.WithAddr("unix:///run/spire/sockets/agent.sock"),
-    ),
-)
-
-// Client config for calling WorkloadManager
-wmTLSConfig := tlsconfig.MTLSClientConfig(source, source,
-    tlsconfig.AuthorizeID(spiffeid.RequireIDFromString("spiffe://agentcube.local/workload-manager")),
-)
-
-// Client config for proxying to PicoD
-picodTLSConfig := tlsconfig.MTLSClientConfig(source, source,
-    tlsconfig.AuthorizeID(spiffeid.RequireIDFromString("spiffe://agentcube.local/picod")),
-)
-```
-
-**WorkloadManager** (server-side, accepts calls only from Router):
-
-```go
-tlsConfig := tlsconfig.MTLSServerConfig(source, source,
-    tlsconfig.AuthorizeID(spiffeid.RequireIDFromString("spiffe://agentcube.local/router")),
-)
-```
-
-**PicoD** (server-side, accepts invocations proxied from Router):
-
-```go
-tlsConfig := tlsconfig.MTLSServerConfig(source, source,
-    tlsconfig.AuthorizeID(spiffeid.RequireIDFromString("spiffe://agentcube.local/router")),
-)
-```
-
-#### File-Based Mode
-
-When `--tls-cert-source=file` is configured, each component loads its certificate, private key, and CA bundle from disk:
-
-```go
-// Load certificate and key
+// Load certificate and key (from any source: SPIRE via spiffe-helper, cert-manager, self-signed, etc.)
 cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 
 // Load CA bundle for peer verification
 caCert, err := os.ReadFile(caFile)
 caPool := x509.NewCertPool()
 caPool.AppendCertsFromPEM(caCert)
+```
 
-// Server TLS config (WorkloadManager, PicoD)
+#### Server-Side (WorkloadManager, PicoD)
+
+WorkloadManager and PicoD require incoming connections to present a valid client certificate signed by the trusted CA:
+
+```go
 serverTLSConfig := &tls.Config{
     Certificates: []tls.Certificate{cert},
     ClientCAs:    caPool,
     ClientAuth:   tls.RequireAndVerifyClientCert,
 }
 
-// Client TLS config (Router)
+server := &http.Server{
+    TLSConfig: serverTLSConfig,
+}
+```
+
+#### Client-Side (Router)
+
+The Router presents its own certificate when connecting to WorkloadManager and PicoD, and verifies the server's certificate against the trusted CA:
+
+```go
 clientTLSConfig := &tls.Config{
     Certificates: []tls.Certificate{cert},
     RootCAs:      caPool,
 }
+
+httpClient := &http.Client{
+    Transport: &http.Transport{
+        TLSClientConfig: clientTLSConfig,
+    },
+}
 ```
 
 The cert/key/CA files can be provisioned by any mechanism:
+- **SPIRE:** The [SPIFFE Helper](https://github.com/spiffe/spiffe-helper) sidecar fetches SVIDs from the Workload API and writes them to disk as PEM files. Certificates are rotated automatically.
 - **cert-manager:** Automatically issues and rotates certificates, stored as Kubernetes Secrets and mounted into pods.
 - **Self-signed CA:** Generated manually or via a script for development and testing environments.
 - **Let's Encrypt / corporate PKI:** Externally issued certificates placed on disk or in Secrets.
 
-*(Note: WorkloadManager manages PicoD pods via the Kubernetes API, so it does not make direct HTTP requests to PicoD and does not need a PicoD client mTLS configuration in either mode.)*
+*(Note: WorkloadManager manages PicoD pods via the Kubernetes API, so it does not make direct HTTP requests to PicoD and does not need a PicoD client mTLS configuration.)*
 
-In both modes, the mTLS enforcement is identical — this replaces the existing `PICOD_AUTH_PUBLIC_KEY` environment variable mechanism entirely.
+This replaces the existing `PICOD_AUTH_PUBLIC_KEY` environment variable mechanism entirely.
 
 ### 1.7 Communication Channel Summary
 
@@ -380,10 +405,10 @@ graph LR
         end
 
         subgraph "AgentCube Components"
-            R["Router<br/>spiffe://agentcube.local/router"]
-            WM["WorkloadManager<br/>spiffe://agentcube.local/workload-manager"]
-            P1["PicoD Sandbox 1<br/>spiffe://agentcube.local/picod"]
-            P2["PicoD Sandbox 2<br/>spiffe://agentcube.local/picod"]
+            R["Router<br/>spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-router"]
+            WM["WorkloadManager<br/>spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-workload-manager"]
+            P1["PicoD Sandbox 1<br/>spiffe://agentcube.local/sa/agentcube-sandbox"]
+            P2["PicoD Sandbox 2<br/>spiffe://agentcube.local/sa/agentcube-sandbox"]
         end
     end
 

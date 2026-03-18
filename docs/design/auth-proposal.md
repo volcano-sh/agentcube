@@ -57,16 +57,34 @@ The design is structured in four layers, ordered by priority:
 
 | Priority | Layer | Problem | Solution |
 |---|---|---|---|
-| P1 (Urgent) | Internal workload identity | Machine-to-machine trust between Router, WorkloadManager, PicoD | SPIFFE/SPIRE with X.509 mTLS |
+| P1 (Urgent) | Internal workload identity | Machine-to-machine trust between Router, WorkloadManager, PicoD | X.509 mTLS (SPIRE recommended, file-based certs also supported) |
 | P2 | External user authentication | Client/SDK identity verification at the Router | Keycloak (OIDC/OAuth2) |
 | P3 | Authorization | Role-based access control for external users | Keycloak realm roles (JWT claim checking) |
 | P4 (Stretch) | Cloud provider federation | Enterprise SSO via cloud IAM | Keycloak identity brokering |
 
 ---
 
-## 1. Internal Workload Authentication (SPIRE)
+## 1. Internal Workload Authentication (X.509 mTLS)
 
-### 1.1 Background
+Internal communication between AgentCube components is secured using mutual TLS (mTLS) with X.509 certificates. The mTLS enforcement layer is **certificate-source agnostic** — it works with any valid X.509 cert/key/CA bundle, regardless of how the certificates are provisioned. Two certificate source modes are supported:
+
+| Mode | Certificate Source | Rotation | Best For |
+|---|---|---|---|
+| **SPIRE** (recommended) | SPIRE Workload API issues short-lived SVIDs automatically | Automatic (default: 1 hour TTL) | Production deployments needing zero-touch certificate management |
+| **File-based** | Certs loaded from disk (provisioned by cert-manager, self-signed CA, Let's Encrypt, corporate PKI, etc.) | Manual or delegated to the provisioning tool | Environments where SPIRE is not available, or operators prefer existing PKI infrastructure |
+
+Configuration flags for each component:
+
+```
+--tls-cert-source=spire|file    (default: spire)
+--tls-cert-file=<path>          (for file mode)
+--tls-key-file=<path>           (for file mode)
+--tls-ca-file=<path>            (for file mode)
+```
+
+When `--tls-cert-source=file` is used, the cert/key/CA files can be populated by any mechanism - for example, a Kubernetes Secret mounted as a volume (managed by cert-manager), or static files for development. The mTLS enforcement (requiring client certs, verifying peer identity) is identical in both modes.
+
+### 1.1 SPIRE Background
 
 [SPIFFE](https://spiffe.io/) (Secure Production Identity Framework for Everyone) is a CNCF graduated project that provides a standard for service identity. It defines:
 
@@ -107,9 +125,11 @@ Each component receives a unique SPIFFE ID based on its Kubernetes metadata:
 |---|---|---|
 | Router | `spiffe://agentcube.local/router` | `k8s:ns:agentcube-system`, `k8s:sa:agentcube-router` |
 | WorkloadManager | `spiffe://agentcube.local/workload-manager` | `k8s:ns:agentcube-system`, `k8s:sa:agentcube-workload-manager` |
-| PicoD (Sandboxes) | `spiffe://agentcube.local/picod` | `k8s:pod-label:app:picod` |
+| PicoD (Sandboxes) | `spiffe://agentcube.local/picod` | `k8s:pod-label:app:picod`, `k8s:sa:agentcube-sandbox` |
 
-> **Note:** PicoD uses only a pod-label selector without a namespace constraint because sandbox pods are created in the namespace specified by the user's request, not in a fixed namespace.
+> **Note:** PicoD cannot use a namespace selector because sandbox pods are created in the namespace specified by the user's request, not in a fixed namespace. To prevent identity spoofing in multi-tenant clusters, PicoD registration requires both the `app:picod` pod label and a dedicated `agentcube-sandbox` ServiceAccount. WorkloadManager creates this ServiceAccount in the target namespace as part of sandbox provisioning. Using a specific ServiceAccount requires RBAC permission, preventing arbitrary workloads from obtaining the PicoD SPIFFE ID.
+>
+> **Security Hardening:** For multi-tenant clusters, operators are encouraged to deploy a `ValidatingAdmissionPolicy` (or equivalent policy engine rule) that restricts the `app: picod` label to pods created by the WorkloadManager ServiceAccount. This provides defense-in-depth beyond the ServiceAccount selector.
 
 ### 1.4 SPIRE Deployment
 
@@ -223,10 +243,12 @@ spire-server entry create \
     -selector k8s:sa:agentcube-workload-manager
 
 # Register PicoD instances (namespace-agnostic, sandboxes can run in any namespace)
+# Requires both the app:picod label and the dedicated agentcube-sandbox ServiceAccount
 spire-server entry create \
     -spiffeID spiffe://agentcube.local/picod \
     -parentID spiffe://agentcube.local/spire-agent \
-    -selector k8s:pod-label:app:picod
+    -selector k8s:pod-label:app:picod \
+    -selector k8s:sa:agentcube-sandbox
 ```
 
 #### Attestation Flow (Example: Router)
@@ -244,11 +266,13 @@ spire-server entry create \
 
 ### 1.6 mTLS Integration
 
-The `go-spiffe` library (`github.com/spiffe/go-spiffe/v2`) provides helpers that make mTLS integration straightforward. Each component needs two changes: configure its server to require client certificates, and configure its clients to present its own certificate while verifying the server's.
+Each component needs two changes: configure its server to require client certificates, and configure its clients to present its own certificate while verifying the server's. The TLS configuration is sourced differently depending on the certificate mode.
 
-#### Router
+#### SPIRE Mode
 
-The Router serves external clients over HTTPS (secured via Keycloak) and acts as an *outbound client* to internal components. Therefore, it does not need a SPIRE mTLS server configuration, only client configurations:
+The `go-spiffe` library (`github.com/spiffe/go-spiffe/v2`) provides helpers that make SPIRE-based mTLS integration straightforward:
+
+**Router** (outbound client only — serves external clients over HTTPS via Keycloak, does not need an mTLS server):
 
 ```go
 source, err := workloadapi.NewX509Source(ctx,
@@ -262,21 +286,13 @@ wmTLSConfig := tlsconfig.MTLSClientConfig(source, source,
     tlsconfig.AuthorizeID(spiffeid.RequireIDFromString("spiffe://agentcube.local/workload-manager")),
 )
 
-httpClient := &http.Client{
-    Transport: &http.Transport{
-        TLSClientConfig: wmTLSConfig,
-    },
-}
-
 // Client config for proxying to PicoD
 picodTLSConfig := tlsconfig.MTLSClientConfig(source, source,
     tlsconfig.AuthorizeID(spiffeid.RequireIDFromString("spiffe://agentcube.local/picod")),
 )
 ```
 
-#### WorkloadManager
-
-Server-side (accepts calls only from Router):
+**WorkloadManager** (server-side, accepts calls only from Router):
 
 ```go
 tlsConfig := tlsconfig.MTLSServerConfig(source, source,
@@ -284,11 +300,7 @@ tlsConfig := tlsconfig.MTLSServerConfig(source, source,
 )
 ```
 
-*(Note: WorkloadManager manages PicoD pods via the Kubernetes API, so it does not make direct HTTP requests to PicoD and does not need a PicoD client mTLS configuration).*
-
-#### PicoD
-
-Server-side (accepts invocations proxied from the Router):
+**PicoD** (server-side, accepts invocations proxied from Router):
 
 ```go
 tlsConfig := tlsconfig.MTLSServerConfig(source, source,
@@ -296,7 +308,41 @@ tlsConfig := tlsconfig.MTLSServerConfig(source, source,
 )
 ```
 
-This replaces the existing `PICOD_AUTH_PUBLIC_KEY` environment variable mechanism entirely. Instead of distributing public keys through Secrets, every PicoD instance receives a short-lived certificate from SPIRE and validates callers via the trust bundle.
+#### File-Based Mode
+
+When `--tls-cert-source=file` is configured, each component loads its certificate, private key, and CA bundle from disk:
+
+```go
+// Load certificate and key
+cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+
+// Load CA bundle for peer verification
+caCert, err := os.ReadFile(caFile)
+caPool := x509.NewCertPool()
+caPool.AppendCertsFromPEM(caCert)
+
+// Server TLS config (WorkloadManager, PicoD)
+serverTLSConfig := &tls.Config{
+    Certificates: []tls.Certificate{cert},
+    ClientCAs:    caPool,
+    ClientAuth:   tls.RequireAndVerifyClientCert,
+}
+
+// Client TLS config (Router)
+clientTLSConfig := &tls.Config{
+    Certificates: []tls.Certificate{cert},
+    RootCAs:      caPool,
+}
+```
+
+The cert/key/CA files can be provisioned by any mechanism:
+- **cert-manager:** Automatically issues and rotates certificates, stored as Kubernetes Secrets and mounted into pods.
+- **Self-signed CA:** Generated manually or via a script for development and testing environments.
+- **Let's Encrypt / corporate PKI:** Externally issued certificates placed on disk or in Secrets.
+
+*(Note: WorkloadManager manages PicoD pods via the Kubernetes API, so it does not make direct HTTP requests to PicoD and does not need a PicoD client mTLS configuration in either mode.)*
+
+In both modes, the mTLS enforcement is identical — this replaces the existing `PICOD_AUTH_PUBLIC_KEY` environment variable mechanism entirely.
 
 ### 1.7 Communication Channel Summary
 
@@ -313,8 +359,8 @@ WorkloadManager → PicoD:   (No direct HTTP calls, managed via K8s API)
 
 ```
 SDK → Router:              HTTPS + Keycloak JWT (see Section 2)
-Router → WorkloadManager:  mTLS (SPIRE SVIDs)
-Router → PicoD:            mTLS (SPIRE SVIDs)
+Router → WorkloadManager:  mTLS (X.509 certs via SPIRE or file-based)
+Router → PicoD:            mTLS (X.509 certs via SPIRE or file-based)
 WorkloadManager → PicoD:   (No direct HTTP calls, managed via K8s API)
 ```
 
@@ -356,15 +402,15 @@ graph LR
 
 ### 1.9 Impact on Existing PicoD-Plain-Authentication
 
-The SPIRE-based mTLS approach supersedes the PicoD-Plain-Authentication design:
+The X.509 mTLS approach supersedes the PicoD-Plain-Authentication design:
 
-| Current (PicoD-Plain-Auth) | New (SPIRE) |
+| Current (PicoD-Plain-Auth) | New (X.509 mTLS) |
 |---|---|
-| Router generates RSA key pair, stores both keys in `picod-router-identity` Secret | SPIRE issues short-lived X.509 SVIDs automatically |
-| Public key read from `picod-router-identity` Secret by WorkloadManager | Trust bundle delivered through Workload API socket |
-| Bootstrap phase with optimistic locking race between Router replicas | No bootstrap race - each replica independently fetches its SVID |
-| `PICOD_AUTH_PUBLIC_KEY` env var injected into PicoD pods | Workload API socket mounted into PicoD pods |
-| Manual key rotation (delete Secret, restart Routers) | Automatic rotation by SPIRE (default: 1 hour TTL) |
+| Router generates RSA key pair, stores both keys in `picod-router-identity` Secret | SPIRE issues short-lived X.509 SVIDs automatically, or certs are loaded from disk (cert-manager, self-signed, etc.) |
+| Public key read from `picod-router-identity` Secret by WorkloadManager | Trust bundle delivered through Workload API socket (SPIRE) or CA file on disk (file-based) |
+| Bootstrap phase with optimistic locking race between Router replicas | No bootstrap race - each replica independently fetches its SVID (SPIRE) or loads certs from disk (file-based) |
+| `PICOD_AUTH_PUBLIC_KEY` env var injected into PicoD pods | Workload API socket or cert files mounted into PicoD pods |
+| Manual key rotation (delete Secret, restart Routers) | Automatic rotation by SPIRE (default: 1 hour TTL) or delegated to external tool (cert-manager) |
 | Application-layer JWT verification | Transport-layer mTLS verification |
 
 The existing PicoD-Plain-Auth code path will be kept behind a `--legacy-picod-auth` flag during the transition period and marked as deprecated.
@@ -481,7 +527,11 @@ client = CodeInterpreterClient(
 result = client.run_code("python", "print('hello')")
 ```
 
-The SDK handles token refresh automatically using the refresh token.
+Token lifecycle is handled automatically by the SDK, but differs by authentication method:
+
+- **`ServiceAccountAuth` (`client_credentials` grant):** No refresh token is issued by Keycloak for this grant type. When the access token expires, the SDK re-authenticates by repeating the client credentials exchange using the configured `client_id` and `client_secret`.
+- **`TokenAuth` (pre-obtained token):** The SDK uses the provided token as-is. The caller is responsible for providing a valid, non-expired token. This supports tokens obtained through any flow, including `authorization_code` (e.g., from a web application or CLI tool that performed the interactive login).
+
 
 ### 2.6 Backward Compatibility
 
@@ -523,7 +573,7 @@ Example JWT payload issued by Keycloak:
   "realm_access": {
     "roles": ["sandbox:invoke"]
   },
-  "exp": 1716242600
+  "exp": 1893456000
 }
 ```
 
@@ -596,7 +646,7 @@ The standard across CNCF projects is to strictly separate authentication and aut
 
 The key advantages of OPA over Keycloak-based RBAC:
 
-- **Local evaluation:** OPA runs as a sidecar alongside the Router, so policy checks are local and avoid a network call to Keycloak on every request.
+- **Decoupled policy evaluation:** Like the Keycloak RBAC approach in Section 3, OPA evaluates policies locally without per-request network calls. Its advantage is richer, more expressive policy logic that is decoupled from the identity provider - policies are evaluated independently of how tokens are issued or roles are assigned.
 - **Policy as code:** Rego policies are version-controlled, peer-reviewed, and merged through standard PR workflows, giving full audit history over authorization changes.
 - **Expressiveness:** OPA supports context-aware policies beyond simple role checks (e.g., time-based access, request payload inspection, cross-namespace constraints).
 

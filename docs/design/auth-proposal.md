@@ -96,7 +96,7 @@ When `--tls-cert-source=file` is used, the cert/key/CA files can be populated by
 - **SPIRE Server:** Central signing authority. Manages registration entries (which selectors map to which SPIFFE IDs) and issues SVIDs to agents.
 - **SPIRE Agent:** Runs on every node (DaemonSet). Performs workload attestation, verifying process identity by querying the kernel and kubelet, and delivers SVIDs to local workloads via a Unix domain socket (the Workload API).
 
-SPIRE handles the entire certificate lifecycle (issuance, rotation, revocation) automatically. Workloads never see raw keys on disk; certificates arrive through the Workload API and are rotated before they expire.
+SPIRE handles the entire certificate lifecycle (issuance, rotation, revocation) automatically. Workloads receive certificates through the Workload API and they are rotated before they expire.
 
 ### 1.2 Why Single-Cluster SPIRE
 
@@ -300,7 +300,7 @@ kubectl exec -n agentcube-system <spire-server-pod> -- \
     -selector k8s:sa:agentcube-sandbox
 ```
 
-> **Note:** Manual CLI entries do not survive SPIRE Server restarts (unless backed by persistent storage) and are not recommended for production use.
+> **Note:** Manual CLI entries are stored in the SPIRE Server's datastore (SQLite by default). They survive restarts if the datastore is backed by persistent storage, but are harder to manage and audit compared to the declarative CRD approach.
 
 #### Attestation Flow (Example: Router)
 
@@ -367,7 +367,7 @@ The cert/key/CA files can be provisioned by any mechanism:
 
 *(Note: WorkloadManager manages PicoD pods via the Kubernetes API, so it does not make direct HTTP requests to PicoD and does not need a PicoD client mTLS configuration.)*
 
-This replaces the existing `PICOD_AUTH_PUBLIC_KEY` environment variable mechanism entirely.
+This replaces the existing `PICOD_AUTH_PUBLIC_KEY` environment variable mechanism as the new default. The legacy mechanism is retained behind a flag during transition (see Section 1.9).
 
 ### 1.7 Communication Channel Summary
 
@@ -425,6 +425,8 @@ graph LR
     R <-->|mTLS| P2
 ```
 
+> **Note:** The architecture diagram above shows the SPIRE-based deployment. When using file-based certificates (`--tls-cert-source=file`), the SPIRE Infrastructure components are not deployed; certificates are provisioned externally and mounted into pods. The mTLS connections between AgentCube components remain the same.
+
 ### 1.9 Impact on Existing PicoD-Plain-Authentication
 
 The X.509 mTLS approach supersedes the PicoD-Plain-Authentication design:
@@ -460,18 +462,24 @@ sequenceDiagram
     participant WM as WorkloadManager
     participant Sandbox as PicoD
 
-    Note over SDK, KC: Authentication
-    SDK->>KC: POST /realms/agentcube/protocol/openid-connect/token
-    KC-->>SDK: Access Token (JWT) + Refresh Token
+    Note over SDK, KC: Authentication (client_credentials grant)
+    SDK->>KC: POST /realms/agentcube/protocol/openid-connect/token<br/>grant_type=client_credentials<br/>client_id=agentcube-sdk&client_secret=<secret>
+    KC->>KC: Validate client_id and client_secret<br/>against registered client in agentcube realm
+    KC-->>SDK: Access Token (JWT with sub, roles, exp)
+
+    Note over Router, KC: JWKS Cache (periodic, e.g. every 5 min)
+    Router->>KC: GET /realms/agentcube/protocol/openid-connect/certs
+    KC-->>Router: JWKS (public signing keys)
+    Router->>Router: Cache JWKS keys locally
 
     Note over SDK, Sandbox: Invocation
     SDK->>Router: POST /v1/namespaces/.../invocations<br/>Authorization: Bearer jwt
-    Router->>Router: Validate JWT signature via cached JWKS
+    Router->>Router: Validate JWT signature using cached JWKS from Keycloak
     Router->>Router: Extract claims (sub, roles)
     Router->>Router: Check role authorization
 
     alt Valid token + authorized role
-        Router->>WM: Forward (mTLS)
+        Router->>WM: Forward (mTLS)<br/>X-AgentCube-User-ID, X-AgentCube-User-Roles
         WM->>WM: Create sandbox via K8s API
         Router->>Sandbox: Proxy to sandbox (mTLS)
         Sandbox-->>Router: Response

@@ -57,6 +57,9 @@ const (
 	// ownerKindSandboxWarmPool is the owner reference kind for SandboxWarmPool resources
 	ownerKindSandboxWarmPool = "SandboxWarmPool"
 
+	// sessionIDLabelKey is the label key for session ID on Sandbox (matches workloadmanager.SessionIdLabelKey)
+	sessionIDLabelKey = "runtime.agentcube.io/session-id"
+
 	agentcubeNamespace = "agentcube"
 )
 
@@ -938,6 +941,69 @@ print("Fibonacci sequence generated")
 	})
 }
 
+// TestCodeInterpreterSandboxAccessAfterPodRestart verifies sandbox access resilience:
+// when the pod is evicted/recreated, requests with the same session still succeed (ServiceFQDN).
+func TestCodeInterpreterSandboxAccessAfterPodRestart(t *testing.T) {
+	env := newTestEnv(t)
+	ctx, err := newE2ETestContext()
+	require.NoError(t, err)
+
+	namespace := agentcubeNamespace
+	name := "e2e-code-interpreter"
+
+	sessionID, err := env.createCodeInterpreterSession(namespace, name)
+	require.NoError(t, err, "Failed to create code interpreter session")
+
+	t.Cleanup(func() {
+		_ = env.deleteCodeInterpreterSession(sessionID)
+	})
+
+	// 1. Invoke once to verify sandbox is ready
+	req := &CodeInterpreterExecuteRequest{
+		Command: []string{"echo", "before-pod-restart"},
+	}
+	resp, err := env.invokeCodeInterpreter(namespace, name, sessionID, req)
+	require.NoError(t, err, "First invoke should succeed")
+	require.Contains(t, resp.Stdout, "before-pod-restart")
+
+	// 2. Find sandbox and its pod
+	sandbox, err := ctx.getSandboxBySessionID(namespace, sessionID)
+	require.NoError(t, err, "Should find sandbox by session ID")
+	require.NotNil(t, sandbox)
+
+	pod, err := ctx.getPodByOwner(namespace, "Sandbox", sandbox.Name)
+	require.NoError(t, err, "Should find pod owned by sandbox")
+	require.NotNil(t, pod)
+
+	t.Logf("Deleting pod %s/%s to simulate eviction", pod.Namespace, pod.Name)
+	err = ctx.kubeClient.CoreV1().Pods(namespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{})
+	require.NoError(t, err, "Failed to delete pod")
+
+	// 3. Wait for new pod to be ready (agent-sandbox reconciles and recreates)
+	require.Eventually(t, func() bool {
+		newPod, err := ctx.getPodByOwner(namespace, "Sandbox", sandbox.Name)
+		if err != nil || newPod == nil {
+			return false
+		}
+		for _, c := range newPod.Status.Conditions {
+			if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
+				return true
+			}
+		}
+		return false
+	}, 3*time.Minute, 5*time.Second, "New pod should become ready after recreation")
+
+	// 4. Invoke again with same session - should succeed via ServiceFQDN
+	reqAfter := &CodeInterpreterExecuteRequest{
+		Command: []string{"echo", "after-pod-restart"},
+	}
+	respAfter, err := env.invokeCodeInterpreter(namespace, name, sessionID, reqAfter)
+	require.NoError(t, err, "Invoke after pod restart should succeed (ServiceFQDN resilience)")
+	require.Contains(t, respAfter.Stdout, "after-pod-restart")
+
+	t.Logf("Sandbox access after pod restart verified successfully")
+}
+
 func (ctx *e2eTestContext) cleanupCodeInterpreter(t *testing.T, namespace, name, yamlPath string) {
 	t.Log("Cleaning up code interpreter resources...")
 	if err := ctx.deleteYamlFile(yamlPath); err != nil {
@@ -1309,6 +1375,24 @@ func (ctx *e2eTestContext) getSandboxByOwner(namespace, ownerKind, ownerName str
 	}
 
 	return found, nil
+}
+
+// getSandboxBySessionID finds exactly one Sandbox with the given session ID label
+func (ctx *e2eTestContext) getSandboxBySessionID(namespace, sessionID string) (*sandboxv1alpha1.Sandbox, error) {
+	sandboxList := &sandboxv1alpha1.SandboxList{}
+	err := ctx.ctrlClient.List(context.Background(), sandboxList,
+		client.InNamespace(namespace),
+		client.MatchingLabels{sessionIDLabelKey: sessionID})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sandboxes: %w", err)
+	}
+	if len(sandboxList.Items) == 0 {
+		return nil, fmt.Errorf("no sandbox found with session ID %s", sessionID)
+	}
+	if len(sandboxList.Items) > 1 {
+		return nil, fmt.Errorf("found multiple sandboxes with session ID %s", sessionID)
+	}
+	return &sandboxList.Items[0], nil
 }
 
 // getPodByOwner finds exactly one Pod owned by the specified owner

@@ -83,11 +83,21 @@ func readySandbox() *sandboxv1alpha1.Sandbox {
 			Annotations:       map[string]string{controllers.SandboxPodNameAnnotation: "pod-1"},
 			CreationTimestamp: metav1.Now(),
 		},
-		Status: sandboxv1alpha1.SandboxStatus{Conditions: []metav1.Condition{{
-			Type:   string(sandboxv1alpha1.SandboxConditionReady),
-			Status: metav1.ConditionTrue,
-		}}},
+		Status: sandboxv1alpha1.SandboxStatus{
+			ServiceFQDN: "sandbox-1.ns-1.svc.cluster.local",
+			Conditions: []metav1.Condition{{
+				Type:   string(sandboxv1alpha1.SandboxConditionReady),
+				Status: metav1.ConditionTrue,
+			}},
+		},
 	}
+}
+
+// readySandboxNoFQDN returns a sandbox without ServiceFQDN (fallback to GetSandboxPodIP).
+func readySandboxNoFQDN() *sandboxv1alpha1.Sandbox {
+	sb := readySandbox()
+	sb.Status.ServiceFQDN = ""
+	return sb
 }
 
 func makeEntry() *sandboxEntry {
@@ -111,6 +121,7 @@ func TestServerCreateSandbox(t *testing.T) {
 		updateErr         error
 		sendResult        bool
 		expectErr         bool
+		noServiceFQDN     bool // use sandbox without ServiceFQDN (triggers GetSandboxPodIP fallback)
 		expectCreateCalls int
 		expectClaimCalls  int
 		expectDeleteCalls int
@@ -127,6 +138,13 @@ func TestServerCreateSandbox(t *testing.T) {
 			sandboxClaim:      true,
 			sendResult:        true,
 			expectClaimCalls:  1,
+			expectUpdateCalls: 1,
+		},
+		{
+			name:              "fallback to pod IP when ServiceFQDN empty",
+			sendResult:        true,
+			noServiceFQDN:     true,
+			expectCreateCalls: 1,
 			expectUpdateCalls: 1,
 		},
 		{
@@ -148,12 +166,13 @@ func TestServerCreateSandbox(t *testing.T) {
 			expectClaimCalls: 1,
 		},
 		{
-			name:              "pod ip lookup fails triggers rollback",
+			name:              "pod ip lookup fails triggers rollback (no ServiceFQDN fallback)",
 			podIPErr:          errors.New("pod ip missing"),
 			sendResult:        true,
 			expectErr:         true,
 			expectCreateCalls: 1,
 			expectDeleteCalls: 1,
+			noServiceFQDN:     true,
 		},
 		{
 			name:              "update store fails triggers rollback",
@@ -174,6 +193,9 @@ func TestServerCreateSandbox(t *testing.T) {
 
 			resultChan := make(chan SandboxStatusUpdate, 1)
 			sb := readySandbox()
+			if tt.noServiceFQDN {
+				sb = readySandboxNoFQDN()
+			}
 			if tt.sendResult {
 				resultChan <- SandboxStatusUpdate{Sandbox: sb.DeepCopy()}
 			}
@@ -241,7 +263,11 @@ func TestServerCreateSandbox(t *testing.T) {
 			require.Equal(t, string(sb.UID), resp.SandboxID)
 			require.Len(t, resp.EntryPoints, 1)
 			require.Equal(t, "/api", resp.EntryPoints[0].Path)
-			require.Equal(t, "10.0.0.9:8080", resp.EntryPoints[0].Endpoint)
+			expectedEndpoint := "sandbox-1.ns-1.svc.cluster.local:8080"
+			if tt.noServiceFQDN {
+				expectedEndpoint = "10.0.0.9:8080"
+			}
+			require.Equal(t, expectedEndpoint, resp.EntryPoints[0].Endpoint)
 		})
 	}
 }

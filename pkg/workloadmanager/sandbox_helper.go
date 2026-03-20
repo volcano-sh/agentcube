@@ -37,7 +37,8 @@ func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxE
 	}
 }
 
-func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *sandboxEntry) *types.SandboxInfo {
+// buildSandboxInfo builds SandboxInfo. host is ServiceFQDN (preferred, resilient to pod restart) or pod IP.
+func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, host string, entry *sandboxEntry) *types.SandboxInfo {
 	createdAt := sandbox.GetCreationTimestamp().Time
 	expiresAt := createdAt.Add(DefaultSandboxTTL)
 	if sandbox.Spec.Lifecycle.ShutdownTime != nil {
@@ -48,7 +49,7 @@ func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *san
 		accesses = append(accesses, types.SandboxEntryPoint{
 			Path:     port.PathPrefix,
 			Protocol: string(port.Protocol),
-			Endpoint: net.JoinHostPort(podIP, strconv.Itoa(int(port.Port))),
+			Endpoint: net.JoinHostPort(host, strconv.Itoa(int(port.Port))),
 		})
 	}
 	return &types.SandboxInfo{

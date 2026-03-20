@@ -200,21 +200,22 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		sandboxRollbackFunc()
 	}()
 
-	// agent-sandbox create pod with same name as sandbox if no warmpool is used
-	// so here we try to get pod IP by sandbox name first
-	// if warmpool is used, the pod name is stored in sandbox's annotation `agents.x-k8s.io/sandbox-pod-name`
-	// https://github.com/kubernetes-sigs/agent-sandbox/blob/3ab7fbcd85ad0d75c6e632ecd14bcaeda5e76e1e/controllers/sandbox_controller.go#L465
-	sandboxPodName := sandbox.Name
-	if podName, exists := createdSandbox.Annotations[controllers.SandboxPodNameAnnotation]; exists {
-		sandboxPodName = podName
+	// Prefer ServiceFQDN: K8s Endpoints controller keeps DNS in sync when pod is evicted/recreated.
+	// Fallback to pod IP for agent-sandbox without ServiceFQDN.
+	host := createdSandbox.Status.ServiceFQDN
+	if host == "" {
+		sandboxPodName := sandbox.Name
+		if podName, exists := createdSandbox.Annotations[controllers.SandboxPodNameAnnotation]; exists {
+			sandboxPodName = podName
+		}
+		var err error
+		host, err = s.k8sClient.GetSandboxPodIP(ctx, sandbox.Namespace, sandbox.Name, sandboxPodName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get sandbox %s/%s pod IP: %v", sandbox.Namespace, sandbox.Name, err)
+		}
 	}
 
-	podIP, err := s.k8sClient.GetSandboxPodIP(ctx, sandbox.Namespace, sandbox.Name, sandboxPodName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get sandbox %s/%s pod IP: %v", sandbox.Namespace, sandbox.Name, err)
-	}
-
-	storeCacheInfo := buildSandboxInfo(createdSandbox, podIP, sandboxEntry)
+	storeCacheInfo := buildSandboxInfo(createdSandbox, host, sandboxEntry)
 
 	response := &types.CreateSandboxResponse{
 		SessionID:   sandboxEntry.SessionID,

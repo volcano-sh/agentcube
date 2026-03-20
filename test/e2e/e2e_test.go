@@ -60,7 +60,8 @@ const (
 	// sessionIDLabelKey is the label key for session ID on Sandbox (matches workloadmanager.SessionIdLabelKey)
 	sessionIDLabelKey = "runtime.agentcube.io/session-id"
 
-	agentcubeNamespace = "agentcube"
+	agentcubeNamespace       = "agentcube"
+	e2eCodeInterpreterName   = "e2e-code-interpreter"
 )
 
 var (
@@ -795,7 +796,7 @@ func TestCodeInterpreterBasicInvocation(t *testing.T) {
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace
-	name := "e2e-code-interpreter"
+	name := e2eCodeInterpreterName
 
 	testCases := []struct {
 		name         string
@@ -838,7 +839,7 @@ func TestCodeInterpreterFileOperations(t *testing.T) {
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace
-	name := "e2e-code-interpreter"
+	name := e2eCodeInterpreterName
 
 	// Create a session for file operations
 	sessionID, err := env.createCodeInterpreterSession(namespace, name)
@@ -949,7 +950,7 @@ func TestCodeInterpreterSandboxAccessAfterPodRestart(t *testing.T) {
 	require.NoError(t, err)
 
 	namespace := agentcubeNamespace
-	name := "e2e-code-interpreter"
+	name := e2eCodeInterpreterName
 
 	sessionID, err := env.createCodeInterpreterSession(namespace, name)
 	require.NoError(t, err, "Failed to create code interpreter session")
@@ -1589,7 +1590,7 @@ func TestCodeInterpreterBasicInvocationLoad(t *testing.T) {
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace
-	name := "e2e-code-interpreter"
+	name := e2eCodeInterpreterName
 
 	// Load test configuration
 	const (

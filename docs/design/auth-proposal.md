@@ -66,7 +66,7 @@ The design is structured in four layers, ordered by priority:
 
 ## 1. Internal Workload Authentication (X.509 mTLS)
 
-Internal communication between AgentCube components is secured using mutual TLS (mTLS) with X.509 certificates. The mTLS enforcement layer is **certificate-source agnostic** — it works with any valid X.509 cert/key/CA bundle, regardless of how the certificates are provisioned. Two certificate source modes are supported:
+Internal communication between AgentCube components is secured using mutual TLS (mTLS) with X.509 certificates. The mTLS enforcement layer is **certificate-source agnostic** - it works with any valid X.509 cert/key/CA bundle, regardless of how the certificates are provisioned. Two certificate source modes are supported:
 
 | Mode | Certificate Source | Rotation | Best For |
 |---|---|---|---|
@@ -312,7 +312,7 @@ kubectl exec -n agentcube-system <spire-server-pod> -- \
 
 ### 1.6 mTLS Integration
 
-Each component needs two changes: configure its server to require client certificates, and configure its clients to present its own certificate while verifying the server's. The mTLS implementation uses Go's standard `crypto/tls` package — no external libraries are required.
+Each component needs two changes: configure its server to require client certificates, and configure its clients to present its own certificate while verifying the server's. The mTLS implementation uses Go's standard `crypto/tls` package - no external libraries are required.
 
 Regardless of the certificate source (SPIRE or file-based), the cert/key/CA files end up on disk and the Go code is identical. When using SPIRE, the [SPIFFE Helper](https://github.com/spiffe/spiffe-helper) sidecar writes SVIDs to disk as PEM files, making them consumable by standard TLS configuration.
 
@@ -565,8 +565,36 @@ Token lifecycle is handled automatically by the SDK, but differs by authenticati
 - **`ServiceAccountAuth` (`client_credentials` grant):** No refresh token is issued by Keycloak for this grant type. When the access token expires, the SDK re-authenticates by repeating the client credentials exchange using the configured `client_id` and `client_secret`.
 - **`TokenAuth` (pre-obtained token):** The SDK uses the provided token as-is. The caller is responsible for providing a valid, non-expired token. This supports tokens obtained through any flow, including `authorization_code` (e.g., from a web application or CLI tool that performed the interactive login).
 
+### 2.6 User Identity Propagation
 
-### 2.6 Backward Compatibility
+With mTLS on the Router→WorkloadManager channel, the Router is the only authenticated caller from WorkloadManager's perspective. Without explicit identity forwarding, all sandbox operations would be attributed to the Router's workload identity, losing the end-user context needed for ownership tracking and audit logging.
+
+The Router solves this by extracting user context from the validated Keycloak JWT and forwarding it as trusted HTTP headers over the mTLS channel:
+
+```
+Router → WorkloadManager (mTLS):
+  X-AgentCube-User-ID: user-123
+  X-AgentCube-User-Roles: sandbox:invoke
+```
+
+**Why WorkloadManager can trust these headers:**
+
+The mTLS channel cryptographically guarantees that only the Router (verified via its X.509 certificate) can send requests to WorkloadManager. No other workload can inject or spoof these headers because it cannot establish an mTLS connection with WorkloadManager's expected peer identity.
+
+**WorkloadManager behavior:**
+
+1. **Verify caller identity:** Confirm the mTLS peer is the Router (via its certificate).
+2. **Extract user context:** Read `X-AgentCube-User-ID` and `X-AgentCube-User-Roles` from request headers.
+3. **Sandbox ownership:** Tag created sandboxes with the user ID for ownership tracking (e.g., as a Kubernetes label or annotation on the sandbox pod).
+4. **Audit logging:** Log the user ID alongside all sandbox operations for traceability.
+5. **Kubernetes API calls:** Use WorkloadManager's **own** ServiceAccount for all K8s API interactions (not the end user's). The end user is a Keycloak identity, not a Kubernetes ServiceAccount.
+6. **No re-authorization:** WorkloadManager does not re-evaluate roles. The Router has already enforced authorization before forwarding the request.
+
+**Transition from current model:**
+
+Today, when `EnableAuth` is true, the Router forwards the caller's Kubernetes ServiceAccount token and WorkloadManager validates it via TokenReview. With Keycloak, external users are Keycloak identities (`sub: user-123`), not Kubernetes ServiceAccounts, so the TokenReview-based flow is replaced by the trusted header approach described above.
+
+### 2.7 Backward Compatibility
 
 External auth is opt-in via `--enable-external-auth` (default: `false`):
 

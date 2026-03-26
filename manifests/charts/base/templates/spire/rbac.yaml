@@ -1,0 +1,135 @@
+{{- if .Values.spire.enabled }}
+# --- SPIRE Server ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spire-server
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: spire-server
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: spire-server
+  labels:
+    app: spire-server
+rules:
+  # Required for k8s_psat NodeAttestor to validate projected service account tokens
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  # Required for node attestation and registration entry management
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: spire-server
+  labels:
+    app: spire-server
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: spire-server
+subjects:
+  - kind: ServiceAccount
+    name: spire-server
+    namespace: {{ .Release.Namespace }}
+---
+
+# --- SPIRE Agent ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spire-agent
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: spire-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: spire-agent
+  labels:
+    app: spire-agent
+rules:
+  # Required for k8s workload attestor to query pod metadata from kubelet
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # Required for workload attestation to resolve node information
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  # Required for k8s_psat NodeAttestor to create token reviews
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: spire-agent
+  labels:
+    app: spire-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: spire-agent
+subjects:
+  - kind: ServiceAccount
+    name: spire-agent
+    namespace: {{ .Release.Namespace }}
+
+---
+# --- SPIRE Controller Manager ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spire-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: spire-controller-manager
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: spire-controller-manager
+  labels:
+    app: spire-controller-manager
+rules:
+  # Required to watch ClusterSPIFFEID CRDs and sync entries to SPIRE Server
+  - apiGroups: ["spire.spiffe.io"]
+    resources: ["clusterspiffeids"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["spire.spiffe.io"]
+    resources: ["clusterspiffeids/status"]
+    verbs: ["get", "update", "patch"]
+  # Required to watch pods for label-based workload matching
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Required to resolve namespaces for namespaceSelector
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: spire-controller-manager
+  labels:
+    app: spire-controller-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: spire-controller-manager
+subjects:
+  - kind: ServiceAccount
+    name: spire-controller-manager
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+

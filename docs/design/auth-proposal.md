@@ -121,7 +121,7 @@ SPIRE uses **selectors** to verify workload identity during attestation. When a 
 | Component | SPIFFE ID | Selectors |
 |---|---|---|
 | Router | `spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-router` | `k8s:ns:agentcube-system`, `k8s:sa:agentcube-router` |
-| WorkloadManager | `spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-workload-manager` | `k8s:ns:agentcube-system`, `k8s:sa:agentcube-workload-manager` |
+| WorkloadManager | `spiffe://agentcube.local/ns/agentcube-system/sa/workloadmanager` | `k8s:ns:agentcube-system`, `k8s:sa:workloadmanager` |
 | PicoD (Sandboxes) | `spiffe://agentcube.local/sa/agentcube-sandbox` | `k8s:pod-label:app:picod`, `k8s:sa:agentcube-sandbox` |
 
 > **Note:** PicoD cannot use a namespace selector because sandbox pods are created in the namespace specified by the user's request, not in a fixed namespace. To prevent identity spoofing in multi-tenant clusters, PicoD registration requires both the `app:picod` pod label and a dedicated `agentcube-sandbox` ServiceAccount. WorkloadManager creates this ServiceAccount in the target namespace as part of sandbox provisioning. Using a specific ServiceAccount requires RBAC permission, preventing arbitrary workloads from obtaining the PicoD SPIFFE ID.
@@ -256,7 +256,7 @@ spec:
   spiffeIDTemplate: "spiffe://agentcube.local/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
   podSelector:
     matchLabels:
-      app: agentcube-workload-manager
+      app: workloadmanager
   namespaceSelector:
     matchNames:
       - agentcube-system
@@ -287,10 +287,10 @@ kubectl exec -n agentcube-system <spire-server-pod> -- \
 
 kubectl exec -n agentcube-system <spire-server-pod> -- \
   spire-server entry create \
-    -spiffeID spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-workload-manager \
+    -spiffeID spiffe://agentcube.local/ns/agentcube-system/sa/workloadmanager \
     -parentID spiffe://agentcube.local/spire-agent \
     -selector k8s:ns:agentcube-system \
-    -selector k8s:sa:agentcube-workload-manager
+    -selector k8s:sa:workloadmanager
 
 kubectl exec -n agentcube-system <spire-server-pod> -- \
   spire-server entry create \
@@ -406,7 +406,7 @@ graph LR
 
         subgraph "AgentCube Components"
             R["Router<br/>spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-router"]
-            WM["WorkloadManager<br/>spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-workload-manager"]
+            WM["WorkloadManager<br/>spiffe://agentcube.local/ns/agentcube-system/sa/workloadmanager"]
             P1["PicoD Sandbox 1<br/>spiffe://agentcube.local/sa/agentcube-sandbox"]
             P2["PicoD Sandbox 2<br/>spiffe://agentcube.local/sa/agentcube-sandbox"]
         end

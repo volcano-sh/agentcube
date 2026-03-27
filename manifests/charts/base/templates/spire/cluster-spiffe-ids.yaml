@@ -1,0 +1,42 @@
+{{- if .Values.spire.enabled }}
+# Router registration
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: agentcube-router
+spec:
+  spiffeIDTemplate: "spiffe://{{ .Values.spire.trustDomain }}/ns/{{ "{{ .PodMeta.Namespace }}" }}/sa/{{ "{{ .PodSpec.ServiceAccountName }}" }}"
+  podSelector:
+    matchLabels:
+      app: agentcube-router
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+
+---
+# WorkloadManager registration
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: agentcube-workload-manager
+spec:
+  spiffeIDTemplate: "spiffe://{{ .Values.spire.trustDomain }}/ns/{{ "{{ .PodMeta.Namespace }}" }}/sa/{{ "{{ .PodSpec.ServiceAccountName }}" }}"
+  podSelector:
+    matchLabels:
+      app: workloadmanager
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+
+---
+# PicoD (Sandbox) registration - namespace-agnostic
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: agentcube-sandbox
+spec:
+  spiffeIDTemplate: "spiffe://{{ .Values.spire.trustDomain }}/sa/{{ "{{ .PodSpec.ServiceAccountName }}" }}"
+  podSelector:
+    matchLabels:
+      app: picod
+{{- end }}

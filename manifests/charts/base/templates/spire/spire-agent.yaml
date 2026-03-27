@@ -30,8 +30,7 @@ data:
 
         WorkloadAttestor "k8s" {
             plugin_data {
-                # TODO: In production environments, set this to false to enforce kubelet certificate verification
-                skip_kubelet_verification = true
+                skip_kubelet_verification = true        # NOTE: In production environments, set this to false to enforce kubelet certificate verification
             }
         }
     }
@@ -54,7 +53,7 @@ spec:
         app: spire-agent
     spec:
       serviceAccountName: spire-agent
-      hostPID: true
+      hostPID: true       # Required for workload attestation (process identity)
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       containers:
@@ -98,7 +97,7 @@ spec:
       volumes:
         - name: spire-agent-socket
           hostPath:
-            path: /run/spire/sockets
+            path: /run/spire/sockets  # Workload API socket shared with pods on this node
             type: DirectoryOrCreate
         - name: spire-config
           configMap:
@@ -107,7 +106,7 @@ spec:
           projected:
             sources:
               - serviceAccountToken:
-                  audience: spire-server
+                  audience: spire-server  # Projected token for k8s_psat node attestation
                   expirationSeconds: 7200
                   path: spire-agent
 {{- end }}

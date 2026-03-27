@@ -1,0 +1,47 @@
+{{- if .Values.spire.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spire-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: spire-controller-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spire-controller-manager
+  template:
+    metadata:
+      labels:
+        app: spire-controller-manager
+    spec:
+      serviceAccountName: spire-controller-manager
+      containers:
+        - name: spire-controller-manager
+          image: "{{ .Values.spire.controllerManager.image.repository }}:{{ .Values.spire.controllerManager.image.tag }}"
+          imagePullPolicy: {{ .Values.spire.controllerManager.image.pullPolicy }}
+          args:
+            - --spire-server-address=spire-server.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.spire.server.service.port }}
+          ports:
+            - name: https
+              containerPort: 9443
+              protocol: TCP
+            - name: health
+              containerPort: 8083
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 60
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.spire.controllerManager.resources | nindent 12 }}
+{{- end }}

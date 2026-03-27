@@ -101,7 +101,7 @@ spec:
           configMap:
             name: spire-server-config
         - name: spire-data
-          emptyDir: {}
+          emptyDir: {}  # Re-synced from ClusterSPIFFEID CRDs on restart; PVC not required
 
 ---
 apiVersion: v1

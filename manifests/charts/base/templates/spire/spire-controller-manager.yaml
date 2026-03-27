@@ -1,47 +1,31 @@
 {{- if .Values.spire.enabled }}
-apiVersion: apps/v1
-kind: Deployment
+# Controller Manager ConfigMap
+# The Controller Manager runs as a sidecar in the spire-server StatefulSet
+apiVersion: v1
+kind: ConfigMap
 metadata:
-  name: spire-controller-manager
+  name: spire-controller-manager-config
   namespace: {{ .Release.Namespace }}
   labels:
     app: spire-controller-manager
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: spire-controller-manager
-  template:
-    metadata:
-      labels:
-        app: spire-controller-manager
-    spec:
-      serviceAccountName: spire-controller-manager
-      containers:
-        - name: spire-controller-manager
-          image: "{{ .Values.spire.controllerManager.image.repository }}:{{ .Values.spire.controllerManager.image.tag }}"
-          imagePullPolicy: {{ .Values.spire.controllerManager.image.pullPolicy }}
-          args:
-            - --spire-server-address=spire-server.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.spire.server.service.port }}
-          ports:
-            - name: https
-              containerPort: 9443
-              protocol: TCP
-            - name: health
-              containerPort: 8083
-              protocol: TCP
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: health
-            initialDelaySeconds: 15
-            periodSeconds: 60
-          readinessProbe:
-            httpGet:
-              path: /readyz
-              port: health
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          resources:
-            {{- toYaml .Values.spire.controllerManager.resources | nindent 12 }}
+data:
+  spire-controller-manager.yaml: |
+    apiVersion: spire.spiffe.io/v1alpha1
+    kind: ControllerManagerConfig
+    metrics:
+      bindAddress: 127.0.0.1:8082
+    health:
+      healthProbeBindAddress: :8083
+    leaderElection:
+      leaderElect: true
+      resourceName: spire-controller-manager
+      resourceNamespace: {{ .Release.Namespace }}
+    spireServerSocketPath: "/tmp/spire-server/private/api.sock"
+    clusterName: {{ .Values.spire.clusterName }}
+    trustDomain: {{ .Values.spire.trustDomain }}
+    validatingWebhookConfigurationName: spire-controller-manager-webhook
+    ignoreNamespaces:
+      - kube-system
+      - kube-public
+      - local-path-storage
 {{- end }}

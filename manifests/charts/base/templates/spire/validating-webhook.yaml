@@ -1,0 +1,42 @@
+{{- if .Values.spire.enabled }}
+# Service to expose the Controller Manager webhook (which runs as a sidecar in spire-server pod)
+apiVersion: v1
+kind: Service
+metadata:
+  name: spire-controller-manager-webhook
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: spire-server
+spec:
+  type: ClusterIP
+  ports:
+    - name: https
+      port: 443
+      targetPort: 9443
+      protocol: TCP
+  selector:
+    app: spire-server
+---
+# The ValidatingWebhookConfiguration object patched by the Controller Manager
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: spire-controller-manager-webhook
+  labels:
+    app: spire-controller-manager
+webhooks:
+  - name: spire-controller-manager-webhook.spiffe.io
+    clientConfig:
+      service:
+        name: spire-controller-manager-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validate-spire-spiffe-io-v1alpha1-clusterspiffeid
+    rules:
+      - apiGroups:   ["spire.spiffe.io"]
+        apiVersions: ["v1alpha1"]
+        operations:  ["CREATE", "UPDATE"]
+        resources:   ["clusterspiffeids"]
+    sideEffects: None
+    failurePolicy: Ignore
+    admissionReviewVersions: ["v1", "v1beta1"]
+{{- end }}

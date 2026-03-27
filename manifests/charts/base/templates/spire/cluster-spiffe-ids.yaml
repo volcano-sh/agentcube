@@ -10,8 +10,8 @@ spec:
     matchLabels:
       app: agentcube-router
   namespaceSelector:
-    matchNames:
-      - {{ .Release.Namespace }}
+    matchLabels:
+      kubernetes.io/metadata.name: {{ .Release.Namespace }}
 
 ---
 # WorkloadManager registration
@@ -25,8 +25,8 @@ spec:
     matchLabels:
       app: workloadmanager
   namespaceSelector:
-    matchNames:
-      - {{ .Release.Namespace }}
+    matchLabels:
+      kubernetes.io/metadata.name: {{ .Release.Namespace }}
 
 ---
 # PicoD (Sandbox) registration - namespace-agnostic

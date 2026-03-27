@@ -1,5 +1,6 @@
 {{- if .Values.spire.enabled }}
 # --- SPIRE Server ---
+# Also used by the Controller Manager sidecar running in the same pod
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -19,10 +20,40 @@ rules:
   - apiGroups: ["authentication.k8s.io"]
     resources: ["tokenreviews"]
     verbs: ["create"]
+  # Required for k8s_psat NodeAttestor to query pod identity during attestation
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
   # Required for node attestation and registration entry management
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list", "watch"]
+  # Required by Controller Manager sidecar to watch and sync ClusterSPIFFEID CRDs
+  - apiGroups: ["spire.spiffe.io"]
+    resources: ["clusterspiffeids", "clusterfederatedtrustdomains", "clusterstaticentries"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["spire.spiffe.io"]
+    resources: ["clusterspiffeids/status", "clusterfederatedtrustdomains/status", "clusterstaticentries/status"]
+    verbs: ["get", "update", "patch"]
+  # Required by Controller Manager sidecar to resolve namespaces for namespaceSelector
+  - apiGroups: [""]
+    resources: ["namespaces", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  # Required by Controller Manager sidecar for leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  # Required by Controller Manager sidecar to manage its webhook certificate
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations"]
+    resourceNames: ["spire-controller-manager-webhook"]
+    verbs: ["update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -64,10 +95,6 @@ rules:
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list"]
-  # Required for k8s_psat NodeAttestor to create token reviews
-  - apiGroups: ["authentication.k8s.io"]
-    resources: ["tokenreviews"]
-    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -82,54 +109,6 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: spire-agent
-    namespace: {{ .Release.Namespace }}
-
----
-# --- SPIRE Controller Manager ---
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: spire-controller-manager
-  namespace: {{ .Release.Namespace }}
-  labels:
-    app: spire-controller-manager
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: spire-controller-manager
-  labels:
-    app: spire-controller-manager
-rules:
-  # Required to watch ClusterSPIFFEID CRDs and sync entries to SPIRE Server
-  - apiGroups: ["spire.spiffe.io"]
-    resources: ["clusterspiffeids"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
-  - apiGroups: ["spire.spiffe.io"]
-    resources: ["clusterspiffeids/status"]
-    verbs: ["get", "update", "patch"]
-  # Required to watch pods for label-based workload matching
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list", "watch"]
-  # Required to resolve namespaces for namespaceSelector
-  - apiGroups: [""]
-    resources: ["namespaces"]
-    verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: spire-controller-manager
-  labels:
-    app: spire-controller-manager
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: spire-controller-manager
-subjects:
-  - kind: ServiceAccount
-    name: spire-controller-manager
     namespace: {{ .Release.Namespace }}
 {{- end }}
 

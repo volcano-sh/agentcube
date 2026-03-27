@@ -15,6 +15,7 @@ data:
         server_port    = "{{ .Values.spire.server.service.port }}"
         socket_path  = "/run/spire/sockets/agent.sock"
         trust_domain = "{{ .Values.spire.trustDomain }}"
+        insecure_bootstrap = true    # NOTE: Bootstrap without pre-existing trust bundle; safe with k8s_psat attestation
     }
 
     plugins {

@@ -132,12 +132,13 @@ SPIRE uses **selectors** to verify workload identity during attestation. When a 
 
 #### SPIRE Server
 
-Deployed as a `StatefulSet` in `agentcube-system`. Key configuration:
+Deployed as a `StatefulSet` in `agentcube-system`. The StatefulSet runs two critical containers: the SPIRE Server itself, and the SPIRE Controller Manager sidecar (which shares the Server's Unix Domain Socket via an `emptyDir` volume). Key SPIRE Server configuration:
 
 ```hcl
 server {
     bind_address = "0.0.0.0"
     bind_port    = "8081"
+    socket_path  = "/tmp/spire-server/private/api.sock"
     trust_domain = "agentcube.local"
     data_dir     = "/run/spire/data"
 
@@ -222,7 +223,12 @@ spec:
 
 #### SPIRE Controller Manager
 
-The [SPIRE Controller Manager](https://github.com/spiffe/spire-controller-manager) is deployed as a `Deployment` alongside the SPIRE Server. It watches for `ClusterSPIFFEID` custom resources and automatically syncs registration entries to the SPIRE Server. This makes workload registration fully declarative and is the recommended approach for production deployments.
+The [SPIRE Controller Manager](https://github.com/spiffe/spire-controller-manager) watches for `ClusterSPIFFEID` custom resources and automatically syncs registration entries to the SPIRE Server. This makes workload registration fully declarative and is the recommended approach for production deployments.
+
+**Architectural Deployment Details:**
+- **Sidecar Pattern:** The Controller Manager must be deployed as a sidecar container operating strictly within the `spire-server` `StatefulSet` pod. This guarantees it has direct, shared-memory-speed filesystem access to the SPIRE Server's private API Domain Socket (`/tmp/spire-server/private/api.sock`).
+- **Shared RBAC:** Running as a sidecar implies it natively shares the `spire-server` Kubernetes ServiceAccount. The corresponding `ClusterRole` must amalgamate all required permissions. For defense-in-depth security, RBAC privileges are strictly scoped (for example, explicitly restricting webhook patching by `resourceNames`).
+- **Validating Webhook Bootstrap:** The Controller Manager natively enforces CRD schema validation via an internal webhook server. To support a seamless "One-Click" Helm installation workflow where CRDs and the Controller are deployed simultaneously, a blank `ValidatingWebhookConfiguration` explicitly configured with `failurePolicy: Ignore` is pre-provisioned via the Helm chart. This actively bypasses the classic "chicken-and-egg" deployment race condition where Kube-Apiserver attempts to validate freshly submitted `ClusterSPIFFEID` CRDs before the sidecar has even finished booting to inject its own dynamic TLS CA bundle.
 
 ### 1.5 Workload Registration
 
@@ -244,8 +250,8 @@ spec:
     matchLabels:
       app: agentcube-router
   namespaceSelector:
-    matchNames:
-      - agentcube-system
+    matchLabels:
+      kubernetes.io/metadata.name: agentcube-system
 ---
 # WorkloadManager registration
 apiVersion: spire.spiffe.io/v1alpha1
@@ -258,8 +264,8 @@ spec:
     matchLabels:
       app: workloadmanager
   namespaceSelector:
-    matchNames:
-      - agentcube-system
+    matchLabels:
+      kubernetes.io/metadata.name: agentcube-system
 ---
 # PicoD registration (namespace-agnostic)
 apiVersion: spire.spiffe.io/v1alpha1

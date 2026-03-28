@@ -322,3 +322,12 @@ build-python-sdk: ## Build Python SDK
 	cp LICENSE sdk-python/LICENSE
 	cd sdk-python && python3 -m build; cd ..; rm -f sdk-python/LICENSE
 	@echo "Build complete. Artifacts are in sdk-python/dist/"
+
+.PHONY: build-python-cli
+build-python-cli: ## Build Python CLI
+	@echo "Building Python CLI..."
+	@tmp_file="$(PROJECT_DIR)/cmd/cli/LICENSE"; \
+	trap 'rm -f "$$tmp_file"' EXIT; \
+	cp LICENSE "$$tmp_file"; \
+	cd cmd/cli && python3 -m build
+	@echo "Build complete. Artifacts are in cmd/cli/dist/"

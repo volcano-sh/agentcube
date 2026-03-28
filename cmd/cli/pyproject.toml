@@ -7,12 +7,11 @@ name = "agentcube-cli"
 version = "0.1.0"
 description = "AgentCube CLI - A developer tool for packaging, building, and deploying AI agents to AgentCube"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
 keywords = ["ai", "agent", "kubernetes", "volcano", "agentcube", "cli"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",

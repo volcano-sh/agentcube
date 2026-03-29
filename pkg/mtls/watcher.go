@@ -1,0 +1,132 @@
+package mtls
+
+import (
+	"crypto/tls"
+	"fmt"
+	"sync"
+
+	"github.com/fsnotify/fsnotify"
+	"k8s.io/klog/v2"
+)
+
+// CertWatcher watches certificate files and reloads them on change.
+// It provides a GetCertificate callback for use with tls.Config.
+type CertWatcher struct {
+	certFile string
+	keyFile  string
+
+	mu   sync.RWMutex
+	cert *tls.Certificate
+	once sync.Once
+
+	watcher *fsnotify.Watcher
+	done    chan struct{}
+}
+
+// NewCertWatcher creates a CertWatcher that monitors the given cert/key files.
+// It loads the initial certificate and starts watching for changes.
+func NewCertWatcher(certFile, keyFile string) (*CertWatcher, error) {
+	cw := &CertWatcher{
+		certFile: certFile,
+		keyFile:  keyFile,
+		done:     make(chan struct{}),
+	}
+
+	// Load initial certificate
+	if err := cw.reload(); err != nil {
+		return nil, fmt.Errorf("initial cert load: %w", err)
+	}
+
+	// Setup file watcher
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, fmt.Errorf("create file watcher: %w", err)
+	}
+	cw.watcher = watcher
+
+	// Watch the cert file (key file is typically updated atomically with cert)
+	if err := watcher.Add(certFile); err != nil {
+		watcher.Close()
+		return nil, fmt.Errorf("watch cert file %s: %w", certFile, err)
+	}
+	if err := watcher.Add(keyFile); err != nil {
+		watcher.Close()
+		return nil, fmt.Errorf("watch key file %s: %w", keyFile, err)
+	}
+
+	go cw.watchLoop()
+	return cw, nil
+}
+
+// GetCertificate returns the current certificate. Safe for concurrent use.
+// This is intended as the tls.Config.GetCertificate callback.
+func (cw *CertWatcher) GetCertificate(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	cw.mu.RLock()
+	defer cw.mu.RUnlock()
+	return cw.cert, nil
+}
+
+// GetClientCertificate returns the current certificate for client TLS.
+// This is intended as the tls.Config.GetClientCertificate callback.
+func (cw *CertWatcher) GetClientCertificate(_ *tls.CertificateRequestInfo) (*tls.Certificate, error) {
+	cw.mu.RLock()
+	defer cw.mu.RUnlock()
+	return cw.cert, nil
+}
+
+// Stop stops the file watcher. Safe to call multiple times.
+func (cw *CertWatcher) Stop() {
+	cw.once.Do(func() {
+		close(cw.done)
+		if cw.watcher != nil {
+			cw.watcher.Close()
+		}
+	})
+}
+
+// reload must not be called while cw.mu is held.
+func (cw *CertWatcher) reload() error {
+	cert, err := tls.LoadX509KeyPair(cw.certFile, cw.keyFile)
+	if err != nil {
+		return err
+	}
+	cw.mu.Lock()
+	cw.cert = &cert
+	cw.mu.Unlock()
+	klog.V(2).Infof("Reloaded TLS certificate from %s", cw.certFile)
+	return nil
+}
+
+func (cw *CertWatcher) watchLoop() {
+	for {
+		select {
+		case event, ok := <-cw.watcher.Events:
+			if !ok {
+				return
+			}
+			// Reload on write or create
+			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+				if err := cw.reload(); err != nil {
+					klog.Errorf("Failed to reload certificate: %v", err)
+				}
+			}
+			// Re-watch after atomic rename (spiffe-helper does atomic rename)
+			if event.Has(fsnotify.Rename) || event.Has(fsnotify.Remove) {
+				_ = cw.watcher.Remove(cw.certFile)
+				if err := cw.watcher.Add(cw.certFile); err != nil {
+					klog.Errorf("Failed to re-watch %s: %v", cw.certFile, err)
+				}
+				if err := cw.reload(); err != nil {
+					klog.Errorf("Failed to reload certificate after rename: %v", err)
+				}
+			}
+		case err, ok := <-cw.watcher.Errors:
+			if !ok {
+				return
+			}
+			klog.Errorf("Certificate watcher error: %v", err)
+		case <-cw.done:
+			return
+		}
+	}
+}

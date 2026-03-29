@@ -36,6 +36,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
+	"github.com/volcano-sh/agentcube/pkg/mtls"
 	"github.com/volcano-sh/agentcube/pkg/workloadmanager"
 )
 
@@ -58,6 +59,12 @@ func main() {
 		tlsCert          = flag.String("tls-cert", "", "Path to TLS certificate file")
 		tlsKey           = flag.String("tls-key", "", "Path to TLS key file")
 		enableAuth       = flag.Bool("enable-auth", false, "Enable Authentication")
+
+		// mTLS flags (certificate source abstraction)
+		mtlsCertSource = flag.String("mtls-cert-source", "", "Certificate source for internal mTLS: 'spire' or 'file' (empty=disabled)")
+		mtlsCertFile   = flag.String("mtls-cert-file", "", "Path to mTLS certificate file (for --mtls-cert-source=file)")
+		mtlsKeyFile    = flag.String("mtls-key-file", "", "Path to mTLS private key file (for --mtls-cert-source=file)")
+		mtlsCAFile     = flag.String("mtls-ca-file", "", "Path to mTLS CA bundle file (for --mtls-cert-source=file)")
 	)
 
 	// Initialize klog flags
@@ -65,6 +72,17 @@ func main() {
 
 	// Parse command line flags
 	flag.Parse()
+
+	// Validate mTLS configuration early (fail fast on bad flags)
+	mTLSCfg := mtls.CertSourceConfig{
+		Source:   mtls.CertSource(*mtlsCertSource),
+		CertFile: *mtlsCertFile,
+		KeyFile:  *mtlsKeyFile,
+		CAFile:   *mtlsCAFile,
+	}
+	if err := mTLSCfg.Validate(); err != nil {
+		klog.Fatalf("Invalid mTLS configuration: %v", err)
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 
@@ -103,6 +121,10 @@ func main() {
 		TLSCert:          *tlsCert,
 		TLSKey:           *tlsKey,
 		EnableAuth:       *enableAuth,
+		MTLSCertSource:   *mtlsCertSource,
+		MTLSCertFile:     *mtlsCertFile,
+		MTLSKeyFile:      *mtlsKeyFile,
+		MTLSCAFile:       *mtlsCAFile,
 	}
 
 	// Create and initialize API server

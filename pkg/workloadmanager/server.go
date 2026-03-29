@@ -62,6 +62,17 @@ type Config struct {
 	SandboxReadyProbeTimeout time.Duration
 	// SandboxReadyProbeInterval is the retry interval for sandbox entrypoint probes.
 	SandboxReadyProbeInterval time.Duration
+
+	// mTLS configuration (certificate source abstraction)
+
+	// MTLSCertSource is the certificate provisioning mode: "spire", "file", or "" (disabled)
+	MTLSCertSource string
+	// MTLSCertFile is the path to the mTLS certificate (--mtls-cert-file)
+	MTLSCertFile string
+	// MTLSKeyFile is the path to the mTLS private key (--mtls-key-file)
+	MTLSKeyFile string
+	// MTLSCAFile is the path to the mTLS CA bundle (--mtls-ca-file)
+	MTLSCAFile string
 }
 
 // NewServer creates a new API server instance

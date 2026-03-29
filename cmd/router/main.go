@@ -25,6 +25,7 @@ import (
 
 	"k8s.io/klog/v2"
 
+	"github.com/volcano-sh/agentcube/pkg/mtls"
 	"github.com/volcano-sh/agentcube/pkg/router"
 )
 
@@ -36,6 +37,12 @@ func main() {
 		tlsKey                = flag.String("tls-key", "", "Path to TLS key file")
 		debug                 = flag.Bool("debug", false, "Enable debug mode")
 		maxConcurrentRequests = flag.Int("max-concurrent-requests", 1000, "Maximum number of concurrent requests that a router server can handle (0 = unlimited)")
+
+		// mTLS flags (certificate source abstraction)
+		mtlsCertSource = flag.String("mtls-cert-source", "", "Certificate source for internal mTLS: 'spire' or 'file' (empty=disabled)")
+		mtlsCertFile   = flag.String("mtls-cert-file", "", "Path to mTLS certificate file (for --mtls-cert-source=file)")
+		mtlsKeyFile    = flag.String("mtls-key-file", "", "Path to mTLS private key file (for --mtls-cert-source=file)")
+		mtlsCAFile     = flag.String("mtls-ca-file", "", "Path to mTLS CA bundle file (for --mtls-cert-source=file)")
 	)
 
 	// Initialize klog flags
@@ -43,6 +50,17 @@ func main() {
 
 	// Parse command line flags
 	flag.Parse()
+
+	// Validate mTLS configuration early (fail fast on bad flags)
+	mTLSCfg := mtls.CertSourceConfig{
+		Source:   mtls.CertSource(*mtlsCertSource),
+		CertFile: *mtlsCertFile,
+		KeyFile:  *mtlsKeyFile,
+		CAFile:   *mtlsCAFile,
+	}
+	if err := mTLSCfg.Validate(); err != nil {
+		klog.Fatalf("Invalid mTLS configuration: %v", err)
+	}
 
 	// Create Router API server configuration
 	config := &router.Config{
@@ -52,6 +70,10 @@ func main() {
 		TLSCert:               *tlsCert,
 		TLSKey:                *tlsKey,
 		MaxConcurrentRequests: *maxConcurrentRequests,
+		MTLSCertSource:        *mtlsCertSource,
+		MTLSCertFile:          *mtlsCertFile,
+		MTLSKeyFile:           *mtlsKeyFile,
+		MTLSCAFile:            *mtlsCAFile,
 	}
 
 	// Create Router API server

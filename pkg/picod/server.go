@@ -30,6 +30,17 @@ import (
 type Config struct {
 	Port      int    `json:"port"`
 	Workspace string `json:"workspace"`
+
+	// mTLS configuration (certificate source abstraction)
+
+	// MTLSCertSource is the certificate provisioning mode: "spire", "file", or "" (disabled)
+	MTLSCertSource string `json:"mtlsCertSource"`
+	// MTLSCertFile is the path to the mTLS certificate (--mtls-cert-file)
+	MTLSCertFile string `json:"mtlsCertFile"`
+	// MTLSKeyFile is the path to the mTLS private key (--mtls-key-file)
+	MTLSKeyFile string `json:"mtlsKeyFile"`
+	// MTLSCAFile is the path to the mTLS CA bundle (--mtls-ca-file)
+	MTLSCAFile string `json:"mtlsCAFile"`
 }
 
 // Server defines the PicoD HTTP server

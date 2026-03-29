@@ -47,4 +47,14 @@ type Config struct {
 
 	// InitialConnectRetryInterval is the delay between preflight retries.
 	InitialConnectRetryInterval time.Duration
+	// mTLS configuration (certificate source abstraction)
+
+	// MTLSCertSource is the certificate provisioning mode: "spire", "file", or "" (disabled)
+	MTLSCertSource string
+	// MTLSCertFile is the path to the mTLS certificate (--mtls-cert-file)
+	MTLSCertFile string
+	// MTLSKeyFile is the path to the mTLS private key (--mtls-key-file)
+	MTLSKeyFile string
+	// MTLSCAFile is the path to the mTLS CA bundle (--mtls-ca-file)
+	MTLSCAFile string
 }

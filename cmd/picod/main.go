@@ -21,6 +21,7 @@ import (
 
 	"k8s.io/klog/v2"
 
+	"github.com/volcano-sh/agentcube/pkg/mtls"
 	"github.com/volcano-sh/agentcube/pkg/picod"
 )
 
@@ -28,13 +29,34 @@ func main() {
 	port := flag.Int("port", 8080, "Port for the PicoD server to listen on")
 	workspace := flag.String("workspace", "", "Root directory for file operations (default: current working directory)")
 
+	// mTLS flags (certificate source abstraction)
+	mtlsCertSource := flag.String("mtls-cert-source", "", "Certificate source for internal mTLS: 'spire' or 'file' (empty=disabled)")
+	mtlsCertFile := flag.String("mtls-cert-file", "", "Path to mTLS certificate file (for --mtls-cert-source=file)")
+	mtlsKeyFile := flag.String("mtls-key-file", "", "Path to mTLS private key file (for --mtls-cert-source=file)")
+	mtlsCAFile := flag.String("mtls-ca-file", "", "Path to mTLS CA bundle file (for --mtls-cert-source=file)")
+
 	// Initialize klog flags
 	klog.InitFlags(nil)
 	flag.Parse()
 
+	// Validate mTLS configuration early (fail fast on bad flags)
+	mTLSCfg := mtls.CertSourceConfig{
+		Source:   mtls.CertSource(*mtlsCertSource),
+		CertFile: *mtlsCertFile,
+		KeyFile:  *mtlsKeyFile,
+		CAFile:   *mtlsCAFile,
+	}
+	if err := mTLSCfg.Validate(); err != nil {
+		klog.Fatalf("Invalid mTLS configuration: %v", err)
+	}
+
 	config := picod.Config{
-		Port:      *port,
-		Workspace: *workspace,
+		Port:           *port,
+		Workspace:      *workspace,
+		MTLSCertSource: *mtlsCertSource,
+		MTLSCertFile:   *mtlsCertFile,
+		MTLSKeyFile:    *mtlsKeyFile,
+		MTLSCAFile:     *mtlsCAFile,
 	}
 
 	// Create and start server

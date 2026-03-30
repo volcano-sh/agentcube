@@ -144,6 +144,33 @@ func TestConfig(t *testing.T) {
 			},
 			description: "TLS enabled but cert/key empty (validation happens in server.go)",
 		},
+		{
+			name: "mTLS file mode configuration",
+			config: Config{
+				Port:           "8080",
+				MTLSCertSource: "file",
+				MTLSCertFile:   "/certs/cert.pem",
+				MTLSKeyFile:    "/certs/key.pem",
+				MTLSCAFile:     "/certs/ca.pem",
+			},
+			description: "mTLS with file-based certificates",
+		},
+		{
+			name: "mTLS spire mode configuration",
+			config: Config{
+				Port:           "8080",
+				MTLSCertSource: "spire",
+			},
+			description: "mTLS with SPIRE-managed certificates (paths use defaults)",
+		},
+		{
+			name: "mTLS disabled (default)",
+			config: Config{
+				Port:           "8080",
+				MTLSCertSource: "",
+			},
+			description: "mTLS disabled - backward compatible",
+		},
 	}
 
 	for _, tt := range tests {
@@ -181,6 +208,18 @@ func TestConfig(t *testing.T) {
 			if decoded.MaxConcurrentRequests != tt.config.MaxConcurrentRequests {
 				t.Errorf("MaxConcurrentRequests not preserved: got %d, want %d",
 					decoded.MaxConcurrentRequests, tt.config.MaxConcurrentRequests)
+			}
+			if decoded.MTLSCertSource != tt.config.MTLSCertSource {
+				t.Errorf("MTLSCertSource not preserved: got %q, want %q", decoded.MTLSCertSource, tt.config.MTLSCertSource)
+			}
+			if decoded.MTLSCertFile != tt.config.MTLSCertFile {
+				t.Errorf("MTLSCertFile not preserved: got %q, want %q", decoded.MTLSCertFile, tt.config.MTLSCertFile)
+			}
+			if decoded.MTLSKeyFile != tt.config.MTLSKeyFile {
+				t.Errorf("MTLSKeyFile not preserved: got %q, want %q", decoded.MTLSKeyFile, tt.config.MTLSKeyFile)
+			}
+			if decoded.MTLSCAFile != tt.config.MTLSCAFile {
+				t.Errorf("MTLSCAFile not preserved: got %q, want %q", decoded.MTLSCAFile, tt.config.MTLSCAFile)
 			}
 		})
 	}

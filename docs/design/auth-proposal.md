@@ -22,7 +22,7 @@ These gaps amount to three distinct problems:
 
 - **Internal (machine-to-machine):** Components trust each other implicitly based on network reachability. A compromised or rogue pod on the same network can impersonate any component.
 - **External (user-to-platform):** Anyone who can reach the Router endpoint can invoke sandboxes, with no identity verification and no audit trail.
-- **Authorization:** Even where authentication exists, there is no mechanism to control what an authenticated identity is allowed to do. There are no roles, no permission checks, and no namespace-scoped access control.
+- **Authorization & Isolation:** Even where authentication exists, there is no mechanism to control what an authenticated identity is allowed to do. There are no roles, no permission checks, no namespace-scoped access control, and no resource-level tenant isolation (preventing User A from invoking User B's sandbox).
 
 This proposal addresses all three problems using CNCF industry-standard tooling.
 
@@ -31,6 +31,7 @@ This proposal addresses all three problems using CNCF industry-standard tooling.
 - Establish zero-trust, mutually authenticated communication between all AgentCube internal components (Router, WorkloadManager, PicoD) using X.509 mTLS.
 - Provide external client/SDK authentication at the Router level via an industry-standard identity provider.
 - Implement role-based access control (RBAC) for external users using Keycloak's built-in authorization capabilities.
+- Enforce resource-level tenant isolation to guarantee users can only access sandboxes they created or that are shared with their group.
 - Keep all new auth features opt-in behind configuration flags so existing deployments are unaffected.
 - Minimize per-request latency overhead from authentication and authorization.
 - Supersede the existing PicoD-Plain-Authentication key distribution mechanism with automated certificate lifecycle management.
@@ -76,19 +77,20 @@ Internal communication between AgentCube components is secured using mutual TLS 
 Configuration flags for each component:
 
 ```
---tls-cert-source=spire|file    (default: spire)
---tls-cert-file=<path>          (for file mode)
---tls-key-file=<path>           (for file mode)
---tls-ca-file=<path>            (for file mode)
+--mtls-cert-file=<path>          
+--mtls-key-file=<path>           
+--mtls-ca-file=<path>            
 ```
 
-When `--tls-cert-source=file` is used, the cert/key/CA files can be populated by any mechanism - for example, a Kubernetes Secret mounted as a volume (managed by cert-manager), or static files for development. The mTLS enforcement (requiring client certs, verifying peer identity) is identical in both modes.
+The application simply loads the certificates directly from the paths provided via the `mtls-*-file` CLI flags.
+
+These cert/key/CA files can be populated on disk by any mechanism - for example, the SPIFFE Helper sidecar syncing SVIDs to disk, a Kubernetes Secret mounted as a volume (managed by cert-manager), or static files for development. The mTLS enforcement (requiring client certs, verifying peer identity) is identical in all cases.
 
 ### 1.1 SPIRE Background
 
 [SPIFFE](https://spiffe.io/) (Secure Production Identity Framework for Everyone) is a CNCF graduated project that provides a standard for service identity. It defines:
 
-- **SPIFFE ID:** A URI-formatted identity, e.g., `spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-router`
+- **SPIFFE ID:** A URI-formatted identity, e.g., `spiffe://cluster.local/ns/agentcube-system/sa/agentcube-router`
 - **SVID (SPIFFE Verifiable Identity Document):** An X.509 certificate or JWT that proves a workload holds a given SPIFFE ID.
 
 [SPIRE](https://spiffe.io/docs/latest/spire-about/spire-concepts/) is the production implementation of SPIFFE. It has two components:
@@ -111,7 +113,7 @@ This design uses a single-cluster SPIRE deployment with one SPIRE Server and a s
 All AgentCube components operate under a single trust domain:
 
 ```
-spiffe://agentcube.local
+spiffe://cluster.local
 ```
 
 Each component receives a unique SPIFFE ID following the Istio-convention format `spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>`, which encodes the workload's Kubernetes namespace and service account directly in the URI path.
@@ -120,9 +122,9 @@ SPIRE uses **selectors** to verify workload identity during attestation. When a 
 
 | Component | SPIFFE ID | Selectors |
 |---|---|---|
-| Router | `spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-router` | `k8s:ns:agentcube-system`, `k8s:sa:agentcube-router` |
-| WorkloadManager | `spiffe://agentcube.local/ns/agentcube-system/sa/workloadmanager` | `k8s:ns:agentcube-system`, `k8s:sa:workloadmanager` |
-| PicoD (Sandboxes) | `spiffe://agentcube.local/sa/agentcube-sandbox` | `k8s:pod-label:app:picod`, `k8s:sa:agentcube-sandbox` |
+| Router | `spiffe://cluster.local/ns/agentcube-system/sa/agentcube-router` | `k8s:ns:agentcube-system`, `k8s:sa:agentcube-router` |
+| WorkloadManager | `spiffe://cluster.local/ns/agentcube-system/sa/workloadmanager` | `k8s:ns:agentcube-system`, `k8s:sa:workloadmanager` |
+| PicoD (Sandboxes) | `spiffe://cluster.local/sa/agentcube-sandbox` | `k8s:pod-label:app:picod`, `k8s:sa:agentcube-sandbox` |
 
 > **Note:** PicoD cannot use a namespace selector because sandbox pods are created in the namespace specified by the user's request, not in a fixed namespace. To prevent identity spoofing in multi-tenant clusters, PicoD registration requires both the `app:picod` pod label and a dedicated `agentcube-sandbox` ServiceAccount. WorkloadManager creates this ServiceAccount in the target namespace as part of sandbox provisioning. Using a specific ServiceAccount requires RBAC permission, preventing arbitrary workloads from obtaining the PicoD SPIFFE ID.
 >
@@ -139,7 +141,7 @@ server {
     bind_address = "0.0.0.0"
     bind_port    = "8081"
     socket_path  = "/tmp/spire-server/private/api.sock"
-    trust_domain = "agentcube.local"
+    trust_domain = "cluster.local"
     data_dir     = "/run/spire/data"
 
     ca_ttl                = "24h"
@@ -245,7 +247,7 @@ kind: ClusterSPIFFEID
 metadata:
   name: agentcube-router
 spec:
-  spiffeIDTemplate: "spiffe://agentcube.local/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  spiffeIDTemplate: "spiffe://cluster.local/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
   podSelector:
     matchLabels:
       app: agentcube-router
@@ -257,9 +259,9 @@ spec:
 apiVersion: spire.spiffe.io/v1alpha1
 kind: ClusterSPIFFEID
 metadata:
-  name: agentcube-workload-manager
+  name: workloadmanager
 spec:
-  spiffeIDTemplate: "spiffe://agentcube.local/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  spiffeIDTemplate: "spiffe://cluster.local/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
   podSelector:
     matchLabels:
       app: workloadmanager
@@ -273,7 +275,7 @@ kind: ClusterSPIFFEID
 metadata:
   name: agentcube-sandbox
 spec:
-  spiffeIDTemplate: "spiffe://agentcube.local/sa/{{ .PodSpec.ServiceAccountName }}"
+  spiffeIDTemplate: "spiffe://cluster.local/sa/{{ .PodSpec.ServiceAccountName }}"
   podSelector:
     matchLabels:
       app: picod
@@ -286,22 +288,22 @@ For local development (e.g., `kind` clusters), registration entries can be creat
 ```bash
 kubectl exec -n agentcube-system <spire-server-pod> -- \
   spire-server entry create \
-    -spiffeID spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-router \
-    -parentID spiffe://agentcube.local/spire-agent \
+    -spiffeID spiffe://cluster.local/ns/agentcube-system/sa/agentcube-router \
+    -parentID spiffe://cluster.local/spire-agent \
     -selector k8s:ns:agentcube-system \
     -selector k8s:sa:agentcube-router
 
 kubectl exec -n agentcube-system <spire-server-pod> -- \
   spire-server entry create \
-    -spiffeID spiffe://agentcube.local/ns/agentcube-system/sa/workloadmanager \
-    -parentID spiffe://agentcube.local/spire-agent \
+    -spiffeID spiffe://cluster.local/ns/agentcube-system/sa/workloadmanager \
+    -parentID spiffe://cluster.local/spire-agent \
     -selector k8s:ns:agentcube-system \
     -selector k8s:sa:workloadmanager
 
 kubectl exec -n agentcube-system <spire-server-pod> -- \
   spire-server entry create \
-    -spiffeID spiffe://agentcube.local/sa/agentcube-sandbox \
-    -parentID spiffe://agentcube.local/spire-agent \
+    -spiffeID spiffe://cluster.local/sa/agentcube-sandbox \
+    -parentID spiffe://cluster.local/spire-agent \
     -selector k8s:pod-label:app:picod \
     -selector k8s:sa:agentcube-sandbox
 ```
@@ -313,10 +315,66 @@ kubectl exec -n agentcube-system <spire-server-pod> -- \
 1. Router process connects to the local SPIRE Agent via `/run/spire/sockets/agent.sock`
 2. Agent identifies the calling process via PID and queries the kubelet for pod metadata (namespace, service account, labels)
 3. Agent matches the discovered selectors against registration entries fetched from the Server
-4. Match found → Agent issues an X.509 SVID with `spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-router` as URI SAN
+4. Match found → Agent issues an X.509 SVID with `spiffe://cluster.local/ns/agentcube-system/sa/agentcube-router` as URI SAN
 5. Router receives a TLS certificate, private key, and trust bundle - ready to serve and initiate mTLS
 
-### 1.6 mTLS Integration
+### 1.6 File-Based Provisioning (cert-manager)
+
+While SPIRE handles identity attestation dynamically, file-based provisioning relies on static Kubernetes Secrets. [cert-manager](https://cert-manager.io/) is the recommended implementation for this mode. It explicitly demonstrates that the architecture is fully certificate-source agnostic.
+
+Administrators declaratively provision SPIFFE-compliant certificates by defining a `Certificate` CRD that explicitly maps the required `uris` field to the Istio-convention SPIFFE ID defined in Section 1.3:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: agentcube-router-cert
+  namespace: agentcube-system
+spec:
+  secretName: router-mtls-secret
+  duration: 2160h # 90 days
+  renewBefore: 360h # 15 days
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always # Critical: Generates a new private key on every renewal for forward secrecy
+  usages:
+    - server auth
+    - client auth
+  # Optional: dnsNames are not strictly required for SPIFFE identity verification, 
+  # but are included to maintain standard HTTPS service discovery compatibility.
+  dnsNames:
+    - agentcube-router.agentcube-system.svc.cluster.local
+  uris:
+    - spiffe://cluster.local/ns/agentcube-system/sa/agentcube-router
+  issuerRef:
+    # Must be a CA or Vault issuer that natively injects the 'ca.crt' field into the resulting Secret
+    name: internal-ca-issuer
+    kind: ClusterIssuer
+```
+
+cert-manager continuously monitors this CRD, automatically signs the requested certificate using the cluster's internal CA, and manages the resulting `router-mtls-secret` Secret on disk. The administrator simply mounts this Secret into the AgentCube pod and passes the mapped paths directly into the component's CLI flags:
+
+```yaml
+      containers:
+      - name: router
+        args:
+        - "--mtls-cert-file=/etc/agentcube/certs/tls.crt"
+        - "--mtls-key-file=/etc/agentcube/certs/tls.key"
+        - "--mtls-ca-file=/etc/agentcube/certs/ca.crt"
+        volumeMounts:
+        - name: mtls-certs
+          mountPath: "/etc/agentcube/certs"
+          readOnly: true
+      volumes:
+      - name: mtls-certs
+        secret:
+          secretName: router-mtls-secret
+```
+
+This fully satisfies the underlying identity requirements without deploying any SPIRE infrastructure. However, operators should carefully weigh the security tradeoff: file-based `cert-manager` systems generally rely on slower, static renewal cycles (e.g., 90 days), whereas SPIRE natively provides highly dynamic, short-lived SVID rotation (1 hour TTL).
+
+### 1.7 mTLS Integration
 
 Each component needs two changes: configure its server to require client certificates, and configure its clients to present its own certificate while verifying the server's. The mTLS implementation uses Go's standard `crypto/tls` package - no external libraries are required.
 
@@ -334,13 +392,26 @@ caPool.AppendCertsFromPEM(caCert)
 
 #### Server-Side (WorkloadManager, PicoD)
 
-WorkloadManager and PicoD require incoming connections to present a valid client certificate signed by the trusted CA:
+WorkloadManager and PicoD require incoming connections to present a valid client certificate signed by the trusted CA, **and** explicitly verify the client's SPIFFE ID encoded in the URI SAN field:
 
 ```go
 serverTLSConfig := &tls.Config{
     Certificates: []tls.Certificate{cert},
     ClientCAs:    caPool,
     ClientAuth:   tls.RequireAndVerifyClientCert,
+    VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+        // The stdlib already verified the chain against our CA pool.
+        // verifiedChains[0][0] is the peer certificate.
+        peerCert := verifiedChains[0][0]
+        
+        // Extract SPIFFE ID from URI SANs to verify identity
+        for _, uri := range peerCert.URIs {
+            if uri.String() == "spiffe://cluster.local/ns/agentcube-system/sa/agentcube-router" {
+                return nil // Identity confirmed
+            }
+        }
+        return fmt.Errorf("unauthorized caller: expected Router SPIFFE ID")
+    },
 }
 
 server := &http.Server{
@@ -350,12 +421,31 @@ server := &http.Server{
 
 #### Client-Side (Router)
 
-The Router presents its own certificate when connecting to WorkloadManager and PicoD, and verifies the server's certificate against the trusted CA:
+The Router presents its own certificate when connecting to WorkloadManager and PicoD, and verifies the server's certificate against the trusted CA **and** its SPIFFE ID:
 
 ```go
 clientTLSConfig := &tls.Config{
     Certificates: []tls.Certificate{cert},
     RootCAs:      caPool,
+    // When connecting via internal IP/DNS, we must manually verify the URI SAN (SPIFFE ID)
+    InsecureSkipVerify: true, 
+    VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+        peerCert, err := x509.ParseCertificate(rawCerts[0])
+        if err != nil { return err }
+
+        // 1. Manually verify against our CA pool
+        opts := x509.VerifyOptions{ Roots: caPool }
+        if _, err := peerCert.Verify(opts); err != nil { return err }
+
+        // 2. Verify SPIFFE ID (URI SAN)
+        expectedSpiffeID := "spiffe://cluster.local/ns/agentcube-system/sa/workloadmanager" // or picod
+        for _, uri := range peerCert.URIs {
+            if uri.String() == expectedSpiffeID {
+                return nil // Identity confirmed
+            }
+        }
+        return fmt.Errorf("server certificate does not match expected SPIFFE ID")
+    },
 }
 
 httpClient := &http.Client{
@@ -373,9 +463,9 @@ The cert/key/CA files can be provisioned by any mechanism:
 
 *(Note: WorkloadManager manages PicoD pods via the Kubernetes API, so it does not make direct HTTP requests to PicoD and does not need a PicoD client mTLS configuration.)*
 
-This replaces the existing `PICOD_AUTH_PUBLIC_KEY` environment variable mechanism as the new default. The legacy mechanism is retained behind a flag during transition (see Section 1.9).
+This replaces the existing `PICOD_AUTH_PUBLIC_KEY` environment variable mechanism as the new default. The legacy mechanism is retained behind a flag during transition (see Section 1.10).
 
-### 1.7 Communication Channel Summary
+### 1.8 Communication Channel Summary
 
 **Before:**
 
@@ -391,11 +481,11 @@ WorkloadManager → PicoD:   (No direct HTTP calls, managed via K8s API)
 ```
 SDK → Router:              HTTPS + Keycloak JWT (see Section 2)
 Router → WorkloadManager:  mTLS (X.509 certs via SPIRE or file-based)
-Router → PicoD:            mTLS (X.509 certs via SPIRE or file-based)
+Router → PicoD:            mTLS + Keycloak JWT (OAuth 2.0 Token Exchange)
 WorkloadManager → PicoD:   (No direct HTTP calls, managed via K8s API)
 ```
 
-### 1.8 Architecture Overview
+### 1.9 Architecture Overview
 
 ```mermaid
 graph LR
@@ -403,7 +493,7 @@ graph LR
         SDK[SDK Client]
     end
 
-    subgraph "agentcube.local cluster"
+    subgraph "cluster.local cluster"
         subgraph "SPIRE Infrastructure"
             SS[SPIRE Server]
             SA1[SPIRE Agent - Node 1]
@@ -411,10 +501,10 @@ graph LR
         end
 
         subgraph "AgentCube Components"
-            R["Router<br/>spiffe://agentcube.local/ns/agentcube-system/sa/agentcube-router"]
-            WM["WorkloadManager<br/>spiffe://agentcube.local/ns/agentcube-system/sa/workloadmanager"]
-            P1["PicoD Sandbox 1<br/>spiffe://agentcube.local/sa/agentcube-sandbox"]
-            P2["PicoD Sandbox 2<br/>spiffe://agentcube.local/sa/agentcube-sandbox"]
+            R["Router<br/>spiffe://cluster.local/ns/agentcube-system/sa/agentcube-router"]
+            WM["WorkloadManager<br/>spiffe://cluster.local/ns/agentcube-system/sa/workloadmanager"]
+            P1["PicoD Sandbox 1<br/>spiffe://cluster.local/sa/agentcube-sandbox"]
+            P2["PicoD Sandbox 2<br/>spiffe://cluster.local/sa/agentcube-sandbox"]
         end
     end
 
@@ -431,9 +521,9 @@ graph LR
     R <-->|mTLS| P2
 ```
 
-> **Note:** The architecture diagram above shows the SPIRE-based deployment. When using file-based certificates (`--tls-cert-source=file`), the SPIRE Infrastructure components are not deployed; certificates are provisioned externally and mounted into pods. The mTLS connections between AgentCube components remain the same.
+> **Note:** The architecture diagram above shows a SPIRE-based deployment. When relying entirely on externally provisioned file-based certificates (like cert-manager), the SPIRE Infrastructure components are not deployed; certificates are instead mounted directly into the pods. The mTLS enforcement between AgentCube components remains exactly the same.
 
-### 1.9 Impact on Existing PicoD-Plain-Authentication
+### 1.10 Impact on Existing PicoD-Plain-Authentication
 
 The X.509 mTLS approach supersedes the PicoD-Plain-Authentication design:
 
@@ -471,7 +561,7 @@ sequenceDiagram
     Note over SDK, KC: Authentication (client_credentials grant)
     SDK->>KC: POST /realms/agentcube/protocol/openid-connect/token<br/>grant_type=client_credentials<br/>client_id=agentcube-sdk&client_secret=<secret>
     KC->>KC: Validate client_id and client_secret<br/>against registered client in agentcube realm
-    KC-->>SDK: Access Token (JWT with sub, roles, exp)
+    KC-->>SDK: Access Token (JWT with sub, roles, aud: agentcube-router)
 
     Note over Router, KC: JWKS Cache (periodic, e.g. every 5 min)
     Router->>KC: GET /realms/agentcube/protocol/openid-connect/certs
@@ -485,9 +575,16 @@ sequenceDiagram
     Router->>Router: Check role authorization
 
     alt Valid token + authorized role
-        Router->>WM: Forward (mTLS)<br/>X-AgentCube-User-ID, X-AgentCube-User-Roles
+        Note over Router, KC: Token Exchange (RFC 8693)
+        Router->>KC: POST /token<br/>grant_type=urn:ietf:params:oauth:grant-type:token-exchange<br/>subject_token=<sdk_jwt><br/>audience=workloadmanager,picod
+        KC->>KC: Validate Router client & exchange permissions
+        KC-->>Router: Exchanged JWT (sub=SDK_User, aud=[WorkloadManager, PicoD])
+
+        Router->>WM: Forward (mTLS)<br/>Authorization: Bearer <exchanged_jwt>
+        WM->>WM: Validate Exchanged JWT via cached JWKS
         WM->>WM: Create sandbox via K8s API
-        Router->>Sandbox: Proxy to sandbox (mTLS)
+        Router->>Sandbox: Proxy to sandbox (mTLS)<br/>Authorization: Bearer <exchanged_jwt>
+        Sandbox->>Sandbox: Validate Exchanged JWT via cached JWKS
         Sandbox-->>Router: Response
         Router-->>SDK: Response + x-agentcube-session-id
     else Invalid/expired token
@@ -504,15 +601,18 @@ Keycloak is deployed as a `Deployment` in `agentcube-system`. A dedicated realm 
 - **Clients:**
   - `agentcube-sdk` - Confidential client for SDK access. Supports `client_credentials` grant for service accounts and `authorization_code` for interactive users.
   - `agentcube-admin` - Client for administrative operations.
+  - `agentcube-router` - Internal service client. Must be configured with Token Exchange policies allowing it to exchange incoming tokens for downstream internal services.
+  - `workloadmanager` - Internal service client acting as a downstream audience for exchanged tokens.
+  - `picod` - Internal service client acting as a downstream audience for the agent runtime.
 
 - **Roles:**
   - `sandbox:invoke` - Permission to invoke agent runtimes and code interpreters.
   - `sandbox:manage` - Permission to create/delete AgentRuntime and CodeInterpreter CRDs.
   - `admin` - Full administrative access.
 
-### 2.4 Router JWT Validation
+### 2.4 Token Validation
 
-The Router validates Keycloak-issued JWTs using standard OIDC token verification:
+The Router, WorkloadManager, and PicoD all validate Keycloak-issued JWTs using standard OIDC token verification:
 
 ```go
 type KeycloakConfig struct {
@@ -571,34 +671,33 @@ Token lifecycle is handled automatically by the SDK, but differs by authenticati
 - **`ServiceAccountAuth` (`client_credentials` grant):** No refresh token is issued by Keycloak for this grant type. When the access token expires, the SDK re-authenticates by repeating the client credentials exchange using the configured `client_id` and `client_secret`.
 - **`TokenAuth` (pre-obtained token):** The SDK uses the provided token as-is. The caller is responsible for providing a valid, non-expired token. This supports tokens obtained through any flow, including `authorization_code` (e.g., from a web application or CLI tool that performed the interactive login).
 
-### 2.6 User Identity Propagation
+### 2.6 User Identity Propagation (OAuth 2.0 Token Exchange)
 
 With mTLS on the Router→WorkloadManager channel, the Router is the only authenticated caller from WorkloadManager's perspective. Without explicit identity forwarding, all sandbox operations would be attributed to the Router's workload identity, losing the end-user context needed for ownership tracking and audit logging.
 
-The Router solves this by extracting user context from the validated Keycloak JWT and forwarding it as trusted HTTP headers over the mTLS channel:
+To securely pass this identity, AgentCube uses **OAuth 2.0 Token Exchange (RFC 8693)** rather than easily spoofed custom HTTP headers.
 
-```
-Router → WorkloadManager (mTLS):
-  X-AgentCube-User-ID: user-123
-  X-AgentCube-User-Roles: sandbox:invoke
-```
+**Token Exchange Workflow:**
 
-**Why WorkloadManager can trust these headers:**
+1. **Router Validates User:** The Router receives and fully validates the `agentcube-sdk` JWT to confirm the identity and permissions of the end-user.
+2. **Keycloak Exchange Call:** The Router makes a back-channel `POST /token` request to Keycloak using the `urn:ietf:params:oauth:grant-type:token-exchange` grant type. It presents its own client credentials and passes the incoming user JWT as the `subject_token`, requesting internal downstream services as the audience (e.g., `audience=workloadmanager picod`).
+3. **Exchanged Token Issued:** Keycloak validates the Router's permissions to exchange the token and issues a new "downstream" JWT. Crucially, this new JWT cryptographically binds two identities:
+    - `sub`: The original end-user (e.g., `user-123`).
+    - `act`: The actor (the Router) making the call on the user's behalf.
+    - `aud`: The downstream services (`workloadmanager`, `picod`).
+4. **Header Injection:** The Router forwards the request over the mTLS channel to both the WorkloadManager and the target Sandbox, injecting `Authorization: Bearer <exchanged_jwt>`.
 
-The mTLS channel cryptographically guarantees that only the Router (verified via its X.509 certificate) can send requests to WorkloadManager. No other workload can inject or spoof these headers because it cannot establish an mTLS connection with WorkloadManager's expected peer identity.
+**Downstream Validation (WorkloadManager & Agent Runtime):**
 
-**WorkloadManager behavior:**
-
-1. **Verify caller identity:** Confirm the mTLS peer is the Router (via its certificate).
-2. **Extract user context:** Read `X-AgentCube-User-ID` and `X-AgentCube-User-Roles` from request headers.
-3. **Sandbox ownership:** Tag created sandboxes with the user ID for ownership tracking (e.g., as a Kubernetes label or annotation on the sandbox pod).
-4. **Audit logging:** Log the user ID alongside all sandbox operations for traceability.
-5. **Kubernetes API calls:** Use WorkloadManager's **own** ServiceAccount for all K8s API interactions (not the end user's). The end user is a Keycloak identity, not a Kubernetes ServiceAccount.
-6. **No re-authorization:** WorkloadManager does not re-evaluate roles. The Router has already enforced authorization before forwarding the request.
+1. **Verify Caller:** Confirm the mTLS peer is the Router (via its SPIRE/file-based certificate).
+2. **Verify JWT:** Validate the exchanged JWT's signature via locally cached JWKS.
+3. **Extract Context:** Read the `sub` claim. For the WorkloadManager, this is used for sandbox ownership tracking. For the Agent Runtime, this allows the executing code to know exactly which user triggered it and pass the token to external APIs.
+4. **Kubernetes API (WorkloadManager only):** Use WorkloadManager's **own** ServiceAccount for K8s API interactions (not the end user's). The end user is a Keycloak identity, not a Kubernetes ServiceAccount.
+5. **No re-authorization:** They do not re-evaluate user roles. The Router has already enforced authorization before forwarding the request.
 
 **Transition from current model:**
 
-Today, when `EnableAuth` is true, the Router forwards the caller's Kubernetes ServiceAccount token and WorkloadManager validates it via TokenReview. With Keycloak, external users are Keycloak identities (`sub: user-123`), not Kubernetes ServiceAccounts, so the TokenReview-based flow is replaced by the trusted header approach described above.
+Today, when `EnableAuth` is true, the Router forwards the caller's Kubernetes ServiceAccount token and WorkloadManager validates it via TokenReview. With Keycloak and Token Exchange, external users are Keycloak identities, so the TokenReview-based flow is fully replaced by Keycloak JWT validation.
 
 ### 2.7 Backward Compatibility
 
@@ -680,6 +779,20 @@ func AuthzMiddleware(requiredRole string) gin.HandlerFunc {
 ### 3.5 Namespace Scoping
 
 For multi-tenant deployments where users should only access sandboxes in specific namespaces, Keycloak's protocol mappers can inject custom claims (e.g., `allowed_namespaces`) into the JWT. The Router would then check the target namespace in the request URL against the user's permitted namespaces from the token claims. This is still a local check from the JWT with no additional calls to Keycloak.
+
+### 3.6 Resource-Level Access Control (Creator/Group Isolation)
+
+While Role-Based Access Control (Section 3.2) determines if a user *can* invoke sandboxes in general, we must also ensure that users cannot invoke specific sandboxes belonging to others unless explicitly shared.
+
+To enforce this resource-level tenant isolation:
+
+1. **Creation Tagging:** When WorkloadManager creates an `AgentRuntime` or `CodeInterpreter`, it reads the `sub` (user ID) and optionally the `groups` claim from the exchanged Keycloak JWT. It applies these as immutable labels on the generated Kubernetes CRDs and Pods (e.g., `agentcube.io/owner: user-123`, `agentcube.io/group: engineering`).
+2. **Invocation Enforcement:** Before proxying an invocation request, the Router performs a quick resource lookup against the target sandbox. It compares the caller's JWT claims against the resource's labels:
+   - If the caller's `sub` matches the `owner` label $\rightarrow$ **Allow**
+   - If the caller's `groups` claim contains the sandbox's `group` label $\rightarrow$ **Allow**
+   - Otherwise $\rightarrow$ **Deny (403 Forbidden)**
+
+This guarantees fine-grained tenant isolation, ensuring a compromised token or rogue user cannot interact with another tenant's active sandbox.
 
 ---
 

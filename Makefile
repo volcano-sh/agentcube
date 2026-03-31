@@ -319,6 +319,8 @@ e2e-clean:
 .PHONY: build-python-sdk
 build-python-sdk: ## Build Python SDK
 	@echo "Building Python SDK..."
-	cp LICENSE sdk-python/LICENSE
-	cd sdk-python && python3 -m build; cd ..; rm -f sdk-python/LICENSE
+	@tmp_file="$(PROJECT_DIR)/sdk-python/LICENSE"; \
+	trap 'rm -f "$$tmp_file"' EXIT; \
+	cp LICENSE "$$tmp_file"; \
+	cd sdk-python && python3 -m build
 	@echo "Build complete. Artifacts are in sdk-python/dist/"

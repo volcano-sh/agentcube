@@ -134,94 +134,15 @@ SPIRE uses **selectors** to verify workload identity during attestation. When a 
 
 #### SPIRE Server
 
-Deployed as a `StatefulSet` in `agentcube-system`. The StatefulSet runs two critical containers: the SPIRE Server itself, and the SPIRE Controller Manager sidecar (which shares the Server's Unix Domain Socket via an `emptyDir` volume). Key SPIRE Server configuration:
-
-```hcl
-server {
-    bind_address = "0.0.0.0"
-    bind_port    = "8081"
-    socket_path  = "/tmp/spire-server/private/api.sock"
-    trust_domain = "cluster.local"
-    data_dir     = "/run/spire/data"
-
-    ca_ttl                = "24h"
-    default_x509_svid_ttl = "1h"
-}
-
-plugins {
-    DataStore "sql" {
-        plugin_data {
-            database_type     = "sqlite3"
-            connection_string = "/run/spire/data/datastore.sqlite3"
-        }
-    }
-
-    NodeAttestor "k8s_psat" {
-        plugin_data {
-            clusters = {
-                "agentcube-cluster" = {
-                    service_account_allow_list = [
-                        "agentcube-system:spire-agent"
-                    ]
-                }
-            }
-        }
-    }
-
-    KeyManager "disk" {
-        plugin_data {
-            keys_path = "/run/spire/data/keys.json"
-        }
-    }
-}
-```
-
-- **Node Attestor `k8s_psat`:** Uses Kubernetes Projected Service Account Tokens to verify agent node identity. This is the recommended attestor for Kubernetes-native deployments.
-- **SVID TTL of 1 hour:** Short-lived certificates limit the blast radius of a compromise. SPIRE renews them transparently.
-- **SQLite datastore:** Sufficient for single-server deployment. Can be swapped for PostgreSQL in HA setups.
+Deployed as a `StatefulSet` in `agentcube-system`. The StatefulSet runs two critical containers: the SPIRE Server itself, and the SPIRE Controller Manager sidecar. 
+* It is configured to use the **`k8s_psat` Node Attestor** to verify agent node identity via Projected Service Account Tokens.
+* The default X.509 **SVID TTL is configured to 1 hour** to limit the blast radius of compromised keys and enforce rapid, transparent auto-renewal.
 
 #### SPIRE Agent
 
-Deployed as a `DaemonSet` - one agent per node. Each agent:
-
-1. Attests to the SPIRE Server using its node's Projected Service Account Token
-2. Exposes the Workload API at `/run/spire/sockets/agent.sock`
-3. Uses the `k8s` workload attestor to verify workload identity by querying the local kubelet for pod metadata
-
-```yaml
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: spire-agent
-  namespace: agentcube-system
-spec:
-  selector:
-    matchLabels:
-      app: spire-agent
-  template:
-    metadata:
-      labels:
-        app: spire-agent
-    spec:
-      serviceAccountName: spire-agent
-      containers:
-        - name: spire-agent
-          image: ghcr.io/spiffe/spire-agent:1.12.0
-          args: ["-config", "/run/spire/config/agent.conf"]
-          volumeMounts:
-            - name: spire-agent-socket
-              mountPath: /run/spire/sockets
-            - name: spire-config
-              mountPath: /run/spire/config
-      volumes:
-        - name: spire-agent-socket
-          hostPath:
-            path: /run/spire/sockets
-            type: DirectoryOrCreate
-        - name: spire-config
-          configMap:
-            name: spire-agent-config
-```
+Deployed as a `DaemonSet` (one agent per node). Each agent:
+1. Exposes the Workload API socket locally at `/run/spire/sockets/agent.sock`.
+2. Uses the native **`k8s` Workload Attestor** to verify workload identity securely by querying the local kubelet for pod metadata (namespaces, labels, service accounts).
 
 #### SPIRE Controller Manager
 

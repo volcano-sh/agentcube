@@ -153,6 +153,12 @@ The [SPIRE Controller Manager](https://github.com/spiffe/spire-controller-manage
 - **Shared RBAC:** Running as a sidecar implies it natively shares the `spire-server` Kubernetes ServiceAccount. The corresponding `ClusterRole` must amalgamate all required permissions. For defense-in-depth security, RBAC privileges are strictly scoped (for example, explicitly restricting webhook patching by `resourceNames`).
 - **Validating Webhook Bootstrap:** The Controller Manager natively enforces CRD schema validation via an internal webhook server. To support a seamless "One-Click" Helm installation workflow where CRDs and the Controller are deployed simultaneously, a blank `ValidatingWebhookConfiguration` explicitly configured with `failurePolicy: Ignore` is pre-provisioned via the Helm chart. This actively bypasses the classic "chicken-and-egg" deployment race condition where Kube-Apiserver attempts to validate freshly submitted `ClusterSPIFFEID` CRDs before the sidecar has even finished booting to inject its own dynamic TLS CA bundle.
 
+**End-to-End Identity Workflow:**
+To clarify how Node and Workload registration coordinate in this architecture:
+1. **Node Registration (Self-Registration):** The SPIRE Agent boots on a worker node and *automatically self-registers* to the SPIRE Server by presenting its Kubernetes PSAT (Projected Service Account Token) to prove it is a legitimate node.
+2. **Workload Registration (Controller):** The cluster admin (or Helm chart) applies `ClusterSPIFFEID` CRDs. The Controller Manager watches these and translates them into registration entries on the SPIRE Server API (e.g., "pods with `app: picod` are allowed to get this SPIFFE ID").
+3. **Workload Attestation (Delivery):** When a pod boots, its `spiffe-helper` sidecar connects to the local SPIRE Agent. The Agent queries the Kubelet to verify the pod's labels and ServiceAccount, matches them against the Controller's registered rules, and mints the SVID certificate.
+
 ### 1.5 Workload Registration
 
 Registration entries tell the SPIRE Server which workloads should receive which SPIFFE IDs. There are two approaches depending on the environment:
@@ -239,6 +245,11 @@ kubectl exec -n agentcube-system <spire-server-pod> -- \
 4. Match found → Agent issues an X.509 SVID with `spiffe://cluster.local/ns/agentcube-system/sa/agentcube-router` as URI SAN
 5. Router receives a TLS certificate, private key, and trust bundle - ready to serve and initiate mTLS
 
+> **Latency Considerations for Sandbox Provisioning:**
+> For long-lived control plane components (Router, WorkloadManager), attestation latency is negligible since it occurs once at boot. For short-lived PicoD sandboxes, the `spiffe-helper` sidecar fetches the SVID **concurrently** with PicoD's own container initialization, so attestation (~200-500ms) overlaps with pod startup rather than blocking it sequentially.
+>
+> For high-throughput scenarios (e.g., agentic RL training loops) where even concurrent attestation overhead is unacceptable, the **file-based certificate mode** (Section 1.6) provides a zero-attestation-delay alternative: certificates are pre-provisioned as Kubernetes Secrets and available instantly at pod start. This makes file-based mode the recommended choice for latency-critical sandbox provisioning.
+
 ### 1.6 File-Based Provisioning (cert-manager)
 
 While SPIRE handles identity attestation dynamically, file-based provisioning relies on static Kubernetes Secrets. [cert-manager](https://cert-manager.io/) is the recommended implementation for this mode. It explicitly demonstrates that the architecture is fully certificate-source agnostic.
@@ -317,7 +328,11 @@ WorkloadManager and PicoD require incoming connections to present a valid client
 
 ```go
 serverTLSConfig := &tls.Config{
-    Certificates: []tls.Certificate{cert},
+    // Dynamically load server certificates to handle transparent 1-hour SVID rotation
+    GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+        cert, err := tls.LoadX509KeyPair("cert.pem", "key.pem")
+        return &cert, err
+    },
     ClientCAs:    caPool,
     ClientAuth:   tls.RequireAndVerifyClientCert,
     VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
@@ -346,7 +361,11 @@ The Router presents its own certificate when connecting to WorkloadManager and P
 
 ```go
 clientTLSConfig := &tls.Config{
-    Certificates: []tls.Certificate{cert},
+    // Dynamically load client certificates from disk
+    GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+        cert, err := tls.LoadX509KeyPair("cert.pem", "key.pem")
+        return &cert, err
+    },
     RootCAs:      caPool,
     // When connecting via internal IP/DNS, we must manually verify the URI SAN (SPIFFE ID)
     InsecureSkipVerify: true, 
@@ -375,6 +394,8 @@ httpClient := &http.Client{
     },
 }
 ```
+
+> **Dynamic Certificate Reloading:** Because SPIRE issues extremely short-lived SVIDs (default 1-hour TTL), the AgentCube components cannot just load their `tls.Certificate` statically at startup. By using the `GetCertificate` and `GetClientCertificate` callbacks, the `crypto/tls` package dynamically reads the updated PEM files directly from disk whenever they are overwritten by the `spiffe-helper` sidecar, guaranteeing zero-downtime continuous rotation without pod restarts.
 
 The cert/key/CA files can be provisioned by any mechanism:
 - **SPIRE:** The [SPIFFE Helper](https://github.com/spiffe/spiffe-helper) sidecar fetches SVIDs from the Workload API and writes them to disk as PEM files. Certificates are rotated automatically.
@@ -480,12 +501,12 @@ sequenceDiagram
     participant Sandbox as PicoD
 
     Note over SDK, KC: Authentication (client_credentials grant)
-    SDK->>KC: POST /realms/agentcube/protocol/openid-connect/token<br/>grant_type=client_credentials<br/>client_id=agentcube-sdk&client_secret=<secret>
+    SDK->>KC: POST /realms/<realm>/protocol/openid-connect/token<br/>grant_type=client_credentials<br/>client_id=agentcube-sdk&client_secret=<secret>
     KC->>KC: Validate client_id and client_secret<br/>against registered client in agentcube realm
     KC-->>SDK: Access Token (JWT with sub, roles, aud: agentcube-router)
 
     Note over Router, KC: JWKS Cache (periodic, e.g. every 5 min)
-    Router->>KC: GET /realms/agentcube/protocol/openid-connect/certs
+    Router->>KC: GET /realms/<realm>/protocol/openid-connect/certs
     KC-->>Router: JWKS (public signing keys)
     Router->>Router: Cache JWKS keys locally
 
@@ -517,7 +538,9 @@ sequenceDiagram
 
 ### 2.3 Keycloak Deployment
 
-Keycloak is deployed as a `Deployment` in `agentcube-system`. A dedicated realm called `agentcube` is created during installation containing:
+Keycloak is deployed as a `Deployment` in `agentcube-system`. By default, a realm named `agentcube` is created during the standard Helm installation. However, all AgentCube components (Router, WorkloadManager) accept the Keycloak Issuer URL and Realm dynamically via configuration flags (e.g., `--keycloak-realm`). This allows administrators to integrate an existing Keycloak cluster, or register and support multiple distinct realms to achieve multi-tenant isolation.
+
+The default `agentcube` realm contains:
 
 - **Clients:**
   - `agentcube-sdk` - Confidential client for SDK access. Supports `client_credentials` grant for service accounts and `authorization_code` for interactive users.
@@ -538,7 +561,7 @@ The Router, WorkloadManager, and PicoD all validate Keycloak-issued JWTs using s
 ```go
 type KeycloakConfig struct {
     IssuerURL    string        // e.g., "https://keycloak.agentcube-system.svc:8443"
-    Realm        string        // "agentcube"
+    Realm        string        // Default: "agentcube"
     Audience     string        // expected audience claim
     JWKSCacheTTL time.Duration // how often to refresh JWKS keys
 }
@@ -645,6 +668,8 @@ Keycloak realm roles are organized in a simple hierarchy:
 | `sandbox:manage` | Create/delete AgentRuntime and CodeInterpreter CRDs | `sandbox:invoke` |
 | `admin` | Full access, user management, view audit logs | `sandbox:manage` |
 
+> **Note:** Currently, `AgentRuntime` and `CodeInterpreter` CRDs are created via `kubectl` or the AgentCube CLI, both of which interact directly with the Kubernetes API server and are governed by Kubernetes RBAC. The `sandbox:manage` role is defined here as a forward-looking placeholder for when CRD lifecycle operations are exposed through the Router. Until then, only `sandbox:invoke` is actively enforced by the Keycloak authorization middleware.
+
 New users are assigned the `sandbox:invoke` role by default, maintaining backward compatibility with the current behavior where anyone can invoke sandboxes (but now with authentication).
 
 ### 3.3 How It Works
@@ -656,7 +681,7 @@ Example JWT payload issued by Keycloak:
 ```json
 {
   "sub": "user-123",
-  "iss": "https://keycloak.agentcube-system.svc/realms/agentcube",
+  "iss": "https://keycloak.agentcube-system.svc/realms/<realm>",
   "realm_access": {
     "roles": ["sandbox:invoke"]
   },

@@ -117,7 +117,7 @@ GET    /api/files/{path}    → Download file
 GET    /health              → Health check (no auth required)
 ```
 
-**Security**: JWT verification using RSA public key injected via `PICOD_AUTH_PUBLIC_KEY` env var. Max body: 32 MB. Path traversal protection via `sanitizePath()`.
+**Security**: JWT verification using RSA public key injected via `PICOD_AUTH_PUBLIC_KEY` env var. Max body: 32 MB (enforced via `MaxBytesReader` middleware). Path traversal protection via `sanitizePath()`.
 
 ---
 
@@ -310,7 +310,7 @@ Phase 3 — Runtime:
 | `picod` | `cmd/picod/main.go` | `make build-picod` | In-sandbox daemon: execute + files |
 | `agentd` | `cmd/agentd/main.go` | `make build-agentd` | Standalone session expiry cleanup |
 
-All binaries use `controller-runtime` for Kubernetes integration and `signal.NotifyContext()` for graceful shutdown.
+`agentd` and `workload-manager` use `controller-runtime` for Kubernetes integration. Signal handling varies by binary: `router` uses `signal.NotifyContext()`, `agentd` uses `ctrl.SetupSignalHandler()`, `workload-manager` uses `signal.Notify`, `picod` has no signal handling.
 
 ---
 
@@ -332,13 +332,15 @@ client-go/          → Generated typed clients, informers, listers for CRDs
 ## Configuration Reference
 
 ### Router
-| Env Var | Default | Description |
-|---------|---------|-------------|
-| `PORT` | `8080` | Listen port |
-| `WORKLOAD_MANAGER_ADDR` | (required) | Workload Manager service address |
-| `AGENTCUBE_NAMESPACE` | `default` | Namespace for operations |
-| `MAX_CONCURRENT_REQUESTS` | `1000` | Concurrency limit |
-| `ENABLE_TLS` | `false` | Enable TLS termination |
+| Flag / Env Var | Default | Description |
+|----------------|---------|-------------|
+| `--port` / `PORT` | `8080` | Listen port |
+| `WORKLOAD_MANAGER_ADDR` | (required) | Workload Manager service address (env var) |
+| `--max-concurrent-requests` | `1000` | Concurrency limit |
+| `--enable-tls` | `false` | Enable TLS termination |
+| `--tls-cert` | `""` | TLS certificate file path |
+| `--tls-key` | `""` | TLS key file path |
+| `--debug` | `false` | Enable debug mode |
 
 ### Workload Manager
 | Env Var | Default | Description |
@@ -352,7 +354,7 @@ client-go/          → Generated typed clients, informers, listers for CRDs
 | Env Var | Default | Description |
 |---------|---------|-------------|
 | `PORT` | `8080` | Listen port |
-| `WORKSPACE` | `/workspace` | Working directory for file operations |
+| `WORKSPACE` | current directory | Working directory for file operations |
 | `PICOD_AUTH_PUBLIC_KEY` | (injected) | PEM-encoded RSA public key for JWT verification |
 
 ### Session Store

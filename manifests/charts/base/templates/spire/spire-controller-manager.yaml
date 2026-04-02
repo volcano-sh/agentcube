@@ -1,0 +1,31 @@
+{{- if .Values.spire.enabled }}
+# Controller Manager ConfigMap
+# The Controller Manager runs as a sidecar in the spire-server StatefulSet
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-controller-manager-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: spire-controller-manager
+data:
+  spire-controller-manager.yaml: |
+    apiVersion: spire.spiffe.io/v1alpha1
+    kind: ControllerManagerConfig
+    metrics:
+      bindAddress: 127.0.0.1:8082
+    health:
+      healthProbeBindAddress: :8083
+    leaderElection:
+      leaderElect: true
+      resourceName: spire-controller-manager
+      resourceNamespace: {{ .Release.Namespace }}
+    spireServerSocketPath: "/tmp/spire-server/private/api.sock"
+    clusterName: {{ .Values.spire.clusterName }}
+    trustDomain: {{ .Values.spire.trustDomain }}
+    validatingWebhookConfigurationName: spire-controller-manager-webhook
+    ignoreNamespaces:
+      - kube-system
+      - kube-public
+      - local-path-storage
+{{- end }}

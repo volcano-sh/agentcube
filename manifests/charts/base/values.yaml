@@ -31,9 +31,9 @@ router:
       memory: 128Mi
   config: {}
   extraEnv: []
-  serviceAccountName: ""
+  serviceAccountName: "agentcube-router"
   rbac:
-    create: false
+    create: true
 
 # AgentCube Workload Manager
 workloadmanager:
@@ -67,7 +67,7 @@ volcano:
 # SPIRE Configuration (Internal Workload Identity)
 spire:
   enabled: false
-  trustDomain: "agentcube.local"
+  trustDomain: "cluster.local"
   clusterName: "agentcube-cluster"
   server:
     image:

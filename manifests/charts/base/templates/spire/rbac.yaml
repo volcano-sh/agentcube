@@ -91,9 +91,9 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
-  # Required for workload attestation to resolve node information
+  # Required for workload attestation to resolve node information and proxy requests to kubelet
   - apiGroups: [""]
-    resources: ["nodes"]
+    resources: ["nodes", "nodes/proxy"]
     verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

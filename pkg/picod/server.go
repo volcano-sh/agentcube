@@ -73,6 +73,12 @@ func NewServer(config Config) *Server {
 	// Global middleware
 	engine.Use(gin.Logger())   // Request logging
 	engine.Use(gin.Recovery()) // Crash recovery
+	// Limit request body size to 32 MB to prevent DoS attacks
+	engine.Use(func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32<<20)
+		c.Next()
+	})
+	engine.MaxMultipartMemory = 32 << 20
 
 	// Load public key from environment variable (required)
 	if err := s.authManager.LoadPublicKeyFromEnv(); err != nil {

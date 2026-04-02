@@ -69,6 +69,15 @@ spire:
   enabled: false
   trustDomain: "cluster.local"
   clusterName: "agentcube-cluster"
+  spiffeHelper:
+    image:
+      repository: ghcr.io/spiffe/spiffe-helper
+      tag: "0.8.0"
+      pullPolicy: IfNotPresent
+    certDir: "/run/spire/certs"
+    certFileName: "svid.pem"
+    keyFileName: "svid_key.pem"
+    bundleFileName: "svid_bundle.pem"
   server:
     image:
       repository: ghcr.io/spiffe/spire-server

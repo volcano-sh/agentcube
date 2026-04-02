@@ -23,7 +23,30 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
+        {{- if .Values.spire.enabled }}
+        - name: spiffe-helper
+          image: "{{ .Values.spire.spiffeHelper.image.repository }}:{{ .Values.spire.spiffeHelper.image.tag }}"
+          imagePullPolicy: {{ .Values.spire.spiffeHelper.image.pullPolicy }}
+          args:
+            - "-config"
+            - "/etc/spiffe-helper/spiffe-helper.conf"
+          volumeMounts:
+            - name: spiffe-helper-config
+              mountPath: /etc/spiffe-helper
+              readOnly: true
+            - name: spire-agent-socket
+              mountPath: /run/spire/sockets
+              readOnly: true
+            - name: spire-certs
+              mountPath: {{ .Values.spire.spiffeHelper.certDir }}
+        {{- end }}
         - name: agentcube-router
+          {{- if .Values.spire.enabled }}
+          volumeMounts:
+            - name: spire-certs
+              mountPath: {{ .Values.spire.spiffeHelper.certDir }}
+              readOnly: true
+          {{- end }}
           image: "{{ .Values.router.image.repository }}:{{ .Values.router.image.tag }}"
           imagePullPolicy: {{ .Values.router.image.pullPolicy }}
           ports:
@@ -61,6 +84,18 @@ spec:
               port: {{ .Values.router.service.targetPort }}
             initialDelaySeconds: 1
             periodSeconds: 2
+      {{- if .Values.spire.enabled }}
+      volumes:
+        - name: spire-agent-socket
+          hostPath:
+            path: /run/spire/sockets
+            type: DirectoryOrCreate
+        - name: spiffe-helper-config
+          configMap:
+            name: spiffe-helper-config
+        - name: spire-certs
+          emptyDir: {}
+      {{- end }}
 
 ---
 apiVersion: v1

@@ -246,9 +246,12 @@ kubectl exec -n agentcube-system <spire-server-pod> -- \
 5. Router receives a TLS certificate, private key, and trust bundle - ready to serve and initiate mTLS
 
 > **Latency Considerations for Sandbox Provisioning:**
-> For long-lived control plane components (Router, WorkloadManager), attestation latency is negligible since it occurs once at boot. For short-lived PicoD sandboxes, the `spiffe-helper` sidecar fetches the SVID **concurrently** with PicoD's own container initialization, so attestation (~200-500ms) overlaps with pod startup rather than blocking it sequentially.
+> For long-lived control plane components (Router, WorkloadManager), attestation and TLS handshake latency is negligible since connections are persistent and handshakes are amortized over thousands of requests. For short-lived PicoD sandboxes, two sources of latency must be considered:
 >
-> For high-throughput scenarios (e.g., agentic RL training loops) where even concurrent attestation overhead is unacceptable, the **file-based certificate mode** (Section 1.6) provides a zero-attestation-delay alternative: certificates are pre-provisioned as Kubernetes Secrets and available instantly at pod start. This makes file-based mode the recommended choice for latency-critical sandbox provisioning.
+> 1. **Attestation latency (~200-500ms):** The `spiffe-helper` sidecar fetches the SVID concurrently with PicoD's own container initialization, so this overlaps with pod startup rather than blocking it. The file-based certificate mode (Section 1.6) eliminates this entirely by pre-provisioning certificates as Kubernetes Secrets.
+> 2. **TLS handshake latency (~20-50ms per new connection):** Each new mTLS connection between the Router and a PicoD sandbox requires a full TLS handshake (certificate exchange, chain verification, key negotiation). For Code Interpreters targeting ~100ms bootstrap latency, this overhead is significant.
+>
+> For latency-critical scenarios (Code Interpreters, agentic RL training loops), the Router→PicoD channel supports **JWT-based authentication** as an alternative to mTLS (see Section 1.10). JWT auth uses plain HTTP with an `Authorization: Bearer` header, eliminating the TLS handshake entirely. Combined with warm pools, this ensures the auth system adds near-zero latency to sandbox invocations.
 
 ### 1.6 File-Based Provisioning (cert-manager)
 
@@ -465,20 +468,21 @@ graph LR
 
 > **Note:** The architecture diagram above shows a SPIRE-based deployment. When relying entirely on externally provisioned file-based certificates (like cert-manager), the SPIRE Infrastructure components are not deployed; certificates are instead mounted directly into the pods. The mTLS enforcement between AgentCube components remains exactly the same.
 
-### 1.10 Impact on Existing PicoD-Plain-Authentication
+### 1.10 Router → PicoD Authentication Modes
 
-The X.509 mTLS approach supersedes the PicoD-Plain-Authentication design:
+The Router→PicoD channel supports two authentication modes, selectable via configuration flags. The choice depends on the deployment's priority - **security hardening** vs. **provisioning latency**:
 
-| Current (PicoD-Plain-Auth) | New (X.509 mTLS) |
-|---|---|
-| Router generates RSA key pair, stores both keys in `picod-router-identity` Secret | SPIRE issues short-lived X.509 SVIDs automatically, or certs are loaded from disk (cert-manager, self-signed, etc.) |
-| Public key read from `picod-router-identity` Secret by WorkloadManager | Trust bundle delivered through Workload API socket (SPIRE) or CA file on disk (file-based) |
-| Bootstrap phase with optimistic locking race between Router replicas | No bootstrap race - each replica independently fetches its SVID (SPIRE) or loads certs from disk (file-based) |
-| `PICOD_AUTH_PUBLIC_KEY` env var injected into PicoD pods | Workload API socket or cert files mounted into PicoD pods |
-| Manual key rotation (delete Secret, restart Routers) | Automatic rotation by SPIRE (default: 1 hour TTL) or delegated to external tool (cert-manager) |
-| Application-layer JWT verification | Transport-layer mTLS verification |
+| | mTLS Mode (X.509) | JWT Mode |
+|---|---|---|
+| **Mechanism** | Transport-layer mutual TLS | Application-layer `Authorization: Bearer` header |
+| **First-connection overhead** | ~20-50ms (TLS handshake) | ~1ms (JWT signature verification) |
+| **Certificate provisioning** | SPIRE SVID or file-based (cert-manager) | Router signs JWT; PicoD validates with pre-shared public key |
+| **Key rotation** | Automatic (SPIRE 1h TTL or cert-manager) | Automatic (Router key rotation) |
+| **Recommended for** | Security-hardened production deployments | Latency-critical scenarios (Code Interpreters, agentic RL) |
 
-The existing PicoD-Plain-Auth code path will be kept behind a `--legacy-picod-auth` flag during the transition period and marked as deprecated.
+> **Note:** Router↔WorkloadManager always uses mTLS regardless of this setting, since both are long-lived components where TLS handshake cost is amortized over thousands of requests.
+
+The existing PicoD-Plain-Auth code path is retained and improved as the **JWT mode** implementation. The `--picod-auth-mode` flag selects between `mtls` (default) and `jwt`.
 
 ---
 

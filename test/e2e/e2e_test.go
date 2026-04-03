@@ -57,8 +57,8 @@ const (
 	// ownerKindSandboxWarmPool is the owner reference kind for SandboxWarmPool resources
 	ownerKindSandboxWarmPool = "SandboxWarmPool"
 
-	agentcubeNamespace          = "agentcube"
-	e2eCodeInterpreterNameConst = "e2e-code-interpreter"
+	agentcubeNamespace     = "agentcube"
+	e2eCodeInterpreterName = "e2e-code-interpreter"
 )
 
 var (
@@ -793,7 +793,7 @@ func TestCodeInterpreterBasicInvocation(t *testing.T) {
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace
-	name := e2eCodeInterpreterNameConst
+	name := e2eCodeInterpreterName
 
 	testCases := []struct {
 		name         string
@@ -836,7 +836,7 @@ func TestCodeInterpreterFileOperations(t *testing.T) {
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace
-	name := e2eCodeInterpreterNameConst
+	name := e2eCodeInterpreterName
 
 	// Create a session for file operations
 	sessionID, err := env.createCodeInterpreterSession(namespace, name)
@@ -1506,7 +1506,7 @@ func TestCodeInterpreterBasicInvocationLoad(t *testing.T) {
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace
-	name := e2eCodeInterpreterNameConst
+	name := e2eCodeInterpreterName
 
 	// Load test configuration
 	const (

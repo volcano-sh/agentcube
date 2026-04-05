@@ -100,6 +100,8 @@ spire:
         cpu: 50m
         memory: 128Mi
   agent:
+    insecureBootstrap: true
+    skipKubeletVerification: true
     image:
       repository: ghcr.io/spiffe/spire-agent
       tag: "1.12.0"

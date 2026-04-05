@@ -3,7 +3,7 @@
 apiVersion: spire.spiffe.io/v1alpha1
 kind: ClusterSPIFFEID
 metadata:
-  name: agentcube-router
+  name: {{ .Release.Name }}-agentcube-router
 spec:
   spiffeIDTemplate: "spiffe://{{ .Values.spire.trustDomain }}/ns/{{ "{{ .PodMeta.Namespace }}" }}/sa/{{ "{{ .PodSpec.ServiceAccountName }}" }}"
   podSelector:
@@ -18,7 +18,7 @@ spec:
 apiVersion: spire.spiffe.io/v1alpha1
 kind: ClusterSPIFFEID
 metadata:
-  name: agentcube-workload-manager
+  name: {{ .Release.Name }}-agentcube-workload-manager
 spec:
   spiffeIDTemplate: "spiffe://{{ .Values.spire.trustDomain }}/ns/{{ "{{ .PodMeta.Namespace }}" }}/sa/{{ "{{ .PodSpec.ServiceAccountName }}" }}"
   podSelector:
@@ -33,7 +33,7 @@ spec:
 apiVersion: spire.spiffe.io/v1alpha1
 kind: ClusterSPIFFEID
 metadata:
-  name: agentcube-sandbox
+  name: {{ .Release.Name }}-agentcube-sandbox
 spec:
   spiffeIDTemplate: "spiffe://{{ .Values.spire.trustDomain }}/sa/{{ "{{ .PodSpec.ServiceAccountName }}" }}"
   podSelector:

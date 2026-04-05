@@ -59,7 +59,7 @@ spec:
   selector:
     matchLabels:
       app: spire-server
-  serviceName: spire-server
+  serviceName: spire-server-headless
   template:
     metadata:
       labels:
@@ -138,13 +138,38 @@ spec:
         - name: spire-config
           configMap:
             name: spire-server-config
-        - name: spire-data
-          emptyDir: {}  # Re-synced from ClusterSPIFFEID CRDs on restart; PVC not required
         - name: spire-server-socket
           emptyDir: {}  # Shared between SPIRE Server and Controller Manager for API socket
         - name: controller-manager-config
           configMap:
             name: spire-controller-manager-config
+  volumeClaimTemplates:
+    - metadata:
+        name: spire-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spire-server-headless
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: spire-server
+spec:
+  clusterIP: None
+  ports:
+    - name: grpc
+      port: {{ .Values.spire.server.service.port }}
+      targetPort: {{ .Values.spire.server.service.port }}
+      protocol: TCP
+  selector:
+    app: spire-server
 
 ---
 apiVersion: v1

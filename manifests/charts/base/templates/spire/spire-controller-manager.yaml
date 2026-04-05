@@ -23,7 +23,7 @@ data:
     spireServerSocketPath: "/tmp/spire-server/private/api.sock"
     clusterName: {{ .Values.spire.clusterName }}
     trustDomain: {{ .Values.spire.trustDomain }}
-    validatingWebhookConfigurationName: spire-controller-manager-webhook
+    validatingWebhookConfigurationName: {{ .Release.Name }}-spire-controller-manager-webhook
     ignoreNamespaces:
       - kube-system
       - kube-public

@@ -12,7 +12,7 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: spire-server
+  name: {{ .Release.Name }}-spire-server
   labels:
     app: spire-server
 rules:
@@ -52,19 +52,19 @@ rules:
     verbs: ["get", "list", "watch", "create"]
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["validatingwebhookconfigurations"]
-    resourceNames: ["spire-controller-manager-webhook"]
+    resourceNames: ["{{ .Release.Name }}-spire-controller-manager-webhook"]
     verbs: ["update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: spire-server
+  name: {{ .Release.Name }}-spire-server
   labels:
     app: spire-server
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: spire-server
+  name: {{ .Release.Name }}-spire-server
 subjects:
   - kind: ServiceAccount
     name: spire-server
@@ -83,7 +83,7 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: spire-agent
+  name: {{ .Release.Name }}-spire-agent
   labels:
     app: spire-agent
 rules:
@@ -99,13 +99,13 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: spire-agent
+  name: {{ .Release.Name }}-spire-agent
   labels:
     app: spire-agent
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: spire-agent
+  name: {{ .Release.Name }}-spire-agent
 subjects:
   - kind: ServiceAccount
     name: spire-agent

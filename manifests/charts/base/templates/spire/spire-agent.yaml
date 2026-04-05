@@ -15,7 +15,7 @@ data:
         server_port    = "{{ .Values.spire.server.service.port }}"
         socket_path  = "/run/spire/sockets/agent.sock"
         trust_domain = "{{ .Values.spire.trustDomain }}"
-        insecure_bootstrap = true    # NOTE: Bootstrap without pre-existing trust bundle; safe with k8s_psat attestation
+        insecure_bootstrap = {{ .Values.spire.agent.insecureBootstrap | default false }}    # Set true only when intentionally bootstrapping without a pre-existing trust bundle
     }
 
     plugins {
@@ -31,7 +31,7 @@ data:
 
         WorkloadAttestor "k8s" {
             plugin_data {
-                skip_kubelet_verification = true        # NOTE: In production environments, set this to false to enforce kubelet certificate verification
+                skip_kubelet_verification = {{ .Values.spire.agent.skipKubeletVerification | default false }}        # Set true only in dev scenarios with self-signed kubelets
             }
         }
     }

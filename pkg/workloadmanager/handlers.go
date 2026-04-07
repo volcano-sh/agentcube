@@ -201,7 +201,7 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	select {
 	case result := <-resultChan:
 		createdSandbox = result.Sandbox
-		klog.V(2).Infof("sandbox %s/%s running", createdSandbox.Namespace, createdSandbox.Name)
+		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
 	case <-time.After(2 * time.Minute): // consistent with router settings
 		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
 		return nil, fmt.Errorf("sandbox creation timed out")
@@ -219,6 +219,9 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	podIP, err := s.k8sClient.GetSandboxPodIP(ctx, sandbox.Namespace, sandbox.Name, sandboxPodName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sandbox %s/%s pod IP: %v", sandbox.Namespace, sandbox.Name, err)
+	}
+	if err := s.waitForSandboxEntryPointsReady(ctx, podIP, sandboxEntry); err != nil {
+		return nil, fmt.Errorf("failed to verify sandbox %s/%s entrypoints: %w", sandbox.Namespace, sandbox.Name, err)
 	}
 
 	storeCacheInfo := buildSandboxInfo(createdSandbox, podIP, sandboxEntry)

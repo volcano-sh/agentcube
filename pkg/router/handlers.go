@@ -17,7 +17,9 @@ limitations under the License.
 package router
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -107,7 +109,7 @@ func determineUpstreamURL(sandbox *types.SandboxInfo, path string) (*url.URL, er
 	// prefer matched entrypoint by path
 	for _, ep := range sandbox.EntryPoints {
 		if strings.HasPrefix(path, ep.Path) {
-			return buildURL(ep.Protocol, ep.Endpoint), nil
+			return buildURL(ep.Protocol, ep.Endpoint)
 		}
 	}
 	// fallback to first entrypoint
@@ -115,15 +117,86 @@ func determineUpstreamURL(sandbox *types.SandboxInfo, path string) (*url.URL, er
 		return nil, fmt.Errorf("no entry point found for sandbox")
 	}
 	ep := sandbox.EntryPoints[0]
-	return buildURL(ep.Protocol, ep.Endpoint), nil
+	return buildURL(ep.Protocol, ep.Endpoint)
 }
 
-func buildURL(protocol, endpoint string) *url.URL {
+func buildURL(protocol, endpoint string) (*url.URL, error) {
 	if protocol != "" && !strings.Contains(endpoint, "://") {
 		endpoint = (strings.ToLower(protocol) + "://" + endpoint)
 	}
-	url, _ := url.Parse(endpoint)
-	return url
+	parsedURL, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("invalid upstream endpoint %q: %w", endpoint, err)
+	}
+	if parsedURL.Host == "" {
+		return nil, fmt.Errorf("invalid upstream endpoint %q: missing host", endpoint)
+	}
+	return parsedURL, nil
+}
+
+func connectionRefusedRetryable(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "connection refused")
+}
+
+func preflightTargetAddress(targetURL *url.URL) string {
+	if targetURL == nil {
+		return ""
+	}
+	if targetURL.Host == "" {
+		return ""
+	}
+	if _, _, err := net.SplitHostPort(targetURL.Host); err == nil {
+		return targetURL.Host
+	}
+	switch strings.ToLower(targetURL.Scheme) {
+	case "https":
+		return net.JoinHostPort(targetURL.Host, "443")
+	default:
+		return net.JoinHostPort(targetURL.Host, "80")
+	}
+}
+
+func (s *Server) waitForUpstreamReachable(ctx context.Context, targetURL *url.URL) error {
+	address := preflightTargetAddress(targetURL)
+	if address == "" {
+		return nil
+	}
+
+	retryCount := 0
+	retryInterval := 200 * time.Millisecond
+	if s != nil && s.config != nil {
+		retryCount = s.config.InitialConnectRetryCount
+		if s.config.InitialConnectRetryInterval > 0 {
+			retryInterval = s.config.InitialConnectRetryInterval
+		}
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= retryCount; attempt++ {
+		dialer := &net.Dialer{Timeout: retryInterval}
+		conn, err := dialer.DialContext(ctx, "tcp", address)
+		if err == nil {
+			if closeErr := conn.Close(); closeErr != nil {
+				klog.V(4).Infof("closing preflight connection to %s failed: %v", address, closeErr)
+			}
+			return nil
+		}
+		lastErr = err
+		if !connectionRefusedRetryable(err) || attempt == retryCount {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(retryInterval):
+		}
+	}
+
+	if lastErr != nil {
+		return fmt.Errorf("sandbox preflight connect failed: %w", lastErr)
+	}
+	return nil
 }
 
 // handleAgentInvoke handles agent invocation requests
@@ -244,6 +317,19 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 		// Always set session ID in response header
 		resp.Header.Set("x-agentcube-session-id", sandbox.SessionID)
 		return nil
+	}
+
+	if err := s.waitForUpstreamReachable(c.Request.Context(), targetURL); err != nil {
+		klog.Errorf("Sandbox preflight failed (session: %s): %v", sandbox.SessionID, err)
+		switch {
+		case connectionRefusedRetryable(err):
+			c.JSON(http.StatusBadGateway, gin.H{"error": "sandbox unreachable"})
+		case strings.Contains(strings.ToLower(err.Error()), "deadline exceeded") || strings.Contains(strings.ToLower(err.Error()), "timeout"):
+			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "sandbox timeout"})
+		default:
+			c.JSON(http.StatusBadGateway, gin.H{"error": "sandbox unreachable"})
+		}
+		return
 	}
 
 	// No timeout for invoke requests to allow long-running operations

@@ -227,6 +227,19 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 		return
 	}
 
+	if err := s.waitForUpstreamReachable(c.Request.Context(), targetURL); err != nil {
+		klog.Errorf("Sandbox preflight failed (session: %s): %v", sandbox.SessionID, err)
+		switch {
+		case connectionRefusedRetryable(err):
+			c.JSON(http.StatusBadGateway, gin.H{"error": "sandbox unreachable"})
+		case strings.Contains(strings.ToLower(err.Error()), "deadline exceeded") || strings.Contains(strings.ToLower(err.Error()), "timeout"):
+			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "sandbox timeout"})
+		default:
+			c.JSON(http.StatusBadGateway, gin.H{"error": "sandbox unreachable"})
+		}
+		return
+	}
+
 	// Create reverse proxy with reusable transport
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 
@@ -317,19 +330,6 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 		// Always set session ID in response header
 		resp.Header.Set("x-agentcube-session-id", sandbox.SessionID)
 		return nil
-	}
-
-	if err := s.waitForUpstreamReachable(c.Request.Context(), targetURL); err != nil {
-		klog.Errorf("Sandbox preflight failed (session: %s): %v", sandbox.SessionID, err)
-		switch {
-		case connectionRefusedRetryable(err):
-			c.JSON(http.StatusBadGateway, gin.H{"error": "sandbox unreachable"})
-		case strings.Contains(strings.ToLower(err.Error()), "deadline exceeded") || strings.Contains(strings.ToLower(err.Error()), "timeout"):
-			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "sandbox timeout"})
-		default:
-			c.JSON(http.StatusBadGateway, gin.H{"error": "sandbox unreachable"})
-		}
-		return
 	}
 
 	// No timeout for invoke requests to allow long-running operations

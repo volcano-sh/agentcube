@@ -222,7 +222,6 @@ sequenceDiagram
 
 1. **Workload Manager GC (Store-based)**: Polls Redis every 15s → `ListExpiredSandboxes()` and `ListInactiveSandboxes()` → deletes Sandbox/SandboxClaim from K8s + removes session from store
 2. **agentd (Annotation-based)**: Reconciles Sandbox CRDs → reads `last-activity-time` annotation → deletes expired sandboxes directly from K8s
-3. **Manual**: Client calls `DELETE /v1/{kind}/sessions/{id}` → Router forwards to WM → WM deletes from K8s + store
 
 ---
 
@@ -297,7 +296,7 @@ Phase 3 — Runtime:
   PicoD verifies JWT signature using public key from env
 ```
 
-**JWT Claims**: `session_id`, `sandbox_id`, `exp` (expiration), `iat` (issued at)
+**JWT Claims**: `session_id`, `exp` (expiration), `iat` (issued at)
 
 ---
 
@@ -335,7 +334,7 @@ client-go/          → Generated typed clients, informers, listers for CRDs
 | Flag / Env Var | Default | Description |
 |----------------|---------|-------------|
 | `--port` / `PORT` | `8080` | Listen port |
-| `WORKLOAD_MANAGER_ADDR` | (required) | Workload Manager service address (env var) |
+| `WORKLOAD_MANAGER_URL` | (required) | Workload Manager service address (env var) |
 | `--max-concurrent-requests` | `1000` | Concurrency limit |
 | `--enable-tls` | `false` | Enable TLS termination |
 | `--tls-cert` | `""` | TLS certificate file path |

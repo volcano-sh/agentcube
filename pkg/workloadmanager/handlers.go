@@ -160,16 +160,9 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		}
 	}
 
-	var createdSandbox *sandboxv1alpha1.Sandbox
-	select {
-	case result := <-resultChan:
-		createdSandbox = result.Sandbox
-		klog.V(2).Infof("sandbox %s/%s running", createdSandbox.Namespace, createdSandbox.Name)
-	case <-time.After(2 * time.Minute): // consistent with router settings
-		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
-		return nil, fmt.Errorf("sandbox creation timed out")
-	}
-
+	// Register rollback BEFORE waiting for the sandbox to become ready.
+	// This ensures the K8s resource and store placeholder are cleaned up on
+	// timeout, pod-IP failure, or store-update failure — not just on post-creation errors.
 	needRollbackSandbox := true
 	sandboxRollbackFunc := func() {
 		ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -180,17 +173,21 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 			err = deleteSandboxClaim(ctxTimeout, dynamicClient, sandboxClaim.Namespace, sandboxClaim.Name)
 			if err != nil {
 				klog.Infof("sandbox claim %s/%s rollback failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err)
-				return
+			} else {
+				klog.Infof("sandbox claim %s/%s rollback succeeded", sandboxClaim.Namespace, sandboxClaim.Name)
 			}
-			klog.Infof("sandbox claim %s/%s rollback succeeded", sandboxClaim.Namespace, sandboxClaim.Name)
 		} else {
 			// Rollback Sandbox
 			err = deleteSandbox(ctxTimeout, dynamicClient, sandbox.Namespace, sandbox.Name)
 			if err != nil {
 				klog.Infof("sandbox %s/%s rollback failed: %v", sandbox.Namespace, sandbox.Name, err)
-				return
+			} else {
+				klog.Infof("sandbox %s/%s rollback succeeded", sandbox.Namespace, sandbox.Name)
 			}
-			klog.Infof("sandbox %s/%s rollback succeeded", sandbox.Namespace, sandbox.Name)
+		}
+		// Clean up the store placeholder so it does not pollute GC queries
+		if delErr := s.storeClient.DeleteSandboxBySessionID(ctxTimeout, sandboxEntry.SessionID); delErr != nil {
+			klog.Infof("sandbox %s/%s store placeholder cleanup failed: %v", sandbox.Namespace, sandbox.Name, delErr)
 		}
 	}
 	defer func() {
@@ -199,6 +196,16 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		}
 		sandboxRollbackFunc()
 	}()
+
+	var createdSandbox *sandboxv1alpha1.Sandbox
+	select {
+	case result := <-resultChan:
+		createdSandbox = result.Sandbox
+		klog.V(2).Infof("sandbox %s/%s running", createdSandbox.Namespace, createdSandbox.Name)
+	case <-time.After(2 * time.Minute): // consistent with router settings
+		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
+		return nil, fmt.Errorf("sandbox creation timed out")
+	}
 
 	// agent-sandbox create pod with same name as sandbox if no warmpool is used
 	// so here we try to get pod IP by sandbox name first

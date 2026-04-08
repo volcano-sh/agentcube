@@ -32,8 +32,6 @@ router:
   config: {}
   extraEnv: []
   serviceAccountName: "agentcube-router"
-  rbac:
-    create: true
 
 # AgentCube Workload Manager
 workloadmanager:
@@ -70,11 +68,14 @@ spire:
   trustDomain: "cluster.local"
   clusterName: "agentcube-cluster"
   spiffeHelper:
+    # Configuration for the spiffe-helper sidecar which automatically fetches and rotates mTLS certificates
     image:
       repository: ghcr.io/spiffe/spiffe-helper
       tag: "0.8.0"
       pullPolicy: IfNotPresent
+    # Directory inside workload pods where the sidecar will deliver the certificates
     certDir: "/run/spire/certs"
+    # Desired file names for the SVID certificate, private key, and root trust bundle
     certFileName: "svid.pem"
     keyFileName: "svid_key.pem"
     bundleFileName: "svid_bundle.pem"
@@ -100,8 +101,9 @@ spire:
         cpu: 50m
         memory: 128Mi
   agent:
-    insecureBootstrap: true
-    skipKubeletVerification: true
+    # For local dev clusters (kind/minikube), override with: --set spire.agent.insecureBootstrap=true --set spire.agent.skipKubeletVerification=true
+    insecureBootstrap: false
+    skipKubeletVerification: false
     image:
       repository: ghcr.io/spiffe/spire-agent
       tag: "1.12.0"

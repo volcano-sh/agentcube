@@ -1,4 +1,7 @@
 {{- if .Values.spire.enabled }}
+# Prerequisite: spire.spiffe.io CRDs must be present in the cluster before these resources can be created.
+# The spire-controller-manager sidecar registers them automatically on first boot.
+# For a fresh cluster, run: kubectl apply -f https://github.com/spiffe/spire-controller-manager/releases/download/v{{ .Values.spire.controllerManager.image.tag }}/crds.yaml
 # Router registration
 apiVersion: spire.spiffe.io/v1alpha1
 kind: ClusterSPIFFEID

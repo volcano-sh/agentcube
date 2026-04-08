@@ -32,8 +32,10 @@ import (
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	"github.com/volcano-sh/agentcube/pkg/workloadmanager"
@@ -174,9 +176,12 @@ func setupControllers(mgr ctrl.Manager, sandboxReconciler *workloadmanager.Sandb
 		return fmt.Errorf("unable to create sandbox controller: %w", err)
 	}
 
-	// Setup CodeInterpreter controller
+	// Setup CodeInterpreter controller.
+	// GenerationChangedPredicate filters out status-only update events so that
+	// the controller is not re-enqueued by its own status writes, preventing
+	// an infinite reconciliation loop.
 	if err := ctrl.NewControllerManagedBy(mgr).
-		For(&runtimev1alpha1.CodeInterpreter{}).
+		For(&runtimev1alpha1.CodeInterpreter{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(codeInterpreterReconciler); err != nil {
 		return fmt.Errorf("unable to create codeinterpreter controller: %w", err)
 	}

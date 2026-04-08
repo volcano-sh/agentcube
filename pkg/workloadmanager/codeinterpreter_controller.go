@@ -24,6 +24,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -97,33 +98,18 @@ func (r *CodeInterpreterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 // updateStatus updates the CodeInterpreter status
 func (r *CodeInterpreterReconciler) updateStatus(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) error {
-	// Update status
 	ci.Status.Ready = true
 
-	// Update conditions
-	readyCondition := metav1.Condition{
+	// SetStatusCondition only updates LastTransitionTime when the condition
+	// Status actually changes, preventing spurious status writes that would
+	// trigger an infinite reconciliation loop.
+	apimeta.SetStatusCondition(&ci.Status.Conditions, metav1.Condition{
 		Type:               "Ready",
 		Status:             metav1.ConditionTrue,
 		Reason:             "Reconciled",
 		Message:            "CodeInterpreter is ready",
-		LastTransitionTime: metav1.Now(),
 		ObservedGeneration: ci.Generation,
-	}
-
-	// Update or add condition
-	conditionIndex := -1
-	for i, cond := range ci.Status.Conditions {
-		if cond.Type == "Ready" {
-			conditionIndex = i
-			break
-		}
-	}
-
-	if conditionIndex >= 0 {
-		ci.Status.Conditions[conditionIndex] = readyCondition
-	} else {
-		ci.Status.Conditions = append(ci.Status.Conditions, readyCondition)
-	}
+	})
 
 	return r.Status().Update(ctx, ci)
 }

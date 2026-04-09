@@ -173,16 +173,12 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 			err = deleteSandboxClaim(ctxTimeout, dynamicClient, sandboxClaim.Namespace, sandboxClaim.Name)
 			if err != nil {
 				klog.Infof("sandbox claim %s/%s rollback failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err)
-			} else {
-				klog.Infof("sandbox claim %s/%s rollback succeeded", sandboxClaim.Namespace, sandboxClaim.Name)
 			}
 		} else {
 			// Rollback Sandbox
 			err = deleteSandbox(ctxTimeout, dynamicClient, sandbox.Namespace, sandbox.Name)
 			if err != nil {
 				klog.Infof("sandbox %s/%s rollback failed: %v", sandbox.Namespace, sandbox.Name, err)
-			} else {
-				klog.Infof("sandbox %s/%s rollback succeeded", sandbox.Namespace, sandbox.Name)
 			}
 		}
 		// Clean up the store placeholder so it does not pollute GC queries

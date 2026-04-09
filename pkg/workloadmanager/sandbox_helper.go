@@ -17,14 +17,32 @@ limitations under the License.
 package workloadmanager
 
 import (
+	"context"
+	"fmt"
 	"net"
 	"strconv"
 	"time"
 
+	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 )
+
+const (
+	defaultSandboxReadyProbeTimeout  = 15 * time.Second
+	defaultSandboxReadyProbeInterval = 1 * time.Second
+	defaultSandboxReadyDialTimeout   = 1 * time.Second
+)
+
+var sandboxEntrypointDial = func(ctx context.Context, endpoint string, timeout time.Duration) error {
+	dialer := &net.Dialer{Timeout: timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", endpoint)
+	if err != nil {
+		return err
+	}
+	return conn.Close()
+}
 
 func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxEntry) *types.SandboxInfo {
 	return &types.SandboxInfo{
@@ -73,4 +91,54 @@ func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) string {
 		}
 	}
 	return "unknown"
+}
+
+func (s *Server) waitForSandboxEntryPointsReady(ctx context.Context, podIP string, entry *sandboxEntry) error {
+	if entry == nil || len(entry.Ports) == 0 {
+		return nil
+	}
+
+	probeTimeout := defaultSandboxReadyProbeTimeout
+	probeInterval := defaultSandboxReadyProbeInterval
+	if s != nil && s.config != nil {
+		if s.config.SandboxReadyProbeTimeout > 0 {
+			probeTimeout = s.config.SandboxReadyProbeTimeout
+		}
+		if s.config.SandboxReadyProbeInterval > 0 {
+			probeInterval = s.config.SandboxReadyProbeInterval
+		}
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+
+	var lastErr error
+	for {
+		lastErr = probeSandboxEntryPoints(probeCtx, podIP, entry.Ports, probeInterval)
+		if lastErr == nil {
+			return nil
+		}
+
+		select {
+		case <-probeCtx.Done():
+			return fmt.Errorf("sandbox entrypoints not ready before timeout: %w", lastErr)
+		case <-time.After(probeInterval):
+		}
+	}
+}
+
+func probeSandboxEntryPoints(ctx context.Context, podIP string, ports []runtimev1alpha1.TargetPort, probeInterval time.Duration) error {
+	dialTimeout := probeInterval
+	if dialTimeout <= 0 || dialTimeout > defaultSandboxReadyDialTimeout {
+		dialTimeout = defaultSandboxReadyDialTimeout
+	}
+
+	for _, port := range ports {
+		endpoint := net.JoinHostPort(podIP, strconv.Itoa(int(port.Port)))
+		if err := sandboxEntrypointDial(ctx, endpoint, dialTimeout); err != nil {
+			return fmt.Errorf("entrypoint %s not reachable: %w", endpoint, err)
+		}
+	}
+
+	return nil
 }

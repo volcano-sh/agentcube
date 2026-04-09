@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -424,9 +425,59 @@ func TestForwardToSandbox_InvalidEndpoint(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Errorf("Expected status code %d, got %d", http.StatusInternalServerError, resp.StatusCode)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("Expected status code %d, got %d", http.StatusNotFound, resp.StatusCode)
 	}
+}
+
+func TestWaitForUpstreamReachable_RetriesUntilReady(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to allocate listener: %v", err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatalf("failed to close listener: %v", err)
+	}
+
+	startServer := make(chan struct{})
+	serveDone := make(chan struct{})
+	go func() {
+		defer close(serveDone)
+		<-startServer
+		ln, listenErr := net.Listen("tcp", address)
+		if listenErr != nil {
+			return
+		}
+		defer ln.Close()
+
+		conn, acceptErr := ln.Accept()
+		if acceptErr == nil {
+			_ = conn.Close()
+		}
+	}()
+
+	server := &Server{config: &Config{InitialConnectRetryCount: 5, InitialConnectRetryInterval: 100 * time.Millisecond}}
+
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		close(startServer)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	targetURL, err := buildURL("HTTP", address)
+	if err != nil {
+		t.Fatalf("failed to build upstream URL: %v", err)
+	}
+
+	err = server.waitForUpstreamReachable(ctx, targetURL)
+	if err != nil {
+		t.Fatalf("expected upstream to become reachable, got error: %v", err)
+	}
+
+	<-serveDone
 }
 
 func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {

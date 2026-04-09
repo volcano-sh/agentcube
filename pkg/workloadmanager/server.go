@@ -57,12 +57,23 @@ type Config struct {
 	TLSKey string
 	// EnableAuth enable auth by service account
 	EnableAuth bool
+	// SandboxReadyProbeTimeout is the maximum time to wait for sandbox entrypoints
+	// to start accepting connections after the sandbox is reported ready.
+	SandboxReadyProbeTimeout time.Duration
+	// SandboxReadyProbeInterval is the retry interval for sandbox entrypoint probes.
+	SandboxReadyProbeInterval time.Duration
 }
 
 // NewServer creates a new API server instance
 func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
+	}
+	if config.SandboxReadyProbeTimeout <= 0 {
+		config.SandboxReadyProbeTimeout = defaultSandboxReadyProbeTimeout
+	}
+	if config.SandboxReadyProbeInterval <= 0 {
+		config.SandboxReadyProbeInterval = defaultSandboxReadyProbeInterval
 	}
 
 	// Create Kubernetes client

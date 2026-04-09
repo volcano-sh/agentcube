@@ -17,7 +17,9 @@ limitations under the License.
 package router
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -107,7 +109,7 @@ func determineUpstreamURL(sandbox *types.SandboxInfo, path string) (*url.URL, er
 	// prefer matched entrypoint by path
 	for _, ep := range sandbox.EntryPoints {
 		if strings.HasPrefix(path, ep.Path) {
-			return buildURL(ep.Protocol, ep.Endpoint), nil
+			return buildURL(ep.Protocol, ep.Endpoint)
 		}
 	}
 	// fallback to first entrypoint
@@ -115,15 +117,192 @@ func determineUpstreamURL(sandbox *types.SandboxInfo, path string) (*url.URL, er
 		return nil, fmt.Errorf("no entry point found for sandbox")
 	}
 	ep := sandbox.EntryPoints[0]
-	return buildURL(ep.Protocol, ep.Endpoint), nil
+	return buildURL(ep.Protocol, ep.Endpoint)
 }
 
-func buildURL(protocol, endpoint string) *url.URL {
+func buildURL(protocol, endpoint string) (*url.URL, error) {
 	if protocol != "" && !strings.Contains(endpoint, "://") {
 		endpoint = (strings.ToLower(protocol) + "://" + endpoint)
 	}
-	url, _ := url.Parse(endpoint)
-	return url
+	parsedURL, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("invalid upstream endpoint %q: %w", endpoint, err)
+	}
+	if parsedURL.Host == "" {
+		return nil, fmt.Errorf("invalid upstream endpoint %q: missing host", endpoint)
+	}
+	return parsedURL, nil
+}
+
+func connectionRefusedRetryable(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "connection refused")
+}
+
+func preflightTargetAddress(targetURL *url.URL) string {
+	if targetURL == nil {
+		return ""
+	}
+	if targetURL.Host == "" {
+		return ""
+	}
+	if _, _, err := net.SplitHostPort(targetURL.Host); err == nil {
+		return targetURL.Host
+	}
+	switch strings.ToLower(targetURL.Scheme) {
+	case "https":
+		return net.JoinHostPort(targetURL.Host, "443")
+	default:
+		return net.JoinHostPort(targetURL.Host, "80")
+	}
+}
+
+func (s *Server) waitForUpstreamReachable(ctx context.Context, targetURL *url.URL) error {
+	address := preflightTargetAddress(targetURL)
+	if address == "" {
+		return nil
+	}
+
+	retryCount := 0
+	retryInterval := 200 * time.Millisecond
+	if s != nil && s.config != nil {
+		retryCount = s.config.InitialConnectRetryCount
+		if s.config.InitialConnectRetryInterval > 0 {
+			retryInterval = s.config.InitialConnectRetryInterval
+		}
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= retryCount; attempt++ {
+		dialer := &net.Dialer{Timeout: retryInterval}
+		conn, err := dialer.DialContext(ctx, "tcp", address)
+		if err == nil {
+			if closeErr := conn.Close(); closeErr != nil {
+				klog.V(4).Infof("closing preflight connection to %s failed: %v", address, closeErr)
+			}
+			return nil
+		}
+		lastErr = err
+		if !connectionRefusedRetryable(err) || attempt == retryCount {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(retryInterval):
+		}
+	}
+
+	if lastErr != nil {
+		return fmt.Errorf("sandbox preflight connect failed: %w", lastErr)
+	}
+	return nil
+}
+
+func upstreamUnavailableResponse(err error) (int, gin.H) {
+	errText := strings.ToLower(err.Error())
+	switch {
+	case connectionRefusedRetryable(err):
+		return http.StatusBadGateway, gin.H{"error": "sandbox unreachable"}
+	case strings.Contains(errText, "deadline exceeded") || strings.Contains(errText, "timeout"):
+		return http.StatusGatewayTimeout, gin.H{"error": "sandbox timeout"}
+	default:
+		return http.StatusServiceUnavailable, gin.H{"error": "sandbox unreachable"}
+	}
+}
+
+func (s *Server) resolveSandboxTarget(c *gin.Context, sandbox *types.SandboxInfo, path string) (*url.URL, bool) {
+	targetURL, err := determineUpstreamURL(sandbox, path)
+	if err != nil {
+		klog.Errorf("Failed to get sandbox access address %s: %v", sandbox.SandboxID, err)
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return nil, false
+	}
+
+	if err := s.waitForUpstreamReachable(c.Request.Context(), targetURL); err != nil {
+		klog.Errorf("Sandbox preflight failed (session: %s): %v", sandbox.SessionID, err)
+		statusCode, response := upstreamUnavailableResponse(err)
+		c.JSON(statusCode, response)
+		return nil, false
+	}
+
+	return targetURL, true
+}
+
+func (s *Server) generateSandboxJWT(c *gin.Context, sandbox *types.SandboxInfo) (string, bool) {
+	if sandbox.Kind != types.SandboxClaimsKind && sandbox.Kind != types.SandboxKind {
+		return "", true
+	}
+	if s.jwtManager == nil {
+		return "", true
+	}
+
+	claims := map[string]interface{}{
+		"session_id": sandbox.SessionID,
+	}
+	token, err := s.jwtManager.GenerateToken(claims)
+	if err != nil {
+		klog.Errorf("Failed to generate JWT token (session: %s): %v", sandbox.SessionID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to sign request",
+			"code":  "JWT_SIGNING_FAILED",
+		})
+		return "", false
+	}
+
+	return token, true
+}
+
+func normalizedProxyPath(path string) string {
+	if path != "" && !strings.HasPrefix(path, "/") {
+		return "/" + path
+	}
+	return path
+}
+
+func forwardedClientIP(req *http.Request, clientIP string) string {
+	if prior, ok := req.Header["X-Forwarded-For"]; ok {
+		return strings.Join(prior, ", ") + ", " + clientIP
+	}
+	return clientIP
+}
+
+func configureProxyDirector(proxy *httputil.ReverseProxy, c *gin.Context, targetURL *url.URL, path, jwtToken, sessionID string) {
+	proxyPath := normalizedProxyPath(path)
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+
+		req.URL.Path = proxyPath
+		req.URL.RawPath = ""
+		req.Host = targetURL.Host
+		req.Header.Set("X-Forwarded-Host", c.Request.Host)
+		req.Header.Set("X-Forwarded-Proto", "http")
+		if c.Request.TLS != nil {
+			req.Header.Set("X-Forwarded-Proto", "https")
+		}
+		req.Header.Set("X-Forwarded-For", forwardedClientIP(req, c.ClientIP()))
+		if jwtToken != "" {
+			req.Header.Set("Authorization", "Bearer "+jwtToken)
+		}
+
+		klog.Infof("Forwarding request to: %s%s (session: %s)", targetURL.String(), proxyPath, sessionID)
+	}
+}
+
+func configureProxyErrorHandler(proxy *httputil.ReverseProxy, c *gin.Context, sessionID string) {
+	proxy.ErrorHandler = func(_ http.ResponseWriter, _ *http.Request, err error) {
+		klog.Errorf("Proxy error (session: %s): %v", sessionID, err)
+		statusCode, response := upstreamUnavailableResponse(err)
+		c.JSON(statusCode, response)
+	}
+}
+
+func configureProxyResponse(proxy *httputil.ReverseProxy, sessionID string) {
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		resp.Header.Set("x-agentcube-session-id", sessionID)
+		return nil
+	}
 }
 
 // handleAgentInvoke handles agent invocation requests
@@ -144,13 +323,8 @@ func (s *Server) handleCodeInterpreterInvoke(c *gin.Context) {
 
 // forwardToSandbox forwards the request to the specified sandbox endpoint
 func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, path string) {
-	// Extract url from sandbox - find matching entry point by path
-	targetURL, err := determineUpstreamURL(sandbox, path)
-	if err != nil {
-		klog.Errorf("Failed to get sandbox access address %s: %v", sandbox.SandboxID, err)
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": err.Error(),
-		})
+	targetURL, ok := s.resolveSandboxTarget(c, sandbox, path)
+	if !ok {
 		return
 	}
 
@@ -160,96 +334,14 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 	// Use the shared HTTP transport for connection pooling
 	proxy.Transport = s.httpTransport
 
-	var jwtToken string
-	if sandbox.Kind == types.SandboxClaimsKind || sandbox.Kind == types.SandboxKind {
-		// Generate JWT token before setting up Director
-		// Include session ID in claims for debugging and request tracking
-		if s.jwtManager != nil {
-			claims := map[string]interface{}{
-				"session_id": sandbox.SessionID,
-			}
-			token, err := s.jwtManager.GenerateToken(claims)
-			if err != nil {
-				klog.Errorf("Failed to generate JWT token (session: %s): %v", sandbox.SessionID, err)
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"error": "failed to sign request",
-					"code":  "JWT_SIGNING_FAILED",
-				})
-				return
-			}
-			jwtToken = token
-		}
+	jwtToken, ok := s.generateSandboxJWT(c, sandbox)
+	if !ok {
+		return
 	}
 
-	// Customize the director to modify the request
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		originalDirector(req)
-
-		// Set the target path
-		if path != "" && !strings.HasPrefix(path, "/") {
-			path = "/" + path
-		}
-		req.URL.Path = path
-		req.URL.RawPath = ""
-
-		// Set the host header
-		req.Host = targetURL.Host
-
-		// Add forwarding headers
-		req.Header.Set("X-Forwarded-Host", c.Request.Host)
-		req.Header.Set("X-Forwarded-Proto", "http")
-		if c.Request.TLS != nil {
-			req.Header.Set("X-Forwarded-Proto", "https")
-		}
-
-		// Set X-Forwarded-For to preserve original client IP
-		clientIP := c.ClientIP()
-		if prior, ok := req.Header["X-Forwarded-For"]; ok {
-			clientIP = strings.Join(prior, ", ") + ", " + clientIP
-		}
-		req.Header.Set("X-Forwarded-For", clientIP)
-
-		// Add JWT authorization header using pre-generated token
-		if jwtToken != "" {
-			req.Header.Set("Authorization", "Bearer "+jwtToken)
-		}
-
-		klog.Infof("Forwarding request to: %s%s (session: %s)", targetURL.String(), path, sandbox.SessionID)
-	}
-
-	// Customize error handler
-	proxy.ErrorHandler = func(_ http.ResponseWriter, _ *http.Request, err error) {
-		klog.Errorf("Proxy error (session: %s): %v", sandbox.SessionID, err)
-
-		// Determine error type and return appropriate response
-		switch {
-		case strings.Contains(err.Error(), "connection refused"):
-			c.JSON(http.StatusBadGateway, gin.H{
-				"error": "sandbox unreachable",
-			})
-		case strings.Contains(err.Error(), "timeout"):
-			c.JSON(http.StatusGatewayTimeout, gin.H{
-				"error": "sandbox timeout",
-			})
-		default:
-			c.JSON(http.StatusBadGateway, gin.H{
-				"error": "sandbox unreachable",
-			})
-		}
-	}
-
-	// Modify response
-	proxy.ModifyResponse = func(resp *http.Response) error {
-		// Always set session ID in response header
-		resp.Header.Set("x-agentcube-session-id", sandbox.SessionID)
-		return nil
-	}
-
-	// No timeout for invoke requests to allow long-running operations
-	// ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(s.config.RequestTimeout)*time.Second)
-	// defer cancel()
-	// c.Request = c.Request.WithContext(ctx)
+	configureProxyDirector(proxy, c, targetURL, path, jwtToken, sandbox.SessionID)
+	configureProxyErrorHandler(proxy, c, sandbox.SessionID)
+	configureProxyResponse(proxy, sandbox.SessionID)
 
 	// Use the proxy to serve the request
 	proxy.ServeHTTP(c.Writer, c.Request)

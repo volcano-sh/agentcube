@@ -51,6 +51,12 @@ func NewServer(config *Config) (*Server, error) {
 	if config.MaxConcurrentRequests <= 0 {
 		config.MaxConcurrentRequests = 1000 // Default limit
 	}
+	if config.InitialConnectRetryCount < 0 {
+		config.InitialConnectRetryCount = 0
+	}
+	if config.InitialConnectRetryInterval <= 0 {
+		config.InitialConnectRetryInterval = 200 * time.Millisecond
+	}
 
 	// Create session manager with store client
 	sessionManager, err := NewSessionManager(store.Storage())
@@ -153,7 +159,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Create HTTP/2 server for better performance
 	h2s := &http2.Server{}
-	
+
 	// Wrap handler with h2c for HTTP/2 cleartext support
 	h2cHandler := h2c.NewHandler(s.engine, h2s)
 

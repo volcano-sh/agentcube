@@ -23,4 +23,4 @@ jobs:
           docker buildx version
 
       - name: Build Agentcube API Server Docker image
-        run: make docker-build
+        run: make docker-build-workloadmanager

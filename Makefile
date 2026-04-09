@@ -68,7 +68,7 @@ gen-check: gen-all ## Check if generated code is up to date
 .PHONY: build run clean test deps
 
 # Build targets
-build: generate ## Build workloadmanager binary
+build-workloadmanager: generate ## Build workloadmanager binary
 	@echo "Building workloadmanager..."
 	go build -o bin/workloadmanager ./cmd/workload-manager
 
@@ -82,35 +82,10 @@ build-router: generate ## Build agentcube-router binary
 
 build-all: build build-agentd build-router ## Build all binaries
 
-# Run server (development mode)
-run:
-	@echo "Running workloadmanager..."
-	go run ./cmd/workload-manager/main.go \
-		--port=8080 \
-		--ssh-username=sandbox \
-		--ssh-port=22
-
-# Run server (with kubeconfig)
-run-local:
-	@echo "Running workloadmanager with local kubeconfig..."
-	go run ./cmd/workload-manager/main.go \
-		--port=8080 \
-		--kubeconfig=${HOME}/.kube/config \
-		--ssh-username=sandbox \
-		--ssh-port=22
-
-# Run router (development mode)
-run-router:
-	@echo "Running agentcube-router..."
-	go run ./cmd/router/main.go \
-		--port=8080 \
-		--debug
-
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
 	rm -rf bin/
-	rm -f workloadmanager agentd agentcube-router
 
 # Install dependencies
 deps:
@@ -149,11 +124,6 @@ gen-copyright:
 	@echo "Adding copyright headers..."
 	@hack/update-copyright.sh
 
-# Install to system
-install: build
-	@echo "Installing workloadmanager..."
-	sudo cp bin/workloadmanager /usr/local/bin/
-
 # Docker image variables
 WORKLOAD_MANAGER_IMAGE ?= workloadmanager:latest
 ROUTER_IMAGE ?= agentcube-router:latest
@@ -161,49 +131,43 @@ PICOD_IMAGE ?= picod:latest
 IMAGE_REGISTRY ?= ""
 
 # Docker and Kubernetes targets
-docker-build:
+docker-build-workloadmanager:
 	@echo "Building Docker image..."
-	docker build -f docker/Dockerfile -t $(WORKLOAD_MANAGER_IMAGE) .
-
-# Multi-architecture build (supports amd64, arm64)
-docker-buildx:
-	@echo "Building multi-architecture Docker image..."
-	docker buildx build -f docker/Dockerfile --platform linux/amd64,linux/arm64 -t $(WORKLOAD_MANAGER_IMAGE) .
+	docker build -f docker/Dockerfile.workloadmanager -t $(WORKLOAD_MANAGER_IMAGE) .
 
 # Multi-architecture build and push
-docker-buildx-push:
+docker-buildx-push-workloadmanager:
 	@if [ -z "$(IMAGE_REGISTRY)" ]; then \
-		echo "Error: IMAGE_REGISTRY not set. Usage: make docker-buildx-push IMAGE_REGISTRY=your-registry.com"; \
+		echo "Error: IMAGE_REGISTRY not set. Usage: make docker-buildx-push-workloadmanager IMAGE_REGISTRY=your-registry.com"; \
 		exit 1; \
 	fi
 	@echo "Building and pushing multi-architecture Docker image to $(IMAGE_REGISTRY)/$(WORKLOAD_MANAGER_IMAGE)..."
-	docker buildx build -f docker/Dockerfile --platform linux/amd64,linux/arm64 \
+	docker buildx build -f docker/Dockerfile.workloadmanager --platform linux/amd64,linux/arm64 \
 		-t $(IMAGE_REGISTRY)/$(WORKLOAD_MANAGER_IMAGE) \
 		--push .
 
-docker-push: docker-build
+docker-push-workloadmanager: docker-build-workloadmanager
 	@if [ -z "$(IMAGE_REGISTRY)" ]; then \
-		echo "Error: IMAGE_REGISTRY not set. Usage: make docker-push IMAGE_REGISTRY=your-registry.com"; \
+		echo "Error: IMAGE_REGISTRY not set. Usage: make docker-push-workloadmanager IMAGE_REGISTRY=your-registry.com"; \
 		exit 1; \
 	fi
 	@echo "Tagging and pushing Docker image to $(IMAGE_REGISTRY)/$(WORKLOAD_MANAGER_IMAGE)..."
 	docker tag $(WORKLOAD_MANAGER_IMAGE) $(IMAGE_REGISTRY)/$(WORKLOAD_MANAGER_IMAGE)
 	docker push $(IMAGE_REGISTRY)/$(WORKLOAD_MANAGER_IMAGE)
 
-# Load image to kind cluster
+# Load images to kind cluster
 kind-load:
-	@echo "Loading image to kind..."
+	@echo "Loading workload manager image to kind..."
 	kind load docker-image $(WORKLOAD_MANAGER_IMAGE)
+	@echo "Loading router image to kind..."
+	kind load docker-image $(ROUTER_IMAGE)
+	@echo "Loading picod image to kind..."
+	kind load docker-image $(PICOD_IMAGE)
 
 # Router Docker targets
 docker-build-router:
 	@echo "Building Router Docker image..."
 	docker build -f docker/Dockerfile.router -t $(ROUTER_IMAGE) .
-
-# Multi-architecture build for router (supports amd64, arm64)
-docker-buildx-router:
-	@echo "Building multi-architecture Router Docker image..."
-	docker buildx build -f docker/Dockerfile.router --platform linux/amd64,linux/arm64 -t $(ROUTER_IMAGE) .
 
 # Multi-architecture build and push for router
 docker-buildx-push-router:
@@ -225,20 +189,10 @@ docker-push-router: docker-build-router
 	docker tag $(ROUTER_IMAGE) $(IMAGE_REGISTRY)/$(ROUTER_IMAGE)
 	docker push $(IMAGE_REGISTRY)/$(ROUTER_IMAGE)
 
-# Load router image to kind cluster
-kind-load-router:
-	@echo "Loading router image to kind..."
-	kind load docker-image $(ROUTER_IMAGE)
-
 # Picod Docker targets
 docker-build-picod:
 	@echo "Building Picod Docker image..."
 	docker build -f docker/Dockerfile.picod -t $(PICOD_IMAGE) .
-
-# Multi-architecture build for picod (supports amd64, arm64)
-docker-buildx-picod:
-	@echo "Building multi-architecture Picod Docker image..."
-	docker buildx build -f docker/Dockerfile.picod --platform linux/amd64,linux/arm64 -t $(PICOD_IMAGE) .
 
 # Multi-architecture build and push for picod
 docker-buildx-push-picod:

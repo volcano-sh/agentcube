@@ -279,7 +279,7 @@ run_setup() {
 
     step "Building images..."
     # We assume we are in the project root
-    make docker-build
+    make docker-build-workloadmanager
     make docker-build-router
     make docker-build-picod
 

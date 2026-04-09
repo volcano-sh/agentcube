@@ -207,7 +207,7 @@ func upstreamUnavailableResponse(err error) (int, gin.H) {
 	case strings.Contains(errText, "deadline exceeded") || strings.Contains(errText, "timeout"):
 		return http.StatusGatewayTimeout, gin.H{"error": "sandbox timeout"}
 	default:
-		return http.StatusBadGateway, gin.H{"error": "sandbox unreachable"}
+		return http.StatusServiceUnavailable, gin.H{"error": "sandbox unreachable"}
 	}
 }
 

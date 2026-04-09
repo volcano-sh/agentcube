@@ -1,0 +1,114 @@
+{{- if .Values.spire.enabled }}
+# --- SPIRE Server ---
+# Also used by the Controller Manager sidecar running in the same pod
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spire-server
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: spire-server
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-spire-server
+  labels:
+    app: spire-server
+rules:
+  # Required for k8s_psat NodeAttestor to validate projected service account tokens
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  # Required for k8s_psat NodeAttestor to query pod identity during attestation
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Required for node attestation and registration entry management
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  # Required by Controller Manager sidecar to watch and sync ClusterSPIFFEID CRDs
+  - apiGroups: ["spire.spiffe.io"]
+    resources: ["clusterspiffeids", "clusterfederatedtrustdomains", "clusterstaticentries"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["spire.spiffe.io"]
+    resources: ["clusterspiffeids/status", "clusterfederatedtrustdomains/status", "clusterstaticentries/status"]
+    verbs: ["get", "update", "patch"]
+  # Required by Controller Manager sidecar to resolve namespaces for namespaceSelector
+  - apiGroups: [""]
+    resources: ["namespaces", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  # Required by Controller Manager sidecar for leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  # Required by Controller Manager sidecar to manage its webhook certificate
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations"]
+    resourceNames: ["{{ .Release.Name }}-spire-controller-manager-webhook"]
+    verbs: ["update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-spire-server
+  labels:
+    app: spire-server
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-spire-server
+subjects:
+  - kind: ServiceAccount
+    name: spire-server
+    namespace: {{ .Release.Namespace }}
+---
+
+# --- SPIRE Agent ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spire-agent
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: spire-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-spire-agent
+  labels:
+    app: spire-agent
+rules:
+  # Required for k8s workload attestor to query pod metadata from kubelet
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # Required for workload attestation to resolve node information and proxy requests to kubelet
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/proxy"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-spire-agent
+  labels:
+    app: spire-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-spire-agent
+subjects:
+  - kind: ServiceAccount
+    name: spire-agent
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+

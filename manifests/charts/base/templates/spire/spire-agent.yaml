@@ -1,0 +1,113 @@
+{{- if .Values.spire.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-agent-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: spire-agent
+data:
+  agent.conf: |
+    agent {
+        data_dir     = "/run/spire/data"
+        log_level    = "INFO"
+        server_address = "spire-server.{{ .Release.Namespace }}.svc.cluster.local"
+        server_port    = "{{ .Values.spire.server.service.port }}"
+        socket_path  = "/run/spire/sockets/agent.sock"
+        trust_domain = "{{ .Values.spire.trustDomain }}"
+        insecure_bootstrap = {{ .Values.spire.agent.insecureBootstrap | default false }}    # Set true only when intentionally bootstrapping without a pre-existing trust bundle
+    }
+
+    plugins {
+        NodeAttestor "k8s_psat" {
+            plugin_data {
+                cluster = "{{ .Values.spire.clusterName }}"
+            }
+        }
+
+        KeyManager "memory" {
+            plugin_data {}
+        }
+
+        WorkloadAttestor "k8s" {
+            plugin_data {
+                skip_kubelet_verification = {{ .Values.spire.agent.skipKubeletVerification | default false }}        # Set true only in dev scenarios with self-signed kubelets
+            }
+        }
+    }
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: spire-agent
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: spire-agent
+spec:
+  selector:
+    matchLabels:
+      app: spire-agent
+  template:
+    metadata:
+      labels:
+        app: spire-agent
+    spec:
+      serviceAccountName: spire-agent
+      hostPID: true       # Required for workload attestation (process identity)
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: spire-agent
+          image: "{{ .Values.spire.agent.image.repository }}:{{ .Values.spire.agent.image.tag }}"
+          imagePullPolicy: {{ .Values.spire.agent.image.pullPolicy }}
+          args: ["-config", "/run/spire/config/agent.conf"]
+          volumeMounts:
+            - name: spire-agent-socket
+              mountPath: /run/spire/sockets
+            - name: spire-config
+              mountPath: /run/spire/config
+              readOnly: true
+            - name: spire-token
+              mountPath: /var/run/secrets/tokens
+          env:
+            - name: MY_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          livenessProbe:
+            exec:
+              command:
+                - /opt/spire/bin/spire-agent
+                - healthcheck
+                - -socketPath
+                - /run/spire/sockets/agent.sock
+            initialDelaySeconds: 15
+            periodSeconds: 60
+          readinessProbe:
+            exec:
+              command:
+                - /opt/spire/bin/spire-agent
+                - healthcheck
+                - -socketPath
+                - /run/spire/sockets/agent.sock
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.spire.agent.resources | nindent 12 }}
+      volumes:
+        - name: spire-agent-socket
+          hostPath:
+            path: /run/spire/sockets  # Workload API socket shared with pods on this node
+            type: DirectoryOrCreate
+        - name: spire-config
+          configMap:
+            name: spire-agent-config
+        - name: spire-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: spire-server  # Projected token for k8s_psat node attestation
+                  expirationSeconds: 7200
+                  path: spire-agent
+{{- end }}

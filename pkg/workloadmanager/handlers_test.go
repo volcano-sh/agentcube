@@ -34,9 +34,11 @@ import (
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	"github.com/volcano-sh/agentcube/pkg/store"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	"sigs.k8s.io/agent-sandbox/controllers"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
@@ -216,6 +218,13 @@ func TestServerCreateSandbox(t *testing.T) {
 					return "", tt.podIPErr
 				}
 				return "10.0.0.9", nil
+			})
+
+			patches.ApplyFunc(createNetworkPolicy, func(_ context.Context, _ kubernetes.Interface, _ *networkingv1.NetworkPolicy) error {
+				return nil
+			})
+			patches.ApplyFunc(deleteNetworkPolicy, func(_ context.Context, _ kubernetes.Interface, _, _ string) error {
+				return nil
 			})
 
 			resp, err := server.createSandbox(context.Background(), nil, sb, claim, makeEntry(), resultChan)

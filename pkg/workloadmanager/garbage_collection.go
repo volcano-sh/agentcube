@@ -96,6 +96,10 @@ func (gc *garbageCollector) once() {
 			errs = append(errs, err)
 			continue
 		}
+		// Delete the NetworkPolicy associated with the sandbox.
+		if npErr := deleteNetworkPolicy(ctx, gc.k8sClient.clientset, gcSandbox.SandboxNamespace, gcSandbox.Name); npErr != nil {
+			klog.Warningf("garbage collector failed to delete network policy for %s/%s: %v", gcSandbox.SandboxNamespace, gcSandbox.Name, npErr)
+		}
 		klog.Infof("garbage collector %s %s/%s session %s deleted", gcSandbox.Kind, gcSandbox.SandboxNamespace, gcSandbox.Name, gcSandbox.SessionID)
 		err = gc.storeClient.DeleteSandboxBySessionID(ctx, gcSandbox.SessionID)
 		if err != nil {

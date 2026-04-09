@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -81,6 +82,11 @@ type CodeInterpreterSpec struct {
 	// +kubebuilder:validation:Enum=picod;none
 	// +optional
 	AuthMode AuthModeType `json:"authMode,omitempty"`
+
+	// NetworkPolicy defines the network access rules for the sandbox.
+	// If not specified, a default deny-all policy is applied to enforce isolation.
+	// +optional
+	NetworkPolicy *SandboxNetworkPolicy `json:"networkPolicy,omitempty"`
 }
 
 // CodeInterpreterStatus represents the observed state of a CodeInterpreter.
@@ -189,6 +195,20 @@ const (
 	// ProtocolTypeHTTPS indicates HTTPS protocol
 	ProtocolTypeHTTPS ProtocolType = "HTTPS"
 )
+
+// SandboxNetworkPolicy defines the network access rules for a sandbox.
+// It maps directly to a Kubernetes NetworkPolicy applied to the sandbox pod.
+type SandboxNetworkPolicy struct {
+	// Ingress is the list of ingress rules applied to the sandbox pod.
+	// An empty list means all ingress traffic is denied.
+	// +optional
+	Ingress []networkingv1.NetworkPolicyIngressRule `json:"ingress,omitempty"`
+
+	// Egress is the list of egress rules applied to the sandbox pod.
+	// An empty list means all egress traffic is denied.
+	// +optional
+	Egress []networkingv1.NetworkPolicyEgressRule `json:"egress,omitempty"`
+}
 
 // CodeInterpreterList contains a list of CodeInterpreter
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

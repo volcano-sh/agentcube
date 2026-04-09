@@ -56,6 +56,11 @@ type AgentRuntimeSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:default="8h"
 	MaxSessionDuration *metav1.Duration `json:"maxSessionDuration,omitempty" protobuf:"bytes,3,opt,name=maxSessionDuration"`
+
+	// NetworkPolicy defines the network access rules for the sandbox.
+	// If not specified, a default deny-all policy is applied to enforce isolation.
+	// +optional
+	NetworkPolicy *SandboxNetworkPolicy `json:"networkPolicy,omitempty"`
 }
 
 // AgentRuntimeStatus represents the observed state of an AgentRuntime.

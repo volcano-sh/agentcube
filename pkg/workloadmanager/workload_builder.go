@@ -277,9 +277,10 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	}
 	sandbox := buildSandboxObject(buildParams)
 	entry := &sandboxEntry{
-		Kind:      types.SandboxKind,
-		Ports:     agentRuntimeObj.Spec.Ports,
-		SessionID: sessionID,
+		Kind:          types.SandboxKind,
+		Ports:         agentRuntimeObj.Spec.Ports,
+		SessionID:     sessionID,
+		NetworkPolicy: agentRuntimeObj.Spec.NetworkPolicy,
 	}
 	return sandbox, entry, nil
 }
@@ -313,9 +314,10 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	sessionID := uuid.New().String()
 	sandboxName := fmt.Sprintf("%s-%s", codeInterpreterName, RandString(8))
 	sandboxEntry := &sandboxEntry{
-		Kind:      types.SandboxKind,
-		Ports:     codeInterpreterObj.Spec.Ports,
-		SessionID: sessionID,
+		Kind:          types.SandboxKind,
+		Ports:         codeInterpreterObj.Spec.Ports,
+		SessionID:     sessionID,
+		NetworkPolicy: codeInterpreterObj.Spec.NetworkPolicy,
 	}
 
 	// Set default port for code interpreter if not configured

@@ -14,10 +14,10 @@
 
 import base64
 import json
-import time
 import os
 import ast
 import shlex
+import uuid
 from typing import Optional, Any, List, Union
 from urllib.parse import urljoin
 
@@ -183,12 +183,12 @@ class CodeInterpreterDataPlaneClient:
                 self.logger.debug(f"AST parsing fallback error: {e}", exc_info=True)
 
             # Use file-based execution to avoid shell quoting issues and length limits
-            filename = f"script_{int(time.time() * 1000)}.py"
+            filename = f"script-{uuid.uuid4()}.py"
             self.write_file(code, filename)
             cmd = ["python3", filename]
         elif lang in ["bash", "sh"]:
             # Also use file execution for bash to be consistent and safe
-            filename = f"script_{int(time.time() * 1000)}.sh"
+            filename = f"script-{uuid.uuid4()}.sh"
             self.write_file(code, filename)
             cmd = ["bash", filename]
         else:

@@ -24,13 +24,16 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
@@ -95,35 +98,29 @@ func (r *CodeInterpreterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	return ctrl.Result{}, nil
 }
 
-// updateStatus updates the CodeInterpreter status
+// updateStatus updates the CodeInterpreter status. It skips the API write
+// when the status is already up-to-date to avoid triggering a new watch event
+// that would re-enqueue the object unnecessarily.
 func (r *CodeInterpreterReconciler) updateStatus(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) error {
-	// Update status
-	ci.Status.Ready = true
+	existing := apimeta.FindStatusCondition(ci.Status.Conditions, "Ready")
+	if ci.Status.Ready &&
+		existing != nil &&
+		existing.Status == metav1.ConditionTrue &&
+		existing.ObservedGeneration == ci.Generation {
+		return nil
+	}
 
-	// Update conditions
-	readyCondition := metav1.Condition{
+	ci.Status.Ready = true
+	// SetStatusCondition only updates LastTransitionTime when the condition
+	// Status actually changes, preventing spurious status writes that would
+	// trigger an infinite reconciliation loop.
+	apimeta.SetStatusCondition(&ci.Status.Conditions, metav1.Condition{
 		Type:               "Ready",
 		Status:             metav1.ConditionTrue,
 		Reason:             "Reconciled",
 		Message:            "CodeInterpreter is ready",
-		LastTransitionTime: metav1.Now(),
 		ObservedGeneration: ci.Generation,
-	}
-
-	// Update or add condition
-	conditionIndex := -1
-	for i, cond := range ci.Status.Conditions {
-		if cond.Type == "Ready" {
-			conditionIndex = i
-			break
-		}
-	}
-
-	if conditionIndex >= 0 {
-		ci.Status.Conditions[conditionIndex] = readyCondition
-	} else {
-		ci.Status.Conditions = append(ci.Status.Conditions, readyCondition)
-	}
+	})
 
 	return r.Status().Update(ctx, ci)
 }
@@ -361,10 +358,12 @@ func (r *CodeInterpreterReconciler) GetCodeInterpreter(name, namespace string) *
 }
 
 // SetupWithManager sets up the controller with the Manager.
+// GenerationChangedPredicate filters out status-only update events so that
+// the controller is not re-enqueued by its own status writes.
 func (r *CodeInterpreterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.mgr = mgr
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&runtimev1alpha1.CodeInterpreter{}).
+		For(&runtimev1alpha1.CodeInterpreter{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)
 }

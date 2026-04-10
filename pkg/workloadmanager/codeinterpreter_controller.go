@@ -29,9 +29,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
@@ -96,10 +98,19 @@ func (r *CodeInterpreterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	return ctrl.Result{}, nil
 }
 
-// updateStatus updates the CodeInterpreter status
+// updateStatus updates the CodeInterpreter status. It skips the API write
+// when the status is already up-to-date to avoid triggering a new watch event
+// that would re-enqueue the object unnecessarily.
 func (r *CodeInterpreterReconciler) updateStatus(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) error {
-	ci.Status.Ready = true
+	existing := apimeta.FindStatusCondition(ci.Status.Conditions, "Ready")
+	if ci.Status.Ready &&
+		existing != nil &&
+		existing.Status == metav1.ConditionTrue &&
+		existing.ObservedGeneration == ci.Generation {
+		return nil
+	}
 
+	ci.Status.Ready = true
 	// SetStatusCondition only updates LastTransitionTime when the condition
 	// Status actually changes, preventing spurious status writes that would
 	// trigger an infinite reconciliation loop.
@@ -347,10 +358,12 @@ func (r *CodeInterpreterReconciler) GetCodeInterpreter(name, namespace string) *
 }
 
 // SetupWithManager sets up the controller with the Manager.
+// GenerationChangedPredicate filters out status-only update events so that
+// the controller is not re-enqueued by its own status writes.
 func (r *CodeInterpreterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.mgr = mgr
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&runtimev1alpha1.CodeInterpreter{}).
+		For(&runtimev1alpha1.CodeInterpreter{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)
 }

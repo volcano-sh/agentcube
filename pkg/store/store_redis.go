@@ -250,23 +250,43 @@ func (rs *redisStore) ListExpiredSandboxes(ctx context.Context, before time.Time
 
 // ListInactiveSandboxes returns up to limit sandboxes whose last activity
 // time is before, using the last-activity sorted-set index.
+// LastActivityAt is populated on each returned SandboxInfo from the sorted-set
+// score so the caller can apply per-sandbox idle-timeout logic.
 func (rs *redisStore) ListInactiveSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 
 	maxScore := before.Unix()
-	ids, err := rs.cli.ZRangeByScore(ctx, rs.lastActivityIndexKey, &redisv9.ZRangeBy{
+	zs, err := rs.cli.ZRangeByScoreWithScores(ctx, rs.lastActivityIndexKey, &redisv9.ZRangeBy{
 		Min:    "-inf",
 		Max:    fmt.Sprintf("%d", maxScore),
 		Offset: 0,
 		Count:  limit,
 	}).Result()
 	if err != nil {
-		return nil, fmt.Errorf("ListInactiveSandboxes: ZRangeByScore failed: %w", err)
+		return nil, fmt.Errorf("ListInactiveSandboxes: ZRangeByScoreWithScores failed: %w", err)
 	}
 
-	return rs.loadSandboxesBySessionIDs(ctx, ids)
+	ids := make([]string, len(zs))
+	scores := make(map[string]time.Time, len(zs))
+	for i, z := range zs {
+		id := fmt.Sprintf("%v", z.Member)
+		ids[i] = id
+		scores[id] = time.Unix(int64(z.Score), 0)
+	}
+
+	sandboxes, err := rs.loadSandboxesBySessionIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, s := range sandboxes {
+		if t, ok := scores[s.SessionID]; ok {
+			s.LastActivityAt = t
+		}
+	}
+	return sandboxes, nil
 }
 
 // Close releases all resources held by the redis store.

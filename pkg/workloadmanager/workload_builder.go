@@ -277,9 +277,10 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	}
 	sandbox := buildSandboxObject(buildParams)
 	entry := &sandboxEntry{
-		Kind:      types.SandboxKind,
-		Ports:     agentRuntimeObj.Spec.Ports,
-		SessionID: sessionID,
+		Kind:        types.SandboxKind,
+		Ports:       agentRuntimeObj.Spec.Ports,
+		SessionID:   sessionID,
+		IdleTimeout: buildParams.idleTimeout,
 	}
 	return sandbox, entry, nil
 }
@@ -312,10 +313,17 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 
 	sessionID := uuid.New().String()
 	sandboxName := fmt.Sprintf("%s-%s", codeInterpreterName, RandString(8))
+
+	idleTimeout := DefaultSandboxIdleTimeout
+	if codeInterpreterObj.Spec.SessionTimeout != nil {
+		idleTimeout = codeInterpreterObj.Spec.SessionTimeout.Duration
+	}
+
 	sandboxEntry := &sandboxEntry{
-		Kind:      types.SandboxKind,
-		Ports:     codeInterpreterObj.Spec.Ports,
-		SessionID: sessionID,
+		Kind:        types.SandboxKind,
+		Ports:       codeInterpreterObj.Spec.Ports,
+		SessionID:   sessionID,
+		IdleTimeout: idleTimeout,
 	}
 
 	// Set default port for code interpreter if not configured
@@ -399,6 +407,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		podSpec:        podSpec,
 		podLabels:      codeInterpreterObj.Spec.Template.Labels,
 		podAnnotations: codeInterpreterObj.Spec.Template.Annotations,
+		idleTimeout:    idleTimeout,
 	}
 	if codeInterpreterObj.Spec.MaxSessionDuration != nil {
 		buildParams.ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration

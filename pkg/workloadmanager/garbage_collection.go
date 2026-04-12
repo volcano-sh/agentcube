@@ -63,16 +63,33 @@ func (gc *garbageCollector) run(stopCh <-chan struct{}) {
 }
 
 func (gc *garbageCollector) once() {
-	// List sandboxes idle timeout
 	ctx, cancel := context.WithTimeout(context.Background(), gcOnceTimeout)
 	defer cancel()
-	inactiveTime := time.Now().Add(-DefaultSandboxIdleTimeout)
-	inactiveSandboxes, err := gc.storeClient.ListInactiveSandboxes(ctx, inactiveTime, 16)
+	now := time.Now()
+
+	// Query candidates inactive for at least DefaultSandboxIdleTimeout. This is the
+	// minimum configured idle timeout; sandboxes with a longer per-sandbox IdleTimeout
+	// are filtered below so they are not deleted prematurely.
+	candidates, err := gc.storeClient.ListInactiveSandboxes(ctx, now.Add(-DefaultSandboxIdleTimeout), 16)
 	if err != nil {
 		klog.Errorf("garbage collector error listing inactive sandboxes: %v", err)
 	}
+
+	// Apply per-sandbox idle timeout: only include sandboxes whose own IdleTimeout
+	// (stored in the session JSON) has actually elapsed since LastActivityAt.
+	inactiveSandboxes := make([]*types.SandboxInfo, 0, len(candidates))
+	for _, s := range candidates {
+		idleTimeout := s.IdleTimeout
+		if idleTimeout == 0 {
+			idleTimeout = DefaultSandboxIdleTimeout
+		}
+		if s.LastActivityAt.Add(idleTimeout).Before(now) {
+			inactiveSandboxes = append(inactiveSandboxes, s)
+		}
+	}
+
 	// List sandboxes reach DDL
-	expiredSandboxes, err := gc.storeClient.ListExpiredSandboxes(ctx, time.Now(), 16)
+	expiredSandboxes, err := gc.storeClient.ListExpiredSandboxes(ctx, now, 16)
 	if err != nil {
 		klog.Errorf("garbage collector error listing expired sandboxes: %v", err)
 	}

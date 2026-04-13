@@ -283,12 +283,12 @@ func (vs *valkeyStore) ListInactiveSandboxes(ctx context.Context, before time.Ti
 	scores := make(map[string]time.Time, len(rawResult)/2)
 	for i := 0; i < len(rawResult); i += 2 {
 		id := rawResult[i]
-		scoreUnix, err := strconv.ParseInt(rawResult[i+1], 10, 64)
+		scoreFloat, err := strconv.ParseFloat(rawResult[i+1], 64)
 		if err != nil {
 			return nil, fmt.Errorf("ListInactiveSandboxes: parse score for %s: %w", id, err)
 		}
 		ids = append(ids, id)
-		scores[id] = time.Unix(scoreUnix, 0)
+		scores[id] = time.Unix(int64(scoreFloat), 0)
 	}
 
 	sandboxes, err := vs.loadSandboxesBySessionIDs(ctx, ids)

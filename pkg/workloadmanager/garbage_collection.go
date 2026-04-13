@@ -79,7 +79,11 @@ func (gc *garbageCollector) once() {
 	// (stored in the session JSON) has actually elapsed since LastActivityAt.
 	inactiveSandboxes := make([]*types.SandboxInfo, 0, len(candidates))
 	for _, s := range candidates {
-		idleTimeout := s.IdleTimeout
+		if s.LastActivityAt.IsZero() {
+			klog.Warningf("garbage collector skipping sandbox %s/%s (session %s): LastActivityAt not populated", s.SandboxNamespace, s.Name, s.SessionID)
+			continue
+		}
+		idleTimeout := s.IdleTimeout.Duration
 		if idleTimeout == 0 {
 			idleTimeout = DefaultSandboxIdleTimeout
 		}

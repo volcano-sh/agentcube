@@ -145,6 +145,7 @@ type buildSandboxClaimParams struct {
 	name                string
 	sandboxTemplateName string
 	sessionID           string
+	idleTimeout         time.Duration
 	// ownerReference is the reference to the CodeInterpreter that creates this SandboxClaim
 	ownerReference *metav1.OwnerReference
 }
@@ -200,6 +201,10 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 }
 
 func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha1.SandboxClaim {
+	idleTimeout := params.idleTimeout
+	if idleTimeout == 0 {
+		idleTimeout = DefaultSandboxIdleTimeout
+	}
 	sandboxClaim := &extensionsv1alpha1.SandboxClaim{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "extensions.agents.x-k8s.io/v1alpha1",
@@ -212,7 +217,9 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 				SessionIdLabelKey:   params.sessionID,
 				SandboxNameLabelKey: params.name,
 			},
-			Annotations: map[string]string{},
+			Annotations: map[string]string{
+				IdleTimeoutAnnotationKey: idleTimeout.String(),
+			},
 		},
 		Spec: extensionsv1alpha1.SandboxClaimSpec{
 			TemplateRef: extensionsv1alpha1.SandboxTemplateRef{
@@ -343,6 +350,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 			name:                sandboxName,
 			sandboxTemplateName: codeInterpreterName,
 			sessionID:           sessionID,
+			idleTimeout:         idleTimeout,
 			ownerReference: &metav1.OwnerReference{
 				APIVersion: codeInterpreterObj.APIVersion,
 				Kind:       codeInterpreterObj.Kind,

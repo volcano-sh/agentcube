@@ -62,7 +62,7 @@ func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxE
 		Name:             sandboxCR.GetName(),
 		ExpiresAt:        expiresAt,
 		Status:           "creating",
-		IdleTimeout:      idleTimeout,
+		IdleTimeout:      metav1.Duration{Duration: idleTimeout},
 	}
 }
 
@@ -94,7 +94,7 @@ func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *san
 		CreatedAt:        createdAt,
 		ExpiresAt:        expiresAt,
 		Status:           getSandboxStatus(sandbox),
-		IdleTimeout:      idleTimeout,
+		IdleTimeout:      metav1.Duration{Duration: idleTimeout},
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -122,6 +123,12 @@ func determineUpstreamURL(sandbox *types.SandboxInfo, path string) (*url.URL, er
 	return buildURL(ep.Protocol, ep.Endpoint)
 }
 
+// validProxySchemes are the URL schemes accepted for reverse-proxy targets.
+// ws/wss are included to support WebSocket upgrades.
+var validProxySchemes = map[string]bool{
+	"http": true, "https": true, "ws": true, "wss": true,
+}
+
 func buildURL(protocol, endpoint string) (*url.URL, error) {
 	if protocol != "" && !strings.Contains(endpoint, "://") {
 		endpoint = strings.ToLower(protocol) + "://" + endpoint
@@ -133,8 +140,17 @@ func buildURL(protocol, endpoint string) (*url.URL, error) {
 	if u.Scheme == "" {
 		return nil, fmt.Errorf("invalid endpoint URL %q: missing scheme", endpoint)
 	}
+	if !validProxySchemes[u.Scheme] {
+		return nil, fmt.Errorf("invalid endpoint URL %q: unsupported scheme %q, must be http, https, ws, or wss", endpoint, u.Scheme)
+	}
 	if u.Host == "" {
 		return nil, fmt.Errorf("invalid endpoint URL %q: missing host", endpoint)
+	}
+	if portStr := u.Port(); portStr != "" {
+		port, err := strconv.Atoi(portStr)
+		if err != nil || port < 1 || port > 65535 {
+			return nil, fmt.Errorf("invalid endpoint URL %q: port %q out of range (1-65535)", endpoint, portStr)
+		}
 	}
 	return u, nil
 }

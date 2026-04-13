@@ -399,8 +399,11 @@ func TestForwardToSandbox_InvalidEndpoint(t *testing.T) {
 	}{
 		{"malformed scheme", "://invalid-url"},
 		{"empty endpoint", ""},
-		{"scheme only", "http://"},
+		{"scheme only no host", "http://"},
 		{"no scheme", "localhost:8080"},
+		{"unsupported scheme ftp", "ftp://host:21"},
+		{"unsupported scheme file", "file:///etc/passwd"},
+		{"port out of range", "http://host:99999"},
 	}
 
 	for _, tc := range cases {

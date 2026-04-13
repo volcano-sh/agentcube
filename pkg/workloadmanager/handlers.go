@@ -174,8 +174,15 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	var createdSandbox *sandboxv1alpha1.Sandbox
 	select {
 	case result := <-resultChan:
+		if result.Err != nil {
+			klog.Warningf("sandbox %s/%s failed: %v", sandbox.Namespace, sandbox.Name, result.Err)
+			return nil, result.Err
+		}
 		createdSandbox = result.Sandbox
 		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
+	case <-ctx.Done():
+		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
+		return nil, fmt.Errorf("sandbox creation canceled: %w", ctx.Err())
 	case <-time.After(2 * time.Minute): // consistent with router settings
 		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
 		return nil, fmt.Errorf("sandbox creation timed out")

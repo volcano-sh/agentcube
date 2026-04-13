@@ -18,6 +18,7 @@ package workloadmanager
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -40,6 +41,7 @@ type SandboxReconciler struct {
 
 type SandboxStatusUpdate struct {
 	Sandbox *sandboxv1alpha1.Sandbox
+	Err     error
 }
 
 func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -48,30 +50,38 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	status := getSandboxStatus(sandbox)
+	status, failMsg := getSandboxStatus(sandbox)
 
-	// Check for pending requests with proper locking
-	if status == "running" {
-		klog.V(2).Infof("Sandbox %s/%s is running, sending notification", sandbox.Namespace, sandbox.Name)
-		r.mu.Lock()
-		resultChan, exists := r.watchers[req.NamespacedName]
-		if exists {
-			klog.V(2).Infof("Found %d pending requests for sandbox %s/%s", len(r.watchers), sandbox.Namespace, sandbox.Name)
-			// Remove from map before sending to avoid memory leak
-			delete(r.watchers, req.NamespacedName)
-		} else {
-			klog.V(2).Infof("No pending requests found for sandbox %s/%s", sandbox.Namespace, sandbox.Name)
-		}
-		r.mu.Unlock()
+	// Only notify the waiter on a terminal state (running or failed).
+	// "unknown" means the sandbox is still being scheduled/started; stay quiet.
+	var update *SandboxStatusUpdate
+	switch status {
+	case "running":
+		klog.V(2).Infof("Sandbox %s/%s is running, notifying waiter", sandbox.Namespace, sandbox.Name)
+		update = &SandboxStatusUpdate{Sandbox: sandbox}
+	case "failed":
+		klog.Warningf("Sandbox %s/%s entered a terminal failure state: %s", sandbox.Namespace, sandbox.Name, failMsg)
+		update = &SandboxStatusUpdate{Sandbox: sandbox, Err: fmt.Errorf("sandbox failed: %s", failMsg)}
+	default:
+		return ctrl.Result{}, nil
+	}
 
-		if exists {
-			// Send notification outside the lock to avoid deadlock
-			select {
-			case resultChan <- SandboxStatusUpdate{Sandbox: sandbox}:
-				klog.V(2).Infof("Notified waiter about sandbox %s/%s reaching Running state", sandbox.Namespace, sandbox.Name)
-			default:
-				klog.Warningf("Failed to notify watcher for sandbox %s/%s: channel buffer full or not receiving", sandbox.Namespace, sandbox.Name)
-			}
+	r.mu.Lock()
+	resultChan, exists := r.watchers[req.NamespacedName]
+	if exists {
+		delete(r.watchers, req.NamespacedName)
+	}
+	r.mu.Unlock()
+
+	if exists {
+		// Send notification outside the lock to avoid deadlock.
+		// The channel has buffer 1 so this never blocks when the map entry
+		// is deleted before the send (only one sender per key is possible).
+		select {
+		case resultChan <- *update:
+			klog.V(2).Infof("Notified waiter about sandbox %s/%s (status: %s)", sandbox.Namespace, sandbox.Name, status)
+		default:
+			klog.Warningf("Could not notify waiter for sandbox %s/%s: channel unexpectedly full", sandbox.Namespace, sandbox.Name)
 		}
 	}
 

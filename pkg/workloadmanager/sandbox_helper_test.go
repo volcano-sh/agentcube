@@ -349,7 +349,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 			expected: "running",
 		},
 		{
-			name: "ready condition false",
+			name: "ready condition false without reason",
 			sandbox: &sandboxv1alpha1.Sandbox{
 				Status: sandboxv1alpha1.SandboxStatus{
 					Conditions: []metav1.Condition{
@@ -361,6 +361,22 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 				},
 			},
 			expected: "unknown",
+		},
+		{
+			name: "ready condition false with reason indicates terminal failure",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				Status: sandboxv1alpha1.SandboxStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:    string(sandboxv1alpha1.SandboxConditionReady),
+							Status:  metav1.ConditionFalse,
+							Reason:  "ErrImagePull",
+							Message: "Back-off pulling image",
+						},
+					},
+				},
+			},
+			expected: "failed",
 		},
 		{
 			name: "ready condition unknown",
@@ -430,7 +446,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := getSandboxStatus(tt.sandbox)
+			result, _ := getSandboxStatus(tt.sandbox)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

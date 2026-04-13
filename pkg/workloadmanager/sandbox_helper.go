@@ -93,20 +93,38 @@ func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *san
 		SessionID:        entry.SessionID,
 		CreatedAt:        createdAt,
 		ExpiresAt:        expiresAt,
-		Status:           getSandboxStatus(sandbox),
+		Status:           sandboxStatusString(sandbox),
 		IdleTimeout:      metav1.Duration{Duration: idleTimeout},
 	}
 }
 
-// getSandboxStatus extracts status from Sandbox CRD conditions
-func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) string {
-	// Check conditions for Ready status
+// sandboxStatusString returns only the status string (discards the failure message).
+// Use this where only the status label is needed (e.g. store metadata).
+func sandboxStatusString(sandbox *sandboxv1alpha1.Sandbox) string {
+	s, _ := getSandboxStatus(sandbox)
+	return s
+}
+
+// getSandboxStatus extracts status from Sandbox CRD conditions.
+// Returns "running", "failed", or "unknown".
+func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) (string, string) {
 	for _, condition := range sandbox.Status.Conditions {
-		if condition.Type == string(sandboxv1alpha1.SandboxConditionReady) && condition.Status == metav1.ConditionTrue {
-			return "running"
+		if condition.Type != string(sandboxv1alpha1.SandboxConditionReady) {
+			continue
+		}
+		if condition.Status == metav1.ConditionTrue {
+			return "running", ""
+		}
+		// ConditionFalse with a reason indicates a terminal failure, not transient pending.
+		if condition.Status == metav1.ConditionFalse && condition.Reason != "" {
+			msg := condition.Message
+			if msg == "" {
+				msg = condition.Reason
+			}
+			return "failed", msg
 		}
 	}
-	return "unknown"
+	return "unknown", ""
 }
 
 func (s *Server) waitForSandboxEntryPointsReady(ctx context.Context, podIP string, entry *sandboxEntry) error {

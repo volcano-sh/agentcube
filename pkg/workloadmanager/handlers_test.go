@@ -337,7 +337,7 @@ func TestHandleSandboxCreate(t *testing.T) {
 			body:              `{"name":"workload","namespace":"ns"}`,
 			createErr:         errors.New("create failed"),
 			expectStatus:      http.StatusInternalServerError,
-			expectMessage:     "internal server error",
+			expectMessage:     "create failed",
 			expectCreateCalls: 1,
 		},
 		{

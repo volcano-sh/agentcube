@@ -133,7 +133,7 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	response, err := s.createSandbox(c.Request.Context(), dynamicClient, sandbox, sandboxClaim, sandboxEntry, resultChan)
 	if err != nil {
 		klog.Errorf("create sandbox failed %s/%s: %v", sandbox.Namespace, sandbox.Name, err)
-		respondError(c, http.StatusInternalServerError, "internal server error")
+		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -171,9 +171,14 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		s.sandboxRollback(sandboxClaim, dynamicClient, sandbox, sandboxEntry)
 	}()
 
+	// Use NewTimer so we can stop it explicitly when another branch wins,
+	// preventing the runtime from retaining the timer until it fires.
+	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
+
 	var createdSandbox *sandboxv1alpha1.Sandbox
 	select {
 	case result := <-resultChan:
+		timer.Stop()
 		if result.Err != nil {
 			klog.Warningf("sandbox %s/%s failed: %v", sandbox.Namespace, sandbox.Name, result.Err)
 			return nil, result.Err
@@ -181,9 +186,10 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		createdSandbox = result.Sandbox
 		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
 	case <-ctx.Done():
+		timer.Stop()
 		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
 		return nil, fmt.Errorf("sandbox creation canceled: %w", ctx.Err())
-	case <-time.After(2 * time.Minute): // consistent with router settings
+	case <-timer.C:
 		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
 		return nil, fmt.Errorf("sandbox creation timed out")
 	}

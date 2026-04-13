@@ -54,14 +54,22 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// Only notify the waiter on a terminal state (running or failed).
 	// "unknown" means the sandbox is still being scheduled/started; stay quiet.
-	var update *SandboxStatusUpdate
+	var (
+		update  SandboxStatusUpdate
+		hasWork bool
+	)
 	switch status {
 	case "running":
 		klog.V(2).Infof("Sandbox %s/%s is running, notifying waiter", sandbox.Namespace, sandbox.Name)
-		update = &SandboxStatusUpdate{Sandbox: sandbox}
+		update = SandboxStatusUpdate{Sandbox: sandbox}
+		hasWork = true
 	case "failed":
 		klog.Warningf("Sandbox %s/%s entered a terminal failure state: %s", sandbox.Namespace, sandbox.Name, failMsg)
-		update = &SandboxStatusUpdate{Sandbox: sandbox, Err: fmt.Errorf("sandbox failed: %s", failMsg)}
+		update = SandboxStatusUpdate{
+			Sandbox: sandbox,
+			Err:     fmt.Errorf("sandbox %s/%s failed: %s", sandbox.Namespace, sandbox.Name, failMsg),
+		}
+		hasWork = true
 	default:
 		return ctrl.Result{}, nil
 	}
@@ -73,12 +81,12 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 	r.mu.Unlock()
 
-	if exists {
+	if exists && hasWork {
 		// Send notification outside the lock to avoid deadlock.
 		// The channel has buffer 1 so this never blocks when the map entry
 		// is deleted before the send (only one sender per key is possible).
 		select {
-		case resultChan <- *update:
+		case resultChan <- update:
 			klog.V(2).Infof("Notified waiter about sandbox %s/%s (status: %s)", sandbox.Namespace, sandbox.Name, status)
 		default:
 			klog.Warningf("Could not notify waiter for sandbox %s/%s: channel unexpectedly full", sandbox.Namespace, sandbox.Name)

@@ -330,9 +330,10 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 
 func TestGetSandboxStatus_TableDriven(t *testing.T) {
 	tests := []struct {
-		name     string
-		sandbox  *sandboxv1alpha1.Sandbox
-		expected string
+		name        string
+		sandbox     *sandboxv1alpha1.Sandbox
+		expected    string
+		expectedMsg string
 	}{
 		{
 			name: "ready condition true",
@@ -346,7 +347,8 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected: "running",
+			expected:    "running",
+			expectedMsg: "",
 		},
 		{
 			name: "ready condition false without reason",
@@ -360,7 +362,8 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected: "unknown",
+			expected:    "unknown",
+			expectedMsg: "",
 		},
 		{
 			name: "ready condition false with reason indicates terminal failure",
@@ -376,7 +379,24 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected: "failed",
+			expected:    "failed",
+			expectedMsg: "Back-off pulling image",
+		},
+		{
+			name: "ready condition false with reason but no message falls back to reason",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				Status: sandboxv1alpha1.SandboxStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:   string(sandboxv1alpha1.SandboxConditionReady),
+							Status: metav1.ConditionFalse,
+							Reason: "OOMKilled",
+						},
+					},
+				},
+			},
+			expected:    "failed",
+			expectedMsg: "OOMKilled",
 		},
 		{
 			name: "ready condition unknown",
@@ -390,7 +410,8 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected: "unknown",
+			expected:    "unknown",
+			expectedMsg: "",
 		},
 		{
 			name: "no conditions",
@@ -399,7 +420,8 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					Conditions: []metav1.Condition{},
 				},
 			},
-			expected: "unknown",
+			expected:    "unknown",
+			expectedMsg: "",
 		},
 		{
 			name: "nil conditions",
@@ -408,7 +430,8 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					Conditions: nil,
 				},
 			},
-			expected: "unknown",
+			expected:    "unknown",
+			expectedMsg: "",
 		},
 		{
 			name: "other condition type",
@@ -422,7 +445,8 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected: "unknown",
+			expected:    "unknown",
+			expectedMsg: "",
 		},
 		{
 			name: "multiple conditions with ready true",
@@ -440,14 +464,16 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected: "running",
+			expected:    "running",
+			expectedMsg: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, _ := getSandboxStatus(tt.sandbox)
+			result, msg := getSandboxStatus(tt.sandbox)
 			assert.Equal(t, tt.expected, result)
+			assert.Equal(t, tt.expectedMsg, msg)
 		})
 	}
 }

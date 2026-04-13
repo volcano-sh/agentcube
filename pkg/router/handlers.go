@@ -130,6 +130,12 @@ func buildURL(protocol, endpoint string) (*url.URL, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid endpoint URL %q: %w", endpoint, err)
 	}
+	if u.Scheme == "" {
+		return nil, fmt.Errorf("invalid endpoint URL %q: missing scheme", endpoint)
+	}
+	if u.Host == "" {
+		return nil, fmt.Errorf("invalid endpoint URL %q: missing host", endpoint)
+	}
 	return u, nil
 }
 

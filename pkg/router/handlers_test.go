@@ -393,39 +393,52 @@ func TestHandleCodeInterpreterInvoke(t *testing.T) {
 }
 
 func TestForwardToSandbox_InvalidEndpoint(t *testing.T) {
-	setupEnv()
-	defer teardownEnv()
-
-	config := &Config{Port: "8080"}
-	server, err := NewServer(config)
-	if err != nil {
-		t.Fatalf("Failed to create server: %v", err)
+	cases := []struct {
+		name     string
+		endpoint string
+	}{
+		{"malformed scheme", "://invalid-url"},
+		{"empty endpoint", ""},
+		{"scheme only", "http://"},
+		{"no scheme", "localhost:8080"},
 	}
 
-	server.sessionManager = &mockSessionManager{
-		sandbox: &types.SandboxInfo{
-			SandboxID: "test-sandbox",
-			SessionID: "test-session",
-			Name:      "test-sandbox",
-			EntryPoints: []types.SandboxEntryPoint{
-				{Endpoint: "://invalid-url", Path: "/test"},
-			},
-		},
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setupEnv()
+			defer teardownEnv()
 
-	// run via real server to avoid CloseNotifier panic
-	routerServer := httptest.NewServer(server.engine)
-	defer routerServer.Close()
+			config := &Config{Port: "8080"}
+			server, err := NewServer(config)
+			if err != nil {
+				t.Fatalf("Failed to create server: %v", err)
+			}
 
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Post(routerServer.URL+"/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", "application/json", nil)
-	if err != nil {
-		t.Fatalf("Failed to make request: %v", err)
-	}
-	defer resp.Body.Close()
+			server.sessionManager = &mockSessionManager{
+				sandbox: &types.SandboxInfo{
+					SandboxID: "test-sandbox",
+					SessionID: "test-session",
+					Name:      "test-sandbox",
+					EntryPoints: []types.SandboxEntryPoint{
+						{Endpoint: tc.endpoint, Path: "/test"},
+					},
+				},
+			}
 
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Errorf("Expected status code %d, got %d", http.StatusInternalServerError, resp.StatusCode)
+			routerServer := httptest.NewServer(server.engine)
+			defer routerServer.Close()
+
+			client := &http.Client{Timeout: 5 * time.Second}
+			resp, err := client.Post(routerServer.URL+"/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", "application/json", nil)
+			if err != nil {
+				t.Fatalf("Failed to make request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusInternalServerError {
+				t.Errorf("[%s] expected %d, got %d", tc.name, http.StatusInternalServerError, resp.StatusCode)
+			}
+		})
 	}
 }
 

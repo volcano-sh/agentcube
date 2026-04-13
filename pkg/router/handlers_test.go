@@ -429,6 +429,40 @@ func TestForwardToSandbox_InvalidEndpoint(t *testing.T) {
 	}
 }
 
+func TestForwardToSandbox_NoEntryPoints(t *testing.T) {
+	setupEnv()
+	defer teardownEnv()
+
+	config := &Config{Port: "8080"}
+	server, err := NewServer(config)
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+
+	server.sessionManager = &mockSessionManager{
+		sandbox: &types.SandboxInfo{
+			SandboxID:   "test-sandbox",
+			SessionID:   "test-session",
+			Name:        "test-sandbox",
+			EntryPoints: []types.SandboxEntryPoint{},
+		},
+	}
+
+	routerServer := httptest.NewServer(server.engine)
+	defer routerServer.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(routerServer.URL+"/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", "application/json", nil)
+	if err != nil {
+		t.Fatalf("Failed to make request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("Expected status code %d, got %d", http.StatusNotFound, resp.StatusCode)
+	}
+}
+
 func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 	// Set required environment variables
 	setupEnv()

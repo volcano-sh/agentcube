@@ -183,7 +183,16 @@ func TestGetPrivateKeyPEM(t *testing.T) {
 	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 	assert.NoError(t, err)
 	assert.NotNil(t, privateKey)
-	assert.Equal(t, manager.privateKey, privateKey)
+
+	// Compare key components instead of whole struct — ParsePKCS1PrivateKey may
+	// not precompute Dp/Dq/Qinv identically to the original key.
+	assert.Equal(t, manager.privateKey.PublicKey.N, privateKey.PublicKey.N, "Public key N should match")
+	assert.Equal(t, manager.privateKey.PublicKey.E, privateKey.PublicKey.E, "Public key E should match")
+	assert.Equal(t, 0, manager.privateKey.D.Cmp(privateKey.D), "Private exponent D should match")
+	assert.Equal(t, len(manager.privateKey.Primes), len(privateKey.Primes), "Number of primes should match")
+	for i := range manager.privateKey.Primes {
+		assert.Equal(t, 0, manager.privateKey.Primes[i].Cmp(privateKey.Primes[i]), "Prime %d should match", i)
+	}
 }
 
 func TestLoadPrivateKeyPEM(t *testing.T) {

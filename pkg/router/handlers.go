@@ -17,6 +17,7 @@ limitations under the License.
 package router
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
@@ -103,27 +104,33 @@ func (s *Server) handleGetSandboxError(c *gin.Context, err error) {
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 }
 
+// errNoEntryPoint is returned when a sandbox has no entry points configured.
+var errNoEntryPoint = errors.New("no entry point found for sandbox")
+
 func determineUpstreamURL(sandbox *types.SandboxInfo, path string) (*url.URL, error) {
 	// prefer matched entrypoint by path
 	for _, ep := range sandbox.EntryPoints {
 		if strings.HasPrefix(path, ep.Path) {
-			return buildURL(ep.Protocol, ep.Endpoint), nil
+			return buildURL(ep.Protocol, ep.Endpoint)
 		}
 	}
 	// fallback to first entrypoint
 	if len(sandbox.EntryPoints) == 0 {
-		return nil, fmt.Errorf("no entry point found for sandbox")
+		return nil, errNoEntryPoint
 	}
 	ep := sandbox.EntryPoints[0]
-	return buildURL(ep.Protocol, ep.Endpoint), nil
+	return buildURL(ep.Protocol, ep.Endpoint)
 }
 
-func buildURL(protocol, endpoint string) *url.URL {
+func buildURL(protocol, endpoint string) (*url.URL, error) {
 	if protocol != "" && !strings.Contains(endpoint, "://") {
-		endpoint = (strings.ToLower(protocol) + "://" + endpoint)
+		endpoint = strings.ToLower(protocol) + "://" + endpoint
 	}
-	url, _ := url.Parse(endpoint)
-	return url
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("invalid endpoint URL %q: %w", endpoint, err)
+	}
+	return u, nil
 }
 
 // handleAgentInvoke handles agent invocation requests
@@ -148,9 +155,11 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 	targetURL, err := determineUpstreamURL(sandbox, path)
 	if err != nil {
 		klog.Errorf("Failed to get sandbox access address %s: %v", sandbox.SandboxID, err)
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": err.Error(),
-		})
+		if errors.Is(err, errNoEntryPoint) {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid sandbox endpoint configuration"})
+		}
 		return
 	}
 

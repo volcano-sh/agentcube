@@ -132,8 +132,19 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 
 	response, err := s.createSandbox(c.Request.Context(), dynamicClient, sandbox, sandboxClaim, sandboxEntry, resultChan)
 	if err != nil {
+		// Client disconnected — nothing to write back, avoid a misleading 500 in metrics.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			klog.Warningf("create sandbox aborted %s/%s: client disconnected", sandbox.Namespace, sandbox.Name)
+			return
+		}
 		klog.Errorf("create sandbox failed %s/%s: %v", sandbox.Namespace, sandbox.Name, err)
-		respondError(c, http.StatusInternalServerError, err.Error())
+		// Internal errors (store, K8s API) must not leak system details to callers;
+		// sandbox-level failures (terminal pod state, timeout) are safe to surface.
+		msg := err.Error()
+		if apierrors.IsInternalError(err) {
+			msg = "internal server error"
+		}
+		respondError(c, http.StatusInternalServerError, msg)
 		return
 	}
 
@@ -188,7 +199,7 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	case <-ctx.Done():
 		timer.Stop()
 		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
-		return nil, fmt.Errorf("sandbox creation canceled: %w", ctx.Err())
+		return nil, ctx.Err()
 	case <-timer.C:
 		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
 		return nil, fmt.Errorf("sandbox creation timed out")

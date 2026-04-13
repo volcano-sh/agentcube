@@ -82,15 +82,12 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	r.mu.Unlock()
 
 	if exists && hasWork {
-		// Send notification outside the lock to avoid deadlock.
-		// The channel has buffer 1 so this never blocks when the map entry
-		// is deleted before the send (only one sender per key is possible).
-		select {
-		case resultChan <- update:
-			klog.V(2).Infof("Notified waiter about sandbox %s/%s (status: %s)", sandbox.Namespace, sandbox.Name, status)
-		default:
-			klog.Warningf("Could not notify waiter for sandbox %s/%s: channel unexpectedly full", sandbox.Namespace, sandbox.Name)
-		}
+		// WatchSandboxOnce always creates a buffered channel of size 1, and the
+		// map entry is deleted before this point so only one sender can ever
+		// reach here for a given key. The buffer is therefore always empty and
+		// this send never blocks.
+		resultChan <- update
+		klog.V(2).Infof("Notified waiter about sandbox %s/%s (status: %s)", sandbox.Namespace, sandbox.Name, status)
 	}
 
 	return ctrl.Result{}, nil

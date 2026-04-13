@@ -2,11 +2,8 @@ name: Python SDK Publish
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - "sdk-python/**"
-      - ".github/workflows/python-sdk-publish.yml"
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
 
 jobs:

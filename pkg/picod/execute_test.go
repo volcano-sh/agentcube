@@ -256,6 +256,34 @@ func TestExecuteHandler_WorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestExecuteHandler_WorkingDirectory_SymlinkEscape(t *testing.T) {
+	server, tmpDir := setupExecuteTestServer(t)
+	defer os.RemoveAll(tmpDir)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	// Plant a symlink inside the workspace that points outside it.
+	outsideDir := t.TempDir()
+	symlinkPath := filepath.Join(tmpDir, "escape")
+	require.NoError(t, os.Symlink(outsideDir, symlinkPath))
+
+	// Attempt to execute in a subdirectory of the symlink — mkdirSafe should reject this.
+	req := ExecuteRequest{
+		Command:    []string{"pwd"},
+		WorkingDir: "escape/newdir",
+	}
+	body, _ := json.Marshal(req)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request, _ = http.NewRequest("POST", "/api/execute", bytes.NewBuffer(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	server.ExecuteHandler(c)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "Failed to create working directory")
+}
+
 func TestExecuteHandler_DefaultsToWorkspace(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)

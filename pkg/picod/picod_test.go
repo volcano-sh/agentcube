@@ -397,7 +397,8 @@ func TestPicoD_SetWorkspace(t *testing.T) {
 	// Case 1: Absolute Path
 	absPath, err := filepath.Abs(realDir)
 	require.NoError(t, err)
-	server.setWorkspace(realDir)
+	err = server.setWorkspace(realDir)
+	require.NoError(t, err)
 	assert.Equal(t, resolve(absPath), resolve(server.workspaceDir))
 
 	// Case 2: Relative Path
@@ -407,12 +408,14 @@ func TestPicoD_SetWorkspace(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, os.Chdir(originalWd)) }()
 
-	server.setWorkspace("real")
+	err = server.setWorkspace("real")
+	require.NoError(t, err)
 	assert.Equal(t, resolve(absPath), resolve(server.workspaceDir))
 
 	// Case 3: Symlink
 	absLinkPath, err := filepath.Abs(linkDir)
 	require.NoError(t, err)
-	server.setWorkspace(linkDir)
+	err = server.setWorkspace(linkDir)
+	require.NoError(t, err)
 	assert.Equal(t, resolve(absLinkPath), resolve(server.workspaceDir))
 }

@@ -103,7 +103,7 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 			})
 			return
 		}
-		if err := os.MkdirAll(safeWorkingDir, 0755); err != nil {
+		if err := s.mkdirSafe(safeWorkingDir); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": fmt.Sprintf("Failed to create working directory: %v", err),
 				"code":  http.StatusInternalServerError,

@@ -386,6 +386,44 @@ func parseFileMode(modeStr string) os.FileMode {
 	return os.FileMode(mode)
 }
 
+// mkdirSafe creates dir and all parents within the workspace, guarding against
+// symlink-based directory traversal in existing path components.
+//
+// os.MkdirAll follows symlinks in the existing portion of the path.  If an
+// attacker has placed a symlink inside the workspace that points outside (e.g.
+// workspace/link -> /), MkdirAll("workspace/link/newdir") would silently create
+// /newdir.  mkdirSafe walks up to the deepest existing ancestor, resolves its
+// symlinks, and verifies it is still inside the workspace before proceeding.
+func (s *Server) mkdirSafe(dir string) error {
+	resolvedWorkspace, err := filepath.EvalSymlinks(s.workspaceDir)
+	if err != nil {
+		resolvedWorkspace = filepath.Clean(s.workspaceDir)
+	}
+
+	// Walk up to the deepest ancestor that already exists.
+	existing := dir
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			resolved, err := filepath.EvalSymlinks(existing)
+			if err != nil {
+				return fmt.Errorf("failed to resolve path %q: %w", existing, err)
+			}
+			rel, relErr := filepath.Rel(resolvedWorkspace, resolved)
+			if relErr != nil || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || rel == ".." {
+				return fmt.Errorf("access denied: path %q escapes workspace jail via symlink", dir)
+			}
+			break
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			// Reached filesystem root — workspace itself will be created by MkdirAll.
+			break
+		}
+		existing = parent
+	}
+	return os.MkdirAll(dir, 0755)
+}
+
 // setWorkspace sets the workspace directory and creates it if it does not exist.
 func (s *Server) setWorkspace(dir string) error {
 	klog.Infof("setWorkspace called with dir: %q", dir)

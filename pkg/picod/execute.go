@@ -92,13 +92,21 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	// Use the first element as the command and the rest as arguments
 	cmd := exec.CommandContext(ctx, req.Command[0], req.Command[1:]...) //nolint:gosec // This is an agent designed to execute arbitrary commands
 
-	// Set working directory
+	// Default working directory to workspace; override if the request specifies one.
+	cmd.Dir = s.workspaceDir
 	if req.WorkingDir != "" {
 		safeWorkingDir, err := s.sanitizePath(req.WorkingDir)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": fmt.Sprintf("Invalid working directory: %v", err),
 				"code":  http.StatusBadRequest,
+			})
+			return
+		}
+		if err := os.MkdirAll(safeWorkingDir, 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": fmt.Sprintf("Failed to create working directory: %v", err),
+				"code":  http.StatusInternalServerError,
 			})
 			return
 		}

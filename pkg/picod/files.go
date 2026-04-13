@@ -386,8 +386,8 @@ func parseFileMode(modeStr string) os.FileMode {
 	return os.FileMode(mode)
 }
 
-// setWorkspace sets the global workspace directory
-func (s *Server) setWorkspace(dir string) {
+// setWorkspace sets the workspace directory and creates it if it does not exist.
+func (s *Server) setWorkspace(dir string) error {
 	klog.Infof("setWorkspace called with dir: %q", dir)
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
@@ -397,6 +397,11 @@ func (s *Server) setWorkspace(dir string) {
 		s.workspaceDir = absDir
 		klog.Infof("Resolved workspace to absolute path: %q", s.workspaceDir)
 	}
+	if err := os.MkdirAll(s.workspaceDir, 0755); err != nil {
+		return fmt.Errorf("failed to create workspace directory %q: %w", s.workspaceDir, err)
+	}
+	klog.Infof("Workspace directory ensured: %q", s.workspaceDir)
+	return nil
 }
 
 // sanitizePath ensures path is within allowed scope, preventing directory traversal attacks

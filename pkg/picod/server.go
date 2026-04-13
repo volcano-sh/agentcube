@@ -51,17 +51,16 @@ func NewServer(config Config) *Server {
 
 	// Initialize workspace directory
 	klog.Infof("Initializing workspace with config.Workspace: %q", config.Workspace)
-	if config.Workspace != "" {
-		s.setWorkspace(config.Workspace)
-		klog.Infof("Set workspace to configured value: %q", config.Workspace)
-	} else {
-		// Default to current working directory if not specified
+	workspaceDir := config.Workspace
+	if workspaceDir == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
 			klog.Fatalf("Failed to get current working directory: %v", err)
 		}
-		s.setWorkspace(cwd)
-		klog.Infof("Set workspace to current working directory: %q", cwd)
+		workspaceDir = cwd
+	}
+	if err := s.setWorkspace(workspaceDir); err != nil {
+		klog.Fatalf("Failed to initialize workspace: %v", err)
 	}
 	klog.Infof("Final workspace directory: %q", s.workspaceDir)
 

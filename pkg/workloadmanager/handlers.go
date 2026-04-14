@@ -164,33 +164,11 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	// This ensures the K8s resource and store placeholder are cleaned up on
 	// timeout, pod-IP failure, or store-update failure — not just on post-creation errors.
 	needRollbackSandbox := true
-	sandboxRollbackFunc := func() {
-		ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		var err error
-		if sandboxClaim != nil {
-			// Rollback SandboxClaim
-			err = deleteSandboxClaim(ctxTimeout, dynamicClient, sandboxClaim.Namespace, sandboxClaim.Name)
-			if err != nil {
-				klog.Infof("sandbox claim %s/%s rollback failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err)
-			}
-		} else {
-			// Rollback Sandbox
-			err = deleteSandbox(ctxTimeout, dynamicClient, sandbox.Namespace, sandbox.Name)
-			if err != nil {
-				klog.Infof("sandbox %s/%s rollback failed: %v", sandbox.Namespace, sandbox.Name, err)
-			}
-		}
-		// Clean up the store placeholder so it does not pollute GC queries
-		if delErr := s.storeClient.DeleteSandboxBySessionID(ctxTimeout, sandboxEntry.SessionID); delErr != nil {
-			klog.Infof("sandbox %s/%s store placeholder cleanup failed: %v", sandbox.Namespace, sandbox.Name, delErr)
-		}
-	}
 	defer func() {
 		if !needRollbackSandbox {
 			return
 		}
-		sandboxRollbackFunc()
+		s.sandboxRollback(sandboxClaim, dynamicClient, sandbox, sandboxEntry)
 	}()
 
 	var createdSandbox *sandboxv1alpha1.Sandbox
@@ -237,6 +215,29 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	klog.V(2).Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
 		createdSandbox.Name, createdSandbox.Kind, sandboxEntry.SessionID)
 	return response, nil
+}
+
+func (s *Server) sandboxRollback(sandboxClaim *extensionsv1alpha1.SandboxClaim, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxEntry *sandboxEntry) {
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var err error
+	if sandboxClaim != nil {
+		// Rollback SandboxClaim
+		err = deleteSandboxClaim(ctxTimeout, dynamicClient, sandboxClaim.Namespace, sandboxClaim.Name)
+		if err != nil {
+			klog.Infof("sandbox claim %s/%s rollback failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err)
+		}
+	} else {
+		// Rollback Sandbox
+		err = deleteSandbox(ctxTimeout, dynamicClient, sandbox.Namespace, sandbox.Name)
+		if err != nil {
+			klog.Infof("sandbox %s/%s rollback failed: %v", sandbox.Namespace, sandbox.Name, err)
+		}
+	}
+	// Clean up the store placeholder so it does not pollute GC queries
+	if delErr := s.storeClient.DeleteSandboxBySessionID(ctxTimeout, sandboxEntry.SessionID); delErr != nil {
+		klog.Infof("sandbox %s/%s store placeholder cleanup failed: %v", sandbox.Namespace, sandbox.Name, delErr)
+	}
 }
 
 // handleDeleteSandbox handles sandbox deletion requests

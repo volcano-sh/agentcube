@@ -179,7 +179,7 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		if !needRollbackSandbox {
 			return
 		}
-		s.sandboxRollback(sandboxClaim, dynamicClient, sandbox, sandboxEntry)
+		s.rollbackSandboxCreation(dynamicClient, sandbox, sandboxClaim, sandboxEntry.SessionID)
 	}()
 
 	// Use NewTimer so we can stop it explicitly when another branch wins,
@@ -241,25 +241,26 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	return response, nil
 }
 
-func (s *Server) sandboxRollback(sandboxClaim *extensionsv1alpha1.SandboxClaim, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxEntry *sandboxEntry) {
+// rollbackSandboxCreation deletes the sandbox (or sandbox claim) and its store
+// placeholder when creation fails. It runs in a fresh context so that a
+// cancelled request context does not prevent cleanup.
+func (s *Server) rollbackSandboxCreation(dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sessionID string) {
 	ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	var err error
 	if sandboxClaim != nil {
-		// Rollback SandboxClaim
-		err = deleteSandboxClaim(ctxTimeout, dynamicClient, sandboxClaim.Namespace, sandboxClaim.Name)
-		if err != nil {
+		if err := deleteSandboxClaim(ctxTimeout, dynamicClient, sandboxClaim.Namespace, sandboxClaim.Name); err != nil {
 			klog.Infof("sandbox claim %s/%s rollback failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err)
+		} else {
+			klog.Infof("sandbox claim %s/%s rollback succeeded", sandboxClaim.Namespace, sandboxClaim.Name)
 		}
 	} else {
-		// Rollback Sandbox
-		err = deleteSandbox(ctxTimeout, dynamicClient, sandbox.Namespace, sandbox.Name)
-		if err != nil {
+		if err := deleteSandbox(ctxTimeout, dynamicClient, sandbox.Namespace, sandbox.Name); err != nil {
 			klog.Infof("sandbox %s/%s rollback failed: %v", sandbox.Namespace, sandbox.Name, err)
+		} else {
+			klog.Infof("sandbox %s/%s rollback succeeded", sandbox.Namespace, sandbox.Name)
 		}
 	}
-	// Clean up the store placeholder so it does not pollute GC queries
-	if delErr := s.storeClient.DeleteSandboxBySessionID(ctxTimeout, sandboxEntry.SessionID); delErr != nil {
+	if delErr := s.storeClient.DeleteSandboxBySessionID(ctxTimeout, sessionID); delErr != nil {
 		klog.Infof("sandbox %s/%s store placeholder cleanup failed: %v", sandbox.Namespace, sandbox.Name, delErr)
 	}
 }

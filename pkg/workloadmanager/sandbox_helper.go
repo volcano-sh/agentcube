@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
@@ -120,6 +121,12 @@ func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) (string, string) {
 			msg := condition.Message
 			if msg == "" {
 				msg = condition.Reason
+			}
+			// "Operation cannot be fulfilled" is a Kubernetes conflict error (HTTP 409).
+			// The sandbox controller retries these automatically, so they are transient —
+			// do not surface them as terminal failures.
+			if strings.Contains(msg, "Operation cannot be fulfilled") {
+				return "unknown", ""
 			}
 			return "failed", msg
 		}

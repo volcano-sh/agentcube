@@ -399,6 +399,23 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 			expectedMsg: "OOMKilled",
 		},
 		{
+			name: "ready condition false with conflict error is treated as transient",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				Status: sandboxv1alpha1.SandboxStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:    string(sandboxv1alpha1.SandboxConditionReady),
+							Status:  metav1.ConditionFalse,
+							Reason:  "Error",
+							Message: "Error seen: failed to update pod: Operation cannot be fulfilled on pods \"my-pod\": the object has been modified; please apply your changes to the latest version and try again",
+						},
+					},
+				},
+			},
+			expected:    "unknown",
+			expectedMsg: "",
+		},
+		{
 			name: "ready condition unknown",
 			sandbox: &sandboxv1alpha1.Sandbox{
 				Status: sandboxv1alpha1.SandboxStatus{

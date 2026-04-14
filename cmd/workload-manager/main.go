@@ -174,10 +174,8 @@ func setupControllers(mgr ctrl.Manager, sandboxReconciler *workloadmanager.Sandb
 		return fmt.Errorf("unable to create sandbox controller: %w", err)
 	}
 
-	// Setup CodeInterpreter controller
-	if err := ctrl.NewControllerManagedBy(mgr).
-		For(&runtimev1alpha1.CodeInterpreter{}).
-		Complete(codeInterpreterReconciler); err != nil {
+	// Setup CodeInterpreter controller.
+	if err := codeInterpreterReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create codeinterpreter controller: %w", err)
 	}
 

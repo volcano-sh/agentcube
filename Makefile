@@ -22,7 +22,8 @@ SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
 .PHONY: all
-all: build
+.PHONY: all build-all build-workloadmanager build-agentd build-router clean test deps
+all: build-all
 
 ##@ General
 
@@ -80,7 +81,7 @@ build-router: generate ## Build agentcube-router binary
 	@echo "Building agentcube-router..."
 	go build -o bin/agentcube-router ./cmd/router
 
-build-all: build build-agentd build-router ## Build all binaries
+build-all: build-workloadmanager build-agentd build-router
 
 # Clean build artifacts
 clean:

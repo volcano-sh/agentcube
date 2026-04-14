@@ -85,7 +85,7 @@ curl -s http://localhost:8000/chat \
 # Reuse the same browser session (pass session_id from previous response)
 curl -s http://localhost:8000/chat \
   -H 'Content-Type: application/json' \
-  -d '{"message": "Now find the deprecation list from the same release", "session_id": "<SESSION_ID>"}' \
+  -d '{"message": "Now find the Patch Releases list from the same release", "session_id": "<SESSION_ID>"}' \
   | python -m json.tool
 ```
 

@@ -2,11 +2,8 @@ name: Python CLI Publish
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - "cmd/cli/**"
-      - ".github/workflows/python-cli-publish.yml"
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
 
 jobs:

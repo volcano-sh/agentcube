@@ -243,7 +243,7 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 
 // rollbackSandboxCreation deletes the sandbox (or sandbox claim) and its store
 // placeholder when creation fails. It runs in a fresh context so that a
-// cancelled request context does not prevent cleanup.
+// canceled request context does not prevent cleanup.
 func (s *Server) rollbackSandboxCreation(dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sessionID string) {
 	ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

@@ -186,7 +186,7 @@ func TestGetPrivateKeyPEM(t *testing.T) {
 
 	// Compare key components instead of whole struct — ParsePKCS1PrivateKey may
 	// not precompute Dp/Dq/Qinv identically to the original key.
-	assert.Equal(t, manager.privateKey.PublicKey.N, privateKey.PublicKey.N, "Public key N should match")
+	assert.Equal(t, 0, manager.privateKey.PublicKey.N.Cmp(privateKey.PublicKey.N), "Public key N should match")
 	assert.Equal(t, manager.privateKey.PublicKey.E, privateKey.PublicKey.E, "Public key E should match")
 	assert.Equal(t, 0, manager.privateKey.D.Cmp(privateKey.D), "Private exponent D should match")
 	assert.Equal(t, len(manager.privateKey.Primes), len(privateKey.Primes), "Number of primes should match")

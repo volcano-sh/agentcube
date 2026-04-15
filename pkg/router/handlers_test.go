@@ -408,8 +408,9 @@ func TestForwardToSandbox_InvalidEndpoint(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			setupEnv()
-			defer teardownEnv()
+			t.Setenv("REDIS_ADDR", "localhost:6379")
+			t.Setenv("REDIS_PASSWORD", "test-password")
+			t.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
 
 			config := &Config{Port: "8080"}
 			server, err := NewServer(config)
@@ -446,8 +447,9 @@ func TestForwardToSandbox_InvalidEndpoint(t *testing.T) {
 }
 
 func TestForwardToSandbox_NoEntryPoints(t *testing.T) {
-	setupEnv()
-	defer teardownEnv()
+	t.Setenv("REDIS_ADDR", "localhost:6379")
+	t.Setenv("REDIS_PASSWORD", "test-password")
+	t.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
 
 	config := &Config{Port: "8080"}
 	server, err := NewServer(config)

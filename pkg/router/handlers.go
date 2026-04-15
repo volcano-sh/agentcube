@@ -180,7 +180,7 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 		if errors.Is(err, errNoEntryPoint) {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("invalid sandbox endpoint configuration: %v", err)})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid sandbox endpoint configuration"})
 		}
 		return
 	}

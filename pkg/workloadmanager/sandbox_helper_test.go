@@ -82,7 +82,7 @@ func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 			},
 			validate: func(t *testing.T, result *types.SandboxInfo) {
 				expected := now.Add(24 * time.Hour)
-				assert.WithinDuration(t, expected, result.ExpiresAt, 2*time.Second)
+				assert.Equal(t, expected, result.ExpiresAt)
 			},
 		},
 		{
@@ -107,10 +107,43 @@ func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 			},
 			validate: func(t *testing.T, result *types.SandboxInfo) {
 				expected := now.Add(30 * time.Minute)
-				assert.WithinDuration(t, expected, result.ExpiresAt, 2*time.Second)
+				assert.Equal(t, expected, result.ExpiresAt)
 				// Must NOT be 8h (DefaultSandboxTTL)
 				assert.True(t, result.ExpiresAt.Before(now.Add(DefaultSandboxTTL)),
 					"ExpiresAt should be 30m, not the 8h default")
+			},
+		},
+		{
+			name: "warm-pool path: ShutdownTime set on simpleSandbox reflects MaxSessionDuration",
+			setupSandbox: func() *sandboxv1alpha1.Sandbox {
+				// Simulates the simpleSandbox built by the warm-pool CodeInterpreter path
+				// after the fix in workload_builder.go sets ShutdownTime from MaxSessionDuration.
+				shutdownTime := now.Add(24 * time.Hour)
+				return &sandboxv1alpha1.Sandbox{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: "default",
+						Name:      "ci-warmpool-abc",
+						Labels: map[string]string{
+							SessionIdLabelKey: "session-wp-001",
+						},
+					},
+					Spec: sandboxv1alpha1.SandboxSpec{
+						Lifecycle: sandboxv1alpha1.Lifecycle{
+							ShutdownTime: &metav1.Time{Time: shutdownTime},
+						},
+					},
+				}
+			},
+			entry: &sandboxEntry{
+				Kind:      types.SandboxClaimsKind,
+				SessionID: "session-wp-001",
+			},
+			validate: func(t *testing.T, result *types.SandboxInfo) {
+				expected := now.Add(24 * time.Hour)
+				assert.Equal(t, expected, result.ExpiresAt,
+					"warm-pool placeholder ExpiresAt must reflect MaxSessionDuration, not the 8h default")
+				assert.Equal(t, "creating", result.Status)
+				assert.Equal(t, types.SandboxClaimsKind, result.Kind)
 			},
 		},
 	}

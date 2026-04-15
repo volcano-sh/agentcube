@@ -351,6 +351,10 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				},
 			},
 		}
+		if codeInterpreterObj.Spec.MaxSessionDuration != nil {
+			shutdownTime := metav1.NewTime(time.Now().Add(codeInterpreterObj.Spec.MaxSessionDuration.Duration))
+			simpleSandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
+		}
 		sandboxEntry.Kind = types.SandboxClaimsKind
 		return simpleSandbox, sandboxClaim, sandboxEntry, nil
 	}

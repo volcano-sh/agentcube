@@ -27,9 +27,11 @@ import (
 )
 
 func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxEntry) *types.SandboxInfo {
-	expiresAt := time.Now().Add(DefaultSandboxTTL)
+	var expiresAt time.Time
 	if sandboxCR.Spec.Lifecycle.ShutdownTime != nil {
 		expiresAt = sandboxCR.Spec.Lifecycle.ShutdownTime.Time
+	} else {
+		expiresAt = time.Now().Add(DefaultSandboxTTL)
 	}
 	return &types.SandboxInfo{
 		Kind:             entry.Kind,

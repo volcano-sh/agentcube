@@ -429,12 +429,10 @@ func (s *Server) setWorkspace(dir string) error {
 	klog.Infof("setWorkspace called with dir: %q", dir)
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
-		klog.Warningf("Failed to resolve absolute path for workspace '%s': %v", dir, err)
-		s.workspaceDir = dir // Fallback to provided path
-	} else {
-		s.workspaceDir = absDir
-		klog.Infof("Resolved workspace to absolute path: %q", s.workspaceDir)
+		return fmt.Errorf("failed to resolve absolute path for workspace %q: %w", dir, err)
 	}
+	s.workspaceDir = absDir
+	klog.Infof("Resolved workspace to absolute path: %q", s.workspaceDir)
 	if err := os.MkdirAll(s.workspaceDir, 0755); err != nil {
 		return fmt.Errorf("failed to create workspace directory %q: %w", s.workspaceDir, err)
 	}

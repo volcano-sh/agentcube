@@ -30,9 +30,99 @@ import (
 
 const sandboxHelperTestPodIP = "10.0.0.1"
 
-// Note: TestBuildSandboxPlaceHolder and TestBuildSandboxPlaceHolder_CodeInterpreter
-// removed - they only verified that struct fields match input parameters, which is
-// trivial field copying behavior.
+func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		name         string
+		setupSandbox func() *sandboxv1alpha1.Sandbox
+		entry        *sandboxEntry
+		validate     func(t *testing.T, result *types.SandboxInfo)
+	}{
+		{
+			name: "no ShutdownTime falls back to DefaultSandboxTTL",
+			setupSandbox: func() *sandboxv1alpha1.Sandbox {
+				return &sandboxv1alpha1.Sandbox{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-sandbox",
+						Namespace: "default",
+					},
+				}
+			},
+			entry: &sandboxEntry{
+				Kind:      types.SandboxKind,
+				SessionID: "session-123",
+			},
+			validate: func(t *testing.T, result *types.SandboxInfo) {
+				expected := now.Add(DefaultSandboxTTL)
+				assert.WithinDuration(t, expected, result.ExpiresAt, 2*time.Second)
+				assert.Equal(t, "creating", result.Status)
+				assert.Equal(t, "session-123", result.SessionID)
+			},
+		},
+		{
+			name: "ShutdownTime set to 24h is used as ExpiresAt",
+			setupSandbox: func() *sandboxv1alpha1.Sandbox {
+				shutdownTime := now.Add(24 * time.Hour)
+				return &sandboxv1alpha1.Sandbox{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-sandbox",
+						Namespace: "default",
+					},
+					Spec: sandboxv1alpha1.SandboxSpec{
+						Lifecycle: sandboxv1alpha1.Lifecycle{
+							ShutdownTime: &metav1.Time{Time: shutdownTime},
+						},
+					},
+				}
+			},
+			entry: &sandboxEntry{
+				Kind:      types.SandboxKind,
+				SessionID: "session-456",
+			},
+			validate: func(t *testing.T, result *types.SandboxInfo) {
+				expected := now.Add(24 * time.Hour)
+				assert.WithinDuration(t, expected, result.ExpiresAt, 2*time.Second)
+			},
+		},
+		{
+			name: "ShutdownTime set to 30m overrides DefaultSandboxTTL",
+			setupSandbox: func() *sandboxv1alpha1.Sandbox {
+				shutdownTime := now.Add(30 * time.Minute)
+				return &sandboxv1alpha1.Sandbox{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "short-sandbox",
+						Namespace: "default",
+					},
+					Spec: sandboxv1alpha1.SandboxSpec{
+						Lifecycle: sandboxv1alpha1.Lifecycle{
+							ShutdownTime: &metav1.Time{Time: shutdownTime},
+						},
+					},
+				}
+			},
+			entry: &sandboxEntry{
+				Kind:      types.SandboxClaimsKind,
+				SessionID: "session-789",
+			},
+			validate: func(t *testing.T, result *types.SandboxInfo) {
+				expected := now.Add(30 * time.Minute)
+				assert.WithinDuration(t, expected, result.ExpiresAt, 2*time.Second)
+				// Must NOT be 8h (DefaultSandboxTTL)
+				assert.True(t, result.ExpiresAt.Before(now.Add(DefaultSandboxTTL)),
+					"ExpiresAt should be 30m, not the 8h default")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sandbox := tt.setupSandbox()
+			result := buildSandboxPlaceHolder(sandbox, tt.entry)
+			tt.validate(t, result)
+		})
+	}
+}
 
 func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 	now := time.Now()

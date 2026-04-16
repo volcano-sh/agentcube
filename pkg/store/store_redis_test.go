@@ -183,6 +183,43 @@ func TestListExpiredSandboxes(t *testing.T) {
 	}
 }
 
+// TestListExpiredSandboxes_MissingKey verifies that ListExpiredSandboxes
+// gracefully skips session IDs whose data key was concurrently deleted
+// (e.g. by a parallel GC run) between the sorted-set scan and the GET pipeline.
+// Previously, the pipeline's redis.Nil would surface as a fatal error and
+// prevent any sandboxes from being returned.
+func TestListExpiredSandboxes_MissingKey(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	ctx := context.Background()
+	c, mr := newTestRedisClient(t)
+
+	sb1 := newTestSandbox("sb-1", "sess-1", now.Add(-2*time.Hour))
+	sb2 := newTestSandbox("sb-2", "sess-2", now.Add(-1*time.Hour))
+
+	if err := c.StoreSandbox(ctx, sb1); err != nil {
+		t.Fatalf("StoreSandbox sb1: %v", err)
+	}
+	if err := c.StoreSandbox(ctx, sb2); err != nil {
+		t.Fatalf("StoreSandbox sb2: %v", err)
+	}
+
+	// Simulate a concurrent delete: remove the session data key for sess-1
+	// but leave its entry in the expiry sorted set (the race window).
+	mr.Del(c.sessionKey("sess-1"))
+
+	// Should return sb2 without error; sb1's missing key is skipped gracefully.
+	list, err := c.ListExpiredSandboxes(ctx, now, 10)
+	if err != nil {
+		t.Fatalf("ListExpiredSandboxes returned unexpected error: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 sandbox, got %d", len(list))
+	}
+	if list[0].SandboxID != "sb-2" {
+		t.Fatalf("expected sb-2, got %s", list[0].SandboxID)
+	}
+}
+
 func TestListInactiveSandboxes(t *testing.T) {
 	ctx := context.Background()
 	c, _ := newTestRedisClient(t)

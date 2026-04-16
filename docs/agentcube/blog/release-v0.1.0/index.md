@@ -1,4 +1,4 @@
-# v0.1.0
+# AgentCube v0.1.0 Released: Serverless Orchestration Layer for AI Agents
 
 ## Summary
 
@@ -139,7 +139,7 @@ Key Capabilities:
 - **LangChain integration**: `CodeInterpreterClient` can be wrapped as a `@tool` and wired into LangGraph ReAct agents — see [devguide](https://github.com/volcano-sh/agentcube/blob/main/docs/devguide/code-interpreter-using-langchain.md)
 - **Dify plugin**: `integrations/dify-plugin/` — AgentCube tool integration for the Dify AI application platform
 - **pcap-analyzer example**: `example/pcap-analyzer/` — end-to-end example agent that analyzes packet captures using code interpreter
-- **Redis and ValKey backends**: pluggable session store (`pkg/store`) with implementations for both Redis and ValKey; selected via configuration
+- **Redis and Valkey backends**: pluggable session store (`pkg/store`) with implementations for both Redis and Valkey; selected via configuration
 - **Prometheus metrics**: metrics exported by Router and Workload Manager for operational observability
 - **Health probes**: `/health/live` and `/health/ready` on the Router for Kubernetes liveness/readiness checks
 - **User-scoped Kubernetes clients**: Workload Manager creates per-user dynamic clients from service account tokens, enabling per-sandbox RBAC enforcement
@@ -154,7 +154,7 @@ This is the initial release of AgentCube. No upgrade path from a prior version e
 **Prerequisites:**
 
 1. Kubernetes cluster v1.24+
-2. Redis or ValKey instance accessible from the cluster
+2. Redis or Valkey instance accessible from the cluster
 3. `sigs.k8s.io/agent-sandbox` v0.1.1 CRDs installed
 
 **Install with Helm:**

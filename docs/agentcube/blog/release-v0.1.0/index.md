@@ -22,8 +22,6 @@ AgentCube v0.1.0 is the **first official release** of AgentCube, a Volcano subpr
 
 ### Session-Based MicroVM Agent Routing
 
-**Background and Motivation:**
-
 AI agent workloads are fundamentally stateful and interactive. A single agent session may span many invocations — tool calls, environment inspections, multi-step reasoning — all requiring the same isolated execution environment. Kubernetes has no native concept of persistent, identity-bound agent sessions. AgentCube fills this gap by mapping session IDs to dedicated microVM sandbox pods.
 
 The Router acts as the data plane entry point. It reads the `x-agentcube-session-id` request header to look up an existing session in the store, or allocates a new sandbox via the Workload Manager when no session exists. Every response carries the `x-agentcube-session-id` header, enabling stateless clients to maintain session continuity across requests.
@@ -45,16 +43,9 @@ POST /v1/namespaces/{namespace}/code-interpreters/{name}/invocations/*path
 GET  /v1/namespaces/{namespace}/code-interpreters/{name}/invocations/*path
 ```
 
-Related:
-
-- Design Doc: [Router Proposal](../design/router-proposal.md)
-- Contributors: [@volcano-sh](https://github.com/volcano-sh)
-
 ---
 
-### AgentRuntime and CodeInterpreter CRDs
-
-**Background and Motivation:**
+### Agent as First-Class Citizen in Kubernetes
 
 Two distinct workload profiles emerge in the AI agent space: conversational/tool-using agents that need access to credentials, volumes, and custom networking; and short-lived code interpreters that require strict isolation and resource caps. Modeling both as first-class Kubernetes CRDs enables declarative configuration, RBAC integration, and GitOps-friendly workflows.
 
@@ -79,16 +70,9 @@ Designed for secure, multi-tenant code execution. More locked-down than AgentRun
 
 Alpha Feature Notice: APIs are under active development. Spec fields and default values may change in future releases.
 
-Related:
-
-- Design Doc: [AgentCube Proposal](../design/agentcube-proposal.md)
-- Contributors: [@volcano-sh](https://github.com/volcano-sh)
-
 ---
 
 ### Warm Pool for Fast Cold Starts
-
-**Background and Motivation:**
 
 Creating a microVM sandbox from scratch on every session request incurs a cold-start penalty that is unacceptable for interactive workloads. AgentCube introduces a warm pool mechanism: the Workload Manager pre-creates a configurable number of idle `Sandbox` pods and keeps them ready. When an invocation arrives, the Router claims a pre-warmed pod via a `SandboxClaim` CR instead of waiting for a new pod to start. The pool is automatically replenished after each claim.
 
@@ -99,16 +83,9 @@ Key Capabilities:
 - Pool refills asynchronously after each claim, keeping steady-state latency low
 - Cold-start path remains available when pool is exhausted
 
-Related:
-
-- Design Doc: [AgentCube Proposal](../design/agentcube-proposal.md)
-- Contributors: [@volcano-sh](https://github.com/volcano-sh)
-
 ---
 
 ### PicoD — Lightweight Sandbox Runtime Daemon
-
-**Background and Motivation:**
 
 Traditional code sandbox implementations use SSH to execute commands remotely. SSH carries significant overhead: key management, multiplexing negotiation, and a heavyweight protocol for what are essentially single-request RPCs. PicoD replaces SSH with a minimal HTTP/1.1 daemon that runs inside each sandbox pod, providing code execution, file I/O, and authentication via a small, auditable binary.
 
@@ -122,16 +99,9 @@ Key Capabilities:
 - **Path sanitization**: all paths are jailed to the configured workspace root, preventing directory traversal
 - **32 MB request body limit** with configurable workspace root via `--workspace` flag
 
-Related:
-
-- Design Doc: [PicoD Proposal](../design/picod-proposal.md)
-- Contributors: [@volcano-sh](https://github.com/volcano-sh)
-
 ---
 
 ### JWT Security Chain (Router → PicoD)
-
-**Background and Motivation:**
 
 Sandbox pods are ephemeral and may be replaced at any time; embedding a shared secret in cluster config is fragile and hard to rotate. AgentCube establishes an RSA-based trust chain: the Router generates an RSA-2048 key pair at startup, stores the public key in a Kubernetes Secret (`picod-router-identity`), and the Workload Manager injects it as `PICOD_AUTH_PUBLIC_KEY` for `CodeInterpreter` sandboxes when authentication is enabled (the default is `picod`; `none` disables injection). The Router signs short-lived (5-minute) RS256 JWTs for every proxied request. PicoD verifies these tokens entirely in-process — no network round-trip, no shared database.
 
@@ -143,16 +113,9 @@ Key Capabilities:
 - 5-minute token expiry limits blast radius of token leakage
 - PicoD rejects any request without a valid Router-issued JWT
 
-Related:
-
-- Design Doc: [PicoD Plain Authentication Design](../design/PicoD-Plain-Authentication-Design.md)
-- Contributors: [@volcano-sh](https://github.com/volcano-sh)
-
 ---
 
 ### Sandbox Lifecycle Management and GC
-
-**Background and Motivation:**
 
 Agent sessions that complete their work or are abandoned by clients must be automatically reclaimed to avoid resource exhaustion. AgentCube implements a dual garbage collection policy enforced by a background loop in the Workload Manager:
 
@@ -170,22 +133,6 @@ Key Capabilities:
 
 ## Other Notable Changes
 
-### API Changes
-
-New CRDs introduced in v0.1.0:
-
-1. **`AgentRuntime`** (`runtime.agentcube.volcano.sh/v1alpha1`)
-
-   Full-`PodSpec` sandbox for conversational AI agents. Supports volume mounts, sidecar containers, credential injection, and custom resource classes.
-
-2. **`CodeInterpreter`** (`runtime.agentcube.volcano.sh/v1alpha1`)
-
-   Restricted sandbox for secure code execution. Adds warm pool support (`spec.warmPoolSize`) and auth mode selection (`spec.authMode`).
-
-Generated client-go code is under `client-go/` with versioned clientsets, shared informers, and listers for both CRDs.
-
----
-
 ### Features and Enhancements
 
 - **Python SDK** (`agentcube-sdk`): `CodeInterpreterClient` with `execute_command()`, `run_code(language, code)`, `upload_file()`, `download_file()`, `write_file()`; session lifecycle managed automatically
@@ -200,7 +147,7 @@ Generated client-go code is under `client-go/` with versioned clientsets, shared
 
 ---
 
-## Upgrade Instructions
+## Installation instructions
 
 This is the initial release of AgentCube. No upgrade path from a prior version exists.
 

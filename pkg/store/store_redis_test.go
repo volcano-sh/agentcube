@@ -220,6 +220,26 @@ func TestListExpiredSandboxes_MissingKey(t *testing.T) {
 	}
 }
 
+// TestLoadSandboxesBySessionIDs_PipelineError verifies that a genuine pipeline
+// failure (not redis.Nil) is still surfaced as an error.
+func TestLoadSandboxesBySessionIDs_PipelineError(t *testing.T) {
+	ctx := context.Background()
+	c, mr := newTestRedisClient(t)
+
+	sb := newTestSandbox("sb-1", "sess-1", time.Now().Add(time.Hour))
+	if err := c.StoreSandbox(ctx, sb); err != nil {
+		t.Fatalf("StoreSandbox: %v", err)
+	}
+
+	// Close miniredis to force a real connection error (not redis.Nil) in the pipeline.
+	mr.Close()
+
+	_, err := c.loadSandboxesBySessionIDs(ctx, []string{"sess-1"})
+	if err == nil {
+		t.Fatal("expected error from closed redis, got nil")
+	}
+}
+
 func TestListInactiveSandboxes(t *testing.T) {
 	ctx := context.Background()
 	c, _ := newTestRedisClient(t)

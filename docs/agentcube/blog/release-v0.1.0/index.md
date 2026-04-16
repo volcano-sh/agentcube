@@ -136,7 +136,7 @@ Key Capabilities:
 ### Features and Enhancements
 
 - **Python SDK** (`agentcube-sdk`): `CodeInterpreterClient` with `execute_command()`, `run_code(language, code)`, `upload_file()`, `download_file()`, `write_file()`; session lifecycle managed automatically
-- **LangChain integration**: `CodeInterpreterClient` can be wrapped as a `@tool` and wired into LangGraph ReAct agents — see [devguide](../devguide/code-interpreter-using-langchain.md)
+- **LangChain integration**: `CodeInterpreterClient` can be wrapped as a `@tool` and wired into LangGraph ReAct agents — see [devguide](https://github.com/volcano-sh/agentcube/blob/main/docs/devguide/code-interpreter-using-langchain.md)
 - **Dify plugin**: `integrations/dify-plugin/` — AgentCube tool integration for the Dify AI application platform
 - **pcap-analyzer example**: `example/pcap-analyzer/` — end-to-end example agent that analyzes packet captures using code interpreter
 - **Redis and ValKey backends**: pluggable session store (`pkg/store`) with implementations for both Redis and ValKey; selected via configuration

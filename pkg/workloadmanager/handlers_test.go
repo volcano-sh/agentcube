@@ -108,6 +108,7 @@ func TestServerCreateSandbox(t *testing.T) {
 		createSandboxErr  error
 		createClaimErr    error
 		podIPErr          error
+		readyErr          error
 		updateErr         error
 		sendResult        bool
 		expectErr         bool
@@ -150,6 +151,14 @@ func TestServerCreateSandbox(t *testing.T) {
 		{
 			name:              "pod ip lookup fails triggers rollback",
 			podIPErr:          errors.New("pod ip missing"),
+			sendResult:        true,
+			expectErr:         true,
+			expectCreateCalls: 1,
+			expectDeleteCalls: 1,
+		},
+		{
+			name:              "entrypoint readiness failure triggers rollback",
+			readyErr:          errors.New("connection refused"),
 			sendResult:        true,
 			expectErr:         true,
 			expectCreateCalls: 1,
@@ -218,6 +227,10 @@ func TestServerCreateSandbox(t *testing.T) {
 				return "10.0.0.9", nil
 			})
 
+			patches.ApplyPrivateMethod(reflect.TypeOf(server), "waitForSandboxEntryPointsReady", func(_ *Server, _ context.Context, _ string, _ *sandboxEntry) error {
+				return tt.readyErr
+			})
+
 			resp, err := server.createSandbox(context.Background(), nil, sb, claim, makeEntry(), resultChan)
 
 			require.Equal(t, tt.expectCreateCalls, createCalls, "createSandbox call count")
@@ -248,7 +261,7 @@ func TestServerCreateSandbox(t *testing.T) {
 
 func newFakeServer() *Server {
 	return &Server{
-		config:            &Config{},
+		config:            &Config{SandboxReadyProbeTimeout: 5 * time.Millisecond, SandboxReadyProbeInterval: time.Millisecond},
 		k8sClient:         &K8sClient{},
 		sandboxController: &SandboxReconciler{},
 		storeClient:       &fakeStore{},

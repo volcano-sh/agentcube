@@ -25,6 +25,7 @@ import (
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
@@ -251,9 +252,10 @@ func deleteSandbox(ctx context.Context, client dynamic.Interface, namespace, san
 		sandboxName,
 		metav1.DeleteOptions{},
 	)
-	if err != nil {
+	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete sandbox: %w", err)
 	}
+
 	return nil
 }
 
@@ -264,9 +266,10 @@ func deleteSandboxClaim(ctx context.Context, client dynamic.Interface, namespace
 		sandboxClaimName,
 		metav1.DeleteOptions{},
 	)
-	if err != nil {
+	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete sandbox claim: %w", err)
 	}
+
 	return nil
 }
 

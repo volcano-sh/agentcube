@@ -89,7 +89,7 @@ func (rs *redisStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs 
 		sandboxCommands[i] = pipe.Get(ctx, sessionKey)
 	}
 	_, pipeErr := pipe.Exec(ctx)
-	if pipeErr != nil {
+	if pipeErr != nil && !errors.Is(pipeErr, redisv9.Nil) {
 		return nil, fmt.Errorf("redis pipeline exec failed: %w", pipeErr)
 	}
 

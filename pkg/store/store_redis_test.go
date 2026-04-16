@@ -240,6 +240,44 @@ func TestListInactiveSandboxes(t *testing.T) {
 	}
 }
 
+// TestLoadSandboxesBySessionIDs_OrphanedZSetEntry verifies that
+// loadSandboxesBySessionIDs skips session IDs whose hash key has been evicted
+// from Redis (orphaned sorted-set entry) instead of aborting the entire batch.
+//
+// This scenario occurs in production when Redis evicts hash keys under memory
+// pressure (allkeys-lru policy) while leaving sorted-set index entries intact,
+// causing garbage collection to fail for the whole batch.
+func TestLoadSandboxesBySessionIDs_OrphanedZSetEntry(t *testing.T) {
+	ctx := context.Background()
+	c, mr := newTestRedisClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+
+	sb1 := newTestSandbox("sb-orphan", "sess-orphan", now.Add(-1*time.Hour))
+	sb2 := newTestSandbox("sb-alive", "sess-alive", now.Add(-2*time.Hour))
+
+	if err := c.StoreSandbox(ctx, sb1); err != nil {
+		t.Fatalf("StoreSandbox sb1 error: %v", err)
+	}
+	if err := c.StoreSandbox(ctx, sb2); err != nil {
+		t.Fatalf("StoreSandbox sb2 error: %v", err)
+	}
+
+	// Simulate Redis evicting the hash key for sb1 while leaving its zset entry.
+	mr.Del(c.sessionKey("sess-orphan"))
+
+	result, err := c.loadSandboxesBySessionIDs(ctx, []string{"sess-orphan", "sess-alive"})
+	if err != nil {
+		t.Fatalf("expected no error with orphaned zset entry, got: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 sandbox (the non-evicted one), got %d", len(result))
+	}
+	if result[0].SandboxID != "sb-alive" {
+		t.Fatalf("expected sb-alive, got %s", result[0].SandboxID)
+	}
+}
+
 func TestUpdateSandboxLastActivity(t *testing.T) {
 	ctx := context.Background()
 	c, mr := newTestRedisClient(t)

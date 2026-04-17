@@ -100,6 +100,24 @@ func TestNewServer_WorkspaceConfiguration(t *testing.T) {
 			},
 		},
 		{
+			name: "non-existent workspace directory is created",
+			setupWorkDir: func(t *testing.T) (string, func()) {
+				tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
+				require.NoError(t, err)
+				// Point to a subdirectory that does not exist yet
+				nonExistent := filepath.Join(tmpDir, "workspace", "nested")
+				return nonExistent, func() { os.RemoveAll(tmpDir) }
+			},
+			verifyResult: func(t *testing.T, server *Server) {
+				assert.NotNil(t, server)
+				assert.True(t, filepath.IsAbs(server.workspaceDir))
+				// Directory must have been created by setWorkspace
+				info, err := os.Stat(server.workspaceDir)
+				assert.NoError(t, err, "workspace directory should exist after NewServer")
+				assert.True(t, info.IsDir())
+			},
+		},
+		{
 			name: "with relative path workspace",
 			setupWorkDir: func(t *testing.T) (string, func()) {
 				tmpDir, err := os.MkdirTemp("", "picod-server-test-*")

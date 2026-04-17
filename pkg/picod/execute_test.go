@@ -27,6 +27,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -219,8 +220,13 @@ func TestExecuteHandler_WorkingDirectory(t *testing.T) {
 			errorContains: "Invalid working directory",
 		},
 		{
-			name:        "valid subdirectory",
+			name:        "valid subdirectory (already exists)",
 			workingDir:  "subdir",
+			expectError: false,
+		},
+		{
+			name:        "non-existent subdirectory is auto-created",
+			workingDir:  "newdir/nested",
 			expectError: false,
 		},
 	}
@@ -248,6 +254,69 @@ func TestExecuteHandler_WorkingDirectory(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExecuteHandler_WorkingDirectory_SymlinkEscape(t *testing.T) {
+	server, tmpDir := setupExecuteTestServer(t)
+	defer os.RemoveAll(tmpDir)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	// Plant a symlink inside the workspace that points outside it.
+	outsideDir := t.TempDir()
+	symlinkPath := filepath.Join(tmpDir, "escape")
+	require.NoError(t, os.Symlink(outsideDir, symlinkPath))
+
+	// Attempt to execute in a subdirectory of the symlink — mkdirSafe should reject this.
+	req := ExecuteRequest{
+		Command:    []string{"pwd"},
+		WorkingDir: "escape/newdir",
+	}
+	body, _ := json.Marshal(req)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request, _ = http.NewRequest("POST", "/api/execute", bytes.NewBuffer(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	server.ExecuteHandler(c)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "Failed to create working directory")
+}
+
+func TestExecuteHandler_DefaultsToWorkspace(t *testing.T) {
+	server, tmpDir := setupExecuteTestServer(t)
+	defer os.RemoveAll(tmpDir)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	// No WorkingDir set — command should run inside the workspace directory.
+	req := ExecuteRequest{
+		Command: []string{"pwd"},
+	}
+	body, _ := json.Marshal(req)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request, _ = http.NewRequest("POST", "/api/execute", bytes.NewBuffer(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	server.ExecuteHandler(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp ExecuteResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, 0, resp.ExitCode)
+
+	// Resolve symlinks on both sides so the comparison is stable on macOS
+	// where /tmp and /var are symlinks to /private/tmp and /private/var.
+	pwdOutput := strings.TrimSpace(resp.Stdout)
+	resolvedPwd, err := filepath.EvalSymlinks(pwdOutput)
+	require.NoError(t, err)
+	resolvedWorkspace, err := filepath.EvalSymlinks(server.workspaceDir)
+	require.NoError(t, err)
+	assert.Equal(t, resolvedWorkspace, resolvedPwd, "command should run inside the workspace directory")
 }
 
 func TestExecuteHandler_ExitCodes(t *testing.T) {

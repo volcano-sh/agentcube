@@ -252,7 +252,8 @@ func TestSetWorkspace(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := &Server{}
-			server.setWorkspace(tt.dir)
+			err := server.setWorkspace(tt.dir)
+			assert.NoError(t, err)
 
 			if tt.checkAbs {
 				// Verify workspace is set to absolute path
@@ -269,7 +270,8 @@ func TestSetWorkspace_WithTemporaryDirectory(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	server := &Server{}
-	server.setWorkspace(tmpDir)
+	err = server.setWorkspace(tmpDir)
+	assert.NoError(t, err)
 
 	assert.Equal(t, tmpDir, server.workspaceDir)
 }

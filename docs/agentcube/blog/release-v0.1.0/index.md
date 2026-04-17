@@ -1,0 +1,246 @@
+# AgentCube v0.1.0 Released: Serverless Orchestration Layer for AI Agents
+
+## Summary
+
+AgentCube v0.1.0 is the **first official release** of AgentCube, a Volcano subproject that extends Kubernetes with native support for AI agent and code interpreter workloads. This release establishes the foundational architecture: a lightweight HTTP reverse proxy (Router) routes agent invocations to per-session microVM sandboxes, while a Workload Manager controls sandbox lifecycle, warm pools, and garbage collection. A minimal runtime daemon (PicoD) replaces SSH inside sandboxes, providing secure code execution, file operations, and JWT-based authentication with zero protocol overhead. Session state is stored in Redis/Valkey, enabling horizontal Router scaling. Two new Kubernetes CRDs — `AgentRuntime` and `CodeInterpreter` — are introduced to model agent workloads as first-class Kubernetes resources. A Python SDK, LangChain integration, and Dify plugin are included to make AgentCube immediately usable from popular AI frameworks.
+
+## What's New
+
+### Key Features Overview
+
+- **Session-Based MicroVM Agent Routing**: Stateful request routing with session affinity, backed by isolated microVM sandboxes per session
+- **AgentRuntime and CodeInterpreter CRDs**: Kubernetes-native abstractions for conversational agent and secure code interpreter workloads
+- **Warm Pool for Fast Cold Starts**: Pre-warmed sandbox pool support for `CodeInterpreter`, reducing invocation latency via `SandboxClaim` adoption
+- **PicoD Runtime Daemon**: Lightweight HTTP daemon replacing SSH inside sandboxes — code execution, file I/O, JWT authentication
+- **JWT Security Chain (Router → PicoD)**: RSA-2048 key pair generated at startup; public key distributed via Kubernetes Secret and injected into sandbox pods
+- **Dual GC Policy (Idle TTL + Max Duration)**: Background garbage collector enforces both idle timeout and hard maximum session duration
+- **Python SDK and AI Framework Integrations**: Out-of-the-box SDK with LangChain and Dify plugin support
+
+---
+
+### Session-Based MicroVM Agent Routing
+
+AI agent workloads are fundamentally stateful and interactive. A single agent session may span many invocations — tool calls, environment inspections, multi-step reasoning — all requiring the same isolated execution environment. Kubernetes has no native concept of persistent, identity-bound agent sessions. AgentCube fills this gap by mapping session IDs to dedicated microVM sandbox pods.
+
+The Router acts as the data plane entry point. It reads the `x-agentcube-session-id` request header to look up an existing session in the store, or allocates a new sandbox via the Workload Manager when no session exists. Every response carries the `x-agentcube-session-id` header, enabling stateless clients to maintain session continuity across requests.
+
+Key Capabilities:
+
+- **Session affinity via header**: `x-agentcube-session-id` header maps requests to existing sandbox pods
+- **Transparent sandbox allocation**: new sessions trigger automatic sandbox creation with no client-side configuration
+- **Reverse proxy with path-prefix matching**: path-based routing to multiple exposed sandbox ports
+- **HTTP/2 (h2c) support**: low-latency connections to sandbox endpoints
+- **Configurable concurrency limit**: `MaxConcurrentRequests` prevents overload
+
+**Router Endpoints:**
+
+```
+POST /v1/namespaces/{namespace}/agent-runtimes/{name}/invocations/*path
+GET  /v1/namespaces/{namespace}/agent-runtimes/{name}/invocations/*path
+POST /v1/namespaces/{namespace}/code-interpreters/{name}/invocations/*path
+GET  /v1/namespaces/{namespace}/code-interpreters/{name}/invocations/*path
+```
+
+---
+
+### Agent as First-Class Citizen in Kubernetes
+
+Two distinct workload profiles emerge in the AI agent space: conversational/tool-using agents that need access to credentials, volumes, and custom networking; and short-lived code interpreters that require strict isolation and resource caps. Modeling both as first-class Kubernetes CRDs enables declarative configuration, RBAC integration, and GitOps-friendly workflows.
+
+**AgentRuntime** (`agentruntimes.runtime.agentcube.volcano.sh`):
+
+Designed for general-purpose AI agents. Accepts a full Kubernetes `PodSpec` template, allowing volume mounts, credential injection, sidecar containers, and custom resource requests.
+
+- `spec.podTemplate` — full `PodSpec` for sandbox pod
+- `spec.targetPort` — list of exposed ports with path prefix, port, and protocol
+- `spec.sessionTimeout` — idle session expiry (default: `15m`)
+- `spec.maxSessionDuration` — hard maximum session lifetime (default: `8h`)
+
+**CodeInterpreter** (`codeinterpreters.runtime.agentcube.volcano.sh`):
+
+Designed for secure, multi-tenant code execution. More locked-down than AgentRuntime, with a constrained sandbox template that restricts image, resources, and runtime class.
+
+- `spec.template` — `CodeInterpreterSandboxTemplate` (image, imagePullPolicy, resources, runtimeClassName)
+- `spec.ports` — list of exposed ports with path prefix
+- `spec.sessionTimeout` / `spec.maxSessionDuration` — session lifecycle bounds
+- `spec.warmPoolSize` — optional pre-warmed sandbox pool size
+- `spec.authMode` — `picod` (default, RSA/JWT) or `none` (delegate auth to sandbox)
+
+Alpha Feature Notice: APIs are under active development. Spec fields and default values may change in future releases.
+
+---
+
+### Warm Pool for Fast Cold Starts
+
+Creating a microVM sandbox from scratch on every session request incurs a cold-start penalty that is unacceptable for interactive workloads. AgentCube introduces a warm pool mechanism: the Workload Manager pre-creates a configurable number of idle `Sandbox` pods and keeps them ready. When an invocation arrives, the Router claims a pre-warmed pod via a `SandboxClaim` CR instead of waiting for a new pod to start. The pool is automatically replenished after each claim.
+
+Key Capabilities:
+
+- `spec.warmPoolSize` on `CodeInterpreter` controls pool depth
+- `SandboxTemplate` + `SandboxClaim` pattern delegates pod adoption to the upstream `agent-sandbox` controller
+- Pool refills asynchronously after each claim, keeping steady-state latency low
+- Cold-start path remains available when pool is exhausted
+
+---
+
+### PicoD — Lightweight Sandbox Runtime Daemon
+
+Traditional code sandbox implementations use SSH to execute commands remotely. SSH carries significant overhead: key management, multiplexing negotiation, and a heavyweight protocol for what are essentially single-request RPCs. PicoD replaces SSH with a minimal HTTP/1.1 daemon that runs inside each sandbox pod, providing code execution, file I/O, and authentication via a small, auditable binary.
+
+Key Capabilities:
+
+- **Code execution** (`POST /api/execute`): runs arbitrary commands with configurable timeout, working directory, and environment variables; returns stdout, stderr, exit code, and wall-clock duration
+- **File upload / write** (`POST /api/files`): supports multipart form-data and JSON/base64 content for workspace-scoped file creation and updates
+- **File download / read** (`GET /api/files/*path`): streams files from the sandbox workspace using path-addressed operations
+- **Health check** (`GET /health`): exposes an unauthenticated liveness endpoint
+- **JWT authentication**: validates RS256 tokens from the Router; rejects unauthenticated requests
+- **Path sanitization**: all paths are jailed to the configured workspace root, preventing directory traversal
+- **32 MB request body limit** with configurable workspace root via `--workspace` flag
+
+---
+
+### JWT Security Chain (Router → PicoD)
+
+Sandbox pods are ephemeral and may be replaced at any time; embedding a shared secret in cluster config is fragile and hard to rotate. AgentCube establishes an RSA-based trust chain: the Router generates an RSA-2048 key pair at startup, stores the public key in a Kubernetes Secret (`picod-router-identity`), and the Workload Manager injects it as `PICOD_AUTH_PUBLIC_KEY` for `CodeInterpreter` sandboxes when authentication is enabled (the default is `picod`; `none` disables injection). The Router signs short-lived (5-minute) RS256 JWTs for every proxied request. PicoD verifies these tokens entirely in-process — no network round-trip, no shared database.
+
+Key Capabilities:
+
+- RSA-2048 key pair auto-generated at Router startup
+- Public key distributed via `picod-router-identity` Kubernetes Secret
+- Workload Manager injects public key into `CodeInterpreter` sandbox env when `spec.authMode` is not `none`
+- 5-minute token expiry limits blast radius of token leakage
+- PicoD rejects any request without a valid Router-issued JWT
+
+---
+
+### Sandbox Lifecycle Management and GC
+
+Agent sessions that complete their work or are abandoned by clients must be automatically reclaimed to avoid resource exhaustion. AgentCube implements a dual garbage collection policy enforced by a background loop in the Workload Manager:
+
+- **Idle timeout**: sandboxes inactive beyond `spec.sessionTimeout` (default `15m`) are deleted
+- **Hard max TTL**: sandboxes older than `spec.maxSessionDuration` (default `8h`) are deleted regardless of activity
+
+Key Capabilities:
+
+- Configurable GC interval in the Workload Manager
+- `UpdateSessionLastActivity` store operation to reset idle timer on each invocation
+- `ListExpiredSandboxes` and `ListInactiveSandboxes` store queries feed the GC loop
+- Workload Manager deletes `Sandbox` / `SandboxClaim` CRs and removes store records atomically
+
+---
+
+## Other Notable Changes
+
+### Features and Enhancements
+
+- **Python SDK** (`agentcube-sdk`): `CodeInterpreterClient` with `execute_command()`, `run_code(language, code)`, `upload_file()`, `download_file()`, `write_file()`; session lifecycle managed automatically
+- **LangChain integration**: `CodeInterpreterClient` can be wrapped as a `@tool` and wired into LangGraph ReAct agents — see [devguide](https://github.com/volcano-sh/agentcube/blob/main/docs/devguide/code-interpreter-using-langchain.md)
+- **Dify plugin**: `integrations/dify-plugin/` — AgentCube tool integration for the Dify AI application platform
+- **pcap-analyzer example**: `example/pcap-analyzer/` — end-to-end example agent that analyzes packet captures using code interpreter
+- **Redis and Valkey backends**: pluggable session store (`pkg/store`) with implementations for both Redis and Valkey; selected via configuration
+- **Prometheus metrics**: metrics exported by Router and Workload Manager for operational observability
+- **Health probes**: `/health/live` and `/health/ready` on the Router for Kubernetes liveness/readiness checks
+- **User-scoped Kubernetes clients**: Workload Manager creates per-user dynamic clients from service account tokens, enabling per-sandbox RBAC enforcement
+- **Helm chart**: `manifests/charts/base` for one-command installation of CRDs, Workload Manager, and Router
+
+---
+
+## Installation instructions
+
+This is the initial release of AgentCube. No upgrade path from a prior version exists.
+
+**Prerequisites:**
+
+1. Kubernetes cluster v1.24+
+2. Redis or Valkey instance accessible from the cluster
+3. `sigs.k8s.io/agent-sandbox` v0.1.1 CRDs installed
+
+**Install with Helm:**
+
+```bash
+helm install agentcube manifests/charts/base \
+  --namespace agentcube-system --create-namespace \
+  --set redis.addr=<redis-or-valkey-host>:6379 \
+  --set redis.password="''''" \
+  --set router.rbac.create=true
+```
+
+**Verify installation:**
+
+```bash
+kubectl get crd agentruntimes.runtime.agentcube.volcano.sh
+kubectl get crd codeinterpreters.runtime.agentcube.volcano.sh
+kubectl get pods -n agentcube-system
+```
+
+**Create a CodeInterpreter:**
+
+```yaml
+apiVersion: runtime.agentcube.volcano.sh/v1alpha1
+kind: CodeInterpreter
+metadata:
+  name: my-interpreter
+  namespace: default
+spec:
+  template:
+    image: ghcr.io/volcano-sh/picod:latest
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "2"
+        memory: "2Gi"
+  warmPoolSize: 2
+  sessionTimeout: 15m
+  maxSessionDuration: 8h
+```
+
+**Invoke the interpreter:**
+
+```bash
+curl -X POST \
+  http://<router-host>/v1/namespaces/default/code-interpreters/my-interpreter/invocations/api/execute \
+  -H "Content-Type: application/json" \
+  -d '{"command": ["python3", "-c", "print(1+1)"]}'
+```
+
+The response will include an `x-agentcube-session-id` header. Pass it in subsequent requests to reuse the session.
+
+---
+
+## Contributors
+
+Thank you to all contributors who made this release possible:
+
+[@YaoZengzeng](https://github.com/YaoZengzeng),
+[@acsoto](https://github.com/acsoto),
+[@hzxuzhonghu](https://github.com/hzxuzhonghu),
+[@Sagar-6203620715](https://github.com/Sagar-6203620715),
+[@mahil-2040](https://github.com/mahil-2040),
+[@t2wang](https://github.com/t2wang),
+[@FAUST-BENCHOU](https://github.com/FAUST-BENCHOU),
+[@tjucoder](https://github.com/tjucoder),
+[@LaynePeng](https://github.com/LaynePeng),
+[@yashisrani](https://github.com/yashisrani),
+[@katara-Jayprakash](https://github.com/katara-Jayprakash),
+[@LiZhenCheng9527](https://github.com/LiZhenCheng9527),
+[@Tweakzx](https://github.com/Tweakzx),
+[@warjiang](https://github.com/warjiang),
+[@LeslieKuo](https://github.com/LeslieKuo),
+[@MahaoAlex](https://github.com/MahaoAlex),
+[@VanderChen](https://github.com/VanderChen),
+[@kevin-wangzefeng](https://github.com/kevin-wangzefeng),
+[@ifelseend](https://github.com/ifelseend),
+[@cairon-ab](https://github.com/cairon-ab),
+[@RushabhMehta2005](https://github.com/RushabhMehta2005),
+[@Sanchit2662](https://github.com/Sanchit2662),
+[@qizha](https://github.com/qizha),
+[@ssfffss](https://github.com/ssfffss),
+[@wjf295004046](https://github.com/wjf295004046)
+
+---
+
+## Full Changelog
+
+This is the initial v0.1.0 release of AgentCube.

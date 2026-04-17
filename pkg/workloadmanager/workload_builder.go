@@ -294,6 +294,20 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	return sandbox, entry, nil
 }
 
+// buildCodeInterpreterEnvVars copies the template env vars and injects the
+// public key when authMode is picod.
+func buildCodeInterpreterEnvVars(templateEnv []corev1.EnvVar, authMode runtimev1alpha1.AuthModeType) []corev1.EnvVar {
+	envVars := make([]corev1.EnvVar, len(templateEnv))
+	copy(envVars, templateEnv)
+	if authMode == runtimev1alpha1.AuthModePicoD {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "PICOD_AUTH_PUBLIC_KEY",
+			Value: GetCachedPublicKey(),
+		})
+	}
+	return envVars
+}
+
 func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
 	codeInterpreterKey := namespace + "/" + codeInterpreterName
 	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
@@ -383,16 +397,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		runtimeClassName = nil
 	}
 
-	// Build environment variables - create a copy to avoid mutating the informer cached object
-	envVars := make([]corev1.EnvVar, len(codeInterpreterObj.Spec.Template.Environment))
-	copy(envVars, codeInterpreterObj.Spec.Template.Environment)
-	// Only inject public key for picod auth mode (default behavior)
-	if codeInterpreterObj.Spec.AuthMode == runtimev1alpha1.AuthModePicoD {
-		envVars = append(envVars, corev1.EnvVar{
-			Name:  "PICOD_AUTH_PUBLIC_KEY",
-			Value: GetCachedPublicKey(),
-		})
-	}
+	envVars := buildCodeInterpreterEnvVars(codeInterpreterObj.Spec.Template.Environment, codeInterpreterObj.Spec.AuthMode)
 
 	podSpec := corev1.PodSpec{
 		ImagePullSecrets: codeInterpreterObj.Spec.Template.ImagePullSecrets,

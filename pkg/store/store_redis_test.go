@@ -222,22 +222,12 @@ func TestListInactiveSandboxes(t *testing.T) {
 	if len(list) != 2 {
 		t.Fatalf("expected 2 inactive sandboxes, got %d", len(list))
 	}
-	bySession := map[string]*types.SandboxInfo{}
+	ids := map[string]bool{}
 	for _, sb := range list {
-		bySession[sb.SessionID] = sb
+		ids[sb.SandboxID] = true
 	}
-	if _, ok := bySession["sess-1"]; !ok {
-		t.Fatalf("expected sess-1 in result, got %+v", bySession)
-	}
-	if _, ok := bySession["sess-2"]; !ok {
-		t.Fatalf("expected sess-2 in result, got %+v", bySession)
-	}
-	// LastActivityAt must reflect the score written by UpdateSessionLastActivity.
-	if got, want := bySession["sess-1"].LastActivityAt.Unix(), now.Add(-3*time.Hour).Unix(); got != want {
-		t.Errorf("sess-1 LastActivityAt: got %v, want %v", got, want)
-	}
-	if got, want := bySession["sess-2"].LastActivityAt.Unix(), now.Add(-2*time.Hour).Unix(); got != want {
-		t.Errorf("sess-2 LastActivityAt: got %v, want %v", got, want)
+	if !ids["sb-1"] || !ids["sb-2"] {
+		t.Fatalf("unexpected sandbox IDs in result: %+v", ids)
 	}
 
 	// Limit should be respected.
@@ -286,6 +276,30 @@ func TestLoadSandboxesBySessionIDs_OrphanedZSetEntry(t *testing.T) {
 	if result[0].SandboxID != "sb-alive" {
 		t.Fatalf("expected sb-alive, got %s", result[0].SandboxID)
 	}
+}
+
+func TestListInactiveSandboxes_PopulatesLastActivityAt(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newTestRedisClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+
+	assert.NoError(t, c.StoreSandbox(ctx, newTestSandbox("sb-1", "sess-1", now.Add(10*time.Minute))))
+	assert.NoError(t, c.StoreSandbox(ctx, newTestSandbox("sb-2", "sess-2", now.Add(10*time.Minute))))
+	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-1", now.Add(-3*time.Hour)))
+	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-2", now.Add(-2*time.Hour)))
+
+	list, err := c.ListInactiveSandboxes(ctx, now, 10)
+	assert.NoError(t, err)
+	assert.Len(t, list, 2)
+
+	bySession := map[string]*types.SandboxInfo{}
+	for _, sb := range list {
+		bySession[sb.SessionID] = sb
+	}
+	// LastActivityAt must reflect the score written by UpdateSessionLastActivity.
+	assert.Equal(t, now.Add(-3*time.Hour).Unix(), bySession["sess-1"].LastActivityAt.Unix())
+	assert.Equal(t, now.Add(-2*time.Hour).Unix(), bySession["sess-2"].LastActivityAt.Unix())
 }
 
 func TestUpdateSandboxLastActivity(t *testing.T) {

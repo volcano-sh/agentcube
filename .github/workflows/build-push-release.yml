@@ -11,6 +11,9 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -18,7 +21,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.24.4'
+          go-version: "1.24.4"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
@@ -30,9 +33,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Determine tag
-        id: determine_tag
+      - name: Determine release metadata
+        id: determine_release_metadata
         run: |
+          echo "REPOSITORY_OWNER_LOWER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
           if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
             echo "TAG=${{ github.ref_name }}" >> $GITHUB_ENV
           else
@@ -41,9 +45,38 @@ jobs:
 
       - name: Build and push images
         env:
-          # Please confirm that there are no uppercase letters in github.repository_owner.
-          IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}
+          IMAGE_REGISTRY: ghcr.io/${{ env.REPOSITORY_OWNER_LOWER }}
         run: |
           make docker-buildx-push IMAGE_REGISTRY=$IMAGE_REGISTRY WORKLOAD_MANAGER_IMAGE=workloadmanager:${{ env.TAG }}
           make docker-buildx-push-router IMAGE_REGISTRY=$IMAGE_REGISTRY ROUTER_IMAGE=agentcube-router:${{ env.TAG }}
           make docker-buildx-push-picod IMAGE_REGISTRY=$IMAGE_REGISTRY PICOD_IMAGE=picod:${{ env.TAG }}
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Set up yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.1/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Login Helm to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{
+          github.actor }}" --password-stdin
+
+      - name: Package Helm chart
+        env:
+          CHART_PATH: manifests/charts/base
+          IMAGE_REGISTRY: ghcr.io/${{ env.REPOSITORY_OWNER_LOWER }}
+        run: |
+          yq e -i '.version = env(TAG)' "$CHART_PATH/Chart.yaml"
+          yq e -i '.appVersion = env(TAG)' "$CHART_PATH/Chart.yaml"
+          yq e -i '.router.image.repository = env(IMAGE_REGISTRY) + "/agentcube-router"' "$CHART_PATH/values.yaml"
+          yq e -i '.router.image.tag = env(TAG)' "$CHART_PATH/values.yaml"
+          yq e -i '.workloadmanager.image.repository = env(IMAGE_REGISTRY) + "/workloadmanager"' "$CHART_PATH/values.yaml"
+          yq e -i '.workloadmanager.image.tag = env(TAG)' "$CHART_PATH/values.yaml"
+          helm dependency build "$CHART_PATH"
+          helm package "$CHART_PATH" --version "${TAG}" --app-version "${TAG}"
+
+      - name: Push Helm chart
+        run: helm push "agentcube-${TAG}.tgz"
+          "oci://ghcr.io/${REPOSITORY_OWNER_LOWER}/charts"

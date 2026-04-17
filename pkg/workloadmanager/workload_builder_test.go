@@ -67,6 +67,17 @@ func TestBuildSandboxObject_DoesNotMutateCallerLabels(t *testing.T) {
 	if podLabels[SandboxNameLabelKey] != "sandbox-abc" {
 		t.Errorf("expected pod label %s=sandbox-abc, got %q", SandboxNameLabelKey, podLabels[SandboxNameLabelKey])
 	}
+
+	// Mutating the returned sandbox labels must not affect the caller's map.
+	podLabels["app"] = "mutated-app"
+	delete(podLabels, "env")
+
+	if original["app"] != before["app"] {
+		t.Fatalf("caller labels map was aliased through sandbox labels: key %q changed from %q to %q", "app", before["app"], original["app"])
+	}
+	if original["env"] != before["env"] {
+		t.Fatalf("caller labels map was aliased through sandbox labels: key %q changed from %q to %q", "env", before["env"], original["env"])
+	}
 }
 
 // TestBuildSandboxObject_NilLabels verifies that a nil podLabels input still

@@ -19,6 +19,7 @@ package workloadmanager
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"sync"
 	"time"
@@ -159,6 +160,13 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 	}
 
 	shutdownTime := metav1.NewTime(time.Now().Add(params.ttl))
+
+	// Always allocate a fresh map so we never mutate the informer-cached object.
+	podLabels := make(map[string]string, len(params.podLabels)+2)
+	maps.Copy(podLabels, params.podLabels)
+	podLabels[SessionIdLabelKey] = params.sessionID
+	podLabels[SandboxNameLabelKey] = params.sandboxName
+
 	// Create Sandbox object using agent-sandbox types
 	sandbox := &sandboxv1alpha1.Sandbox{
 		TypeMeta: metav1.TypeMeta{
@@ -171,7 +179,7 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 			Labels: map[string]string{
 				SessionIdLabelKey:    params.sessionID,
 				WorkloadNameLabelKey: params.workloadName,
-				"managed-by":         "agentcube-workload-manager",
+				"managed-by":        "agentcube-workload-manager",
 			},
 			Annotations: map[string]string{
 				IdleTimeoutAnnotationKey: params.idleTimeout.String(),
@@ -181,7 +189,7 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 			PodTemplate: sandboxv1alpha1.PodTemplate{
 				Spec: params.podSpec,
 				ObjectMeta: sandboxv1alpha1.PodMetadata{
-					Labels:      params.podLabels,
+					Labels:      podLabels,
 					Annotations: params.podAnnotations,
 				},
 			},
@@ -191,11 +199,6 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 			Replicas: ptr.To[int32](1),
 		},
 	}
-	if len(sandbox.Spec.PodTemplate.ObjectMeta.Labels) == 0 {
-		sandbox.Spec.PodTemplate.ObjectMeta.Labels = make(map[string]string, 2)
-	}
-	sandbox.Spec.PodTemplate.ObjectMeta.Labels[SessionIdLabelKey] = params.sessionID
-	sandbox.Spec.PodTemplate.ObjectMeta.Labels[SandboxNameLabelKey] = params.sandboxName
 	return sandbox
 }
 

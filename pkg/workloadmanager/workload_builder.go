@@ -167,8 +167,11 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 	podLabels[SessionIdLabelKey] = params.sessionID
 	podLabels[SandboxNameLabelKey] = params.sandboxName
 
-	podAnnotations := make(map[string]string, len(params.podAnnotations))
-	maps.Copy(podAnnotations, params.podAnnotations)
+	var podAnnotations map[string]string
+	if params.podAnnotations != nil {
+		podAnnotations = make(map[string]string, len(params.podAnnotations))
+		maps.Copy(podAnnotations, params.podAnnotations)
+	}
 
 	// Create Sandbox object using agent-sandbox types
 	sandbox := &sandboxv1alpha1.Sandbox{

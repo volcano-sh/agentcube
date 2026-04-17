@@ -279,15 +279,17 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	if agentRuntimeObj.Spec.MaxSessionDuration != nil {
 		buildParams.ttl = agentRuntimeObj.Spec.MaxSessionDuration.Duration
 	}
+	idleTimeout := DefaultSandboxIdleTimeout
 	if agentRuntimeObj.Spec.SessionTimeout != nil {
-		buildParams.idleTimeout = agentRuntimeObj.Spec.SessionTimeout.Duration
+		idleTimeout = agentRuntimeObj.Spec.SessionTimeout.Duration
 	}
+	buildParams.idleTimeout = idleTimeout
 	sandbox := buildSandboxObject(buildParams)
 	entry := &sandboxEntry{
 		Kind:        types.SandboxKind,
 		Ports:       agentRuntimeObj.Spec.Ports,
 		SessionID:   sessionID,
-		IdleTimeout: buildParams.idleTimeout,
+		IdleTimeout: idleTimeout,
 	}
 	return sandbox, entry, nil
 }

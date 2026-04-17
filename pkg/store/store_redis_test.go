@@ -222,12 +222,22 @@ func TestListInactiveSandboxes(t *testing.T) {
 	if len(list) != 2 {
 		t.Fatalf("expected 2 inactive sandboxes, got %d", len(list))
 	}
-	ids := map[string]bool{}
+	bySession := map[string]*types.SandboxInfo{}
 	for _, sb := range list {
-		ids[sb.SandboxID] = true
+		bySession[sb.SessionID] = sb
 	}
-	if !ids["sb-1"] || !ids["sb-2"] {
-		t.Fatalf("unexpected sandbox IDs in result: %+v", ids)
+	if _, ok := bySession["sess-1"]; !ok {
+		t.Fatalf("expected sess-1 in result, got %+v", bySession)
+	}
+	if _, ok := bySession["sess-2"]; !ok {
+		t.Fatalf("expected sess-2 in result, got %+v", bySession)
+	}
+	// LastActivityAt must reflect the score written by UpdateSessionLastActivity.
+	if got, want := bySession["sess-1"].LastActivityAt.Unix(), now.Add(-3*time.Hour).Unix(); got != want {
+		t.Errorf("sess-1 LastActivityAt: got %v, want %v", got, want)
+	}
+	if got, want := bySession["sess-2"].LastActivityAt.Unix(), now.Add(-2*time.Hour).Unix(); got != want {
+		t.Errorf("sess-2 LastActivityAt: got %v, want %v", got, want)
 	}
 
 	// Limit should be respected.

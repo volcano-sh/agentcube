@@ -266,29 +266,20 @@ func (vs *valkeyStore) ListInactiveSandboxes(ctx context.Context, before time.Ti
 	}
 
 	maxScore := before.Unix()
-	rawResult, err := vs.cli.Do(ctx,
+	zscores, err := vs.cli.Do(ctx,
 		vs.cli.B().Zrangebyscore().Key(vs.lastActivityIndexKey).
 			Min("-inf").Max(fmt.Sprintf("%d", maxScore)).
 			Withscores().Limit(0, limit).Build(),
-	).AsStrSlice()
+	).AsZScores()
 	if err != nil {
 		return nil, fmt.Errorf("ListInactiveSandboxes: ZRangeByScore WITHSCORES failed: %w", err)
 	}
 
-	// WITHSCORES returns interleaved [member, score, member, score, ...] pairs
-	if len(rawResult)%2 != 0 {
-		return nil, fmt.Errorf("ListInactiveSandboxes: unexpected WITHSCORES result length %d", len(rawResult))
-	}
-	ids := make([]string, 0, len(rawResult)/2)
-	scores := make(map[string]time.Time, len(rawResult)/2)
-	for i := 0; i < len(rawResult); i += 2 {
-		id := rawResult[i]
-		scoreFloat, err := strconv.ParseFloat(rawResult[i+1], 64)
-		if err != nil {
-			return nil, fmt.Errorf("ListInactiveSandboxes: parse score for %s: %w", id, err)
-		}
-		ids = append(ids, id)
-		scores[id] = time.Unix(int64(scoreFloat), 0)
+	ids := make([]string, 0, len(zscores))
+	scores := make(map[string]time.Time, len(zscores))
+	for _, z := range zscores {
+		ids = append(ids, z.Member)
+		scores[z.Member] = time.Unix(int64(z.Score), 0)
 	}
 
 	sandboxes, err := vs.loadSandboxesBySessionIDs(ctx, ids)

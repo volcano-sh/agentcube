@@ -32,6 +32,10 @@ import (
 
 const (
 	gcOnceTimeout = 2 * time.Minute
+	// gcMinInactiveLookback is the shortest idle timeout we support. The GC query
+	// uses this as the lower bound so we avoid scanning sandboxes that were active
+	// very recently while still catching sub-DefaultSandboxIdleTimeout timeouts.
+	gcMinInactiveLookback = 1 * time.Minute
 )
 
 type garbageCollector struct {
@@ -67,10 +71,10 @@ func (gc *garbageCollector) once() {
 	defer cancel()
 	now := time.Now()
 
-	// Query sandboxes by last-activity time, oldest-first. Using `now` as the upper
-	// bound includes all sandboxes regardless of how short their configured IdleTimeout
-	// is; the per-sandbox filter below decides whether each one has actually timed out.
-	candidates, err := gc.storeClient.ListInactiveSandboxes(ctx, now, 16)
+	// Query sandboxes inactive for at least gcMinInactiveLookback. This avoids scanning
+	// recently-active sandboxes while still catching timeouts shorter than
+	// DefaultSandboxIdleTimeout. The per-sandbox filter below makes the final decision.
+	candidates, err := gc.storeClient.ListInactiveSandboxes(ctx, now.Add(-gcMinInactiveLookback), 16)
 	if err != nil {
 		klog.Errorf("garbage collector error listing inactive sandboxes: %v", err)
 	}

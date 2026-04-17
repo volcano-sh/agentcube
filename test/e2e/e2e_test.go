@@ -373,12 +373,17 @@ func (e *testEnv) createCodeInterpreterSession(namespace, name string) (string, 
 		}
 
 		if resp.StatusCode == http.StatusInternalServerError {
-			if attempt < maxRetries-1 {
+			// Only retry on generic transient errors. Terminal sandbox failures carry
+			// descriptive messages (e.g. "sandbox failed: Pod exists with phase: Pending")
+			// and must not be retried since they indicate a non-recoverable state for
+			// that session; retrying would extend test runtime without any chance of success.
+			isTransient := strings.Contains(string(body), "internal server error")
+			if isTransient && attempt < maxRetries-1 {
 				time.Sleep(backoff)
 				backoff *= 2
 				continue
 			}
-			return "", fmt.Errorf("create session failed after %d retries with status %d: %s", maxRetries, resp.StatusCode, string(body))
+			return "", fmt.Errorf("create session failed with status %d: %s", resp.StatusCode, string(body))
 		}
 
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {

@@ -14,5 +14,6 @@
 
 from .code_interpreter import CodeInterpreterClient
 from .agent_runtime import AgentRuntimeClient
+from .mcp_server import create_mcp_server
 
-__all__ = ["CodeInterpreterClient", "AgentRuntimeClient"]
+__all__ = ["CodeInterpreterClient", "AgentRuntimeClient", "create_mcp_server"]

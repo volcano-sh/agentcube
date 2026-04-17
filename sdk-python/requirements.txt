@@ -1,3 +1,4 @@
 requests
 PyJWT>=2.0.0
 cryptography
+mcp>=1.0.0

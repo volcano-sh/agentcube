@@ -161,11 +161,14 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 
 	shutdownTime := metav1.NewTime(time.Now().Add(params.ttl))
 
-	// Always allocate a fresh map so we never mutate the informer-cached object.
+	// Always allocate fresh maps so we never mutate the informer-cached object.
 	podLabels := make(map[string]string, len(params.podLabels)+2)
 	maps.Copy(podLabels, params.podLabels)
 	podLabels[SessionIdLabelKey] = params.sessionID
 	podLabels[SandboxNameLabelKey] = params.sandboxName
+
+	podAnnotations := make(map[string]string, len(params.podAnnotations))
+	maps.Copy(podAnnotations, params.podAnnotations)
 
 	// Create Sandbox object using agent-sandbox types
 	sandbox := &sandboxv1alpha1.Sandbox{
@@ -190,7 +193,7 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 				Spec: params.podSpec,
 				ObjectMeta: sandboxv1alpha1.PodMetadata{
 					Labels:      podLabels,
-					Annotations: params.podAnnotations,
+					Annotations: podAnnotations,
 				},
 			},
 			Lifecycle: sandboxv1alpha1.Lifecycle{

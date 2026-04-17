@@ -161,7 +161,8 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 
 	shutdownTime := metav1.NewTime(time.Now().Add(params.ttl))
 
-	// Always allocate fresh maps so we never mutate the informer-cached object.
+	// Allocate fresh maps for copied metadata so we never mutate informer-cached input.
+	// Annotations are only copied when params.podAnnotations is non-nil.
 	podLabels := make(map[string]string, len(params.podLabels)+2)
 	maps.Copy(podLabels, params.podLabels)
 	podLabels[SessionIdLabelKey] = params.sessionID

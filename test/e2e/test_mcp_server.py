@@ -20,11 +20,10 @@ These tests verify the MCP server functionality and structure without
 requiring a running AgentCube cluster.
 """
 
-import json
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 import inspect
 
 
@@ -164,7 +163,7 @@ class TestMCPToolInvocations(unittest.TestCase):
             return result
 
         import asyncio
-        result = asyncio.get_event_loop().run_until_complete(call_tool())
+        asyncio.get_event_loop().run_until_complete(call_tool())
 
         mock_client.run_code.assert_called_once_with("python", "print(42)", None)
 
@@ -180,7 +179,7 @@ class TestMCPToolInvocations(unittest.TestCase):
         mcp = create_mcp_server(name="test")
 
         import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
+        asyncio.get_event_loop().run_until_complete(
             mcp.call_tool("execute_command", {"command": "echo hello"})
         )
 
@@ -197,7 +196,7 @@ class TestMCPToolInvocations(unittest.TestCase):
         mcp = create_mcp_server(name="test")
 
         import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
+        asyncio.get_event_loop().run_until_complete(
             mcp.call_tool("write_file", {"content": "test", "remote_path": "test.txt"})
         )
 

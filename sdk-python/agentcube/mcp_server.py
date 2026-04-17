@@ -33,19 +33,14 @@ Usage:
 
 from __future__ import annotations
 
-import os
-import sys
 import json
+import os
 import tempfile
-import base64
-import shutil
 from typing import Optional
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 from agentcube.code_interpreter import CodeInterpreterClient
-from agentcube.exceptions import CommandExecutionError
 
 
 def create_mcp_server(

@@ -416,6 +416,23 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 			expectedMsg: "",
 		},
 		{
+			name: "ready condition false with pending pod is treated as transient",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				Status: sandboxv1alpha1.SandboxStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:    string(sandboxv1alpha1.SandboxConditionReady),
+							Status:  metav1.ConditionFalse,
+							Reason:  "Error",
+							Message: "Pod exists with phase: Pending; Service Exists",
+						},
+					},
+				},
+			},
+			expected:    "unknown",
+			expectedMsg: "",
+		},
+		{
 			name: "ready condition unknown",
 			sandbox: &sandboxv1alpha1.Sandbox{
 				Status: sandboxv1alpha1.SandboxStatus{

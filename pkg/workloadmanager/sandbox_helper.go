@@ -128,6 +128,13 @@ func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) (string, string) {
 			if strings.Contains(msg, "Operation cannot be fulfilled") {
 				return "unknown", ""
 			}
+			// "Pod exists with phase: Pending" means the sandbox controller found the pod
+			// already created but not yet Running. This is a reconciliation race during
+			// startup, not a permanent failure — the pod will eventually transition to
+			// Running. Treat as transient so the 2-minute timeout decides the outcome.
+			if strings.Contains(msg, "Pod exists with phase: Pending") {
+				return "unknown", ""
+			}
 			return "failed", msg
 		}
 	}

@@ -18,8 +18,6 @@ AgentCube v0.1.0 is the **first official release** of AgentCube, a Volcano subpr
 
 ---
 
-### Key Feature Details
-
 ### Session-Based MicroVM Agent Routing
 
 AI agent workloads are fundamentally stateful and interactive. A single agent session may span many invocations — tool calls, environment inspections, multi-step reasoning — all requiring the same isolated execution environment. Kubernetes has no native concept of persistent, identity-bound agent sessions. AgentCube fills this gap by mapping session IDs to dedicated microVM sandbox pods.

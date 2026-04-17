@@ -59,11 +59,11 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		hasWork bool
 	)
 	switch status {
-	case "running":
+	case sandboxStatusRunning:
 		klog.V(2).Infof("Sandbox %s/%s is running, notifying waiter", sandbox.Namespace, sandbox.Name)
 		update = SandboxStatusUpdate{Sandbox: sandbox}
 		hasWork = true
-	case "failed":
+	case sandboxStatusFailed:
 		klog.Warningf("Sandbox %s/%s entered a terminal failure state: %s", sandbox.Namespace, sandbox.Name, failMsg)
 		update = SandboxStatusUpdate{
 			Sandbox: sandbox,

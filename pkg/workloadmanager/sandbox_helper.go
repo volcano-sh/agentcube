@@ -34,6 +34,10 @@ const (
 	defaultSandboxReadyProbeTimeout  = 15 * time.Second
 	defaultSandboxReadyProbeInterval = 1 * time.Second
 	defaultSandboxReadyDialTimeout   = 1 * time.Second
+
+	sandboxStatusRunning = "running"
+	sandboxStatusFailed  = "failed"
+	sandboxStatusUnknown = "unknown"
 )
 
 var sandboxEntrypointDial = func(ctx context.Context, endpoint string, timeout time.Duration) error {
@@ -107,14 +111,14 @@ func sandboxStatusString(sandbox *sandboxv1alpha1.Sandbox) string {
 }
 
 // getSandboxStatus extracts status from Sandbox CRD conditions.
-// Returns "running", "failed", or "unknown".
+// Returns sandboxStatusRunning, sandboxStatusFailed, or sandboxStatusUnknown.
 func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) (string, string) {
 	for _, condition := range sandbox.Status.Conditions {
 		if condition.Type != string(sandboxv1alpha1.SandboxConditionReady) {
 			continue
 		}
 		if condition.Status == metav1.ConditionTrue {
-			return "running", ""
+			return sandboxStatusRunning, ""
 		}
 		// ConditionFalse with a reason indicates a terminal failure, not transient pending.
 		if condition.Status == metav1.ConditionFalse && condition.Reason != "" {
@@ -126,19 +130,19 @@ func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) (string, string) {
 			// The sandbox controller retries these automatically, so they are transient —
 			// do not surface them as terminal failures.
 			if strings.Contains(msg, "Operation cannot be fulfilled") {
-				return "unknown", ""
+				return sandboxStatusUnknown, ""
 			}
 			// "Pod exists with phase: Pending" means the sandbox controller found the pod
 			// already created but not yet Running. This is a reconciliation race during
 			// startup, not a permanent failure — the pod will eventually transition to
 			// Running. Treat as transient so the 2-minute timeout decides the outcome.
 			if strings.Contains(msg, "Pod exists with phase: Pending") {
-				return "unknown", ""
+				return sandboxStatusUnknown, ""
 			}
-			return "failed", msg
+			return sandboxStatusFailed, msg
 		}
 	}
-	return "unknown", ""
+	return sandboxStatusUnknown, ""
 }
 
 func (s *Server) waitForSandboxEntryPointsReady(ctx context.Context, podIP string, entry *sandboxEntry) error {

@@ -196,9 +196,12 @@ class CodeInterpreterDataPlaneClient:
 
         return self.execute_command(cmd, timeout)
 
-    def write_file(self, content: str, remote_path: str) -> None:
-        """Write text content to a file."""
-        content_bytes = content.encode('utf-8')
+    def write_file(self, content: Union[str, bytes], remote_path: str) -> None:
+        """Write text or binary content to a file."""
+        if isinstance(content, str):
+            content_bytes = content.encode('utf-8')
+        else:
+            content_bytes = content
         content_b64 = base64.b64encode(content_bytes).decode('utf-8')
 
         payload = {

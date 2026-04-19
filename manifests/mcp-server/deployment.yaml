@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentcube-mcp-server
+  namespace: agentcube
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agentcube-mcp-server
+  template:
+    metadata:
+      labels:
+        app: agentcube-mcp-server
+    spec:
+      containers:
+      - name: mcp-server
+        image: agentcube-mcp-server:latest
+        imagePullPolicy: IfNotPresent
+        args:
+        - "--transport"
+        - "streamable-http"
+        - "--port"
+        - "8000"
+        - "--host"
+        - "0.0.0.0"
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: WORKLOAD_MANAGER_URL
+          value: "http://workloadmanager.agentcube.svc.cluster.local:8080"
+        - name: ROUTER_URL
+          value: "http://agentcube-router.agentcube.svc.cluster.local:8080"
+        - name: NAMESPACE
+          value: "agentcube"
+        - name: AUTH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: agentcube-mcp-token
+              key: token
+              optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentcube-mcp-server
+  namespace: agentcube
+spec:
+  selector:
+    app: agentcube-mcp-server
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http

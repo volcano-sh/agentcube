@@ -1,0 +1,24 @@
+# Dockerfile for AgentCube MCP Server
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Copy SDK source
+COPY sdk-python/ /app/sdk-python/
+
+# Install SDK and dependencies
+RUN pip install --no-cache-dir ./sdk-python
+
+# Set environment variables (defaults)
+ENV WORKLOAD_MANAGER_URL="http://workloadmanager.agentcube.svc.cluster.local:8080"
+ENV ROUTER_URL="http://agentcube-router.agentcube.svc.cluster.local:8080"
+ENV NAMESPACE="agentcube"
+
+# Expose port for HTTP transport if used
+EXPOSE 8000
+
+# Run MCP server
+# By default it runs in stdio mode. For K8s, we might want HTTP transport
+# or we can use stdio if we are running as a sidecar/interactive pod.
+# However, usually MCP servers in K8s are best served via HTTP if they are shared.
+ENTRYPOINT ["python", "-m", "agentcube.mcp_server"]

@@ -95,8 +95,7 @@ class TestMCPServerToolsRegistered(unittest.TestCase):
     def test_list_tools_returns_tool_list(self, mock_class):
         """Test list_tools returns a list of tools."""
         mock_client = MagicMock()
-        mock_class.return_value.__enter__ = MagicMock(return_value=mock_client)
-        mock_class.return_value.__exit__ = MagicMock(return_value=False)
+        mock_class.return_value = mock_client
 
         from agentcube.mcp_server import create_mcp_server
         mcp = create_mcp_server(name="test")
@@ -120,8 +119,7 @@ class TestMCPServerToolsRegistered(unittest.TestCase):
     def test_run_code_tool_schema(self, mock_class):
         """Test run_code tool has correct schema."""
         mock_client = MagicMock()
-        mock_class.return_value.__enter__ = MagicMock(return_value=mock_client)
-        mock_class.return_value.__exit__ = MagicMock(return_value=False)
+        mock_class.return_value = mock_client
 
         from agentcube.mcp_server import create_mcp_server
         mcp = create_mcp_server(name="test")
@@ -152,8 +150,7 @@ class TestMCPToolInvocations(unittest.TestCase):
         """Test run_code can be invoked via call_tool."""
         mock_client = MagicMock()
         mock_client.run_code.return_value = "42\n"
-        mock_class.return_value.__enter__ = MagicMock(return_value=mock_client)
-        mock_class.return_value.__exit__ = MagicMock(return_value=False)
+        mock_class.return_value = mock_client
 
         from agentcube.mcp_server import create_mcp_server
         mcp = create_mcp_server(name="test")
@@ -172,8 +169,7 @@ class TestMCPToolInvocations(unittest.TestCase):
         """Test execute_command can be invoked."""
         mock_client = MagicMock()
         mock_client.execute_command.return_value = "hello\n"
-        mock_class.return_value.__enter__ = MagicMock(return_value=mock_client)
-        mock_class.return_value.__exit__ = MagicMock(return_value=False)
+        mock_class.return_value = mock_client
 
         from agentcube.mcp_server import create_mcp_server
         mcp = create_mcp_server(name="test")
@@ -189,8 +185,7 @@ class TestMCPToolInvocations(unittest.TestCase):
     def test_write_file_invocation(self, mock_class):
         """Test write_file can be invoked."""
         mock_client = MagicMock()
-        mock_class.return_value.__enter__ = MagicMock(return_value=mock_client)
-        mock_class.return_value.__exit__ = MagicMock(return_value=False)
+        mock_class.return_value = mock_client
 
         from agentcube.mcp_server import create_mcp_server
         mcp = create_mcp_server(name="test")
@@ -209,8 +204,7 @@ class TestMCPToolInvocations(unittest.TestCase):
         mock_client.list_files.return_value = [
             {"name": "file1.py", "size": 1024, "is_dir": False}
         ]
-        mock_class.return_value.__enter__ = MagicMock(return_value=mock_client)
-        mock_class.return_value.__exit__ = MagicMock(return_value=False)
+        mock_class.return_value = mock_client
 
         from agentcube.mcp_server import create_mcp_server
         mcp = create_mcp_server(name="test")

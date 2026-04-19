@@ -71,15 +71,20 @@ def create_mcp_server(
     router_url = router_url or os.getenv("ROUTER_URL")
     auth_token = auth_token or os.getenv("AUTH_TOKEN")
 
+    _client: Optional[CodeInterpreterClient] = None
+
     def get_client() -> CodeInterpreterClient:
-        return CodeInterpreterClient(
-            name=name,
-            namespace=namespace,
-            ttl=ttl,
-            workload_manager_url=workload_manager_url,
-            router_url=router_url,
-            auth_token=auth_token,
-        )
+        nonlocal _client
+        if _client is None:
+            _client = CodeInterpreterClient(
+                name=name,
+                namespace=namespace,
+                ttl=ttl,
+                workload_manager_url=workload_manager_url,
+                router_url=router_url,
+                auth_token=auth_token,
+            )
+        return _client
 
     @mcp.tool()
     def run_code(language: str, code: str, timeout: Optional[float] = None) -> str:
@@ -94,8 +99,8 @@ def create_mcp_server(
         Returns:
             The stdout output from the code execution.
         """
-        with get_client() as client:
-            return client.run_code(language, code, timeout)
+        client = get_client()
+        return client.run_code(language, code, timeout)
 
     @mcp.tool()
     def execute_command(command: str, timeout: Optional[float] = None) -> str:
@@ -109,8 +114,8 @@ def create_mcp_server(
         Returns:
             The stdout output from the command.
         """
-        with get_client() as client:
-            return client.execute_command(command, timeout)
+        client = get_client()
+        return client.execute_command(command, timeout)
 
     @mcp.tool()
     def write_file(content: str, remote_path: str) -> str:
@@ -124,9 +129,9 @@ def create_mcp_server(
         Returns:
             Success message with the file path.
         """
-        with get_client() as client:
-            client.write_file(content, remote_path)
-            return f"Successfully wrote to {remote_path}"
+        client = get_client()
+        client.write_file(content, remote_path)
+        return f"Successfully wrote to {remote_path}"
 
     @mcp.tool()
     def upload_file(local_path: str, remote_path: str) -> str:
@@ -140,9 +145,9 @@ def create_mcp_server(
         Returns:
             Success message with the file paths.
         """
-        with get_client() as client:
-            client.upload_file(local_path, remote_path)
-            return f"Successfully uploaded {local_path} to {remote_path}"
+        client = get_client()
+        client.upload_file(local_path, remote_path)
+        return f"Successfully uploaded {local_path} to {remote_path}"
 
     @mcp.tool()
     def download_file(remote_path: str, local_path: str) -> str:
@@ -156,9 +161,9 @@ def create_mcp_server(
         Returns:
             Success message with the file paths.
         """
-        with get_client() as client:
-            client.download_file(remote_path, local_path)
-            return f"Successfully downloaded {remote_path} to {local_path}"
+        client = get_client()
+        client.download_file(remote_path, local_path)
+        return f"Successfully downloaded {remote_path} to {local_path}"
 
     @mcp.tool()
     def list_files(path: str = ".") -> str:
@@ -171,9 +176,9 @@ def create_mcp_server(
         Returns:
             JSON string of file entries.
         """
-        with get_client() as client:
-            files = client.list_files(path)
-            return json.dumps(files, default=str)
+        client = get_client()
+        files = client.list_files(path)
+        return json.dumps(files, default=str)
 
     @mcp.resource("workspace://{path}")
     def get_file(path: str) -> str:
@@ -186,16 +191,16 @@ def create_mcp_server(
         Returns:
             The file content as a string.
         """
-        with get_client() as client:
-            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as tmp:
-                tmp_path = tmp.name
-            try:
-                client.download_file(path, tmp_path)
-                with open(tmp_path, 'r') as f:
-                    return f.read()
-            finally:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
+        client = get_client()
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as tmp:
+            tmp_path = tmp.name
+        try:
+            client.download_file(path, tmp_path)
+            with open(tmp_path, 'r') as f:
+                return f.read()
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
     return mcp
 

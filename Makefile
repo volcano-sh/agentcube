@@ -158,6 +158,7 @@ install: build
 WORKLOAD_MANAGER_IMAGE ?= workloadmanager:latest
 ROUTER_IMAGE ?= agentcube-router:latest
 PICOD_IMAGE ?= picod:latest
+MCP_SERVER_IMAGE ?= agentcube-mcp-server:latest
 IMAGE_REGISTRY ?= ""
 
 # Docker and Kubernetes targets
@@ -259,6 +260,17 @@ docker-push-picod: docker-build-picod
 	@echo "Tagging and pushing Picod Docker image to $(IMAGE_REGISTRY)/$(PICOD_IMAGE)..."
 	docker tag $(PICOD_IMAGE) $(IMAGE_REGISTRY)/$(PICOD_IMAGE)
 	docker push $(IMAGE_REGISTRY)/$(PICOD_IMAGE)
+
+
+# MCP Docker targets
+docker-build-mcp:
+	@echo "Building MCP Server Docker image..."
+	docker build -f docker/Dockerfile.mcp -t $(MCP_SERVER_IMAGE) .
+
+# Load MCP image to kind cluster
+kind-load-mcp:
+	@echo "Loading MCP server image to kind..."
+	kind load docker-image $(MCP_SERVER_IMAGE)
 
 
 ##@ Dependencies

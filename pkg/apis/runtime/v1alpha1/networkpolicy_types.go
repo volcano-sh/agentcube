@@ -68,7 +68,10 @@ type SandboxNetworkPolicy struct {
 // SandboxEgressRule describes an egress allow rule for a sandbox pod.
 type SandboxEgressRule struct {
 	// CIDRs is the list of destination CIDR blocks.
+	// Each entry must be a valid CIDR notation (e.g. "10.0.0.0/8" or "2001:db8::/32").
 	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:items:Pattern=`^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$|^[0-9a-fA-F:]+\/\d{1,3}$`
 	CIDRs []string `json:"cidrs,omitempty"`
 	// Ports restricts the rule to these destination ports. An empty list matches all ports.
 	// +optional
@@ -78,7 +81,10 @@ type SandboxEgressRule struct {
 // SandboxIngressRule describes an ingress allow rule for a sandbox pod.
 type SandboxIngressRule struct {
 	// CIDRs is the list of source CIDR blocks.
+	// Each entry must be a valid CIDR notation (e.g. "10.0.0.0/8" or "2001:db8::/32").
 	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:items:Pattern=`^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$|^[0-9a-fA-F:]+\/\d{1,3}$`
 	CIDRs []string `json:"cidrs,omitempty"`
 	// Ports restricts the rule to these destination ports. An empty list matches all ports.
 	// +optional

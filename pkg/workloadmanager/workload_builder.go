@@ -449,6 +449,6 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		buildParams.ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration
 	}
 	sandbox := buildSandboxObject(buildParams)
-	np := buildNetworkPolicy(sandboxName, namespace, codeInterpreterObj.Spec.Template.NetworkPolicy, routerSelector, routerNamespace)
+	np := buildNetworkPolicy(sandboxName, namespace, effectiveNetworkPolicy(sessionNetworkPolicy, codeInterpreterObj.Spec.Template.NetworkPolicy), routerSelector, routerNamespace)
 	return sandbox, nil, np, sandboxEntry, nil
 }

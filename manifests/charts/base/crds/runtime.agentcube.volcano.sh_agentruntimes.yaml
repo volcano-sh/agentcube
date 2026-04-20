@@ -81,10 +81,14 @@ spec:
                             rule for a sandbox pod.
                           properties:
                             cidrs:
-                              description: CIDRs is the list of destination CIDR blocks.
+                              description: |-
+                                CIDRs is the list of destination CIDR blocks.
+                                Each entry must be a valid CIDR notation (e.g. "10.0.0.0/8" or "2001:db8::/32").
                               items:
+                                pattern: ^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$|^[0-9a-fA-F:]+\/\d{1,3}$
                                 type: string
                               type: array
+                              x-kubernetes-list-type: atomic
                             ports:
                               description: Ports restricts the rule to these destination
                                 ports. An empty list matches all ports.
@@ -118,10 +122,14 @@ spec:
                             rule for a sandbox pod.
                           properties:
                             cidrs:
-                              description: CIDRs is the list of source CIDR blocks.
+                              description: |-
+                                CIDRs is the list of source CIDR blocks.
+                                Each entry must be a valid CIDR notation (e.g. "10.0.0.0/8" or "2001:db8::/32").
                               items:
+                                pattern: ^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$|^[0-9a-fA-F:]+\/\d{1,3}$
                                 type: string
                               type: array
+                              x-kubernetes-list-type: atomic
                             ports:
                               description: Ports restricts the rule to these destination
                                 ports. An empty list matches all ports.

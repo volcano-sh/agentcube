@@ -319,6 +319,10 @@ func TestValkeyStore_ListInactiveSandboxes(t *testing.T) {
 	assert.Equal(t, "sess-1", expiredSandboxes[0].SessionID)
 	assert.Equal(t, "sess-2", expiredSandboxes[1].SessionID)
 	assert.Equal(t, "sess-3", expiredSandboxes[2].SessionID)
+	// LastActivityAt must reflect the score written by UpdateSessionLastActivity.
+	assert.Equal(t, now.Add(-10*time.Hour).Unix(), expiredSandboxes[0].LastActivityAt.Unix())
+	assert.Equal(t, now.Add(-8*time.Hour).Unix(), expiredSandboxes[1].LastActivityAt.Unix())
+	assert.Equal(t, now.Add(-6*time.Hour).Unix(), expiredSandboxes[2].LastActivityAt.Unix())
 
 	expiredSandboxes, err = c.ListInactiveSandboxes(ctx, now, 1)
 	assert.Nil(t, err)

@@ -51,6 +51,10 @@ func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxE
 	} else {
 		expiresAt = time.Now().Add(DefaultSandboxTTL)
 	}
+	idleTimeout := entry.IdleTimeout
+	if idleTimeout == 0 {
+		idleTimeout = DefaultSandboxIdleTimeout
+	}
 	return &types.SandboxInfo{
 		Kind:             entry.Kind,
 		SessionID:        entry.SessionID,
@@ -58,6 +62,7 @@ func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxE
 		Name:             sandboxCR.GetName(),
 		ExpiresAt:        expiresAt,
 		Status:           "creating",
+		IdleTimeout:      metav1.Duration{Duration: idleTimeout},
 	}
 }
 
@@ -75,6 +80,10 @@ func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *san
 			Endpoint: net.JoinHostPort(podIP, strconv.Itoa(int(port.Port))),
 		})
 	}
+	idleTimeout := entry.IdleTimeout
+	if idleTimeout == 0 {
+		idleTimeout = DefaultSandboxIdleTimeout
+	}
 	return &types.SandboxInfo{
 		Kind:             entry.Kind,
 		SandboxID:        string(sandbox.GetUID()),
@@ -85,6 +94,7 @@ func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *san
 		CreatedAt:        createdAt,
 		ExpiresAt:        expiresAt,
 		Status:           getSandboxStatus(sandbox),
+		IdleTimeout:      metav1.Duration{Duration: idleTimeout},
 	}
 }
 

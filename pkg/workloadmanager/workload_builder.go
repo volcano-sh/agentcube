@@ -146,6 +146,7 @@ type buildSandboxClaimParams struct {
 	name                string
 	sandboxTemplateName string
 	sessionID           string
+	idleTimeout         time.Duration
 	// ownerReference is the reference to the CodeInterpreter that creates this SandboxClaim
 	ownerReference *metav1.OwnerReference
 }
@@ -207,6 +208,10 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 }
 
 func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha1.SandboxClaim {
+	idleTimeout := params.idleTimeout
+	if idleTimeout == 0 {
+		idleTimeout = DefaultSandboxIdleTimeout
+	}
 	sandboxClaim := &extensionsv1alpha1.SandboxClaim{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "extensions.agents.x-k8s.io/v1alpha1",
@@ -219,7 +224,9 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 				SessionIdLabelKey:   params.sessionID,
 				SandboxNameLabelKey: params.name,
 			},
-			Annotations: map[string]string{},
+			Annotations: map[string]string{
+				IdleTimeoutAnnotationKey: idleTimeout.String(),
+			},
 		},
 		Spec: extensionsv1alpha1.SandboxClaimSpec{
 			TemplateRef: extensionsv1alpha1.SandboxTemplateRef{
@@ -279,16 +286,33 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	if agentRuntimeObj.Spec.MaxSessionDuration != nil {
 		buildParams.ttl = agentRuntimeObj.Spec.MaxSessionDuration.Duration
 	}
+	idleTimeout := DefaultSandboxIdleTimeout
 	if agentRuntimeObj.Spec.SessionTimeout != nil {
-		buildParams.idleTimeout = agentRuntimeObj.Spec.SessionTimeout.Duration
+		idleTimeout = agentRuntimeObj.Spec.SessionTimeout.Duration
 	}
+	buildParams.idleTimeout = idleTimeout
 	sandbox := buildSandboxObject(buildParams)
 	entry := &sandboxEntry{
-		Kind:      types.SandboxKind,
-		Ports:     agentRuntimeObj.Spec.Ports,
-		SessionID: sessionID,
+		Kind:        types.SandboxKind,
+		Ports:       agentRuntimeObj.Spec.Ports,
+		SessionID:   sessionID,
+		IdleTimeout: idleTimeout,
 	}
 	return sandbox, entry, nil
+}
+
+// buildCodeInterpreterEnvVars copies the template env vars and injects the
+// public key when authMode is picod.
+func buildCodeInterpreterEnvVars(templateEnv []corev1.EnvVar, authMode runtimev1alpha1.AuthModeType) []corev1.EnvVar {
+	envVars := make([]corev1.EnvVar, len(templateEnv))
+	copy(envVars, templateEnv)
+	if authMode == runtimev1alpha1.AuthModePicoD {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "PICOD_AUTH_PUBLIC_KEY",
+			Value: GetCachedPublicKey(),
+		})
+	}
+	return envVars
 }
 
 func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
@@ -319,10 +343,17 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 
 	sessionID := uuid.New().String()
 	sandboxName := fmt.Sprintf("%s-%s", codeInterpreterName, RandString(8))
+
+	idleTimeout := DefaultSandboxIdleTimeout
+	if codeInterpreterObj.Spec.SessionTimeout != nil {
+		idleTimeout = codeInterpreterObj.Spec.SessionTimeout.Duration
+	}
+
 	sandboxEntry := &sandboxEntry{
-		Kind:      types.SandboxKind,
-		Ports:     codeInterpreterObj.Spec.Ports,
-		SessionID: sessionID,
+		Kind:        types.SandboxKind,
+		Ports:       codeInterpreterObj.Spec.Ports,
+		SessionID:   sessionID,
+		IdleTimeout: idleTimeout,
 	}
 
 	// Set default port for code interpreter if not configured
@@ -342,6 +373,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 			name:                sandboxName,
 			sandboxTemplateName: codeInterpreterName,
 			sessionID:           sessionID,
+			idleTimeout:         idleTimeout,
 			ownerReference: &metav1.OwnerReference{
 				APIVersion: codeInterpreterObj.APIVersion,
 				Kind:       codeInterpreterObj.Kind,
@@ -372,16 +404,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		runtimeClassName = nil
 	}
 
-	// Build environment variables - create a copy to avoid mutating the informer cached object
-	envVars := make([]corev1.EnvVar, len(codeInterpreterObj.Spec.Template.Environment))
-	copy(envVars, codeInterpreterObj.Spec.Template.Environment)
-	// Only inject public key for picod auth mode (default behavior)
-	if codeInterpreterObj.Spec.AuthMode == runtimev1alpha1.AuthModePicoD {
-		envVars = append(envVars, corev1.EnvVar{
-			Name:  "PICOD_AUTH_PUBLIC_KEY",
-			Value: GetCachedPublicKey(),
-		})
-	}
+	envVars := buildCodeInterpreterEnvVars(codeInterpreterObj.Spec.Template.Environment, codeInterpreterObj.Spec.AuthMode)
 
 	podSpec := corev1.PodSpec{
 		ImagePullSecrets: codeInterpreterObj.Spec.Template.ImagePullSecrets,
@@ -406,6 +429,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		podSpec:        podSpec,
 		podLabels:      codeInterpreterObj.Spec.Template.Labels,
 		podAnnotations: codeInterpreterObj.Spec.Template.Annotations,
+		idleTimeout:    idleTimeout,
 	}
 	if codeInterpreterObj.Spec.MaxSessionDuration != nil {
 		buildParams.ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration

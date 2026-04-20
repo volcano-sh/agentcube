@@ -257,19 +257,42 @@ func (vs *valkeyStore) ListExpiredSandboxes(ctx context.Context, before time.Tim
 	return vs.loadSandboxesBySessionIDs(ctx, ids)
 }
 
-// ListInactiveSandboxes returns up to limit sandboxes with last-activity time before the given time
+// ListInactiveSandboxes returns up to limit sandboxes with last-activity time before the given time.
+// LastActivityAt is populated on each returned SandboxInfo from the sorted-set score so the
+// caller can apply per-sandbox idle-timeout logic.
 func (vs *valkeyStore) ListInactiveSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 
 	maxScore := before.Unix()
-	ids, err := vs.cli.Do(ctx, vs.cli.B().Zrangebyscore().Key(vs.lastActivityIndexKey).Min("-inf").Max(fmt.Sprintf("%d", maxScore)).Limit(0, limit).Build()).AsStrSlice()
+	zscores, err := vs.cli.Do(ctx,
+		vs.cli.B().Zrangebyscore().Key(vs.lastActivityIndexKey).
+			Min("-inf").Max(fmt.Sprintf("%d", maxScore)).
+			Withscores().Limit(0, limit).Build(),
+	).AsZScores()
 	if err != nil {
-		return nil, fmt.Errorf("ListInactiveSandboxes: ZRangeByScore failed: %w", err)
+		return nil, fmt.Errorf("ListInactiveSandboxes: ZRangeByScore WITHSCORES failed: %w", err)
 	}
 
-	return vs.loadSandboxesBySessionIDs(ctx, ids)
+	ids := make([]string, 0, len(zscores))
+	scores := make(map[string]time.Time, len(zscores))
+	for _, z := range zscores {
+		ids = append(ids, z.Member)
+		scores[z.Member] = time.Unix(int64(z.Score), 0)
+	}
+
+	sandboxes, err := vs.loadSandboxesBySessionIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, s := range sandboxes {
+		if t, ok := scores[s.SessionID]; ok {
+			s.LastActivityAt = t
+		}
+	}
+	return sandboxes, nil
 }
 
 // Close releases all resources held by the valkey store.

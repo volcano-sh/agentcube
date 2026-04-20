@@ -19,6 +19,8 @@ package types
 import (
 	"fmt"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type SandboxInfo struct {
@@ -30,9 +32,16 @@ type SandboxInfo struct {
 	SessionID        string              `json:"sessionId"`
 	CreatedAt        time.Time           `json:"createdAt"`
 	ExpiresAt        time.Time           `json:"expiresAt"`
-	// LastActivityAt is intentionally omitted from this type.
-	// Last activity is tracked in Store via a sorted set index.
-	Status string `json:"status"`
+	// IdleTimeout is the per-sandbox idle timeout configured via SessionTimeout on the
+	// AgentRuntime or CodeInterpreter spec. It is stored in the JSON blob so the
+	// garbage collector can apply it per-sandbox rather than using a global constant.
+	// metav1.Duration marshals as a human-readable string (e.g. "15m0s") rather than
+	// a raw nanosecond integer, making the persisted JSON unambiguous.
+	IdleTimeout metav1.Duration `json:"idleTimeout,omitempty"`
+	// LastActivityAt is populated transiently from the store's last-activity sorted set
+	// during ListInactiveSandboxes. It is intentionally excluded from JSON serialization.
+	LastActivityAt time.Time `json:"-"`
+	Status         string    `json:"status"`
 }
 
 type SandboxEntryPoint struct {

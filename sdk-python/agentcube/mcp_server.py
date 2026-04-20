@@ -83,8 +83,22 @@ def create_mcp_server(
                 workload_manager_url=workload_manager_url,
                 router_url=router_url,
                 auth_token=auth_token,
+                session_id=os.getenv("AGENTCUBE_SESSION_ID"),
             )
         return _client
+
+    @mcp.on_startup()
+    def on_startup():
+        """Initialize the Code Interpreter client on server startup."""
+        get_client()
+
+    @mcp.on_shutdown()
+    def on_shutdown():
+        """Clean up the Code Interpreter session on server shutdown."""
+        nonlocal _client
+        if _client:
+            _client.stop()
+            _client = None
 
     @mcp.tool()
     def run_code(language: str, code: str, timeout: Optional[float] = None) -> str:

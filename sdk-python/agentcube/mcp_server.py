@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -65,8 +66,6 @@ def create_mcp_server(
     Returns:
         A FastMCP server instance.
     """
-    mcp = FastMCP(name, json_response=True)
-
     workload_manager_url = workload_manager_url or os.getenv("WORKLOAD_MANAGER_URL")
     router_url = router_url or os.getenv("ROUTER_URL")
     auth_token = auth_token or os.getenv("AUTH_TOKEN")
@@ -87,18 +86,21 @@ def create_mcp_server(
             )
         return _client
 
-    @mcp.on_startup()
-    def on_startup():
-        """Initialize the Code Interpreter client on server startup."""
+    @asynccontextmanager
+    async def lifespan(server: FastMCP):
+        """Manage the Code Interpreter session lifespan."""
+        # Initialize client on startup
         get_client()
+        try:
+            yield
+        finally:
+            # Clean up on shutdown
+            nonlocal _client
+            if _client:
+                _client.stop()
+                _client = None
 
-    @mcp.on_shutdown()
-    def on_shutdown():
-        """Clean up the Code Interpreter session on server shutdown."""
-        nonlocal _client
-        if _client:
-            _client.stop()
-            _client = None
+    mcp = FastMCP(name, json_response=True, lifespan=lifespan)
 
     @mcp.tool()
     def run_code(language: str, code: str, timeout: Optional[float] = None) -> str:

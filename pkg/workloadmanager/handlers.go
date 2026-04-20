@@ -216,10 +216,10 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 
 	podIP, err := s.k8sClient.GetSandboxPodIP(ctx, sandbox.Namespace, sandbox.Name, sandboxPodName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get sandbox %s/%s pod IP: %v", sandbox.Namespace, sandbox.Name, err)
+		return nil, api.NewInternalError(fmt.Errorf("failed to get sandbox %s/%s pod IP: %v", sandbox.Namespace, sandbox.Name, err))
 	}
 	if err := s.waitForSandboxEntryPointsReady(ctx, podIP, sandboxEntry); err != nil {
-		return nil, fmt.Errorf("failed to verify sandbox %s/%s entrypoints: %w", sandbox.Namespace, sandbox.Name, err)
+		return nil, api.NewInternalError(fmt.Errorf("failed to verify sandbox %s/%s entrypoints: %w", sandbox.Namespace, sandbox.Name, err))
 	}
 
 	storeCacheInfo := buildSandboxInfo(createdSandbox, podIP, sandboxEntry)
@@ -232,7 +232,7 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	}
 
 	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {
-		return nil, fmt.Errorf("update store cache failed: %v", err)
+		return nil, api.NewInternalError(fmt.Errorf("update store cache failed: %v", err))
 	}
 
 	needRollbackSandbox = false

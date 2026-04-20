@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "agentcube-code-interpreter": {
+      "command": "python3",
+      "args": [
+        "-m",
+        "agentcube.mcp_server",
+        "--name",
+        "default-workspace",
+        "--transport",
+        "stdio"
+      ],
+      "env": {
+        "WORKLOAD_MANAGER_URL": "http://localhost:8080",
+        "ROUTER_URL": "http://localhost:8081",
+        "AUTH_TOKEN": "your-optional-token"
+      }
+    }
+  }
+}

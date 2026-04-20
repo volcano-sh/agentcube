@@ -112,6 +112,41 @@ client2.run_code("python", "print(open('value.txt').read())")  # File persists
 client2.stop()  # Cleanup when done
 ```
 
+## MCP Server Integration
+
+The SDK includes a built-in [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server. This allows AI agents (like Claude Desktop, Cursor, Copilot, Codex, OpenHands/OpenClaw, etc.) to securely execute code in an AgentCube sandbox instance.
+
+You can run the MCP server natively via:
+
+```bash
+python -m agentcube.mcp_server --transport stdio
+```
+
+For comprehensive examples and configuration guides for popular AI agents, see our [MCP Integration Tutorial](../../docs/agentcube/docs/tutorials/mcp-integration.md) or explore the AI agent integration snippets below.
+
+### Examples
+
+**Claude Config (`claude_desktop_config.json`):**
+```json
+{
+  "mcpServers": {
+    "agentcube": {
+      "command": "python3",
+      "args": ["-m", "agentcube.mcp_server", "--transport", "stdio"],
+      "env": {
+        "WORKLOAD_MANAGER_URL": "http://<wlm-host>:8080",
+        "ROUTER_URL": "http://<router-host>:8081"
+      }
+    }
+  }
+}
+```
+
+**Cursor/Claude Code CLI:**
+```bash
+claude config add mcp-server agentcube "python3 -m agentcube.mcp_server --transport stdio"
+```
+
 ## Development
 
 ```bash

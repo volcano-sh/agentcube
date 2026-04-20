@@ -126,12 +126,8 @@ def create_mcp_server(
     instructions: str | None = None,
 ) -> FastMCP:
     instr = instructions or (
-        "Run code and shell commands in an isolated AgentCube Code Interpreter sandbox. "
-        "For multi-step tasks (write file then run code, list then read, etc.), set session_reuse=true "
-        "and pass session_id from the previous JSON response on each follow-up call so the same sandbox "
-        "workspace stays available. IMPORTANT: each run_code starts a new Python process—variables do not "
-        "carry between run_code calls; only workspace files persist while the session is open. "
-        "When finished with a reused session, call stop_session with that session_id."
+        "AgentCube sandbox. Multi-step: session_reuse=true, pass session_id from prior JSON; "
+        "each run_code is a new process—only files persist. stop_session when done."
     )
     app = FastMCP(
         "agentcube-code-interpreter",
@@ -148,40 +144,33 @@ def create_mcp_server(
         language: Annotated[
             str,
             Field(
-                description="Interpreter language for CodeInterpreterClient.run_code (e.g. python, bash)."
+                description="Language (python, bash)."
             ),
         ],
-        code: Annotated[str, Field(description="Source or script body to execute in the sandbox.")],
+        code: Annotated[str, Field(description="Code or script to run.")],
         session_id: Annotated[
             Optional[str],
             Field(
                 default=None,
-                description=(
-                    "Continue an existing sandbox: use the session_id string from a prior tool JSON response. "
-                    "Omit to start a new session."
-                ),
+                description="Prior session_id to continue; omit for new session.",
             ),
         ] = None,
         session_reuse: Annotated[
             bool,
             Field(
                 default=False,
-                description=(
-                    "If false (default), the server stops the sandbox after this call—later calls cannot rely "
-                    "on files from this session. If true, the sandbox stays alive for follow-up tools; you MUST "
-                    "pass the returned session_id on the next call and call stop_session when done to free resources."
-                ),
+                description="Keep sandbox; pass session_id next; stop_session when done. Default tears down after.",
             ),
         ] = False,
         timeout_seconds: Annotated[
             Optional[float],
             Field(
                 default=None,
-                description="Optional execution timeout in seconds for this run_code invocation.",
+                description="Run timeout (seconds).",
             ),
         ] = None,
     ) -> str:
-        """Execute code in an AgentCube Code Interpreter session (via Router)."""
+        """Run code in the sandbox."""
         cfg = _load_server()
         client = _client_for_call(session_id, session_reuse, cfg, CodeInterpreterClient)
         try:
@@ -197,30 +186,27 @@ def create_mcp_server(
 
     @app.tool(structured_output=False)
     def execute_command(
-        command: Annotated[str, Field(description="Shell command to run inside the interpreter sandbox.")],
+        command: Annotated[str, Field(description="Shell command in sandbox.")],
         session_id: Annotated[
             Optional[str],
             Field(
                 default=None,
-                description="Existing session_id from a prior tool response; omit for a new session.",
+                description="Prior session_id; omit for new session.",
             ),
         ] = None,
         session_reuse: Annotated[
             bool,
             Field(
                 default=False,
-                description=(
-                    "False: stop sandbox after this call. True: keep sandbox for follow-up; pass session_id next "
-                    "and stop_session when finished."
-                ),
+                description="Keep sandbox; pass session_id next; stop_session when done.",
             ),
         ] = False,
         timeout_seconds: Annotated[
             Optional[float],
-            Field(default=None, description="Optional timeout in seconds for this command."),
+            Field(default=None, description="Timeout (seconds)."),
         ] = None,
     ) -> str:
-        """Run a shell command in the Code Interpreter sandbox."""
+        """Run shell in sandbox."""
         cfg = _load_server()
         client = _client_for_call(session_id, session_reuse, cfg, CodeInterpreterClient)
         try:
@@ -231,29 +217,26 @@ def create_mcp_server(
 
     @app.tool(structured_output=False)
     def write_file(
-        content: Annotated[str, Field(description="File contents to write (text).")],
+        content: Annotated[str, Field(description="File text.")],
         remote_path: Annotated[
             str,
             Field(
-                description="Path relative to the interpreter workspace (e.g. data/input.txt)."
+                description="Path under workspace (e.g. data/input.txt)."
             ),
         ],
         session_id: Annotated[
             Optional[str],
-            Field(default=None, description="Existing session_id; omit to create a new session."),
+            Field(default=None, description="Prior session_id; omit for new session."),
         ] = None,
         session_reuse: Annotated[
             bool,
             Field(
                 default=False,
-                description=(
-                    "Set true when more steps will read or run against this file; then pass session_id on "
-                    "follow-up tools and stop_session when done. If false, the session ends after this write."
-                ),
+                description="Keep session for follow-up; pass session_id; stop_session when done.",
             ),
         ] = False,
     ) -> str:
-        """Write text to a path inside the interpreter workspace (CodeInterpreterClient.write_file)."""
+        """Write a file in the workspace."""
         cfg = _load_server()
         client = _client_for_call(session_id, session_reuse, cfg, CodeInterpreterClient)
         try:
@@ -268,22 +251,22 @@ def create_mcp_server(
             str,
             Field(
                 default=".",
-                description="Directory path inside the workspace to list (default: current/workspace root).",
+                description="Dir to list (default .).",
             ),
         ] = ".",
         session_id: Annotated[
             Optional[str],
-            Field(default=None, description="Existing session_id; omit to create a new session."),
+            Field(default=None, description="Prior session_id; omit for new session."),
         ] = None,
         session_reuse: Annotated[
             bool,
             Field(
                 default=False,
-                description="True to keep the session after listing for further tools; false to tear down after.",
+                description="Keep session for more tools; else tear down after.",
             ),
         ] = False,
     ) -> str:
-        """List files in the interpreter workspace (CodeInterpreterClient.list_files)."""
+        """List workspace directory."""
         cfg = _load_server()
         client = _client_for_call(session_id, session_reuse, cfg, CodeInterpreterClient)
         try:
@@ -296,10 +279,10 @@ def create_mcp_server(
     def stop_session(
         session_id: Annotated[
             str,
-            Field(description="The session_id to terminate; must match a session you opened with session_reuse."),
+            Field(description="session_id to stop (from session_reuse)."),
         ],
     ) -> str:
-        """Stop and delete a session (CodeInterpreterClient.stop); required after session_reuse."""
+        """Stop a reused session."""
         cfg = _load_server()
         with _SESSION_LOCK:
             client = _SESSIONS.pop(session_id, None)

@@ -271,7 +271,10 @@ func (rs *redisStore) ListInactiveSandboxes(ctx context.Context, before time.Tim
 	ids := make([]string, len(zs))
 	scores := make(map[string]time.Time, len(zs))
 	for i, z := range zs {
-		id := fmt.Sprintf("%v", z.Member)
+		id, ok := z.Member.(string)
+		if !ok {
+			return nil, fmt.Errorf("ListInactiveSandboxes: unexpected member type %T", z.Member)
+		}
 		ids[i] = id
 		scores[id] = time.Unix(int64(z.Score), 0)
 	}

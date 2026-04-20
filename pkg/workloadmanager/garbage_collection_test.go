@@ -31,9 +31,32 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/store"
 )
 
+// nopStore provides no-op implementations of every store.Store method.
+// gcFakeStore embeds it so that any future store call added to gc.once()
+// fails as a clear test error rather than panicking on a nil interface.
+type nopStore struct{}
+
+func (nopStore) Ping(_ context.Context) error { return nil }
+func (nopStore) GetSandboxBySessionID(_ context.Context, _ string) (*types.SandboxInfo, error) {
+	return nil, nil
+}
+func (nopStore) StoreSandbox(_ context.Context, _ *types.SandboxInfo) error  { return nil }
+func (nopStore) UpdateSandbox(_ context.Context, _ *types.SandboxInfo) error { return nil }
+func (nopStore) DeleteSandboxBySessionID(_ context.Context, _ string) error  { return nil }
+func (nopStore) ListExpiredSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxInfo, error) {
+	return nil, nil
+}
+func (nopStore) ListInactiveSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxInfo, error) {
+	return nil, nil
+}
+func (nopStore) UpdateSessionLastActivity(_ context.Context, _ string, _ time.Time) error {
+	return nil
+}
+func (nopStore) Close() error { return nil }
+
 // gcFakeStore is a controllable store for GC tests.
 type gcFakeStore struct {
-	store.Store
+	nopStore
 	inactive    []*types.SandboxInfo
 	inactiveErr error
 	expired     []*types.SandboxInfo

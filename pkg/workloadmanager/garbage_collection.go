@@ -31,10 +31,13 @@ import (
 )
 
 const (
+	// gcOnceTimeout caps the wall-clock time a single GC run is allowed to take.
+	// Unrelated to gcMinInactiveLookback — the 2m vs 1m coincidence is not meaningful.
 	gcOnceTimeout = 2 * time.Minute
-	// gcMinInactiveLookback is the shortest idle timeout we support. The GC query
-	// uses this as the lower bound so we avoid scanning sandboxes that were active
-	// very recently while still catching sub-DefaultSandboxIdleTimeout timeouts.
+	// gcMinInactiveLookback is the minimum time a sandbox must have been idle before
+	// it is included in the GC's inactive candidate query. Sandboxes with an IdleTimeout
+	// shorter than this window are not caught by this check; those rely on the
+	// idle-timeout annotation enforced by the agent-sandbox controller.
 	gcMinInactiveLookback = 1 * time.Minute
 	// gcCandidateLimit is the number of inactive candidates fetched per GC cycle.
 	// A larger value reduces the chance that sandboxes with long IdleTimeout values

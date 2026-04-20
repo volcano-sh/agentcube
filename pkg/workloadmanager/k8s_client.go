@@ -25,6 +25,7 @@ import (
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -62,7 +63,7 @@ var (
 
 // K8sClient encapsulates the Kubernetes client
 type K8sClient struct {
-	clientset       *kubernetes.Clientset
+	clientset       kubernetes.Interface
 	dynamicClient   dynamic.Interface
 	scheme          *runtime.Scheme
 	baseConfig      *rest.Config // Store base config for creating user clients
@@ -382,4 +383,22 @@ func (c *K8sClient) WaitForSandboxReady(ctx context.Context, namespace, sandboxN
 // GetSandboxInformer returns a shared informer for Sandbox CRD
 func (c *K8sClient) GetSandboxInformer() cache.SharedInformer {
 	return c.dynamicInformer.ForResource(SandboxGVR).Informer()
+}
+
+// createNetworkPolicy creates a NetworkPolicy using the workloadmanager's own client.
+func createNetworkPolicy(ctx context.Context, clientset kubernetes.Interface, np *networkingv1.NetworkPolicy) error {
+	_, err := clientset.NetworkingV1().NetworkPolicies(np.Namespace).Create(ctx, np, metav1.CreateOptions{})
+	if err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create network policy %s/%s: %w", np.Namespace, np.Name, err)
+	}
+	return nil
+}
+
+// deleteNetworkPolicy deletes the NetworkPolicy with the given name, ignoring not-found.
+func deleteNetworkPolicy(ctx context.Context, clientset kubernetes.Interface, namespace, name string) error {
+	err := clientset.NetworkingV1().NetworkPolicies(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete network policy %s/%s: %w", namespace, name, err)
+	}
+	return nil
 }

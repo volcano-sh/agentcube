@@ -21,6 +21,7 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 )
 
 type SandboxInfo struct {
@@ -54,6 +55,10 @@ type CreateSandboxRequest struct {
 	Kind      string `json:"kind"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
+	// NetworkPolicy overrides the NetworkPolicy spec from the template for this session only.
+	// When set, it replaces (not merges) the template-level NetworkPolicy entirely.
+	// +optional
+	NetworkPolicy *runtimev1alpha1.SandboxNetworkPolicy `json:"networkPolicy,omitempty"`
 }
 
 type CreateSandboxResponse struct {

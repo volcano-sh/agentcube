@@ -78,6 +78,11 @@ type SandboxTemplate struct {
 	// Spec is the Pod's spec
 	// +kubebuilder:validation:Required
 	Spec corev1.PodSpec `json:"spec" protobuf:"bytes,3,opt,name=spec"`
+
+	// NetworkPolicy defines the network isolation policy for sandbox pods created from
+	// this template. Defaults to Mode=None (no policy created).
+	// +optional
+	NetworkPolicy *SandboxNetworkPolicy `json:"networkPolicy,omitempty"`
 }
 
 // AgentRuntimeList contains a list of AgentRuntime

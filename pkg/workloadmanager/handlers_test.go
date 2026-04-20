@@ -29,11 +29,13 @@ import (
 
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/volcano-sh/agentcube/pkg/api"
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	"github.com/volcano-sh/agentcube/pkg/store"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
@@ -242,7 +244,7 @@ func TestServerCreateSandbox(t *testing.T) {
 				claim = &extensionsv1alpha1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: sb.Name, Namespace: sb.Namespace}}
 			}
 
-			resp, err := server.createSandbox(context.Background(), nil, sb, claim, makeEntry(), resultChan)
+			resp, err := server.createSandbox(context.Background(), nil, sb, claim, nil, makeEntry(), resultChan)
 
 			require.Equal(t, tt.expectCreateCalls, createCalls, "createSandbox call count")
 			require.Equal(t, tt.expectClaimCalls, claimCalls, "createSandboxClaim call count")
@@ -421,28 +423,28 @@ func TestHandleSandboxCreate(t *testing.T) {
 			patches := gomonkey.NewPatches()
 			defer patches.Reset()
 
-			patches.ApplyFunc(buildSandboxByAgentRuntime, func(_, _ string, _ *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
+			patches.ApplyFunc(buildSandboxByAgentRuntime, func(_, _ string, _ *Informers, _ map[string]string, _ string, _ *runtimev1alpha1.SandboxNetworkPolicy) (*sandboxv1alpha1.Sandbox, *sandboxEntry, *networkingv1.NetworkPolicy, error) {
 				if tc.kind != types.AgentRuntimeKind {
-					return nil, nil, errors.New("unexpected kind")
-				}
-				if tc.buildErr != nil {
-					return nil, nil, tc.buildErr
-				}
-				return sb, entry, nil
-			})
-
-			patches.ApplyFunc(buildSandboxByCodeInterpreter, func(_, _ string, _ *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
-				if tc.kind != types.CodeInterpreterKind {
 					return nil, nil, nil, errors.New("unexpected kind")
 				}
 				if tc.buildErr != nil {
 					return nil, nil, nil, tc.buildErr
 				}
-				return sb, claim, entry, nil
+				return sb, entry, nil, nil
+			})
+
+			patches.ApplyFunc(buildSandboxByCodeInterpreter, func(_, _ string, _ *Informers, _ map[string]string, _ string, _ *runtimev1alpha1.SandboxNetworkPolicy) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *networkingv1.NetworkPolicy, *sandboxEntry, error) {
+				if tc.kind != types.CodeInterpreterKind {
+					return nil, nil, nil, nil, errors.New("unexpected kind")
+				}
+				if tc.buildErr != nil {
+					return nil, nil, nil, nil, tc.buildErr
+				}
+				return sb, claim, nil, entry, nil
 			})
 
 			createCalls := 0
-			patches.ApplyPrivateMethod(reflect.TypeOf(fakeServer), "createSandbox", func(_ *Server, _ context.Context, _ dynamic.Interface, _ *sandboxv1alpha1.Sandbox, _ *extensionsv1alpha1.SandboxClaim, _ *sandboxEntry, _ <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
+			patches.ApplyPrivateMethod(reflect.TypeOf(fakeServer), "createSandbox", func(_ *Server, _ context.Context, _ dynamic.Interface, _ *sandboxv1alpha1.Sandbox, _ *extensionsv1alpha1.SandboxClaim, _ *networkingv1.NetworkPolicy, _ *sandboxEntry, _ <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
 				createCalls++
 				if tc.createErr != nil {
 					return nil, tc.createErr
@@ -472,6 +474,54 @@ func TestHandleSandboxCreate(t *testing.T) {
 			if tc.createResp != nil {
 				require.Equal(t, *tc.createResp, resp)
 			}
+		})
+	}
+}
+
+// TestHandleSandboxCreate_SessionNetworkPolicyOverride verifies that a per-session
+// NetworkPolicy override in the request body is forwarded unchanged to the builder.
+// This is the "replace, not merge" contract promised to the maintainer.
+func TestHandleSandboxCreate_SessionNetworkPolicyOverride(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := `{"name":"workload","namespace":"ns","networkPolicy":{"mode":"Restricted","allowDNS":false}}`
+
+	for _, kind := range []string{types.AgentRuntimeKind, types.CodeInterpreterKind} {
+		t.Run(kind, func(t *testing.T) {
+			fakeServer := newFakeServer()
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			c.Request = req
+
+			sb, entry := makeSandbox(kind, "ns", "sandbox-1")
+			claim := &extensionsv1alpha1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: sb.Name, Namespace: sb.Namespace}}
+
+			patches := gomonkey.NewPatches()
+			defer patches.Reset()
+
+			var capturedNP *runtimev1alpha1.SandboxNetworkPolicy
+			patches.ApplyFunc(buildSandboxByAgentRuntime, func(_, _ string, _ *Informers, _ map[string]string, _ string, sessionNP *runtimev1alpha1.SandboxNetworkPolicy) (*sandboxv1alpha1.Sandbox, *sandboxEntry, *networkingv1.NetworkPolicy, error) {
+				capturedNP = sessionNP
+				return sb, entry, nil, nil
+			})
+			patches.ApplyFunc(buildSandboxByCodeInterpreter, func(_, _ string, _ *Informers, _ map[string]string, _ string, sessionNP *runtimev1alpha1.SandboxNetworkPolicy) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *networkingv1.NetworkPolicy, *sandboxEntry, error) {
+				capturedNP = sessionNP
+				return sb, claim, nil, entry, nil
+			})
+			patches.ApplyPrivateMethod(reflect.TypeOf(fakeServer), "createSandbox", func(_ *Server, _ context.Context, _ dynamic.Interface, _ *sandboxv1alpha1.Sandbox, _ *extensionsv1alpha1.SandboxClaim, _ *networkingv1.NetworkPolicy, _ *sandboxEntry, _ <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
+				return &types.CreateSandboxResponse{SessionID: "sess-1"}, nil
+			})
+
+			fakeServer.handleSandboxCreate(c, kind)
+
+			require.Equal(t, http.StatusOK, w.Code)
+			require.NotNil(t, capturedNP, "session NetworkPolicy override must reach the builder")
+			assert.Equal(t, runtimev1alpha1.NetworkPolicyModeRestricted, capturedNP.Mode)
+			require.NotNil(t, capturedNP.AllowDNS)
+			assert.False(t, *capturedNP.AllowDNS, "AllowDNS=false from request body should propagate")
 		})
 	}
 }

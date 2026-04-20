@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -58,6 +59,13 @@ func main() {
 		tlsCert          = flag.String("tls-cert", "", "Path to TLS certificate file")
 		tlsKey           = flag.String("tls-key", "", "Path to TLS key file")
 		enableAuth       = flag.Bool("enable-auth", false, "Enable Authentication")
+		routerSelector   = flag.String("router-selector", "app=agentcube-router",
+			"Pod label selector identifying the router pod, used for the mandatory "+
+				"router→sandbox ingress rule when NetworkPolicy.Mode=Restricted. "+
+				"Format: comma-separated key=value pairs (e.g. app=agentcube-router,tier=proxy)")
+		routerNamespace = flag.String("router-namespace", "",
+			"Namespace the router runs in. Used to build a cross-namespace NamespaceSelector "+
+				"for the router→sandbox ingress rule. Defaults to the workloadmanager's own namespace.")
 	)
 
 	// Initialize klog flags
@@ -103,6 +111,8 @@ func main() {
 		TLSCert:          *tlsCert,
 		TLSKey:           *tlsKey,
 		EnableAuth:       *enableAuth,
+		RouterSelector:   parseSelector(*routerSelector),
+		RouterNamespace:  *routerNamespace,
 	}
 
 	// Create and initialize API server
@@ -164,6 +174,24 @@ func main() {
 	}
 
 	klog.Info("Server stopped")
+}
+
+// parseSelector parses a comma-separated "key=value" label selector string into a map.
+// Malformed pairs are silently skipped; callers should validate the resulting map is non-empty.
+func parseSelector(s string) map[string]string {
+	m := make(map[string]string)
+	for _, pair := range strings.Split(s, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(pair, "=")
+		if !ok || strings.TrimSpace(k) == "" {
+			continue
+		}
+		m[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	return m
 }
 
 func setupControllers(mgr ctrl.Manager, sandboxReconciler *workloadmanager.SandboxReconciler, codeInterpreterReconciler *workloadmanager.CodeInterpreterReconciler) error {

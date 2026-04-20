@@ -29,6 +29,7 @@ import (
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -127,6 +128,16 @@ func loadPublicKeyFromSecret(clientset kubernetes.Interface) error {
 	cachedPublicKey = string(publicKeyData)
 	publicKeyCacheMutex.Unlock()
 	return nil
+}
+
+// effectiveNetworkPolicy returns the session-level override when set, otherwise the
+// template-level default. Override semantics are "replace, not merge": the session
+// policy replaces the template policy in its entirety.
+func effectiveNetworkPolicy(session, template *runtimev1alpha1.SandboxNetworkPolicy) *runtimev1alpha1.SandboxNetworkPolicy {
+	if session != nil {
+		return session
+	}
+	return template
 }
 
 type buildSandboxParams struct {
@@ -241,23 +252,23 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 	return sandboxClaim
 }
 
-func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
+func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers, routerSelector map[string]string, routerNamespace string, sessionNetworkPolicy *runtimev1alpha1.SandboxNetworkPolicy) (*sandboxv1alpha1.Sandbox, *sandboxEntry, *networkingv1.NetworkPolicy, error) {
 	agentRuntimeKey := namespace + "/" + name
 	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
 	runtimeObj, exists, _ := ifm.AgentRuntimeInformer.GetStore().GetByKey(agentRuntimeKey)
 	if !exists {
-		return nil, nil, api.ErrAgentRuntimeNotFound
+		return nil, nil, nil, api.ErrAgentRuntimeNotFound
 	}
 
 	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
 	if !ok {
 		klog.Errorf("agent runtime %s type asserting unstructured.Unstructured failed", agentRuntimeKey)
-		return nil, nil, fmt.Errorf("agent runtime type asserting failed")
+		return nil, nil, nil, fmt.Errorf("agent runtime type asserting failed")
 	}
 
 	var agentRuntimeObj runtimev1alpha1.AgentRuntime
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.Object, &agentRuntimeObj); err != nil {
-		return nil, nil, fmt.Errorf("failed to convert unstructured to AgentRuntime: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to convert unstructured to AgentRuntime: %w", err)
 	}
 
 	sessionID := uuid.New().String()
@@ -298,7 +309,8 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 		SessionID:   sessionID,
 		IdleTimeout: idleTimeout,
 	}
-	return sandbox, entry, nil
+	np := buildNetworkPolicy(sandboxName, namespace, effectiveNetworkPolicy(sessionNetworkPolicy, agentRuntimeObj.Spec.Template.NetworkPolicy), routerSelector, routerNamespace)
+	return sandbox, entry, np, nil
 }
 
 // buildCodeInterpreterEnvVars copies the template env vars and injects the
@@ -315,30 +327,30 @@ func buildCodeInterpreterEnvVars(templateEnv []corev1.EnvVar, authMode runtimev1
 	return envVars
 }
 
-func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers, routerSelector map[string]string, routerNamespace string, sessionNetworkPolicy *runtimev1alpha1.SandboxNetworkPolicy) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *networkingv1.NetworkPolicy, *sandboxEntry, error) {
 	codeInterpreterKey := namespace + "/" + codeInterpreterName
 	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
 	runtimeObj, exists, err := informer.CodeInterpreterInformer.GetStore().GetByKey(codeInterpreterKey)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to get code interpreter %s from informer cache: %w", codeInterpreterKey, err)
+		return nil, nil, nil, nil, fmt.Errorf("failed to get code interpreter %s from informer cache: %w", codeInterpreterKey, err)
 	}
 	if !exists {
-		return nil, nil, nil, api.ErrCodeInterpreterNotFound
+		return nil, nil, nil, nil, api.ErrCodeInterpreterNotFound
 	}
 	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
 	if !ok {
 		klog.Errorf("code interpreter %s type asserting unstructured.Unstructured failed", codeInterpreterKey)
-		return nil, nil, nil, fmt.Errorf("code interpreter type asserting failed")
+		return nil, nil, nil, nil, fmt.Errorf("code interpreter type asserting failed")
 	}
 
 	var codeInterpreterObj runtimev1alpha1.CodeInterpreter
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.Object, &codeInterpreterObj); err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to convert unstructured to CodeInterpreter: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("failed to convert unstructured to CodeInterpreter: %w", err)
 	}
 
 	// Check public key available if authMode is picod
 	if codeInterpreterObj.Spec.AuthMode == runtimev1alpha1.AuthModePicoD && !IsPublicKeyCached() {
-		return nil, nil, nil, api.ErrPublicKeyMissing
+		return nil, nil, nil, nil, api.ErrPublicKeyMissing
 	}
 
 	sessionID := uuid.New().String()
@@ -395,7 +407,8 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 			simpleSandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
 		}
 		sandboxEntry.Kind = types.SandboxClaimsKind
-		return simpleSandbox, sandboxClaim, sandboxEntry, nil
+		np := buildNetworkPolicy(sandboxName, namespace, effectiveNetworkPolicy(sessionNetworkPolicy, codeInterpreterObj.Spec.Template.NetworkPolicy), routerSelector, routerNamespace)
+		return simpleSandbox, sandboxClaim, np, sandboxEntry, nil
 	}
 
 	// Normalize RuntimeClassName: if it's an empty string, set it to nil
@@ -436,5 +449,6 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		buildParams.ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration
 	}
 	sandbox := buildSandboxObject(buildParams)
-	return sandbox, nil, sandboxEntry, nil
+	np := buildNetworkPolicy(sandboxName, namespace, codeInterpreterObj.Spec.Template.NetworkPolicy, routerSelector, routerNamespace)
+	return sandbox, nil, np, sandboxEntry, nil
 }

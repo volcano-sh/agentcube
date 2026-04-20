@@ -44,6 +44,10 @@ type Server struct {
 	wg                sync.WaitGroup
 }
 
+// DefaultRouterSelector is the pod label selector used to identify the router pod
+// when building the mandatory router→sandbox ingress rule in Restricted network policy mode.
+var DefaultRouterSelector = map[string]string{"app": "agentcube-router"}
+
 type Config struct {
 	// Port is the port the API server listens on
 	Port string
@@ -62,6 +66,15 @@ type Config struct {
 	SandboxReadyProbeTimeout time.Duration
 	// SandboxReadyProbeInterval is the retry interval for sandbox entrypoint probes.
 	SandboxReadyProbeInterval time.Duration
+	// RouterSelector is the pod label selector identifying the router.
+	// Used to build the mandatory router→sandbox ingress allow rule when
+	// SandboxNetworkPolicy.Mode=Restricted. Defaults to DefaultRouterSelector.
+	RouterSelector map[string]string
+	// RouterNamespace is the namespace the router runs in. Used to build the
+	// NamespaceSelector for the router→sandbox ingress rule when sandboxes live
+	// in a different namespace than the router. Defaults to the workloadmanager's
+	// own namespace (AGENTCUBE_NAMESPACE).
+	RouterNamespace string
 }
 
 // NewServer creates a new API server instance
@@ -74,6 +87,15 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 	}
 	if config.SandboxReadyProbeInterval <= 0 {
 		config.SandboxReadyProbeInterval = defaultSandboxReadyProbeInterval
+	}
+	if len(config.RouterSelector) == 0 {
+		config.RouterSelector = DefaultRouterSelector
+	}
+	if config.RouterNamespace == "" {
+		// IdentitySecretNamespace is derived from AGENTCUBE_NAMESPACE and is the
+		// namespace the workloadmanager itself runs in (same as the router in
+		// standard deployments).
+		config.RouterNamespace = IdentitySecretNamespace
 	}
 
 	// Create Kubernetes client

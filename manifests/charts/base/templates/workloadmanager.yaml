@@ -66,6 +66,10 @@ spec:
           args:
             - --port={{ .Values.workloadmanager.service.port }}
             - --runtime-class-name=
+            - --router-selector={{ .Values.workloadmanager.networkPolicy.routerSelector }}
+            {{- if .Values.workloadmanager.networkPolicy.routerNamespace }}
+            - --router-namespace={{ .Values.workloadmanager.networkPolicy.routerNamespace }}
+            {{- end }}
           resources:
             {{- toYaml .Values.workloadmanager.resources | nindent 12 }}
           livenessProbe:

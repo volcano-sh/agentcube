@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	"github.com/volcano-sh/agentcube/pkg/store"
@@ -86,14 +87,16 @@ func (f *gcFakeStore) DeleteSandboxBySessionID(_ context.Context, sessionID stri
 	return nil
 }
 
-// newTestGC builds a garbageCollector backed by a fake dynamic client and the
-// provided store. The fake dynamic client returns "not found" for all deletes
-// (no pre-loaded objects), which garbageCollector treats as success.
+// newTestGC builds a garbageCollector backed by fake dynamic and clientset clients
+// and the provided store. Both fakes return "not found" for all deletes (no pre-loaded
+// objects), which garbageCollector treats as success. The clientset is needed so the
+// NetworkPolicy cleanup path in deleteSandbox/deleteSandboxClaim does not nil-panic.
 func newTestGC(s store.Store) *garbageCollector {
 	scheme := runtime.NewScheme()
 	fakeDynamic := dynamicfake.NewSimpleDynamicClient(scheme)
+	fakeClientset := fake.NewSimpleClientset()
 	return &garbageCollector{
-		k8sClient:   &K8sClient{dynamicClient: fakeDynamic},
+		k8sClient:   &K8sClient{dynamicClient: fakeDynamic, clientset: fakeClientset},
 		storeClient: s,
 		interval:    time.Minute,
 	}

@@ -26,6 +26,8 @@ metadata:
   labels:
     app: agentcube-code-interpreter-mcp
 spec:
+  # Session reuse caches CodeInterpreterClient in this process memory (_SESSIONS).
+  # Do not scale above 1 replica unless the gateway pins all MCP traffic to one Pod.
   replicas: 1
   selector:
     matchLabels:

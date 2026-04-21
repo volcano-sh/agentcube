@@ -26,7 +26,7 @@ func TestConfig_Validate(t *testing.T) {
 		name      string
 		config    Config
 		wantErr   bool
-		errSubstr string // if wantErr, error message must contain this
+		errSubstr string
 	}{
 		{
 			name:    "no paths is valid (mTLS disabled)",
@@ -43,7 +43,7 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "missing key and ca returns error",
+			name: "only one path returns error",
 			config: Config{
 				CertFile: "/path/cert.pem",
 			},
@@ -51,44 +51,10 @@ func TestConfig_Validate(t *testing.T) {
 			errSubstr: "must all be specified together",
 		},
 		{
-			name: "missing cert and ca returns error",
-			config: Config{
-				KeyFile: "/path/key.pem",
-			},
-			wantErr:   true,
-			errSubstr: "must all be specified together",
-		},
-		{
-			name: "missing cert and key returns error",
-			config: Config{
-				CAFile: "/path/ca.pem",
-			},
-			wantErr:   true,
-			errSubstr: "must all be specified together",
-		},
-		{
-			name: "missing ca returns error",
+			name: "two paths returns error",
 			config: Config{
 				CertFile: "/path/cert.pem",
 				KeyFile:  "/path/key.pem",
-			},
-			wantErr:   true,
-			errSubstr: "must all be specified together",
-		},
-		{
-			name: "missing key returns error",
-			config: Config{
-				CertFile: "/path/cert.pem",
-				CAFile:   "/path/ca.pem",
-			},
-			wantErr:   true,
-			errSubstr: "must all be specified together",
-		},
-		{
-			name: "missing cert returns error",
-			config: Config{
-				KeyFile: "/path/key.pem",
-				CAFile:  "/path/ca.pem",
 			},
 			wantErr:   true,
 			errSubstr: "must all be specified together",

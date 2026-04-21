@@ -67,7 +67,7 @@ func NewInformers(k8sClient *K8sClient) *Informers {
 
 func (ifm *Informers) RunAndWaitForCacheSync(ctx context.Context) error {
 	ifm.run(ctx.Done())
-	ctxTimeout, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	ctxTimeout, cancel := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancel()
 	if err := ifm.waitForCacheSync(ctxTimeout); err != nil {
 		return fmt.Errorf("failed to wait for caches to sync: %w", err)

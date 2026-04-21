@@ -32,36 +32,84 @@ type neverSyncedInformer struct {
 	cache.SharedIndexInformer
 }
 
-func (n *neverSyncedInformer) HasSynced() bool { return false }
+func (n *neverSyncedInformer) HasSynced() bool           { return false }
 func (n *neverSyncedInformer) Run(stopCh <-chan struct{}) { <-stopCh }
 
-func TestRunAndWaitForCacheSync_RespectsContextCancellation(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
-	factory := informers.NewSharedInformerFactory(fakeClient, 0)
+// alwaysSyncedInformer is a cache.SharedIndexInformer whose HasSynced always returns true.
+type alwaysSyncedInformer struct {
+	cache.SharedIndexInformer
+}
 
+func (a *alwaysSyncedInformer) HasSynced() bool           { return true }
+func (a *alwaysSyncedInformer) Run(stopCh <-chan struct{}) { <-stopCh }
+
+// runCanceled starts RunAndWaitForCacheSync in a goroutine, cancels the context
+// immediately, and returns the error. Fails the test if it takes more than 2s.
+func runCanceled(t *testing.T, ifm *Informers) error {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- ifm.RunAndWaitForCacheSync(ctx) }()
+	cancel()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunAndWaitForCacheSync did not respect context cancellation within 2s")
+		return nil
+	}
+}
+
+func TestRunAndWaitForCacheSync_AgentRuntimeInformerCanceled(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
 	ifm := &Informers{
 		AgentRuntimeInformer:    &neverSyncedInformer{},
 		CodeInterpreterInformer: &neverSyncedInformer{},
 		PodInformer:             &neverSyncedInformer{},
-		informerFactory:         factory,
+		informerFactory:         informers.NewSharedInformerFactory(fakeClient, 0),
 	}
+	if err := runCanceled(t, ifm); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
 
-	ctx, cancel := context.WithCancel(context.Background())
+func TestRunAndWaitForCacheSync_CodeInterpreterInformerCanceled(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	ifm := &Informers{
+		AgentRuntimeInformer:    &alwaysSyncedInformer{},
+		CodeInterpreterInformer: &neverSyncedInformer{},
+		PodInformer:             &neverSyncedInformer{},
+		informerFactory:         informers.NewSharedInformerFactory(fakeClient, 0),
+	}
+	if err := runCanceled(t, ifm); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
 
-	done := make(chan error, 1)
-	go func() {
-		done <- ifm.RunAndWaitForCacheSync(ctx)
-	}()
+func TestRunAndWaitForCacheSync_PodInformerCanceled(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	ifm := &Informers{
+		AgentRuntimeInformer:    &alwaysSyncedInformer{},
+		CodeInterpreterInformer: &alwaysSyncedInformer{},
+		PodInformer:             &neverSyncedInformer{},
+		informerFactory:         informers.NewSharedInformerFactory(fakeClient, 0),
+	}
+	if err := runCanceled(t, ifm); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
 
-	// Cancel the parent context well before the 1-minute timeout.
-	cancel()
-
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("expected context.Canceled, got %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("RunAndWaitForCacheSync did not respect context cancellation within 2s")
+func TestRunAndWaitForCacheSync_AllSynced(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	ifm := &Informers{
+		AgentRuntimeInformer:    &alwaysSyncedInformer{},
+		CodeInterpreterInformer: &alwaysSyncedInformer{},
+		PodInformer:             &alwaysSyncedInformer{},
+		informerFactory:         informers.NewSharedInformerFactory(fakeClient, 0),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := ifm.RunAndWaitForCacheSync(ctx); err != nil {
+		t.Fatalf("expected no error when all informers are synced, got %v", err)
 	}
 }

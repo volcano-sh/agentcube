@@ -391,9 +391,12 @@ func (c *K8sClient) GetSandboxInformer() cache.SharedInformer {
 }
 
 // createNetworkPolicy creates a NetworkPolicy using the workloadmanager's own client.
+// AlreadyExists is treated as an error: sandbox names embed random suffixes so a
+// collision means something unexpected is already occupying the name, and silently
+// reusing it could leave the sandbox under a stale or incorrect policy.
 func createNetworkPolicy(ctx context.Context, clientset kubernetes.Interface, np *networkingv1.NetworkPolicy) error {
 	_, err := clientset.NetworkingV1().NetworkPolicies(np.Namespace).Create(ctx, np, metav1.CreateOptions{})
-	if err != nil && !apierrors.IsAlreadyExists(err) {
+	if err != nil {
 		return fmt.Errorf("failed to create network policy %s/%s: %w", np.Namespace, np.Name, err)
 	}
 	return nil

@@ -103,6 +103,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	sel := parseSelector(*routerSelector)
+	if len(sel) == 0 {
+		klog.Warningf("--router-selector %q parsed to an empty selector; falling back to default %v", *routerSelector, workloadmanager.DefaultRouterSelector)
+	}
+
 	// Create API server configuration
 	config := &workloadmanager.Config{
 		Port:             *port,
@@ -111,7 +116,7 @@ func main() {
 		TLSCert:          *tlsCert,
 		TLSKey:           *tlsKey,
 		EnableAuth:       *enableAuth,
-		RouterSelector:   parseSelector(*routerSelector),
+		RouterSelector:   sel,
 		RouterNamespace:  *routerNamespace,
 	}
 

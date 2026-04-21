@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type SandboxInfo struct {
@@ -80,6 +80,30 @@ func (car *CreateSandboxRequest) Validate() error {
 	}
 	if car.Name == "" {
 		return fmt.Errorf("name is required")
+	}
+	if err := validateNetworkPolicyOverride(car.NetworkPolicy); err != nil {
+		return fmt.Errorf("invalid networkPolicy: %w", err)
+	}
+	return nil
+}
+
+// validateNetworkPolicyOverride validates a per-session NetworkPolicy override from
+// CreateSandboxRequest. Unlike the CRD field (which has kubebuilder markers), this
+// comes in as raw JSON and bypasses API-server admission, so we validate it here.
+func validateNetworkPolicyOverride(np *runtimev1alpha1.SandboxNetworkPolicy) error {
+	if np == nil {
+		return nil
+	}
+	switch np.Mode {
+	case runtimev1alpha1.NetworkPolicyModeNone,
+		runtimev1alpha1.NetworkPolicyModeRestricted,
+		runtimev1alpha1.NetworkPolicyModeCustom,
+		"": // empty is treated as None
+	default:
+		return fmt.Errorf("unknown mode %q: must be one of None, Restricted, Custom", np.Mode)
+	}
+	if np.Mode == runtimev1alpha1.NetworkPolicyModeCustom && np.Custom == nil {
+		return fmt.Errorf("custom must be set when mode is Custom")
 	}
 	return nil
 }

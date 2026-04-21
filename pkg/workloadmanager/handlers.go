@@ -26,8 +26,11 @@ import (
 	"github.com/gin-gonic/gin"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	"sigs.k8s.io/agent-sandbox/controllers"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
@@ -174,24 +177,45 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	respondJSON(c, http.StatusOK, response)
 }
 
-// createK8sResources creates the K8s sandbox or sandbox claim resource.
-func (s *Server) createK8sResources(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
+// createWorkload creates the Sandbox or SandboxClaim and, when a NetworkPolicy is provided,
+// wires the created object's UID into the NP's OwnerReferences so k8s GC can
+// cascade-delete the NP if the owner is removed out-of-band.
+func createWorkload(ctx context.Context, client dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, networkPolicy *networkingv1.NetworkPolicy) error {
 	if sandboxClaim != nil {
-		if _, err := createSandboxClaim(ctx, dynamicClient, sandboxClaim); err != nil {
+		uid, err := createSandboxClaim(ctx, client, sandboxClaim)
+		if err != nil {
 			if isContextError(err) {
 				return err
 			}
 			return api.NewInternalError(fmt.Errorf("create sandbox claim %s/%s failed: %w", sandboxClaim.Namespace, sandboxClaim.Name, err))
 		}
-	} else {
-		if _, err := createSandbox(ctx, dynamicClient, sandbox); err != nil {
-			if isContextError(err) {
-				return err
-			}
-			return api.NewInternalError(fmt.Errorf("failed to create sandbox: %w", err))
-		}
+		setNetworkPolicyOwner(networkPolicy, "extensions.agents.x-k8s.io/v1alpha1", "SandboxClaim", sandboxClaim.Name, uid)
+		return nil
 	}
+	info, err := createSandbox(ctx, client, sandbox)
+	if err != nil {
+		if isContextError(err) {
+			return err
+		}
+		return api.NewInternalError(fmt.Errorf("failed to create sandbox: %w", err))
+	}
+	setNetworkPolicyOwner(networkPolicy, "agents.x-k8s.io/v1alpha1", "Sandbox", info.Name, info.UID)
 	return nil
+}
+
+// setNetworkPolicyOwner attaches an OwnerReference to np pointing at the given owner.
+// No-op when np is nil or uid is empty.
+func setNetworkPolicyOwner(np *networkingv1.NetworkPolicy, apiVersion, kind, name string, uid k8stypes.UID) {
+	if np == nil || uid == "" {
+		return
+	}
+	np.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion:         apiVersion,
+		Kind:               kind,
+		Name:               name,
+		UID:                uid,
+		BlockOwnerDeletion: ptr.To(true),
+	}}
 }
 
 // createSandbox performs sandbox creation and returns the response payload or an error with an HTTP status code.
@@ -214,12 +238,12 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		s.rollbackSandboxCreation(dynamicClient, sandbox, sandboxClaim, networkPolicy, sandboxEntry.SessionID)
 	}()
 
-	if err := s.createK8sResources(ctx, dynamicClient, sandbox, sandboxClaim); err != nil {
+	if err := createWorkload(ctx, dynamicClient, sandbox, sandboxClaim, networkPolicy); err != nil {
 		return nil, err
 	}
 
-	// Create NetworkPolicy after the workload so the sandbox UID is available for
-	// the OwnerReference. Uses the workloadmanager's own client (not the user client).
+	// Create NetworkPolicy after the workload so the sandbox UID is available in
+	// the OwnerReference set by createWorkload. Uses the workloadmanager's own client.
 	if networkPolicy != nil {
 		if err := createNetworkPolicy(ctx, s.k8sClient.clientset, networkPolicy); err != nil {
 			return nil, api.NewInternalError(err)

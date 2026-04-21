@@ -23,6 +23,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
@@ -274,4 +277,53 @@ func TestGarbageCollector_once_noSandboxes(t *testing.T) {
 	gc := newTestGC(fs)
 	gc.once()
 	assert.Empty(t, fs.deleted)
+}
+
+// TestGarbageCollector_NP_cleanup verifies that the GC deletes the NetworkPolicy
+// associated with a sandbox, including when the sandbox itself is already gone.
+func TestGarbageCollector_NP_cleanup(t *testing.T) {
+	tests := []struct {
+		name    string
+		kind    string
+		sbName  string
+		session string
+	}{
+		{name: "sandbox kind deletes NP", kind: types.SandboxKind, sbName: "sb-np", session: "sess-np"},
+		{name: "sandbox claim kind deletes NP", kind: types.SandboxClaimsKind, sbName: "sc-np", session: "sess-np-claim"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := &gcFakeStore{
+				expired: []*types.SandboxInfo{{
+					SessionID:        tt.session,
+					Kind:             tt.kind,
+					Name:             tt.sbName,
+					SandboxNamespace: "default",
+				}},
+			}
+			gc := newTestGC(fs)
+
+			// Pre-create a NetworkPolicy with the same name as the sandbox
+			// so we can verify the GC deletes it.
+			np := &networkingv1.NetworkPolicy{}
+			np.Name = tt.sbName
+			np.Namespace = "default"
+			_, err := gc.k8sClient.clientset.NetworkingV1().NetworkPolicies("default").Create(
+				context.Background(), np, metav1.CreateOptions{},
+			)
+			require.NoError(t, err)
+
+			gc.once()
+
+			// Session must be removed from store
+			assert.Contains(t, fs.deleted, tt.session)
+
+			// NetworkPolicy must be gone
+			_, err = gc.k8sClient.clientset.NetworkingV1().NetworkPolicies("default").Get(
+				context.Background(), tt.sbName, metav1.GetOptions{},
+			)
+			assert.True(t, apierrors.IsNotFound(err), "NetworkPolicy should have been deleted by GC")
+		})
+	}
 }

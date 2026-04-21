@@ -177,7 +177,7 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 // createK8sResources creates the K8s sandbox or sandbox claim resource.
 func (s *Server) createK8sResources(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
 	if sandboxClaim != nil {
-		if err := createSandboxClaim(ctx, dynamicClient, sandboxClaim); err != nil {
+		if _, err := createSandboxClaim(ctx, dynamicClient, sandboxClaim); err != nil {
 			if isContextError(err) {
 				return err
 			}

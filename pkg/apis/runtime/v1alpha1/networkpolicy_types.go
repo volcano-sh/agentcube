@@ -37,6 +37,7 @@ const (
 )
 
 // SandboxNetworkPolicy defines the network isolation policy applied to each sandbox pod.
+// +kubebuilder:validation:XValidation:rule="self.mode != 'Custom' || (has(self.custom) && self.custom != null)",message="custom must be set when mode is Custom"
 type SandboxNetworkPolicy struct {
 	// Mode controls the network policy enforcement level.
 	// "None" (default): no NetworkPolicy is created.

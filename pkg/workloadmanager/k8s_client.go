@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
@@ -146,6 +147,7 @@ func NewK8sClient() (*K8sClient, error) {
 type SandboxInfo struct {
 	Name      string
 	Namespace string
+	UID       k8stypes.UID
 }
 
 // UserK8sClient creates a temporary Kubernetes client using user's token
@@ -221,30 +223,32 @@ func createSandbox(ctx context.Context, client dynamic.Interface, sandbox *sandb
 	return &SandboxInfo{
 		Name:      created.GetName(),
 		Namespace: created.GetNamespace(),
+		UID:       created.GetUID(),
 	}, nil
 }
 
-// createSandboxClaim creates a SandboxClaim using the provided dynamic client
-func createSandboxClaim(ctx context.Context, client dynamic.Interface, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
+// createSandboxClaim creates a SandboxClaim using the provided dynamic client.
+// Returns the UID of the created SandboxClaim so callers can set OwnerReferences.
+func createSandboxClaim(ctx context.Context, client dynamic.Interface, sandboxClaim *extensionsv1alpha1.SandboxClaim) (k8stypes.UID, error) {
 	// Convert to unstructured for dynamic client
 	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(sandboxClaim)
 	if err != nil {
-		return fmt.Errorf("failed to convert sandbox claim to unstructured: %w", err)
+		return "", fmt.Errorf("failed to convert sandbox claim to unstructured: %w", err)
 	}
 
 	unstructuredSandbox := &unstructured.Unstructured{Object: unstructuredObj}
 
 	// Create SandboxClaim
-	_, err = client.Resource(SandboxClaimGVR).Namespace(sandboxClaim.Namespace).Create(
+	created, err := client.Resource(SandboxClaimGVR).Namespace(sandboxClaim.Namespace).Create(
 		ctx,
 		unstructuredSandbox,
 		metav1.CreateOptions{},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create sandbox claim: %w", err)
+		return "", fmt.Errorf("failed to create sandbox claim: %w", err)
 	}
 
-	return nil
+	return created.GetUID(), nil
 }
 
 // deleteSandbox deletes a Sandbox using the provided dynamic client
@@ -277,7 +281,8 @@ func deleteSandboxClaim(ctx context.Context, client dynamic.Interface, namespace
 
 // CreateSandboxClaim creates a new SandboxClaim using user's permissions
 func (u *UserK8sClient) CreateSandboxClaim(ctx context.Context, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
-	return createSandboxClaim(ctx, u.dynamicClient, sandboxClaim)
+	_, err := createSandboxClaim(ctx, u.dynamicClient, sandboxClaim)
+	return err
 }
 
 // CreateSandbox creates a new Sandbox using user's permissions

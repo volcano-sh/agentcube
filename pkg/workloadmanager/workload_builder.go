@@ -408,6 +408,10 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		}
 		sandboxEntry.Kind = types.SandboxClaimsKind
 		np := buildNetworkPolicy(sandboxName, namespace, effectiveNetworkPolicy(sessionNetworkPolicy, codeInterpreterObj.Spec.Template.NetworkPolicy), routerSelector, routerNamespace)
+		// TODO: warm-pool pods do not currently carry SandboxNameLabelKey, so the
+		// NP PodSelector won't match them and enforcement is a no-op for this path.
+		// Fix requires agent-sandbox to propagate claim labels onto the bound pod,
+		// or a post-ready pod patch. Tracked in issue #216.
 		return simpleSandbox, sandboxClaim, np, sandboxEntry, nil
 	}
 

@@ -820,6 +820,10 @@ spec:
                         - Custom
                         type: string
                     type: object
+                    x-kubernetes-validations:
+                    - message: custom must be set when mode is Custom
+                      rule: self.mode != 'Custom' || (has(self.custom) && self.custom
+                        != null)
                   resources:
                     description: |-
                       Compute Resources required by this container.

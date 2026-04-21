@@ -33,8 +33,6 @@ type Config struct {
 
 	// mTLS configuration (certificate source abstraction)
 
-	// MTLSCertSource is the certificate provisioning mode: "spire", "file", or "" (disabled)
-	MTLSCertSource string `json:"mtlsCertSource"`
 	// MTLSCertFile is the path to the mTLS certificate (--mtls-cert-file)
 	MTLSCertFile string `json:"mtlsCertFile"`
 	// MTLSKeyFile is the path to the mTLS private key (--mtls-key-file)

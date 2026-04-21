@@ -122,8 +122,7 @@ func writePEM(path, blockType string, data []byte) error {
 func TestLoadServerConfig(t *testing.T) {
 	certFile, keyFile, caFile := generateTestCerts(t)
 
-	cfg := &CertSourceConfig{
-		Source:   CertSourceFile,
+	cfg := &Config{
 		CertFile: certFile,
 		KeyFile:  keyFile,
 		CAFile:   caFile,
@@ -151,8 +150,7 @@ func TestLoadServerConfig(t *testing.T) {
 func TestLoadClientConfig(t *testing.T) {
 	certFile, keyFile, caFile := generateTestCerts(t)
 
-	cfg := &CertSourceConfig{
-		Source:   CertSourceFile,
+	cfg := &Config{
 		CertFile: certFile,
 		KeyFile:  keyFile,
 		CAFile:   caFile,
@@ -177,8 +175,7 @@ func TestLoadClientConfig(t *testing.T) {
 func TestLoadServerConfig_MissingCertFile(t *testing.T) {
 	_, keyFile, caFile := generateTestCerts(t)
 
-	cfg := &CertSourceConfig{
-		Source:   CertSourceFile,
+	cfg := &Config{
 		CertFile: "/nonexistent/cert.pem",
 		KeyFile:  keyFile,
 		CAFile:   caFile,
@@ -196,8 +193,7 @@ func TestLoadServerConfig_MissingCertFile(t *testing.T) {
 func TestLoadServerConfig_MissingKeyFile(t *testing.T) {
 	certFile, _, caFile := generateTestCerts(t)
 
-	cfg := &CertSourceConfig{
-		Source:   CertSourceFile,
+	cfg := &Config{
 		CertFile: certFile,
 		KeyFile:  "/nonexistent/key.pem",
 		CAFile:   caFile,
@@ -215,8 +211,7 @@ func TestLoadServerConfig_MissingKeyFile(t *testing.T) {
 func TestLoadServerConfig_MissingCAFile(t *testing.T) {
 	certFile, keyFile, _ := generateTestCerts(t)
 
-	cfg := &CertSourceConfig{
-		Source:   CertSourceFile,
+	cfg := &Config{
 		CertFile: certFile,
 		KeyFile:  keyFile,
 		CAFile:   "/nonexistent/ca.pem",
@@ -240,8 +235,7 @@ func TestLoadServerConfig_InvalidCAPEM(t *testing.T) {
 		t.Fatalf("write invalid CA file: %v", err)
 	}
 
-	cfg := &CertSourceConfig{
-		Source:   CertSourceFile,
+	cfg := &Config{
 		CertFile: certFile,
 		KeyFile:  keyFile,
 		CAFile:   invalidCAFile,
@@ -253,62 +247,5 @@ func TestLoadServerConfig_InvalidCAPEM(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no valid CA certificates") {
 		t.Errorf("error = %q, want it to mention no valid CA certificates", err.Error())
-	}
-}
-
-func TestResolveConfig_SPIREDefaults(t *testing.T) {
-	cfg := &CertSourceConfig{
-		Source: CertSourceSPIRE,
-		// All paths empty — should get defaults
-	}
-
-	resolved := resolveConfig(cfg)
-	defaults := DefaultSPIREPaths()
-
-	if resolved.CertFile != defaults.CertFile {
-		t.Errorf("CertFile = %q, want %q", resolved.CertFile, defaults.CertFile)
-	}
-	if resolved.KeyFile != defaults.KeyFile {
-		t.Errorf("KeyFile = %q, want %q", resolved.KeyFile, defaults.KeyFile)
-	}
-	if resolved.CAFile != defaults.CAFile {
-		t.Errorf("CAFile = %q, want %q", resolved.CAFile, defaults.CAFile)
-	}
-}
-
-func TestResolveConfig_SPIRECustomPaths(t *testing.T) {
-	cfg := &CertSourceConfig{
-		Source:   CertSourceSPIRE,
-		CertFile: "/custom/cert.pem",
-		KeyFile:  "/custom/key.pem",
-		CAFile:   "/custom/ca.pem",
-	}
-
-	resolved := resolveConfig(cfg)
-
-	if resolved.CertFile != "/custom/cert.pem" {
-		t.Errorf("CertFile = %q, want /custom/cert.pem", resolved.CertFile)
-	}
-	if resolved.KeyFile != "/custom/key.pem" {
-		t.Errorf("KeyFile = %q, want /custom/key.pem", resolved.KeyFile)
-	}
-	if resolved.CAFile != "/custom/ca.pem" {
-		t.Errorf("CAFile = %q, want /custom/ca.pem", resolved.CAFile)
-	}
-}
-
-func TestResolveConfig_FileModePassthrough(t *testing.T) {
-	cfg := &CertSourceConfig{
-		Source:   CertSourceFile,
-		CertFile: "/my/cert.pem",
-		KeyFile:  "/my/key.pem",
-		CAFile:   "/my/ca.pem",
-	}
-
-	resolved := resolveConfig(cfg)
-
-	// For file mode, resolveConfig should return the same config (no defaults applied)
-	if resolved != cfg {
-		t.Error("resolveConfig() should return same pointer for file mode")
 	}
 }

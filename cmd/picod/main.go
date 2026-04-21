@@ -30,18 +30,16 @@ func main() {
 	workspace := flag.String("workspace", "", "Root directory for file operations (default: current working directory)")
 
 	// mTLS flags (certificate source abstraction)
-	mtlsCertSource := flag.String("mtls-cert-source", "", "Certificate source for internal mTLS: 'spire' or 'file' (empty=disabled)")
-	mtlsCertFile := flag.String("mtls-cert-file", "", "Path to mTLS certificate file (for --mtls-cert-source=file)")
-	mtlsKeyFile := flag.String("mtls-key-file", "", "Path to mTLS private key file (for --mtls-cert-source=file)")
-	mtlsCAFile := flag.String("mtls-ca-file", "", "Path to mTLS CA bundle file (for --mtls-cert-source=file)")
+	mtlsCertFile := flag.String("mtls-cert-file", "", "Path to mTLS certificate file")
+	mtlsKeyFile := flag.String("mtls-key-file", "", "Path to mTLS private key file")
+	mtlsCAFile := flag.String("mtls-ca-file", "", "Path to mTLS CA bundle file")
 
 	// Initialize klog flags
 	klog.InitFlags(nil)
 	flag.Parse()
 
 	// Validate mTLS configuration early (fail fast on bad flags)
-	mTLSCfg := mtls.CertSourceConfig{
-		Source:   mtls.CertSource(*mtlsCertSource),
+	mTLSCfg := mtls.Config{
 		CertFile: *mtlsCertFile,
 		KeyFile:  *mtlsKeyFile,
 		CAFile:   *mtlsCAFile,
@@ -53,7 +51,6 @@ func main() {
 	config := picod.Config{
 		Port:           *port,
 		Workspace:      *workspace,
-		MTLSCertSource: *mtlsCertSource,
 		MTLSCertFile:   *mtlsCertFile,
 		MTLSKeyFile:    *mtlsKeyFile,
 		MTLSCAFile:     *mtlsCAFile,

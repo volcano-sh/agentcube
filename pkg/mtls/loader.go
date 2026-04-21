@@ -1,3 +1,19 @@
+/*
+Copyright The Volcano Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package mtls
 
 import (
@@ -10,30 +26,33 @@ import (
 // LoadServerConfig returns a tls.Config for a server that requires mTLS.
 // Certs are loaded dynamically via GetCertificate to support rotation.
 // If expectedClientIDs is non-empty, clients must present a matching SPIFFE ID.
-func LoadServerConfig(cfg *Config, expectedClientIDs []string) (*tls.Config, error) {
+func LoadServerConfig(cfg *Config, expectedClientIDs []string) (*tls.Config, *CertWatcher, error) {
+	if cfg == nil {
+		return nil, nil, fmt.Errorf("server TLS config: mtls.Config is nil")
+	}
+
 	caPool, err := loadCAPool(cfg.CAFile)
 	if err != nil {
-		return nil, fmt.Errorf("server TLS config: %w", err)
+		return nil, nil, fmt.Errorf("server TLS config: %w", err)
+	}
+
+	watcher, err := NewCertWatcher(cfg.CertFile, cfg.KeyFile)
+	if err != nil {
+		return nil, nil, fmt.Errorf("server TLS cert watcher: %w", err)
 	}
 
 	tlsCfg := &tls.Config{
-		GetCertificate: func(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
-			if err != nil {
-				return nil, err
-			}
-			return &cert, nil
-		},
-		ClientCAs:  caPool,
-		ClientAuth: tls.RequireAndVerifyClientCert,
-		MinVersion: tls.VersionTLS12,
+		GetCertificate: watcher.GetCertificate,
+		ClientCAs:      caPool,
+		ClientAuth:     tls.RequireAndVerifyClientCert,
+		MinVersion:     tls.VersionTLS12,
 	}
 
 	if len(expectedClientIDs) > 0 {
 		tlsCfg.VerifyPeerCertificate = verifyPeerSPIFFEID(expectedClientIDs)
 	}
 
-	return tlsCfg, nil
+	return tlsCfg, watcher, nil
 }
 
 // LoadClientConfig returns a tls.Config for a client that presents its cert and verifies the server.
@@ -41,22 +60,25 @@ func LoadServerConfig(cfg *Config, expectedClientIDs []string) (*tls.Config, err
 // If expectedServerID is non-empty, the server must present a matching SPIFFE ID.
 // This sets InsecureSkipVerify=true to bypass hostname checking (SPIFFE uses URI SANs)
 // and manually verifies the chain + SPIFFE ID instead.
-func LoadClientConfig(cfg *Config, expectedServerID string) (*tls.Config, error) {
+func LoadClientConfig(cfg *Config, expectedServerID string) (*tls.Config, *CertWatcher, error) {
+	if cfg == nil {
+		return nil, nil, fmt.Errorf("client TLS config: mtls.Config is nil")
+	}
+
 	caPool, err := loadCAPool(cfg.CAFile)
 	if err != nil {
-		return nil, fmt.Errorf("client TLS config: %w", err)
+		return nil, nil, fmt.Errorf("client TLS config: %w", err)
+	}
+
+	watcher, err := NewCertWatcher(cfg.CertFile, cfg.KeyFile)
+	if err != nil {
+		return nil, nil, fmt.Errorf("client TLS cert watcher: %w", err)
 	}
 
 	tlsCfg := &tls.Config{
-		GetClientCertificate: func(_ *tls.CertificateRequestInfo) (*tls.Certificate, error) {
-			cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
-			if err != nil {
-				return nil, err
-			}
-			return &cert, nil
-		},
-		RootCAs:    caPool,
-		MinVersion: tls.VersionTLS12,
+		GetClientCertificate: watcher.GetClientCertificate,
+		RootCAs:              caPool,
+		MinVersion:           tls.VersionTLS12,
 	}
 
 	if expectedServerID != "" {
@@ -64,7 +86,7 @@ func LoadClientConfig(cfg *Config, expectedServerID string) (*tls.Config, error)
 		tlsCfg.VerifyPeerCertificate = verifyPeerChainAndSPIFFEID(caPool, expectedServerID)
 	}
 
-	return tlsCfg, nil
+	return tlsCfg, watcher, nil
 }
 
 // verifyPeerSPIFFEID checks the peer's URI SAN against expected SPIFFE IDs.
@@ -99,7 +121,19 @@ func verifyPeerChainAndSPIFFEID(caPool *x509.CertPool, expectedID string) func([
 			return fmt.Errorf("parse peer certificate: %w", err)
 		}
 
-		opts := x509.VerifyOptions{Roots: caPool}
+		intermediates := x509.NewCertPool()
+		for i, rawCert := range rawCerts[1:] {
+			intermediateCert, err := x509.ParseCertificate(rawCert)
+			if err != nil {
+				return fmt.Errorf("parse peer intermediate certificate %d: %w", i+1, err)
+			}
+			intermediates.AddCert(intermediateCert)
+		}
+
+		opts := x509.VerifyOptions{
+			Roots:         caPool,
+			Intermediates: intermediates,
+		}
 		if _, err := peerCert.Verify(opts); err != nil {
 			return fmt.Errorf("verify peer certificate chain: %w", err)
 		}

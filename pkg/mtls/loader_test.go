@@ -126,10 +126,11 @@ func TestLoadServerConfig(t *testing.T) {
 	certFile, keyFile, caFile := generateTestCerts(t)
 	cfg := &Config{CertFile: certFile, KeyFile: keyFile, CAFile: caFile}
 
-	tlsCfg, err := LoadServerConfig(cfg, nil)
+	tlsCfg, watcher, err := LoadServerConfig(cfg, nil)
 	if err != nil {
 		t.Fatalf("LoadServerConfig() error: %v", err)
 	}
+	defer watcher.Stop()
 	if tlsCfg.ClientAuth != tls.RequireAndVerifyClientCert {
 		t.Errorf("ClientAuth = %v, want RequireAndVerifyClientCert", tlsCfg.ClientAuth)
 	}
@@ -152,10 +153,11 @@ func TestLoadClientConfig(t *testing.T) {
 	certFile, keyFile, caFile := generateTestCerts(t)
 	cfg := &Config{CertFile: certFile, KeyFile: keyFile, CAFile: caFile}
 
-	tlsCfg, err := LoadClientConfig(cfg, "")
+	tlsCfg, watcher, err := LoadClientConfig(cfg, "")
 	if err != nil {
 		t.Fatalf("LoadClientConfig() error: %v", err)
 	}
+	defer watcher.Stop()
 	if tlsCfg.RootCAs == nil {
 		t.Error("RootCAs is nil")
 	}
@@ -172,10 +174,11 @@ func TestLoadClientConfig_WithSPIFFEID(t *testing.T) {
 	certFile, keyFile, caFile := generateTestCerts(t)
 	cfg := &Config{CertFile: certFile, KeyFile: keyFile, CAFile: caFile}
 
-	tlsCfg, err := LoadClientConfig(cfg, "spiffe://cluster.local/ns/default/sa/wm")
+	tlsCfg, watcher, err := LoadClientConfig(cfg, "spiffe://cluster.local/ns/default/sa/wm")
 	if err != nil {
 		t.Fatalf("LoadClientConfig() error: %v", err)
 	}
+	defer watcher.Stop()
 	if !tlsCfg.InsecureSkipVerify {
 		t.Error("InsecureSkipVerify should be true when expectedServerID is set")
 	}
@@ -186,11 +189,31 @@ func TestLoadClientConfig_WithSPIFFEID(t *testing.T) {
 
 // --- Error cases ---
 
+func TestLoadServerConfig_NilConfig(t *testing.T) {
+	_, _, err := LoadServerConfig(nil, nil)
+	if err == nil {
+		t.Fatal("expected error for nil config")
+	}
+	if !strings.Contains(err.Error(), "mtls.Config is nil") {
+		t.Errorf("error = %q, want mention of nil config", err.Error())
+	}
+}
+
+func TestLoadClientConfig_NilConfig(t *testing.T) {
+	_, _, err := LoadClientConfig(nil, "")
+	if err == nil {
+		t.Fatal("expected error for nil config")
+	}
+	if !strings.Contains(err.Error(), "mtls.Config is nil") {
+		t.Errorf("error = %q, want mention of nil config", err.Error())
+	}
+}
+
 func TestLoadServerConfig_MissingCAFile(t *testing.T) {
 	certFile, keyFile, _ := generateTestCerts(t)
 	cfg := &Config{CertFile: certFile, KeyFile: keyFile, CAFile: "/nonexistent/ca.pem"}
 
-	_, err := LoadServerConfig(cfg, nil)
+	_, _, err := LoadServerConfig(cfg, nil)
 	if err == nil {
 		t.Fatal("expected error for missing CA file")
 	}
@@ -202,11 +225,13 @@ func TestLoadServerConfig_MissingCAFile(t *testing.T) {
 func TestLoadServerConfig_InvalidCAPEM(t *testing.T) {
 	certFile, keyFile, _ := generateTestCerts(t)
 	invalidCA := filepath.Join(t.TempDir(), "bad_ca.pem")
-	os.WriteFile(invalidCA, []byte("not valid PEM"), 0600)
+	if err := os.WriteFile(invalidCA, []byte("not valid PEM"), 0600); err != nil {
+		t.Fatalf("write invalid CA file: %v", err)
+	}
 
 	cfg := &Config{CertFile: certFile, KeyFile: keyFile, CAFile: invalidCA}
 
-	_, err := LoadServerConfig(cfg, nil)
+	_, _, err := LoadServerConfig(cfg, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid CA PEM")
 	}
@@ -275,28 +300,48 @@ func TestVerifyPeerChainAndSPIFFEID_UntrustedCA(t *testing.T) {
 
 func verifyAndGetChains(t *testing.T, certFile, caFile string) [][]*x509.Certificate {
 	t.Helper()
-	certPEM, _ := os.ReadFile(certFile)
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		t.Fatalf("verifyAndGetChains: failed to read cert: %v", err)
+	}
 	block, _ := pem.Decode(certPEM)
-	cert, _ := x509.ParseCertificate(block.Bytes)
+	if block == nil {
+		t.Fatalf("verifyAndGetChains: failed to decode PEM block from cert")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("verifyAndGetChains: failed to parse certificate: %v", err)
+	}
 	caPool := loadTestCAPool(t, caFile)
 	chains, err := cert.Verify(x509.VerifyOptions{Roots: caPool})
 	if err != nil {
-		t.Fatalf("verify cert: %v", err)
+		t.Fatalf("verifyAndGetChains: verify cert: %v", err)
 	}
 	return chains
 }
 
 func readRawCert(t *testing.T, certFile string) []byte {
 	t.Helper()
-	certPEM, _ := os.ReadFile(certFile)
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		t.Fatalf("readRawCert: failed to read cert: %v", err)
+	}
 	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		t.Fatalf("readRawCert: failed to decode PEM block")
+	}
 	return block.Bytes
 }
 
 func loadTestCAPool(t *testing.T, caFile string) *x509.CertPool {
 	t.Helper()
-	caPEM, _ := os.ReadFile(caFile)
+	caPEM, err := os.ReadFile(caFile)
+	if err != nil {
+		t.Fatalf("loadTestCAPool: failed to read CA file: %v", err)
+	}
 	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM(caPEM)
+	if !pool.AppendCertsFromPEM(caPEM) {
+		t.Fatalf("loadTestCAPool: failed to append CA certificates to pool")
+	}
 	return pool
 }

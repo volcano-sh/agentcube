@@ -20,6 +20,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -39,8 +40,14 @@ func generateWatcherTestCerts(t *testing.T, dir string) (certFile, keyFile strin
 		t.Fatalf("generate key: %v", err)
 	}
 
+	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
+	if err != nil {
+		t.Fatalf("Failed to generate test serial number: %v", err)
+	}
+
 	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
+		SerialNumber: serialNumber,
 		Subject:      pkix.Name{Organization: []string{"Watcher Test"}},
 		NotBefore:    time.Now().Add(-1 * time.Hour),
 		NotAfter:     time.Now().Add(24 * time.Hour),
@@ -127,21 +134,31 @@ func TestNewCertWatcher_FileUpdate(t *testing.T) {
 	// Overwrite with new certs (different serial number → different cert)
 	generateWatcherTestCerts(t, dir)
 
-	// Wait for fsnotify to detect the change and reload
-	time.Sleep(500 * time.Millisecond)
+	// Wait for fsnotify to detect the change and reload, using robust polling
+	var updatedCert *tls.Certificate
+	timeout := time.After(2 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
 
-	// Get the updated certificate
-	updatedCert, err := cw.GetCertificate(nil)
-	if err != nil {
-		t.Fatalf("GetCertificate() after update error: %v", err)
+	for {
+		select {
+		case <-timeout:
+			t.Fatal("timeout waiting for watcher to reload updated certificate")
+		case <-ticker.C:
+			updatedCert, err = cw.GetCertificate(nil)
+			if err != nil {
+				t.Fatalf("GetCertificate() after update error: %v", err)
+			}
+			// Once the pointer changes, fsnotify has swapped the cert in the cache
+			if initialCert != updatedCert {
+				goto CertUpdated
+			}
+		}
 	}
+
+CertUpdated:
 	if updatedCert == nil {
 		t.Fatal("GetCertificate() returned nil after update")
-	}
-
-	// The certs should be different (different serial numbers)
-	if initialCert == updatedCert {
-		t.Error("certificate pointer did not change after file update")
 	}
 }
 

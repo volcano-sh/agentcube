@@ -1,3 +1,19 @@
+/*
+Copyright The Volcano Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package mtls
 
 import (
@@ -110,11 +126,12 @@ func (cw *CertWatcher) watchLoop() {
 					klog.Errorf("Failed to reload certificate: %v", err)
 				}
 			}
-			// Re-watch after atomic rename (spiffe-helper does atomic rename)
+			// Re-watch after atomic rename (spiffe-helper does atomic renames for both cert and key)
 			if event.Has(fsnotify.Rename) || event.Has(fsnotify.Remove) {
-				_ = cw.watcher.Remove(cw.certFile)
-				if err := cw.watcher.Add(cw.certFile); err != nil {
-					klog.Errorf("Failed to re-watch %s: %v", cw.certFile, err)
+				targetFile := event.Name
+				_ = cw.watcher.Remove(targetFile)
+				if err := cw.watcher.Add(targetFile); err != nil {
+					klog.Errorf("Failed to re-watch %s: %v", targetFile, err)
 				}
 				if err := cw.reload(); err != nil {
 					klog.Errorf("Failed to reload certificate after rename: %v", err)

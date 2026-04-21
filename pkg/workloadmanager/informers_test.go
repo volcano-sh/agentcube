@@ -29,25 +29,27 @@ type neverSyncedInformer struct {
 	cache.SharedIndexInformer
 }
 
-func (n *neverSyncedInformer) HasSynced() bool { return false }
+func (n *neverSyncedInformer) HasSynced() bool                    { return false }
+func (n *neverSyncedInformer) Run(stopCh <-chan struct{})          { <-stopCh }
+
+// noopInformerStarter satisfies informerStarter with a no-op Start.
+type noopInformerStarter struct{}
+
+func (noopInformerStarter) Start(_ <-chan struct{}) {}
 
 func TestRunAndWaitForCacheSync_RespectsContextCancellation(t *testing.T) {
 	ifm := &Informers{
 		AgentRuntimeInformer:    &neverSyncedInformer{},
 		CodeInterpreterInformer: &neverSyncedInformer{},
 		PodInformer:             &neverSyncedInformer{},
+		informerFactory:         noopInformerStarter{},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
 	go func() {
-		// waitForCacheSync calls run internally via RunAndWaitForCacheSync,
-		// but run needs a real informerFactory. Call waitForCacheSync directly
-		// to isolate the context-propagation behaviour.
-		ctxTimeout, cancelTimeout := context.WithTimeout(ctx, 1*time.Minute)
-		defer cancelTimeout()
-		done <- ifm.waitForCacheSync(ctxTimeout)
+		done <- ifm.RunAndWaitForCacheSync(ctx)
 	}()
 
 	// Cancel the parent context well before the 1-minute timeout.
@@ -56,9 +58,9 @@ func TestRunAndWaitForCacheSync_RespectsContextCancellation(t *testing.T) {
 	select {
 	case err := <-done:
 		if err == nil {
-			t.Fatal("expected error when context is cancelled, got nil")
+			t.Fatal("expected error when context is canceled, got nil")
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("waitForCacheSync did not respect context cancellation within 2s")
+		t.Fatal("RunAndWaitForCacheSync did not respect context cancellation within 2s")
 	}
 }

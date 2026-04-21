@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
 )
 
@@ -49,11 +48,16 @@ var (
 	}
 )
 
+// informerStarter is the subset of SharedInformerFactory used by Informers.
+type informerStarter interface {
+	Start(stopCh <-chan struct{})
+}
+
 type Informers struct {
 	AgentRuntimeInformer    cache.SharedIndexInformer
 	CodeInterpreterInformer cache.SharedIndexInformer
 	PodInformer             cache.SharedIndexInformer
-	informerFactory         informers.SharedInformerFactory
+	informerFactory         informerStarter
 }
 
 func NewInformers(k8sClient *K8sClient) *Informers {

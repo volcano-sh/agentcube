@@ -60,52 +60,62 @@ func runCanceled(t *testing.T, ifm *Informers) error {
 	}
 }
 
-func TestRunAndWaitForCacheSync_AgentRuntimeInformerCanceled(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
-	ifm := &Informers{
-		AgentRuntimeInformer:    &neverSyncedInformer{},
-		CodeInterpreterInformer: &neverSyncedInformer{},
-		PodInformer:             &neverSyncedInformer{},
-		informerFactory:         informers.NewSharedInformerFactory(fakeClient, 0),
-	}
-	if err := runCanceled(t, ifm); !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected context.Canceled, got %v", err)
-	}
+func newFactory() informers.SharedInformerFactory {
+	return informers.NewSharedInformerFactory(fake.NewSimpleClientset(), 0)
 }
 
-func TestRunAndWaitForCacheSync_CodeInterpreterInformerCanceled(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
-	ifm := &Informers{
-		AgentRuntimeInformer:    &alwaysSyncedInformer{},
-		CodeInterpreterInformer: &neverSyncedInformer{},
-		PodInformer:             &neverSyncedInformer{},
-		informerFactory:         informers.NewSharedInformerFactory(fakeClient, 0),
-	}
-	if err := runCanceled(t, ifm); !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected context.Canceled, got %v", err)
-	}
-}
+func TestRunAndWaitForCacheSync_ContextCancellation(t *testing.T) {
+	never := func() cache.SharedIndexInformer { return &neverSyncedInformer{} }
+	always := func() cache.SharedIndexInformer { return &alwaysSyncedInformer{} }
 
-func TestRunAndWaitForCacheSync_PodInformerCanceled(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
-	ifm := &Informers{
-		AgentRuntimeInformer:    &alwaysSyncedInformer{},
-		CodeInterpreterInformer: &alwaysSyncedInformer{},
-		PodInformer:             &neverSyncedInformer{},
-		informerFactory:         informers.NewSharedInformerFactory(fakeClient, 0),
+	tests := []struct {
+		name                    string
+		agentRuntime            cache.SharedIndexInformer
+		codeInterpreter         cache.SharedIndexInformer
+		pod                     cache.SharedIndexInformer
+	}{
+		{
+			name:            "AgentRuntimeInformer never syncs",
+			agentRuntime:    never(),
+			codeInterpreter: never(),
+			pod:             never(),
+		},
+		{
+			name:            "CodeInterpreterInformer never syncs",
+			agentRuntime:    always(),
+			codeInterpreter: never(),
+			pod:             never(),
+		},
+		{
+			name:            "PodInformer never syncs",
+			agentRuntime:    always(),
+			codeInterpreter: always(),
+			pod:             never(),
+		},
 	}
-	if err := runCanceled(t, ifm); !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected context.Canceled, got %v", err)
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ifm := &Informers{
+				AgentRuntimeInformer:    tc.agentRuntime,
+				CodeInterpreterInformer: tc.codeInterpreter,
+				PodInformer:             tc.pod,
+				informerFactory:         newFactory(),
+			}
+			err := runCanceled(t, ifm)
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected context.Canceled, got %v", err)
+			}
+		})
 	}
 }
 
 func TestRunAndWaitForCacheSync_AllSynced(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
 	ifm := &Informers{
 		AgentRuntimeInformer:    &alwaysSyncedInformer{},
 		CodeInterpreterInformer: &alwaysSyncedInformer{},
 		PodInformer:             &alwaysSyncedInformer{},
-		informerFactory:         informers.NewSharedInformerFactory(fakeClient, 0),
+		informerFactory:         newFactory(),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

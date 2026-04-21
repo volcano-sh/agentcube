@@ -330,10 +330,9 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 
 func TestGetSandboxStatus_TableDriven(t *testing.T) {
 	tests := []struct {
-		name        string
-		sandbox     *sandboxv1alpha1.Sandbox
-		expected    string
-		expectedMsg string
+		name     string
+		sandbox  *sandboxv1alpha1.Sandbox
+		expected string
 	}{
 		{
 			name: "ready condition true",
@@ -348,7 +347,6 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 				},
 			},
 			expected:    "running",
-			expectedMsg: "",
 		},
 		{
 			name: "ready condition false without reason",
@@ -363,10 +361,9 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 				},
 			},
 			expected:    "unknown",
-			expectedMsg: "",
 		},
 		{
-			name: "ready condition false with reason indicates terminal failure",
+			name: "ready condition false is treated as unknown",
 			sandbox: &sandboxv1alpha1.Sandbox{
 				Status: sandboxv1alpha1.SandboxStatus{
 					Conditions: []metav1.Condition{
@@ -379,75 +376,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected:    "failed",
-			expectedMsg: "Back-off pulling image",
-		},
-		{
-			name: "ready condition false with reason but no message falls back to reason",
-			sandbox: &sandboxv1alpha1.Sandbox{
-				Status: sandboxv1alpha1.SandboxStatus{
-					Conditions: []metav1.Condition{
-						{
-							Type:   string(sandboxv1alpha1.SandboxConditionReady),
-							Status: metav1.ConditionFalse,
-							Reason: "OOMKilled",
-						},
-					},
-				},
-			},
-			expected:    "failed",
-			expectedMsg: "OOMKilled",
-		},
-		{
-			name: "ready condition false with conflict error is treated as transient",
-			sandbox: &sandboxv1alpha1.Sandbox{
-				Status: sandboxv1alpha1.SandboxStatus{
-					Conditions: []metav1.Condition{
-						{
-							Type:    string(sandboxv1alpha1.SandboxConditionReady),
-							Status:  metav1.ConditionFalse,
-							Reason:  "Error",
-							Message: "Error seen: failed to update pod: Operation cannot be fulfilled on pods \"my-pod\": the object has been modified; please apply your changes to the latest version and try again",
-						},
-					},
-				},
-			},
 			expected:    "unknown",
-			expectedMsg: "",
-		},
-		{
-			name: "ready condition false with pending pod is treated as transient",
-			sandbox: &sandboxv1alpha1.Sandbox{
-				Status: sandboxv1alpha1.SandboxStatus{
-					Conditions: []metav1.Condition{
-						{
-							Type:    string(sandboxv1alpha1.SandboxConditionReady),
-							Status:  metav1.ConditionFalse,
-							Reason:  "Error",
-							Message: "Pod exists with phase: Pending; Service Exists",
-						},
-					},
-				},
-			},
-			expected:    "unknown",
-			expectedMsg: "",
-		},
-		{
-			name: "ready condition false with running-but-not-ready pod is treated as transient",
-			sandbox: &sandboxv1alpha1.Sandbox{
-				Status: sandboxv1alpha1.SandboxStatus{
-					Conditions: []metav1.Condition{
-						{
-							Type:    string(sandboxv1alpha1.SandboxConditionReady),
-							Status:  metav1.ConditionFalse,
-							Reason:  "Error",
-							Message: "Pod is Running but not Ready; Service Exists",
-						},
-					},
-				},
-			},
-			expected:    "unknown",
-			expectedMsg: "",
 		},
 		{
 			name: "ready condition unknown",
@@ -462,7 +391,6 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 				},
 			},
 			expected:    "unknown",
-			expectedMsg: "",
 		},
 		{
 			name: "no conditions",
@@ -472,7 +400,6 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 				},
 			},
 			expected:    "unknown",
-			expectedMsg: "",
 		},
 		{
 			name: "nil conditions",
@@ -482,7 +409,6 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 				},
 			},
 			expected:    "unknown",
-			expectedMsg: "",
 		},
 		{
 			name: "other condition type",
@@ -497,7 +423,6 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 				},
 			},
 			expected:    "unknown",
-			expectedMsg: "",
 		},
 		{
 			name: "multiple conditions with ready true",
@@ -516,15 +441,13 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 				},
 			},
 			expected:    "running",
-			expectedMsg: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, msg := getSandboxStatus(tt.sandbox)
+			result := getSandboxStatus(tt.sandbox)
 			assert.Equal(t, tt.expected, result)
-			assert.Equal(t, tt.expectedMsg, msg)
 		})
 	}
 }

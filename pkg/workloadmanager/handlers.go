@@ -190,10 +190,6 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	select {
 	case result := <-resultChan:
 		timer.Stop()
-		if result.Err != nil {
-			klog.Warningf("sandbox %s/%s failed: %v", sandbox.Namespace, sandbox.Name, result.Err)
-			return nil, result.Err
-		}
 		createdSandbox = result.Sandbox
 		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
 	case <-ctx.Done():

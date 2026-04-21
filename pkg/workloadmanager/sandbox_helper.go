@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"strings"
 	"time"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
@@ -36,7 +35,6 @@ const (
 	defaultSandboxReadyDialTimeout   = 1 * time.Second
 
 	sandboxStatusRunning = "running"
-	sandboxStatusFailed  = "failed"
 	sandboxStatusUnknown = "unknown"
 )
 
@@ -98,52 +96,20 @@ func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *san
 		SessionID:        entry.SessionID,
 		CreatedAt:        createdAt,
 		ExpiresAt:        expiresAt,
-		Status:           sandboxStatusString(sandbox),
+		Status:           getSandboxStatus(sandbox),
 		IdleTimeout:      metav1.Duration{Duration: idleTimeout},
 	}
 }
 
-// sandboxStatusString returns only the status string (discards the failure message).
-// Use this where only the status label is needed (e.g. store metadata).
-func sandboxStatusString(sandbox *sandboxv1alpha1.Sandbox) string {
-	s, _ := getSandboxStatus(sandbox)
-	return s
-}
-
 // getSandboxStatus extracts status from Sandbox CRD conditions.
-// Returns sandboxStatusRunning, sandboxStatusFailed, or sandboxStatusUnknown.
-func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) (string, string) {
+// Returns sandboxStatusRunning when the sandbox is ready, sandboxStatusUnknown otherwise.
+func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) string {
 	for _, condition := range sandbox.Status.Conditions {
-		if condition.Type != string(sandboxv1alpha1.SandboxConditionReady) {
-			continue
-		}
-		if condition.Status == metav1.ConditionTrue {
-			return sandboxStatusRunning, ""
-		}
-		// ConditionFalse with a reason indicates a terminal failure, not transient pending.
-		if condition.Status == metav1.ConditionFalse && condition.Reason != "" {
-			msg := condition.Message
-			if msg == "" {
-				msg = condition.Reason
-			}
-			// "Operation cannot be fulfilled" is a Kubernetes conflict error (HTTP 409).
-			// The sandbox controller retries these automatically, so they are transient —
-			// do not surface them as terminal failures.
-			if strings.Contains(msg, "Operation cannot be fulfilled") {
-				return sandboxStatusUnknown, ""
-			}
-			// "Pod exists with phase: Pending" and "Pod is Running but not Ready" are
-			// intermediate states emitted by the sandbox controller during pod startup.
-			// Both are transient — the pod will eventually transition to Running+Ready.
-			// Treat as unknown so the 2-minute timeout decides the outcome.
-			if strings.Contains(msg, "Pod exists with phase: Pending") ||
-				strings.Contains(msg, "Pod is Running but not Ready") {
-				return sandboxStatusUnknown, ""
-			}
-			return sandboxStatusFailed, msg
+		if condition.Type == string(sandboxv1alpha1.SandboxConditionReady) && condition.Status == metav1.ConditionTrue {
+			return sandboxStatusRunning
 		}
 	}
-	return sandboxStatusUnknown, ""
+	return sandboxStatusUnknown
 }
 
 func (s *Server) waitForSandboxEntryPointsReady(ctx context.Context, podIP string, entry *sandboxEntry) error {

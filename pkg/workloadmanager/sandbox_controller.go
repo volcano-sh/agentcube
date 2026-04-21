@@ -18,7 +18,6 @@ package workloadmanager
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -41,7 +40,6 @@ type SandboxReconciler struct {
 
 type SandboxStatusUpdate struct {
 	Sandbox *sandboxv1alpha1.Sandbox
-	Err     error
 }
 
 func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -50,29 +48,11 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	status, failMsg := getSandboxStatus(sandbox)
-
-	// Only notify the waiter on a terminal state (running or failed).
-	// "unknown" means the sandbox is still being scheduled/started; stay quiet.
-	var (
-		update  SandboxStatusUpdate
-		hasWork bool
-	)
-	switch status {
-	case sandboxStatusRunning:
-		klog.V(2).Infof("Sandbox %s/%s is running, notifying waiter", sandbox.Namespace, sandbox.Name)
-		update = SandboxStatusUpdate{Sandbox: sandbox}
-		hasWork = true
-	case sandboxStatusFailed:
-		klog.Warningf("Sandbox %s/%s entered a terminal failure state: %s", sandbox.Namespace, sandbox.Name, failMsg)
-		update = SandboxStatusUpdate{
-			Sandbox: sandbox,
-			Err:     fmt.Errorf("sandbox %s/%s failed: %s", sandbox.Namespace, sandbox.Name, failMsg),
-		}
-		hasWork = true
-	default:
+	if getSandboxStatus(sandbox) != sandboxStatusRunning {
 		return ctrl.Result{}, nil
 	}
+
+	klog.V(2).Infof("Sandbox %s/%s is running, notifying waiter", sandbox.Namespace, sandbox.Name)
 
 	r.mu.Lock()
 	resultChan, exists := r.watchers[req.NamespacedName]
@@ -81,13 +61,13 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 	r.mu.Unlock()
 
-	if exists && hasWork {
+	if exists {
 		// WatchSandboxOnce always creates a buffered channel of size 1, and the
 		// map entry is deleted before this point so only one sender can ever
 		// reach here for a given key. The buffer is therefore always empty and
 		// this send never blocks.
-		resultChan <- update
-		klog.V(2).Infof("Notified waiter about sandbox %s/%s (status: %s)", sandbox.Namespace, sandbox.Name, status)
+		resultChan <- SandboxStatusUpdate{Sandbox: sandbox}
+		klog.V(2).Infof("Notified waiter about sandbox %s/%s", sandbox.Namespace, sandbox.Name)
 	}
 
 	return ctrl.Result{}, nil

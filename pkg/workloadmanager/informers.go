@@ -67,7 +67,7 @@ func NewInformers(k8sClient *K8sClient) *Informers {
 
 func (ifm *Informers) RunAndWaitForCacheSync(ctx context.Context) error {
 	ifm.run(ctx.Done())
-	ctxTimeout, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	ctxTimeout, cancel := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancel()
 	if err := ifm.waitForCacheSync(ctxTimeout); err != nil {
 		return fmt.Errorf("failed to wait for caches to sync: %w", err)
@@ -83,12 +83,21 @@ func (ifm *Informers) run(stopCh <-chan struct{}) {
 
 func (ifm *Informers) waitForCacheSync(ctx context.Context) error {
 	if !cache.WaitForCacheSync(ctx.Done(), ifm.AgentRuntimeInformer.HasSynced) {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("timed out waiting for %v caches to sync: %w", AgentRuntimeGVR, err)
+		}
 		return fmt.Errorf("timed out waiting for %v caches to sync", AgentRuntimeGVR)
 	}
 	if !cache.WaitForCacheSync(ctx.Done(), ifm.CodeInterpreterInformer.HasSynced) {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("timed out waiting for %v caches to sync: %w", CodeInterpreterGVR, err)
+		}
 		return fmt.Errorf("timed out waiting for %v caches to sync", CodeInterpreterGVR)
 	}
 	if !cache.WaitForCacheSync(ctx.Done(), ifm.PodInformer.HasSynced) {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("timed out waiting for pod informer cache to sync: %w", err)
+		}
 		return fmt.Errorf("timed out waiting for pod informer cache to sync")
 	}
 	return nil

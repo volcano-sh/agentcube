@@ -31,7 +31,7 @@ type neverSyncedInformer struct {
 	cache.SharedIndexInformer
 }
 
-func (n *neverSyncedInformer) HasSynced() bool           { return false }
+func (n *neverSyncedInformer) HasSynced() bool { return false }
 func (n *neverSyncedInformer) Run(stopCh <-chan struct{}) { <-stopCh }
 
 func TestRunAndWaitForCacheSync_RespectsContextCancellation(t *testing.T) {

@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
 )
 
@@ -29,20 +31,18 @@ type neverSyncedInformer struct {
 	cache.SharedIndexInformer
 }
 
-func (n *neverSyncedInformer) HasSynced() bool                    { return false }
-func (n *neverSyncedInformer) Run(stopCh <-chan struct{})          { <-stopCh }
-
-// noopInformerStarter satisfies informerStarter with a no-op Start.
-type noopInformerStarter struct{}
-
-func (noopInformerStarter) Start(_ <-chan struct{}) {}
+func (n *neverSyncedInformer) HasSynced() bool           { return false }
+func (n *neverSyncedInformer) Run(stopCh <-chan struct{}) { <-stopCh }
 
 func TestRunAndWaitForCacheSync_RespectsContextCancellation(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	factory := informers.NewSharedInformerFactory(fakeClient, 0)
+
 	ifm := &Informers{
 		AgentRuntimeInformer:    &neverSyncedInformer{},
 		CodeInterpreterInformer: &neverSyncedInformer{},
 		PodInformer:             &neverSyncedInformer{},
-		informerFactory:         noopInformerStarter{},
+		informerFactory:         factory,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

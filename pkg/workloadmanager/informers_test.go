@@ -18,6 +18,7 @@ package workloadmanager
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -57,8 +58,8 @@ func TestRunAndWaitForCacheSync_RespectsContextCancellation(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Fatal("expected error when context is canceled, got nil")
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("RunAndWaitForCacheSync did not respect context cancellation within 2s")

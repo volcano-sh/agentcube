@@ -83,12 +83,21 @@ func (ifm *Informers) run(stopCh <-chan struct{}) {
 
 func (ifm *Informers) waitForCacheSync(ctx context.Context) error {
 	if !cache.WaitForCacheSync(ctx.Done(), ifm.AgentRuntimeInformer.HasSynced) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		return fmt.Errorf("timed out waiting for %v caches to sync", AgentRuntimeGVR)
 	}
 	if !cache.WaitForCacheSync(ctx.Done(), ifm.CodeInterpreterInformer.HasSynced) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		return fmt.Errorf("timed out waiting for %v caches to sync", CodeInterpreterGVR)
 	}
 	if !cache.WaitForCacheSync(ctx.Done(), ifm.PodInformer.HasSynced) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		return fmt.Errorf("timed out waiting for pod informer cache to sync")
 	}
 	return nil

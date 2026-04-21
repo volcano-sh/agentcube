@@ -10,9 +10,11 @@ from __future__ import annotations
 import json
 import os
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, Optional
 
+import requests
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
@@ -119,6 +121,54 @@ def _json_ok(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _is_stale_session_error(exc: BaseException) -> bool:
+    """Router returns 404 for unknown/expired session (see pkg/router session not found)."""
+    if isinstance(exc, requests.HTTPError):
+        r = exc.response
+        if r is not None and r.status_code in (404, 410):
+            return True
+    return False
+
+
+def _drop_session_cache(session_id: str) -> None:
+    with _SESSION_LOCK:
+        _SESSIONS.pop(session_id, None)
+
+
+def _call_with_session_recovery(
+    session_id: Optional[str],
+    session_reuse: bool,
+    cfg: Server,
+    CodeInterpreterClient: type,
+    op: Callable[[Any], Any],
+) -> tuple[Any, dict[str, Any], str]:
+    """Run ``op(client)``; if the caller passed ``session_id`` and Router says it is gone, open a new session once."""
+    meta: dict[str, Any] = {}
+    client = _client_for_call(session_id, session_reuse, cfg, CodeInterpreterClient)
+    try:
+        try:
+            out = op(client)
+            return out, meta, client.session_id or ""
+        except Exception as e:
+            if not session_id or not _is_stale_session_error(e):
+                raise
+            _drop_session_cache(session_id)
+            try:
+                client.stop()
+            except Exception:
+                pass
+            client = _client_for_call(None, session_reuse, cfg, CodeInterpreterClient)
+            meta["session_recovered"] = True
+            meta["previous_session_id"] = session_id
+            meta["hint"] = (
+                "Old session expired or missing; new sandbox below. "
+            )
+            out = op(client)
+            return out, meta, client.session_id or ""
+    finally:
+        _cleanup_after_call(client, session_reuse)
+
+
 def create_mcp_server(
     *,
     host: str = "127.0.0.1",
@@ -127,7 +177,8 @@ def create_mcp_server(
 ) -> FastMCP:
     instr = instructions or (
         "AgentCube sandbox. Multi-step: session_reuse=true, pass session_id from prior JSON; "
-        "each run_code is a new process—only files persist. stop_session when done."
+        "each run_code is a new process—only files persist. stop_session when done. "
+        "If a session_id is expired, the server recreates the sandbox once (workspace files are lost)."
     )
     app = FastMCP(
         "agentcube-code-interpreter",
@@ -172,17 +223,16 @@ def create_mcp_server(
     ) -> str:
         """Run code in the sandbox."""
         cfg = _load_server()
-        client = _client_for_call(session_id, session_reuse, cfg, CodeInterpreterClient)
-        try:
-            out = client.run_code(language, code, timeout=timeout_seconds)
-            return _json_ok(
-                {
-                    "session_id": client.session_id,
-                    "output": out,
-                }
-            )
-        finally:
-            _cleanup_after_call(client, session_reuse)
+
+        def _op(c: Any) -> Any:
+            return c.run_code(language, code, timeout=timeout_seconds)
+
+        out, meta, sid = _call_with_session_recovery(
+            session_id, session_reuse, cfg, CodeInterpreterClient, _op
+        )
+        payload: dict[str, Any] = {"session_id": sid, "output": out}
+        payload.update(meta)
+        return _json_ok(payload)
 
     @app.tool(structured_output=False)
     def execute_command(
@@ -208,12 +258,16 @@ def create_mcp_server(
     ) -> str:
         """Run shell in sandbox."""
         cfg = _load_server()
-        client = _client_for_call(session_id, session_reuse, cfg, CodeInterpreterClient)
-        try:
-            out = client.execute_command(command, timeout=timeout_seconds)
-            return _json_ok({"session_id": client.session_id, "output": out})
-        finally:
-            _cleanup_after_call(client, session_reuse)
+
+        def _op(c: Any) -> Any:
+            return c.execute_command(command, timeout=timeout_seconds)
+
+        out, meta, sid = _call_with_session_recovery(
+            session_id, session_reuse, cfg, CodeInterpreterClient, _op
+        )
+        payload: dict[str, Any] = {"session_id": sid, "output": out}
+        payload.update(meta)
+        return _json_ok(payload)
 
     @app.tool(structured_output=False)
     def write_file(
@@ -238,12 +292,16 @@ def create_mcp_server(
     ) -> str:
         """Write a file in the workspace."""
         cfg = _load_server()
-        client = _client_for_call(session_id, session_reuse, cfg, CodeInterpreterClient)
-        try:
-            client.write_file(content, remote_path)
-            return _json_ok({"session_id": client.session_id, "remote_path": remote_path, "status": "ok"})
-        finally:
-            _cleanup_after_call(client, session_reuse)
+
+        def _op(c: Any) -> None:
+            c.write_file(content, remote_path)
+
+        _, meta, sid = _call_with_session_recovery(
+            session_id, session_reuse, cfg, CodeInterpreterClient, _op
+        )
+        payload: dict[str, Any] = {"session_id": sid, "remote_path": remote_path, "status": "ok"}
+        payload.update(meta)
+        return _json_ok(payload)
 
     @app.tool(structured_output=False)
     def list_files(
@@ -268,12 +326,16 @@ def create_mcp_server(
     ) -> str:
         """List workspace directory."""
         cfg = _load_server()
-        client = _client_for_call(session_id, session_reuse, cfg, CodeInterpreterClient)
-        try:
-            files = client.list_files(path)
-            return _json_ok({"session_id": client.session_id, "path": path, "entries": files})
-        finally:
-            _cleanup_after_call(client, session_reuse)
+
+        def _op(c: Any) -> Any:
+            return c.list_files(path)
+
+        files, meta, sid = _call_with_session_recovery(
+            session_id, session_reuse, cfg, CodeInterpreterClient, _op
+        )
+        payload: dict[str, Any] = {"session_id": sid, "path": path, "entries": files}
+        payload.update(meta)
+        return _json_ok(payload)
 
     @app.tool(structured_output=False)
     def stop_session(

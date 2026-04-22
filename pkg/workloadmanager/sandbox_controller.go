@@ -65,9 +65,14 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		// WatchSandboxOnce always creates a buffered channel of size 1, and the
 		// map entry is deleted before this point so only one sender can ever
 		// reach here for a given key. The buffer is therefore always empty and
-		// this send never blocks.
-		resultChan <- SandboxStatusUpdate{Sandbox: sandbox}
-		klog.V(2).Infof("Notified waiter about sandbox %s/%s", sandbox.Namespace, sandbox.Name)
+		// this send never blocks. The default branch guards against the unlikely
+		// case where the receiver has already gone away (e.g. context cancelled).
+		select {
+		case resultChan <- SandboxStatusUpdate{Sandbox: sandbox}:
+			klog.V(2).Infof("Notified waiter about sandbox %s/%s", sandbox.Namespace, sandbox.Name)
+		default:
+			klog.V(2).Infof("No receiver for sandbox %s/%s notification, skipping", sandbox.Namespace, sandbox.Name)
+		}
 	}
 
 	return ctrl.Result{}, nil

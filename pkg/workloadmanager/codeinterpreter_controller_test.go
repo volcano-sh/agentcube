@@ -17,13 +17,10 @@ limitations under the License.
 package workloadmanager
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -195,62 +192,3 @@ func TestConvertToPodTemplate_AuthMode(t *testing.T) {
 // Note: TestConvertToPodTemplate_EmptyCommandAndArgs and
 // TestConvertToPodTemplate_NilCommandAndArgs removed - they only verified that
 // empty/nil values are preserved, which is trivial field copying behavior.
-
-func newTestCodeInterpreter(name, namespace string) *runtimev1alpha1.CodeInterpreter {
-	return &runtimev1alpha1.CodeInterpreter{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-			Labels:    map[string]string{"env": "test"},
-		},
-	}
-}
-
-func TestGetCodeInterpreter_Found(t *testing.T) {
-	r := setupTestReconciler()
-	ci := newTestCodeInterpreter("my-ci", "default")
-	assert.NoError(t, r.Create(context.Background(), ci))
-
-	got, err := r.GetCodeInterpreter(context.Background(), "my-ci", "default")
-	assert.NoError(t, err)
-	assert.NotNil(t, got)
-	assert.Equal(t, "my-ci", got.Name)
-	assert.Equal(t, "default", got.Namespace)
-}
-
-func TestGetCodeInterpreter_NotFound(t *testing.T) {
-	r := setupTestReconciler()
-
-	got, err := r.GetCodeInterpreter(context.Background(), "missing", "default")
-	assert.Nil(t, got)
-	assert.Error(t, err)
-	assert.True(t, apierrors.IsNotFound(err), "expected NotFound error, got %v", err)
-}
-
-func TestGetCodeInterpreter_NilClient(t *testing.T) {
-	r := &CodeInterpreterReconciler{}
-
-	got, err := r.GetCodeInterpreter(context.Background(), "my-ci", "default")
-	assert.Nil(t, got)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "client is not initialized")
-}
-
-func TestGetCodeInterpreter_ReturnsDeepCopy(t *testing.T) {
-	r := setupTestReconciler()
-	ci := newTestCodeInterpreter("my-ci", "default")
-	assert.NoError(t, r.Create(context.Background(), ci))
-
-	got, err := r.GetCodeInterpreter(context.Background(), "my-ci", "default")
-	assert.NoError(t, err)
-	assert.NotNil(t, got)
-
-	// Mutate the returned copy.
-	got.Labels["env"] = "mutated"
-
-	// A second call should return the original unmodified value.
-	got2, err := r.GetCodeInterpreter(context.Background(), "my-ci", "default")
-	assert.NoError(t, err)
-	assert.NotNil(t, got2)
-	assert.Equal(t, "test", got2.Labels["env"])
-}

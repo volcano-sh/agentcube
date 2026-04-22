@@ -57,9 +57,9 @@ func LoadServerConfig(cfg *Config, expectedClientIDs []string) (*tls.Config, *Ce
 
 // LoadClientConfig returns a tls.Config for a client that presents its cert and verifies the server.
 // Certs are loaded dynamically via GetClientCertificate to support rotation.
-// If expectedServerID is non-empty, the server must present a matching SPIFFE ID.
-// This sets InsecureSkipVerify=true to bypass hostname checking (SPIFFE uses URI SANs)
-// and manually verifies the chain + SPIFFE ID instead.
+// The expectedServerID is required; the server must present a matching SPIFFE ID in its URI SAN.
+// This sets InsecureSkipVerify=true to bypass standard DNS hostname checking 
+// and manually verifies the cryptographic chain and the SPIFFE ID instead.
 func LoadClientConfig(cfg *Config, expectedServerID string) (*tls.Config, *CertWatcher, error) {
 	if expectedServerID == "" {
 		return nil, nil, fmt.Errorf("client TLS config: expectedServerID is required for SPIFFE verification")
@@ -83,6 +83,7 @@ func LoadClientConfig(cfg *Config, expectedServerID string) (*tls.Config, *CertW
 		GetClientCertificate:  watcher.GetClientCertificate,
 		RootCAs:               caPool,
 		MinVersion:            tls.VersionTLS12,
+		//nolint:gosec // G402: we use VerifyPeerCertificate for custom SPIFFE ID verification instead
 		InsecureSkipVerify:    true,
 		VerifyPeerCertificate: verifyPeerChainAndSPIFFEID(caPool, expectedServerID),
 	}

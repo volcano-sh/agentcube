@@ -129,25 +129,7 @@ func (cw *CertWatcher) watchLoop() {
 			}
 			// Re-watch after atomic rename (spiffe-helper does atomic renames for both cert and key)
 			if event.Has(fsnotify.Rename) || event.Has(fsnotify.Remove) {
-				targetFile := event.Name
-				_ = cw.watcher.Remove(targetFile)
-				// Retry loop to handle transient races during atomic replacement
-				var added bool
-				for i := 0; i < 5; i++ {
-					if err := cw.watcher.Add(targetFile); err != nil {
-						klog.V(4).Infof("Failed to re-watch %s (attempt %d/5): %v", targetFile, i+1, err)
-						time.Sleep(50 * time.Millisecond)
-						continue
-					}
-					added = true
-					break
-				}
-				if !added {
-					klog.Errorf("CRITICAL: Exhausted retry budget attempting to re-watch %s. Certificate hot-reload is degraded!", targetFile)
-				}
-				if err := cw.reload(); err != nil {
-					klog.Errorf("Failed to reload certificate after rename: %v", err)
-				}
+				cw.handleRenameEvent(event.Name)
 			}
 		case err, ok := <-cw.watcher.Errors:
 			if !ok {
@@ -157,5 +139,27 @@ func (cw *CertWatcher) watchLoop() {
 		case <-cw.done:
 			return
 		}
+	}
+}
+
+// handleRenameEvent manages the retry loop for re-watching files after atomic renames.
+func (cw *CertWatcher) handleRenameEvent(targetFile string) {
+	_ = cw.watcher.Remove(targetFile)
+	// Retry loop to handle transient races during atomic replacement
+	var added bool
+	for i := 0; i < 5; i++ {
+		if err := cw.watcher.Add(targetFile); err != nil {
+			klog.V(4).Infof("Failed to re-watch %s (attempt %d/5): %v", targetFile, i+1, err)
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		added = true
+		break
+	}
+	if !added {
+		klog.Errorf("CRITICAL: Exhausted retry budget attempting to re-watch %s. Certificate hot-reload is degraded!", targetFile)
+	}
+	if err := cw.reload(); err != nil {
+		klog.Errorf("Failed to reload certificate after rename: %v", err)
 	}
 }

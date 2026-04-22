@@ -343,15 +343,15 @@ func (r *CodeInterpreterReconciler) podTemplateEqual(a, b sandboxv1alpha1.PodTem
 //
 // Example usage:
 //
-//	ci := reconciler.GetCodeInterpreter("my-codeinterpreter", "default")
-func (r *CodeInterpreterReconciler) GetCodeInterpreter(name, namespace string) *runtimev1alpha1.CodeInterpreter {
-	if r.mgr == nil {
+//	ci := reconciler.GetCodeInterpreter(ctx, "my-codeinterpreter", "default")
+func (r *CodeInterpreterReconciler) GetCodeInterpreter(ctx context.Context, name, namespace string) *runtimev1alpha1.CodeInterpreter {
+	if r.Client == nil {
 		return nil
 	}
 
 	ci := &runtimev1alpha1.CodeInterpreter{}
 	key := types.NamespacedName{Namespace: namespace, Name: name}
-	if err := r.mgr.GetCache().Get(context.Background(), key, ci); err != nil {
+	if err := r.Get(ctx, key, ci); err != nil {
 		return nil
 	}
 	return ci.DeepCopy()

@@ -17,10 +17,12 @@ limitations under the License.
 package workloadmanager
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -192,3 +194,66 @@ func TestConvertToPodTemplate_AuthMode(t *testing.T) {
 // Note: TestConvertToPodTemplate_EmptyCommandAndArgs and
 // TestConvertToPodTemplate_NilCommandAndArgs removed - they only verified that
 // empty/nil values are preserved, which is trivial field copying behavior.
+
+func newTestCodeInterpreter(name, namespace string) *runtimev1alpha1.CodeInterpreter {
+	return &runtimev1alpha1.CodeInterpreter{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels:    map[string]string{"env": "test"},
+		},
+	}
+}
+
+func setupReconcilerWithFakeClient() *CodeInterpreterReconciler {
+	scheme := runtime.NewScheme()
+	_ = runtimev1alpha1.AddToScheme(scheme)
+	_ = sandboxv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	return &CodeInterpreterReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
+		Scheme: scheme,
+	}
+}
+
+func TestGetCodeInterpreter_Found(t *testing.T) {
+	r := setupReconcilerWithFakeClient()
+	ci := newTestCodeInterpreter("my-ci", "default")
+	assert.NoError(t, r.Create(context.Background(), ci))
+
+	got := r.GetCodeInterpreter(context.Background(), "my-ci", "default")
+	assert.NotNil(t, got)
+	assert.Equal(t, "my-ci", got.Name)
+	assert.Equal(t, "default", got.Namespace)
+}
+
+func TestGetCodeInterpreter_NotFound(t *testing.T) {
+	r := setupReconcilerWithFakeClient()
+
+	got := r.GetCodeInterpreter(context.Background(), "missing", "default")
+	assert.Nil(t, got)
+}
+
+func TestGetCodeInterpreter_NilClient(t *testing.T) {
+	r := &CodeInterpreterReconciler{}
+
+	got := r.GetCodeInterpreter(context.Background(), "my-ci", "default")
+	assert.Nil(t, got)
+}
+
+func TestGetCodeInterpreter_ReturnsDeepCopy(t *testing.T) {
+	r := setupReconcilerWithFakeClient()
+	ci := newTestCodeInterpreter("my-ci", "default")
+	assert.NoError(t, r.Create(context.Background(), ci))
+
+	got := r.GetCodeInterpreter(context.Background(), "my-ci", "default")
+	assert.NotNil(t, got)
+
+	// Mutate the returned copy.
+	got.Labels["env"] = "mutated"
+
+	// A second call should return the original unmodified value.
+	got2 := r.GetCodeInterpreter(context.Background(), "my-ci", "default")
+	assert.NotNil(t, got2)
+	assert.Equal(t, "test", got2.Labels["env"])
+}

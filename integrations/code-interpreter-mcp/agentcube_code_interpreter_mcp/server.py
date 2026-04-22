@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import threading
 from collections.abc import Callable
@@ -117,10 +116,6 @@ def _cleanup_after_call(client: Any, session_reuse: bool) -> None:
                 _SESSIONS.pop(sid, None)
 
 
-def _json_ok(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, ensure_ascii=False)
-
-
 def _is_stale_session_error(exc: BaseException) -> bool:
     """Router returns 404 for unknown/expired session (see pkg/router session not found)."""
     if isinstance(exc, requests.HTTPError):
@@ -220,7 +215,7 @@ def create_mcp_server(
                 description="Run timeout (seconds).",
             ),
         ] = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Run code in the sandbox."""
         cfg = _load_server()
 
@@ -232,7 +227,7 @@ def create_mcp_server(
         )
         payload: dict[str, Any] = {"session_id": sid, "output": out}
         payload.update(meta)
-        return _json_ok(payload)
+        return payload
 
     @app.tool(structured_output=False)
     def execute_command(
@@ -255,7 +250,7 @@ def create_mcp_server(
             Optional[float],
             Field(default=None, description="Timeout (seconds)."),
         ] = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Run shell in sandbox."""
         cfg = _load_server()
 
@@ -267,7 +262,7 @@ def create_mcp_server(
         )
         payload: dict[str, Any] = {"session_id": sid, "output": out}
         payload.update(meta)
-        return _json_ok(payload)
+        return payload
 
     @app.tool(structured_output=False)
     def write_file(
@@ -289,7 +284,7 @@ def create_mcp_server(
                 description="Keep session for follow-up; pass session_id; stop_session when done.",
             ),
         ] = False,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Write a file in the workspace."""
         cfg = _load_server()
 
@@ -301,7 +296,7 @@ def create_mcp_server(
         )
         payload: dict[str, Any] = {"session_id": sid, "remote_path": remote_path, "status": "ok"}
         payload.update(meta)
-        return _json_ok(payload)
+        return payload
 
     @app.tool(structured_output=False)
     def list_files(
@@ -323,7 +318,7 @@ def create_mcp_server(
                 description="Keep session for more tools; else tear down after.",
             ),
         ] = False,
-    ) -> str:
+    ) -> dict[str, Any]:
         """List workspace directory."""
         cfg = _load_server()
 
@@ -335,7 +330,7 @@ def create_mcp_server(
         )
         payload: dict[str, Any] = {"session_id": sid, "path": path, "entries": files}
         payload.update(meta)
-        return _json_ok(payload)
+        return payload
 
     @app.tool(structured_output=False)
     def stop_session(
@@ -343,7 +338,7 @@ def create_mcp_server(
             str,
             Field(description="session_id to stop (from session_reuse)."),
         ],
-    ) -> str:
+    ) -> dict[str, Any]:
         """Stop a reused session."""
         cfg = _load_server()
         with _SESSION_LOCK:
@@ -359,8 +354,8 @@ def create_mcp_server(
                 session_id=session_id,
             )
             c.stop()
-            return _json_ok({"session_id": session_id, "status": "stopped"})
+            return {"session_id": session_id, "status": "stopped"}
         client.stop()
-        return _json_ok({"session_id": session_id, "status": "stopped"})
+        return {"session_id": session_id, "status": "stopped"}
 
     return app

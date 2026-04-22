@@ -149,24 +149,45 @@ func TestLoadServerConfig(t *testing.T) {
 	}
 }
 
-func TestLoadClientConfig(t *testing.T) {
+func TestLoadServerConfig_WithExpectedClientIDs(t *testing.T) {
+	expectedID := "spiffe://cluster.local/test"
+	certFile, keyFile, caFile := generateTestCertsWithSPIFFEID(t, expectedID)
+	cfg := &Config{CertFile: certFile, KeyFile: keyFile, CAFile: caFile}
+
+	tlsCfg, watcher, err := LoadServerConfig(cfg, []string{expectedID})
+	if err != nil {
+		t.Fatalf("LoadServerConfig() error: %v", err)
+	}
+	defer watcher.Stop()
+
+	if tlsCfg.VerifyPeerCertificate == nil {
+		t.Fatal("VerifyPeerCertificate should be set when expectedClientIDs provided")
+	}
+
+	// Exercise the callback directly with a valid matching certificate
+	chains := verifyAndGetChains(t, certFile, caFile)
+	if err := tlsCfg.VerifyPeerCertificate(nil, chains); err != nil {
+		t.Errorf("VerifyPeerCertificate rejected valid SPIFFE ID: %v", err)
+	}
+
+	// Exercise the callback directly with an invalid/mismatching certificate
+	invalidCertFile, _, invalidCAFile := generateTestCertsWithSPIFFEID(t, "spiffe://cluster.local/wrong")
+	invalidChains := verifyAndGetChains(t, invalidCertFile, invalidCAFile)
+	if err := tlsCfg.VerifyPeerCertificate(nil, invalidChains); err == nil {
+		t.Error("VerifyPeerCertificate accepted invalid SPIFFE ID")
+	}
+}
+
+func TestLoadClientConfig_EmptyServerID(t *testing.T) {
 	certFile, keyFile, caFile := generateTestCerts(t)
 	cfg := &Config{CertFile: certFile, KeyFile: keyFile, CAFile: caFile}
 
-	tlsCfg, watcher, err := LoadClientConfig(cfg, "")
-	if err != nil {
-		t.Fatalf("LoadClientConfig() error: %v", err)
+	_, _, err := LoadClientConfig(cfg, "")
+	if err == nil {
+		t.Fatal("LoadClientConfig() expected error for empty ServerID, got nil")
 	}
-	defer watcher.Stop()
-	if tlsCfg.RootCAs == nil {
-		t.Error("RootCAs is nil")
-	}
-	if tlsCfg.GetClientCertificate == nil {
-		t.Error("GetClientCertificate callback is nil")
-	}
-	// No SPIFFE ID → InsecureSkipVerify false, no VerifyPeerCertificate
-	if tlsCfg.InsecureSkipVerify {
-		t.Error("InsecureSkipVerify should be false when no expectedServerID")
+	if !strings.Contains(err.Error(), "expectedServerID is required") {
+		t.Errorf("error = %q, want mention of expectedServerID", err.Error())
 	}
 }
 
@@ -200,7 +221,7 @@ func TestLoadServerConfig_NilConfig(t *testing.T) {
 }
 
 func TestLoadClientConfig_NilConfig(t *testing.T) {
-	_, _, err := LoadClientConfig(nil, "")
+	_, _, err := LoadClientConfig(nil, "spiffe://cluster.local/ns/default/sa/test")
 	if err == nil {
 		t.Fatal("expected error for nil config")
 	}

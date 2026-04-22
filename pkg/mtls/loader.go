@@ -61,6 +61,10 @@ func LoadServerConfig(cfg *Config, expectedClientIDs []string) (*tls.Config, *Ce
 // This sets InsecureSkipVerify=true to bypass hostname checking (SPIFFE uses URI SANs)
 // and manually verifies the chain + SPIFFE ID instead.
 func LoadClientConfig(cfg *Config, expectedServerID string) (*tls.Config, *CertWatcher, error) {
+	if expectedServerID == "" {
+		return nil, nil, fmt.Errorf("client TLS config: expectedServerID is required for SPIFFE verification")
+	}
+
 	if cfg == nil {
 		return nil, nil, fmt.Errorf("client TLS config: mtls.Config is nil")
 	}
@@ -76,14 +80,11 @@ func LoadClientConfig(cfg *Config, expectedServerID string) (*tls.Config, *CertW
 	}
 
 	tlsCfg := &tls.Config{
-		GetClientCertificate: watcher.GetClientCertificate,
-		RootCAs:              caPool,
-		MinVersion:           tls.VersionTLS12,
-	}
-
-	if expectedServerID != "" {
-		tlsCfg.InsecureSkipVerify = true
-		tlsCfg.VerifyPeerCertificate = verifyPeerChainAndSPIFFEID(caPool, expectedServerID)
+		GetClientCertificate:  watcher.GetClientCertificate,
+		RootCAs:               caPool,
+		MinVersion:            tls.VersionTLS12,
+		InsecureSkipVerify:    true,
+		VerifyPeerCertificate: verifyPeerChainAndSPIFFEID(caPool, expectedServerID),
 	}
 
 	return tlsCfg, watcher, nil

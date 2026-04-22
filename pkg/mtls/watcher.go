@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"k8s.io/klog/v2"
@@ -130,8 +131,19 @@ func (cw *CertWatcher) watchLoop() {
 			if event.Has(fsnotify.Rename) || event.Has(fsnotify.Remove) {
 				targetFile := event.Name
 				_ = cw.watcher.Remove(targetFile)
-				if err := cw.watcher.Add(targetFile); err != nil {
-					klog.Errorf("Failed to re-watch %s: %v", targetFile, err)
+				// Retry loop to handle transient races during atomic replacement
+				var added bool
+				for i := 0; i < 5; i++ {
+					if err := cw.watcher.Add(targetFile); err != nil {
+						klog.V(4).Infof("Failed to re-watch %s (attempt %d/5): %v", targetFile, i+1, err)
+						time.Sleep(50 * time.Millisecond)
+						continue
+					}
+					added = true
+					break
+				}
+				if !added {
+					klog.Errorf("CRITICAL: Exhausted retry budget attempting to re-watch %s. Certificate hot-reload is degraded!", targetFile)
 				}
 				if err := cw.reload(); err != nil {
 					klog.Errorf("Failed to reload certificate after rename: %v", err)

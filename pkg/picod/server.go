@@ -115,6 +115,10 @@ func (s *Server) Run() error {
 		ReadHeaderTimeout: 10 * time.Second, // Prevent Slowloris attacks
 	}
 
+	if s.config.MTLSCertFile != "" || s.config.MTLSKeyFile != "" || s.config.MTLSCAFile != "" {
+		klog.Warningf("TODO(author): wire mTLS in follow-up PR. mTLS flags are currently parsed but not consumed by the PicoD listener.")
+	}
+
 	return server.ListenAndServe()
 }
 

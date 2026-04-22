@@ -44,7 +44,6 @@ import (
 type CodeInterpreterReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
-	mgr    ctrl.Manager
 }
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -338,8 +337,6 @@ func (r *CodeInterpreterReconciler) podTemplateEqual(a, b sandboxv1alpha1.PodTem
 // GenerationChangedPredicate filters out status-only update events so that
 // the controller is not re-enqueued by its own status writes.
 func (r *CodeInterpreterReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.mgr = mgr
-
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&runtimev1alpha1.CodeInterpreter{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)

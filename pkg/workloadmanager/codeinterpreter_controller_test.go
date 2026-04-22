@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
@@ -205,55 +206,51 @@ func newTestCodeInterpreter(name, namespace string) *runtimev1alpha1.CodeInterpr
 	}
 }
 
-func setupReconcilerWithFakeClient() *CodeInterpreterReconciler {
-	scheme := runtime.NewScheme()
-	_ = runtimev1alpha1.AddToScheme(scheme)
-	_ = sandboxv1alpha1.AddToScheme(scheme)
-	_ = corev1.AddToScheme(scheme)
-	return &CodeInterpreterReconciler{
-		Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
-		Scheme: scheme,
-	}
-}
-
 func TestGetCodeInterpreter_Found(t *testing.T) {
-	r := setupReconcilerWithFakeClient()
+	r := setupTestReconciler()
 	ci := newTestCodeInterpreter("my-ci", "default")
 	assert.NoError(t, r.Create(context.Background(), ci))
 
-	got := r.GetCodeInterpreter(context.Background(), "my-ci", "default")
+	got, err := r.GetCodeInterpreter(context.Background(), "my-ci", "default")
+	assert.NoError(t, err)
 	assert.NotNil(t, got)
 	assert.Equal(t, "my-ci", got.Name)
 	assert.Equal(t, "default", got.Namespace)
 }
 
 func TestGetCodeInterpreter_NotFound(t *testing.T) {
-	r := setupReconcilerWithFakeClient()
+	r := setupTestReconciler()
 
-	got := r.GetCodeInterpreter(context.Background(), "missing", "default")
+	got, err := r.GetCodeInterpreter(context.Background(), "missing", "default")
 	assert.Nil(t, got)
+	assert.Error(t, err)
+	assert.True(t, apierrors.IsNotFound(err), "expected NotFound error, got %v", err)
 }
 
 func TestGetCodeInterpreter_NilClient(t *testing.T) {
 	r := &CodeInterpreterReconciler{}
 
-	got := r.GetCodeInterpreter(context.Background(), "my-ci", "default")
+	got, err := r.GetCodeInterpreter(context.Background(), "my-ci", "default")
 	assert.Nil(t, got)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "client is not initialized")
 }
 
 func TestGetCodeInterpreter_ReturnsDeepCopy(t *testing.T) {
-	r := setupReconcilerWithFakeClient()
+	r := setupTestReconciler()
 	ci := newTestCodeInterpreter("my-ci", "default")
 	assert.NoError(t, r.Create(context.Background(), ci))
 
-	got := r.GetCodeInterpreter(context.Background(), "my-ci", "default")
+	got, err := r.GetCodeInterpreter(context.Background(), "my-ci", "default")
+	assert.NoError(t, err)
 	assert.NotNil(t, got)
 
 	// Mutate the returned copy.
 	got.Labels["env"] = "mutated"
 
 	// A second call should return the original unmodified value.
-	got2 := r.GetCodeInterpreter(context.Background(), "my-ci", "default")
+	got2, err := r.GetCodeInterpreter(context.Background(), "my-ci", "default")
+	assert.NoError(t, err)
 	assert.NotNil(t, got2)
 	assert.Equal(t, "test", got2.Labels["env"])
 }

@@ -334,27 +334,29 @@ func (r *CodeInterpreterReconciler) podTemplateEqual(a, b sandboxv1alpha1.PodTem
 	return reflect.DeepEqual(a.Spec, b.Spec)
 }
 
-// GetCodeInterpreter retrieves a CodeInterpreter from the cache by namespace and name.
-// The cache uses Kubernetes informer cache which is automatically maintained by controller-runtime
-// and stays synchronized with the Kubernetes API server through watch mechanism.
+// GetCodeInterpreter retrieves a CodeInterpreter by namespace and name via the
+// reconciler's embedded client. In production the client is cache-backed (see
+// controller-runtime manager.GetClient), so reads hit the informer cache and
+// stay synchronized with the Kubernetes API server through watches.
 //
-// Returns nil if the CodeInterpreter is not found in the cache.
 // The returned object is a deep copy to prevent external modifications.
+// Callers can use apierrors.IsNotFound(err) to distinguish a missing resource
+// from other errors such as context cancellation or transient API failures.
 //
 // Example usage:
 //
-//	ci := reconciler.GetCodeInterpreter(ctx, "my-codeinterpreter", "default")
-func (r *CodeInterpreterReconciler) GetCodeInterpreter(ctx context.Context, name, namespace string) *runtimev1alpha1.CodeInterpreter {
+//	ci, err := reconciler.GetCodeInterpreter(ctx, "my-codeinterpreter", "default")
+func (r *CodeInterpreterReconciler) GetCodeInterpreter(ctx context.Context, name, namespace string) (*runtimev1alpha1.CodeInterpreter, error) {
 	if r.Client == nil {
-		return nil
+		return nil, fmt.Errorf("reconciler client is not initialized")
 	}
 
 	ci := &runtimev1alpha1.CodeInterpreter{}
 	key := types.NamespacedName{Namespace: namespace, Name: name}
 	if err := r.Get(ctx, key, ci); err != nil {
-		return nil
+		return nil, err
 	}
-	return ci.DeepCopy()
+	return ci.DeepCopy(), nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

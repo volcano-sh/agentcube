@@ -259,14 +259,20 @@ func TestServerCreateSandbox(t *testing.T) {
 	}
 }
 
-// TestServerCreateSandbox_ContextCancelled verifies that createSandbox aborts
-// promptly when the caller's context is cancelled while waiting for the
-// sandbox to reach Running state, and that the rollback defer still runs.
-func TestServerCreateSandbox_ContextCancelled(t *testing.T) {
+// TestServerCreateSandbox_ContextCanceled verifies that createSandbox aborts
+// promptly when the caller's context is canceled while blocked in the
+// wait-for-Running select, and that the rollback defer still runs.
+//
+// The context is canceled from a timer (not before the call) so the function
+// actually reaches the select with a live ctx — otherwise an upstream
+// ctx-honoring call could return first and the test would pass without
+// exercising the regression being fixed.
+func TestServerCreateSandbox_ContextCanceled(t *testing.T) {
 	store := &fakeStore{}
 	server := &Server{storeClient: store, k8sClient: &K8sClient{}}
 
-	// Empty channel — Reconcile will never notify in this test.
+	// Empty channel — Reconcile will never notify, forcing the select to
+	// block until ctx cancels or the 2m timer fires.
 	resultChan := make(chan SandboxStatusUpdate, 1)
 	sb := readySandbox()
 
@@ -283,7 +289,9 @@ func TestServerCreateSandbox_ContextCancelled(t *testing.T) {
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel before the call so the select picks ctx.Done() immediately.
+	defer cancel()
+	// Cancel after createSandbox has had time to reach the select.
+	time.AfterFunc(20*time.Millisecond, cancel)
 
 	start := time.Now()
 	resp, err := server.createSandbox(ctx, nil, sb, nil, makeEntry(), resultChan)
@@ -292,7 +300,7 @@ func TestServerCreateSandbox_ContextCancelled(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 	require.ErrorIs(t, err, context.Canceled)
-	require.Less(t, elapsed, time.Second, "createSandbox should abort immediately on ctx cancel, not wait for the 2m timer")
+	require.Less(t, elapsed, time.Second, "createSandbox should abort on ctx cancel, not wait for the 2m timer")
 	require.Equal(t, 1, deleteCalls, "rollback defer should still delete the sandbox on ctx cancel")
 }
 

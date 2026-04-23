@@ -172,8 +172,8 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	}()
 
 	var createdSandbox *sandboxv1alpha1.Sandbox
-	// Use an explicit timer so it is stopped as soon as the channel receives or
-	// ctx cancels, instead of leaking until time.After fires.
+	// Explicit timer + deferred Stop so the runtime timer is released on
+	// function return rather than lingering until the 2m deadline fires.
 	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
 	defer timer.Stop()
 	select {

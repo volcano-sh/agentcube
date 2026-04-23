@@ -22,8 +22,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/rest"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
@@ -37,18 +35,10 @@ func setupTestReconciler() *CodeInterpreterReconciler {
 	_ = corev1.AddToScheme(scheme)
 
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
-	// Create a minimal manager for testing
-	cfg := &rest.Config{
-		Host: "https://test",
-	}
-	mgr, _ := ctrl.NewManager(cfg, ctrl.Options{
-		Scheme: scheme,
-	})
 
 	return &CodeInterpreterReconciler{
 		Client: client,
 		Scheme: scheme,
-		mgr:    mgr,
 	}
 }
 

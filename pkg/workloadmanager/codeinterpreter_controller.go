@@ -44,7 +44,6 @@ import (
 type CodeInterpreterReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
-	mgr    ctrl.Manager
 }
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -334,35 +333,10 @@ func (r *CodeInterpreterReconciler) podTemplateEqual(a, b sandboxv1alpha1.PodTem
 	return reflect.DeepEqual(a.Spec, b.Spec)
 }
 
-// GetCodeInterpreter retrieves a CodeInterpreter from the cache by namespace and name.
-// The cache uses Kubernetes informer cache which is automatically maintained by controller-runtime
-// and stays synchronized with the Kubernetes API server through watch mechanism.
-//
-// Returns nil if the CodeInterpreter is not found in the cache.
-// The returned object is a deep copy to prevent external modifications.
-//
-// Example usage:
-//
-//	ci := reconciler.GetCodeInterpreter("my-codeinterpreter", "default")
-func (r *CodeInterpreterReconciler) GetCodeInterpreter(name, namespace string) *runtimev1alpha1.CodeInterpreter {
-	if r.mgr == nil {
-		return nil
-	}
-
-	ci := &runtimev1alpha1.CodeInterpreter{}
-	key := types.NamespacedName{Namespace: namespace, Name: name}
-	if err := r.mgr.GetCache().Get(context.Background(), key, ci); err != nil {
-		return nil
-	}
-	return ci.DeepCopy()
-}
-
 // SetupWithManager sets up the controller with the Manager.
 // GenerationChangedPredicate filters out status-only update events so that
 // the controller is not re-enqueued by its own status writes.
 func (r *CodeInterpreterReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.mgr = mgr
-
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&runtimev1alpha1.CodeInterpreter{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)

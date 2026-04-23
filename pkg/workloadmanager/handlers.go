@@ -172,11 +172,18 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	}()
 
 	var createdSandbox *sandboxv1alpha1.Sandbox
+	// Use an explicit timer so it is stopped as soon as the channel receives or
+	// ctx cancels, instead of leaking until time.After fires.
+	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
+	defer timer.Stop()
 	select {
 	case result := <-resultChan:
 		createdSandbox = result.Sandbox
 		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
-	case <-time.After(2 * time.Minute): // consistent with router settings
+	case <-ctx.Done():
+		klog.Warningf("sandbox %s/%s create aborted: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
+		return nil, fmt.Errorf("sandbox creation aborted: %w", ctx.Err())
+	case <-timer.C:
 		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
 		return nil, fmt.Errorf("sandbox creation timed out")
 	}

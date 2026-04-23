@@ -259,6 +259,43 @@ func TestServerCreateSandbox(t *testing.T) {
 	}
 }
 
+// TestServerCreateSandbox_ContextCancelled verifies that createSandbox aborts
+// promptly when the caller's context is cancelled while waiting for the
+// sandbox to reach Running state, and that the rollback defer still runs.
+func TestServerCreateSandbox_ContextCancelled(t *testing.T) {
+	store := &fakeStore{}
+	server := &Server{storeClient: store, k8sClient: &K8sClient{}}
+
+	// Empty channel — Reconcile will never notify in this test.
+	resultChan := make(chan SandboxStatusUpdate, 1)
+	sb := readySandbox()
+
+	patches := gomonkey.NewPatches()
+	defer patches.Reset()
+
+	patches.ApplyFunc(createSandbox, func(_ context.Context, _ dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox) (*SandboxInfo, error) {
+		return &SandboxInfo{Name: sandbox.Name, Namespace: sandbox.Namespace}, nil
+	})
+	deleteCalls := 0
+	patches.ApplyFunc(deleteSandbox, func(_ context.Context, _ dynamic.Interface, _, _ string) error {
+		deleteCalls++
+		return nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel before the call so the select picks ctx.Done() immediately.
+
+	start := time.Now()
+	resp, err := server.createSandbox(ctx, nil, sb, nil, makeEntry(), resultChan)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Less(t, elapsed, time.Second, "createSandbox should abort immediately on ctx cancel, not wait for the 2m timer")
+	require.Equal(t, 1, deleteCalls, "rollback defer should still delete the sandbox on ctx cancel")
+}
+
 func newFakeServer() *Server {
 	return &Server{
 		config:            &Config{SandboxReadyProbeTimeout: 5 * time.Millisecond, SandboxReadyProbeInterval: time.Millisecond},

@@ -39,22 +39,24 @@ func main() {
 		maxConcurrentRequests = flag.Int("max-concurrent-requests", 1000, "Maximum number of concurrent requests that a router server can handle (0 = unlimited)")
 
 		// mTLS flags (certificate source abstraction)
-		mtlsCertFile = flag.String("mtls-cert-file", "", "Path to mTLS certificate file")
-		mtlsKeyFile  = flag.String("mtls-key-file", "", "Path to mTLS private key file")
-		mtlsCAFile   = flag.String("mtls-ca-file", "", "Path to mTLS CA bundle file")
+		mtlsCertFile, mtlsKeyFile, mtlsCAFile string
 	)
 
 	// Initialize klog flags
 	klog.InitFlags(nil)
+
+	flag.StringVar(&mtlsCertFile, "mtls-cert-file", "", "Path to mTLS certificate file")
+	flag.StringVar(&mtlsKeyFile, "mtls-key-file", "", "Path to mTLS private key file")
+	flag.StringVar(&mtlsCAFile, "mtls-ca-file", "", "Path to mTLS CA bundle file")
 
 	// Parse command line flags
 	flag.Parse()
 
 	// Validate mTLS configuration early (fail fast on bad flags)
 	mTLSCfg := mtls.Config{
-		CertFile: *mtlsCertFile,
-		KeyFile:  *mtlsKeyFile,
-		CAFile:   *mtlsCAFile,
+		CertFile: mtlsCertFile,
+		KeyFile:  mtlsKeyFile,
+		CAFile:   mtlsCAFile,
 	}
 	if err := mTLSCfg.Validate(); err != nil {
 		klog.Fatalf("Invalid mTLS configuration: %v", err)
@@ -68,9 +70,9 @@ func main() {
 		TLSCert:               *tlsCert,
 		TLSKey:                *tlsKey,
 		MaxConcurrentRequests: *maxConcurrentRequests,
-		MTLSCertFile:          *mtlsCertFile,
-		MTLSKeyFile:           *mtlsKeyFile,
-		MTLSCAFile:            *mtlsCAFile,
+		MTLSCertFile:          mtlsCertFile,
+		MTLSKeyFile:           mtlsKeyFile,
+		MTLSCAFile:            mtlsCAFile,
 	}
 
 	// Create Router API server

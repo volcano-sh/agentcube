@@ -115,6 +115,24 @@ func (cw *CertWatcher) reload() error {
 }
 
 func (cw *CertWatcher) watchLoop() {
+	var debounceTimer *time.Timer
+	scheduleReload := func() {
+		if debounceTimer != nil {
+			debounceTimer.Stop()
+		}
+		debounceTimer = time.AfterFunc(200*time.Millisecond, func() {
+			if err := cw.reload(); err != nil {
+				klog.Errorf("Failed to reload certificate: %v", err)
+			}
+		})
+	}
+
+	defer func() {
+		if debounceTimer != nil {
+			debounceTimer.Stop()
+		}
+	}()
+
 	for {
 		select {
 		case event, ok := <-cw.watcher.Events:
@@ -123,13 +141,12 @@ func (cw *CertWatcher) watchLoop() {
 			}
 			// Reload on write or create
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
-				if err := cw.reload(); err != nil {
-					klog.Errorf("Failed to reload certificate: %v", err)
-				}
+				scheduleReload()
 			}
 			// Re-watch after atomic rename (spiffe-helper does atomic renames for both cert and key)
 			if event.Has(fsnotify.Rename) || event.Has(fsnotify.Remove) {
 				cw.handleRenameEvent(event.Name)
+				scheduleReload()
 			}
 		case err, ok := <-cw.watcher.Errors:
 			if !ok {
@@ -145,21 +162,20 @@ func (cw *CertWatcher) watchLoop() {
 // handleRenameEvent manages the retry loop for re-watching files after atomic renames.
 func (cw *CertWatcher) handleRenameEvent(targetFile string) {
 	_ = cw.watcher.Remove(targetFile)
-	// Retry loop to handle transient races during atomic replacement
-	var added bool
-	for i := 0; i < 5; i++ {
-		if err := cw.watcher.Add(targetFile); err != nil {
-			klog.V(4).Infof("Failed to re-watch %s (attempt %d/5): %v", targetFile, i+1, err)
-			time.Sleep(50 * time.Millisecond)
-			continue
+	
+	// Run the retry loop in a background goroutine to prevent blocking the watchLoop
+	// which could cause fsnotify buffers to overflow during long backoffs.
+	go func() {
+		delay := 100 * time.Millisecond
+		for i := 0; i < 5; i++ {
+			if err := cw.watcher.Add(targetFile); err == nil {
+				return // Success
+			}
+			klog.V(4).Infof("Failed to re-watch %s (attempt %d/5). Retrying in %v...", targetFile, i+1, delay)
+			time.Sleep(delay)
+			delay *= 2 // Exponential backoff (100, 200, 400, 800, 1600ms)
 		}
-		added = true
-		break
-	}
-	if !added {
-		klog.Errorf("CRITICAL: Exhausted retry budget attempting to re-watch %s. Certificate hot-reload is degraded!", targetFile)
-	}
-	if err := cw.reload(); err != nil {
-		klog.Errorf("Failed to reload certificate after rename: %v", err)
-	}
+		
+		klog.Errorf("CRITICAL: Exhausted retry budget attempting to re-watch %s. Certificate rotation is permanently broken! Process restart required.", targetFile)
+	}()
 }

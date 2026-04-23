@@ -25,6 +25,10 @@ import (
 
 // LoadServerConfig returns a tls.Config for a server that requires mTLS.
 // Certs are loaded dynamically via GetCertificate to support rotation.
+//
+// TODO(mahil-2040): CA bundles (cfg.CAFile) are currently loaded statically at startup.
+// Trust bundle rotation will require a process restart until a dynamic CAWatcher is implemented.
+//
 // If expectedClientIDs is non-empty, clients must present a matching SPIFFE ID.
 func LoadServerConfig(cfg *Config, expectedClientIDs []string) (*tls.Config, *CertWatcher, error) {
 	if cfg == nil {
@@ -57,6 +61,10 @@ func LoadServerConfig(cfg *Config, expectedClientIDs []string) (*tls.Config, *Ce
 
 // LoadClientConfig returns a tls.Config for a client that presents its cert and verifies the server.
 // Certs are loaded dynamically via GetClientCertificate to support rotation.
+//
+// TODO(mahil-2040): CA bundles (cfg.CAFile) are currently loaded statically at startup.
+// Trust bundle rotation will require a process restart until a dynamic CAWatcher is implemented.
+//
 // The expectedServerID is required; the server must present a matching SPIFFE ID in its URI SAN.
 // This sets InsecureSkipVerify=true to bypass standard DNS hostname checking 
 // and manually verifies the cryptographic chain and the SPIFFE ID instead.
@@ -135,6 +143,7 @@ func verifyPeerChainAndSPIFFEID(caPool *x509.CertPool, expectedID string) func([
 		opts := x509.VerifyOptions{
 			Roots:         caPool,
 			Intermediates: intermediates,
+			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 		}
 		if _, err := peerCert.Verify(opts); err != nil {
 			return fmt.Errorf("verify peer certificate chain: %w", err)

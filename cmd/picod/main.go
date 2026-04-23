@@ -30,9 +30,10 @@ func main() {
 	workspace := flag.String("workspace", "", "Root directory for file operations (default: current working directory)")
 
 	// mTLS flags (certificate source abstraction)
-	mtlsCertFile := flag.String("mtls-cert-file", "", "Path to mTLS certificate file")
-	mtlsKeyFile := flag.String("mtls-key-file", "", "Path to mTLS private key file")
-	mtlsCAFile := flag.String("mtls-ca-file", "", "Path to mTLS CA bundle file")
+	var mtlsCertFile, mtlsKeyFile, mtlsCAFile string
+	flag.StringVar(&mtlsCertFile, "mtls-cert-file", "", "Path to mTLS certificate file")
+	flag.StringVar(&mtlsKeyFile, "mtls-key-file", "", "Path to mTLS private key file")
+	flag.StringVar(&mtlsCAFile, "mtls-ca-file", "", "Path to mTLS CA bundle file")
 
 	// Initialize klog flags
 	klog.InitFlags(nil)
@@ -40,9 +41,9 @@ func main() {
 
 	// Validate mTLS configuration early (fail fast on bad flags)
 	mTLSCfg := mtls.Config{
-		CertFile: *mtlsCertFile,
-		KeyFile:  *mtlsKeyFile,
-		CAFile:   *mtlsCAFile,
+		CertFile: mtlsCertFile,
+		KeyFile:  mtlsKeyFile,
+		CAFile:   mtlsCAFile,
 	}
 	if err := mTLSCfg.Validate(); err != nil {
 		klog.Fatalf("Invalid mTLS configuration: %v", err)
@@ -51,9 +52,9 @@ func main() {
 	config := picod.Config{
 		Port:           *port,
 		Workspace:      *workspace,
-		MTLSCertFile:   *mtlsCertFile,
-		MTLSKeyFile:    *mtlsKeyFile,
-		MTLSCAFile:     *mtlsCAFile,
+		MTLSCertFile:   mtlsCertFile,
+		MTLSKeyFile:    mtlsKeyFile,
+		MTLSCAFile:     mtlsCAFile,
 	}
 
 	// Create and start server

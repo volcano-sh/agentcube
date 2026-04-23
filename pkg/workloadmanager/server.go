@@ -174,7 +174,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Start HTTP or HTTPS server
 	if s.config.MTLSCertFile != "" || s.config.MTLSKeyFile != "" || s.config.MTLSCAFile != "" {
-		klog.Warningf("TODO(author): wire mTLS in follow-up PR. mTLS flags are currently parsed but not consumed by the WorkloadManager listener.")
+		klog.Warningf("TODO(mahil-2040): wire mTLS in follow-up PR. mTLS flags are currently parsed but not consumed by the WorkloadManager listener.")
 	}
 
 	if s.config.EnableTLS {

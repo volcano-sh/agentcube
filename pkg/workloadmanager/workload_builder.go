@@ -406,6 +406,8 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 
 	envVars := buildCodeInterpreterEnvVars(codeInterpreterObj.Spec.Template.Environment, codeInterpreterObj.Spec.AuthMode)
 
+	// TODO(mahil-2040): wire mTLS volume mounts (e.g., SPIRE CSI driver or spiffe-helper sidecar) 
+	// into the podSpec so that the PicoD container can access its dynamically provisioned certificates.
 	podSpec := corev1.PodSpec{
 		ImagePullSecrets: codeInterpreterObj.Spec.Template.ImagePullSecrets,
 		RuntimeClassName: runtimeClassName,

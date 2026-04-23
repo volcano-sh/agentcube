@@ -116,7 +116,7 @@ func (s *Server) Run() error {
 	}
 
 	if s.config.MTLSCertFile != "" || s.config.MTLSKeyFile != "" || s.config.MTLSCAFile != "" {
-		klog.Warningf("TODO(author): wire mTLS in follow-up PR. mTLS flags are currently parsed but not consumed by the PicoD listener.")
+		klog.Warningf("TODO(mahil-2040): wire mTLS in follow-up PR. mTLS flags are currently parsed but not consumed by the PicoD listener.")
 	}
 
 	return server.ListenAndServe()

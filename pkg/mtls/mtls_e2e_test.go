@@ -116,13 +116,18 @@ func generateMTLSTestPKI(t *testing.T, serverSPIFFEID, clientSPIFFEID string) (
 
 // --- mTLS E2E Tests ---
 
+const (
+	testServerSPIFFEID = "spiffe://cluster.local/ns/default/sa/server"
+	testClientSPIFFEID = "spiffe://cluster.local/ns/default/sa/client"
+)
+
 // TestMTLS_E2E_SuccessfulHandshake verifies that a server configured with
 // LoadServerConfig and a client configured with LoadClientConfig can
 // complete a full mTLS handshake when both present valid SPIFFE certificates
 // signed by the same CA.
 func TestMTLS_E2E_SuccessfulHandshake(t *testing.T) {
-	serverID := "spiffe://cluster.local/ns/default/sa/server"
-	clientID := "spiffe://cluster.local/ns/default/sa/client"
+	serverID := testServerSPIFFEID
+	clientID := testClientSPIFFEID
 
 	serverCert, serverKey, clientCert, clientKey, caFile := generateMTLSTestPKI(t, serverID, clientID)
 
@@ -141,11 +146,14 @@ func TestMTLS_E2E_SuccessfulHandshake(t *testing.T) {
 	defer ln.Close()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/ping", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, "pong")
 	})
-	srv := &http.Server{Handler: mux}
-	go srv.Serve(ln)
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() { _ = srv.Serve(ln) }()
 	defer srv.Close()
 
 	// Client expects the server to present the correct SPIFFE ID
@@ -179,7 +187,7 @@ func TestMTLS_E2E_SuccessfulHandshake(t *testing.T) {
 // TestMTLS_E2E_WrongClientSPIFFEID verifies that the server rejects a client
 // whose SPIFFE ID does not match the server's expected list.
 func TestMTLS_E2E_WrongClientSPIFFEID(t *testing.T) {
-	serverID := "spiffe://cluster.local/ns/default/sa/server"
+	serverID := testServerSPIFFEID
 	actualClientID := "spiffe://cluster.local/ns/default/sa/wrong-client"
 	expectedClientID := "spiffe://cluster.local/ns/default/sa/correct-client"
 
@@ -200,11 +208,14 @@ func TestMTLS_E2E_WrongClientSPIFFEID(t *testing.T) {
 	defer ln.Close()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/ping", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, "pong")
 	})
-	srv := &http.Server{Handler: mux}
-	go srv.Serve(ln)
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() { _ = srv.Serve(ln) }()
 	defer srv.Close()
 
 	clientCfg := &Config{CertFile: clientCert, KeyFile: clientKey, CAFile: caFile}
@@ -235,7 +246,7 @@ func TestMTLS_E2E_WrongClientSPIFFEID(t *testing.T) {
 func TestMTLS_E2E_WrongServerSPIFFEID(t *testing.T) {
 	actualServerID := "spiffe://cluster.local/ns/default/sa/actual-server"
 	expectedServerID := "spiffe://cluster.local/ns/default/sa/expected-server"
-	clientID := "spiffe://cluster.local/ns/default/sa/client"
+	clientID := testClientSPIFFEID
 
 	serverCert, serverKey, clientCert, clientKey, caFile := generateMTLSTestPKI(t, actualServerID, clientID)
 
@@ -254,11 +265,14 @@ func TestMTLS_E2E_WrongServerSPIFFEID(t *testing.T) {
 	defer ln.Close()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/ping", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, "pong")
 	})
-	srv := &http.Server{Handler: mux}
-	go srv.Serve(ln)
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() { _ = srv.Serve(ln) }()
 	defer srv.Close()
 
 	// Client expects a DIFFERENT server SPIFFE ID
@@ -283,8 +297,8 @@ func TestMTLS_E2E_WrongServerSPIFFEID(t *testing.T) {
 // TestMTLS_E2E_UntrustedCA verifies that the handshake fails when the client
 // and server certificates are signed by different CAs (no shared trust).
 func TestMTLS_E2E_UntrustedCA(t *testing.T) {
-	serverID := "spiffe://cluster.local/ns/default/sa/server"
-	clientID := "spiffe://cluster.local/ns/default/sa/client"
+	serverID := testServerSPIFFEID
+	clientID := testClientSPIFFEID
 
 	// Generate two completely independent PKIs (different CAs)
 	serverCert, serverKey, _, _, serverCA := generateMTLSTestPKI(t, serverID, "spiffe://unused")
@@ -305,11 +319,14 @@ func TestMTLS_E2E_UntrustedCA(t *testing.T) {
 	defer ln.Close()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/ping", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, "pong")
 	})
-	srv := &http.Server{Handler: mux}
-	go srv.Serve(ln)
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() { _ = srv.Serve(ln) }()
 	defer srv.Close()
 
 	// Client trusts a DIFFERENT CA
@@ -334,7 +351,7 @@ func TestMTLS_E2E_UntrustedCA(t *testing.T) {
 // TestMTLS_E2E_NoClientCert verifies that the server rejects a client that
 // does not present any certificate (plain TLS, not mTLS).
 func TestMTLS_E2E_NoClientCert(t *testing.T) {
-	serverID := "spiffe://cluster.local/ns/default/sa/server"
+	serverID := testServerSPIFFEID
 
 	serverCert, serverKey, _, _, caFile := generateMTLSTestPKI(t, serverID, "spiffe://unused")
 
@@ -352,11 +369,14 @@ func TestMTLS_E2E_NoClientCert(t *testing.T) {
 	defer ln.Close()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/ping", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, "pong")
 	})
-	srv := &http.Server{Handler: mux}
-	go srv.Serve(ln)
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() { _ = srv.Serve(ln) }()
 	defer srv.Close()
 
 	// Plain TLS client — no client cert, just trust the CA

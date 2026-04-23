@@ -66,7 +66,7 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		// map entry is deleted before this point so only one sender can ever
 		// reach here for a given key. The buffer is therefore always empty and
 		// this send never blocks. The default branch guards against the unlikely
-		// case where the receiver has already gone away (e.g. context cancelled).
+		// case where the receiver has already gone away (e.g. context canceled).
 		select {
 		case resultChan <- SandboxStatusUpdate{Sandbox: sandbox}:
 			klog.V(2).Infof("Notified waiter about sandbox %s/%s", sandbox.Namespace, sandbox.Name)

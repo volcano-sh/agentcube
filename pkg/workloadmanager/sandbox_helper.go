@@ -35,6 +35,11 @@ const (
 	defaultSandboxReadyDialTimeout   = 1 * time.Second
 )
 
+// sandboxCreateTimeout is the deadline for a sandbox to reach the Running
+// state before createSandbox bails. Declared as a var (not const) so tests
+// can override it. Keep in sync with the router settings.
+var sandboxCreateTimeout = 2 * time.Minute
+
 var sandboxEntrypointDial = func(ctx context.Context, endpoint string, timeout time.Duration) error {
 	dialer := &net.Dialer{Timeout: timeout}
 	conn, err := dialer.DialContext(ctx, "tcp", endpoint)

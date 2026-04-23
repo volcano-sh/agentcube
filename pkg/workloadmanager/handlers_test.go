@@ -304,6 +304,44 @@ func TestServerCreateSandbox_ContextCanceled(t *testing.T) {
 	require.Equal(t, 1, deleteCalls, "rollback defer should still delete the sandbox on ctx cancel")
 }
 
+// TestServerCreateSandbox_Timeout verifies that createSandbox returns a
+// timeout error and triggers rollback when the readiness deadline elapses
+// before a Running notification arrives. The package-level deadline is
+// shrunk so the test runs in milliseconds.
+func TestServerCreateSandbox_Timeout(t *testing.T) {
+	oldTimeout := sandboxCreateTimeout
+	sandboxCreateTimeout = 20 * time.Millisecond
+	defer func() { sandboxCreateTimeout = oldTimeout }()
+
+	store := &fakeStore{}
+	server := &Server{storeClient: store, k8sClient: &K8sClient{}}
+
+	resultChan := make(chan SandboxStatusUpdate, 1) // never written
+	sb := readySandbox()
+
+	patches := gomonkey.NewPatches()
+	defer patches.Reset()
+
+	patches.ApplyFunc(createSandbox, func(_ context.Context, _ dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox) (*SandboxInfo, error) {
+		return &SandboxInfo{Name: sandbox.Name, Namespace: sandbox.Namespace}, nil
+	})
+	deleteCalls := 0
+	patches.ApplyFunc(deleteSandbox, func(_ context.Context, _ dynamic.Interface, _, _ string) error {
+		deleteCalls++
+		return nil
+	})
+
+	start := time.Now()
+	resp, err := server.createSandbox(context.Background(), nil, sb, nil, makeEntry(), resultChan)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Contains(t, err.Error(), "sandbox creation timed out")
+	require.Less(t, elapsed, time.Second, "createSandbox should return shortly after the shortened deadline")
+	require.Equal(t, 1, deleteCalls, "rollback defer should delete the sandbox when the deadline fires")
+}
+
 func newFakeServer() *Server {
 	return &Server{
 		config:            &Config{SandboxReadyProbeTimeout: 5 * time.Millisecond, SandboxReadyProbeInterval: time.Millisecond},

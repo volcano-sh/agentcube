@@ -28,6 +28,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from contextlib import asynccontextmanager
@@ -40,6 +41,8 @@ EXPECTED_MCP_TOOLS = frozenset(
         "execute_command",
         "write_file",
         "list_files",
+        "upload_file",
+        "download_file",
         "stop_session",
     }
 )
@@ -311,6 +314,66 @@ class TestMCPCodeInterpreterE2E(unittest.TestCase):
                 self.assertFalse(st.isError, _tool_result_text(st))
                 d_stop = json.loads(_tool_result_text(st))
                 self.assertEqual(d_stop.get("status"), "stopped")
+
+        _run_async(body())
+
+    def test_mcp_upload_download_roundtrip(self):
+        """upload_file (local temp) -> download_file; paths are on the MCP server host (E2E subprocess)."""
+
+        async def body():
+            payload_bytes = f"upload-dl-{int(time.time())}\n".encode("utf-8")
+            remote = f"mcp_roundtrip_{int(time.time())}.txt"
+            sid: str | None = None
+            src_path: str | None = None
+            out_path: str | None = None
+            async with _mcp_client_session(self.host, self.port) as (session, _):
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False) as src:
+                        src.write(payload_bytes)
+                        src.flush()
+                        src_path = src.name
+                    assert src_path is not None
+                    out_path = f"{src_path}.downloaded"
+
+                    u = await session.call_tool(
+                        "upload_file",
+                        {
+                            "local_path": src_path,
+                            "remote_path": remote,
+                            "session_reuse": True,
+                        },
+                    )
+                    self.assertFalse(u.isError, _tool_result_text(u))
+                    sid = json.loads(_tool_result_text(u))["session_id"]
+
+                    d = await session.call_tool(
+                        "download_file",
+                        {
+                            "remote_path": remote,
+                            "local_path": out_path,
+                            "session_id": sid,
+                            "session_reuse": True,
+                        },
+                    )
+                    self.assertFalse(d.isError, _tool_result_text(d))
+
+                    with open(out_path, "rb") as f:
+                        self.assertEqual(f.read(), payload_bytes)
+                    print(f"[MCP E2E] upload_file -> download_file roundtrip ok remote={remote!r}")
+                finally:
+                    if src_path:
+                        try:
+                            os.unlink(src_path)
+                        except OSError:
+                            pass
+                    if out_path:
+                        try:
+                            os.unlink(out_path)
+                        except OSError:
+                            pass
+                    if sid:
+                        st = await session.call_tool("stop_session", {"session_id": sid})
+                        self.assertFalse(st.isError, _tool_result_text(st))
 
         _run_async(body())
 

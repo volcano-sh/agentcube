@@ -333,6 +333,94 @@ def create_mcp_server(
         return payload
 
     @app.tool(structured_output=False)
+    def upload_file(
+        local_path: Annotated[
+            str,
+            Field(
+                description="Path to a file on the host running this MCP server (not the sandbox).",
+            ),
+        ],
+        remote_path: Annotated[
+            str,
+            Field(
+                description="Destination in the workspace (relative to session working directory).",
+            ),
+        ],
+        session_id: Annotated[
+            Optional[str],
+            Field(default=None, description="Prior session_id; omit for new session."),
+        ] = None,
+        session_reuse: Annotated[
+            bool,
+            Field(
+                default=False,
+                description="Keep session for follow-up; pass session_id; stop_session when done.",
+            ),
+        ] = False,
+    ) -> dict[str, Any]:
+        """Upload a local file to the workspace (multipart, same as CodeInterpreterClient.upload_file)."""
+        cfg = _load_server()
+
+        def _op(c: Any) -> None:
+            c.upload_file(local_path, remote_path)
+
+        _, meta, sid = _call_with_session_recovery(
+            session_id, session_reuse, cfg, CodeInterpreterClient, _op
+        )
+        payload: dict[str, Any] = {
+            "session_id": sid,
+            "local_path": local_path,
+            "remote_path": remote_path,
+            "status": "ok",
+        }
+        payload.update(meta)
+        return payload
+
+    @app.tool(structured_output=False)
+    def download_file(
+        remote_path: Annotated[
+            str,
+            Field(
+                description="File in the workspace (relative to session working directory).",
+            ),
+        ],
+        local_path: Annotated[
+            str,
+            Field(
+                description="Destination path on the host running this MCP server (not the sandbox).",
+            ),
+        ],
+        session_id: Annotated[
+            Optional[str],
+            Field(default=None, description="Prior session_id; omit for new session."),
+        ] = None,
+        session_reuse: Annotated[
+            bool,
+            Field(
+                default=False,
+                description="Keep session for follow-up; pass session_id; stop_session when done.",
+            ),
+        ] = False,
+    ) -> dict[str, Any]:
+        """Download a workspace file to a local path (same as CodeInterpreterClient.download_file)."""
+        cfg = _load_server()
+
+        def _op(c: Any) -> None:
+            c.download_file(remote_path, local_path)
+
+        _, meta, sid = _call_with_session_recovery(
+            session_id, session_reuse, cfg, CodeInterpreterClient, _op
+        )
+        payload: dict[str, Any] = {
+            "session_id": sid,
+            "remote_path": remote_path,
+            "local_path": local_path,
+            "status": "ok",
+        }
+        payload.update(meta)
+        return payload
+
+    @app.tool(structured_output=False)
     def stop_session(
         session_id: Annotated[
             str,

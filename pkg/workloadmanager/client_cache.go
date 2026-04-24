@@ -230,18 +230,28 @@ func NewTokenCache(maxSize int, ttl time.Duration) *TokenCache {
 // Returns found status, authenticated status, and username
 // If found is false, the token was not in cache or expired
 func (c *TokenCache) Get(token string) (found bool, authenticated bool, username string) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	entry, exists := c.cache[token]
 	if !exists {
 		return false, false, ""
 	}
 
-	// Check if entry is expired
+	// Expired entries are dropped from the cache and LRU list so they do not
+	// occupy a slot until natural eviction pushes them out. Without this, a
+	// token the caller will never look up again can keep a fresh, live entry
+	// out of the cache under size pressure.
 	if time.Since(entry.lastAccess) > c.ttl {
+		c.lruList.Remove(entry.element)
+		delete(c.cache, token)
 		return false, false, ""
 	}
+
+	// Move to front on a hit so the cache actually behaves LRU, matching the
+	// behavior of ClientCache.Get and the "LRU cache" promise in the type
+	// comment above.
+	c.lruList.MoveToFront(entry.element)
 
 	return true, entry.authenticated, entry.username
 }

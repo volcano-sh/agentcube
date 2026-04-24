@@ -18,15 +18,24 @@ from unittest.mock import MagicMock
 
 from agentcube.integrations.langchain import AgentCubeSandbox
 from agentcube.code_interpreter import CodeInterpreterClient
-from langchain_tests.integration_tests import SandboxIntegrationTests
 
+try:
+    from langchain_tests.integration_tests import SandboxIntegrationTests
+    HAS_LANGCHAIN_TESTS = True
+except ImportError:
+    # Fallback for CI environments where optional dependencies are not installed
+    class SandboxIntegrationTests:  # type: ignore
+        pass
+    HAS_LANGCHAIN_TESTS = False
+
+@pytest.mark.skipif(not HAS_LANGCHAIN_TESTS, reason="langchain-tests not installed")
 class TestAgentCubeSandboxStandard(SandboxIntegrationTests):
     """Standard LangChain integration tests for AgentCubeSandbox."""
 
     @pytest.fixture(scope="class")
     def sandbox(self) -> Iterator[AgentCubeSandbox]:
         """Provide a configured AgentCubeSandbox for testing.
-        
+
         Note: This currently uses a mocked backend to allow CI execution.
         To test against a real backend, provide the necessary environment variables
         (ROUTER_URL, etc.) and remove the mocking logic.
@@ -35,16 +44,16 @@ class TestAgentCubeSandboxStandard(SandboxIntegrationTests):
         # that simulates the behavior required by the test suite.
         mock_client = MagicMock(spec=CodeInterpreterClient)
         mock_client.session_id = "test-session-id"
-        
+
         # Simulate successful command execution
         mock_client.execute_command.return_value = "standard output"
-        
+
         # Simulate file operations
         mock_client.list_files.return_value = []
-        
+
         # Return the sandbox with the mocked client
         backend = AgentCubeSandbox(client=mock_client)
-        
+
         try:
             yield backend
         finally:

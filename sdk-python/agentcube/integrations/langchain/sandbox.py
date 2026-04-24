@@ -33,7 +33,7 @@ try:
     )
     from deepagents.backends.sandbox import BaseSandbox
 except ModuleNotFoundError as e:
-    # Catching only if deepagents itself is missing. 
+    # Catching only if deepagents itself is missing.
     # If deepagents is installed but has internal import errors, we should let them bubble up.
     if e.name and (e.name.startswith("deepagents") or "deepagents" in e.name):
         # Define fallback classes if deepagents is not installed
@@ -119,7 +119,7 @@ class AgentCubeSandbox(BaseSandbox):
             output = e.stdout
             if e.stderr:
                 output = f"{output}\n{e.stderr}".strip() if output else e.stderr
-            
+
             return ExecuteResponse(
                 output=output,
                 exit_code=e.exit_code,

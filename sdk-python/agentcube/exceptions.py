@@ -23,7 +23,7 @@ class CommandExecutionError(AgentCubeError):
         self.stdout = stdout
         self.stderr = stderr
         self.command = command
-        
+
         # Combine for the error message
         output = stdout
         if stderr:

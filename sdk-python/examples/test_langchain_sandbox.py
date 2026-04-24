@@ -23,7 +23,7 @@ async def test_sandbox_provider():
     This demonstrates the BaseSandbox interface compliance.
     """
     print("🛠️ Initializing AgentCube LangChain Sandbox Provider...")
-    
+
     # 1. Setup the client
     # Ensure ROUTER_URL is set in your environment
     try:
@@ -31,7 +31,7 @@ async def test_sandbox_provider():
     except Exception as e:
         print(f"❌ Failed to initialize client: {e}")
         return
-    
+
     # 2. Initialize the Sandbox Provider
     # This object implements the LangChain BaseSandbox interface
     sandbox = AgentCubeSandbox(client)
@@ -42,10 +42,10 @@ async def test_sandbox_provider():
         print("\n📝 Testing code execution...")
         cmd = "python3 -c \"print('Hello from AgentCube Sandbox!'); import os; print(f'Working dir: {os.getcwd()}')\""
         response = await sandbox.aexecute(cmd)
-        
+
         print(f"--- Output ---\n{response.output}")
         print(f"Exit Code: {response.exit_code}")
-        
+
         if response.exit_code == 0:
             print("✅ Execution successful.")
 
@@ -88,5 +88,5 @@ if __name__ == "__main__":
     if not os.getenv("ROUTER_URL"):
         print("⚠️ Warning: ROUTER_URL environment variable is not set.")
         print("Please set it before running (e.g., export ROUTER_URL=http://localhost:8080)")
-    
+
     asyncio.run(test_sandbox_provider())

@@ -82,7 +82,7 @@ class TestAgentCubeSandbox(unittest.TestCase):
         """Test downloading files."""
         # Setup mock temp file
         mock_tmpfile.return_value.__enter__.return_value.name = "/tmp/fake_path"
-        
+
         # Mock file content
         file_content = b"file content"
         mock_open.return_value.__enter__.return_value.read.return_value = file_content

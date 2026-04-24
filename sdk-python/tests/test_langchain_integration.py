@@ -71,8 +71,8 @@ class TestAgentCubeSandbox(unittest.TestCase):
 
         # Verify client calls
         self.assertEqual(self.mock_client.write_file.call_count, 2)
-        self.mock_client.write_file.assert_any_call(b"hello", "test1.txt")
-        self.mock_client.write_file.assert_any_call(b"world", "test2.txt")
+        self.mock_client.write_file.assert_any_call("hello", "test1.txt")
+        self.mock_client.write_file.assert_any_call("world", "test2.txt")
 
     @patch("os.path.exists", return_value=True)
     @patch("os.remove")

@@ -197,8 +197,13 @@ type tokenCacheEntry struct {
 	token         string
 	authenticated bool
 	username      string
-	lastAccess    time.Time
-	element       *list.Element
+	// validatedAt is the wall-clock time the entry was last confirmed against
+	// the Kubernetes TokenReview API (i.e. on Set). TTL is measured from this
+	// time, not from the last Get — reads intentionally do NOT slide the
+	// expiration so a compromised token in active use still gets re-validated
+	// every ttl. This matches ClientCache's use of absolute tokenExpiry.
+	validatedAt time.Time
+	element     *list.Element
 }
 
 // TokenCache is a thread-safe LRU cache for token validation results
@@ -242,7 +247,7 @@ func (c *TokenCache) Get(token string) (found bool, authenticated bool, username
 	// occupy a slot until natural eviction pushes them out. Without this, a
 	// token the caller will never look up again can keep a fresh, live entry
 	// out of the cache under size pressure.
-	if time.Since(entry.lastAccess) > c.ttl {
+	if time.Since(entry.validatedAt) > c.ttl {
 		c.lruList.Remove(entry.element)
 		delete(c.cache, token)
 		return false, false, ""
@@ -266,7 +271,7 @@ func (c *TokenCache) Set(token string, authenticated bool, username string) {
 		// Update existing entry
 		entry.authenticated = authenticated
 		entry.username = username
-		entry.lastAccess = time.Now()
+		entry.validatedAt = time.Now()
 		c.lruList.MoveToFront(entry.element)
 		return
 	}
@@ -281,7 +286,7 @@ func (c *TokenCache) Set(token string, authenticated bool, username string) {
 		token:         token,
 		authenticated: authenticated,
 		username:      username,
-		lastAccess:    time.Now(),
+		validatedAt:   time.Now(),
 	}
 	entry.element = c.lruList.PushFront(entry)
 	c.cache[token] = entry

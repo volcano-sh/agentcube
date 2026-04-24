@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""AgentCube Code Interpreter sandbox integration for LangChain."""
+"""LangChain integration for AgentCube Code Interpreter."""
 
 from __future__ import annotations
 
@@ -141,7 +141,10 @@ class AgentCubeSandbox(BaseSandbox):
         results = []
         for path, content in files:
             try:
-                # Use write_file which now supports bytes
+                # If bytes, try to decode to string as write_file currently only supports str
+                # SDK support for raw bytes will be added in a separate PR.
+                if isinstance(content, bytes):
+                    content = content.decode("utf-8")
                 self._client.write_file(content, path)
                 results.append(FileUploadResponse(path=path, error=None))
             except Exception as e:

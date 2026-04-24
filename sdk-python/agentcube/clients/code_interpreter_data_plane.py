@@ -150,14 +150,22 @@ class CodeInterpreterDataPlaneClient:
         resp.raise_for_status()
 
         result = resp.json()
+        stdout = result.get("stdout", "")
+        stderr = result.get("stderr", "")
+
         if result["exit_code"] != 0:
              raise CommandExecutionError(
                  exit_code=result["exit_code"],
-                 stderr=result["stderr"],
+                 stdout=stdout,
+                 stderr=stderr,
                  command=command
              )
 
-        return result["stdout"]
+        # Combine stdout and stderr for the caller if stderr is present
+        output = stdout
+        if stderr:
+            output = f"{stdout}\n{stderr}".strip() if stdout else stderr
+        return output
 
     def run_code(self, language: str, code: str, timeout: Optional[float] = None) -> str:
         """Run a code snippet (python or bash)."""
@@ -196,12 +204,9 @@ class CodeInterpreterDataPlaneClient:
 
         return self.execute_command(cmd, timeout)
 
-    def write_file(self, content: Union[str, bytes], remote_path: str) -> None:
-        """Write text or binary content to a file."""
-        if isinstance(content, str):
-            content_bytes = content.encode('utf-8')
-        else:
-            content_bytes = content
+    def write_file(self, content: str, remote_path: str) -> None:
+        """Write text content to a file."""
+        content_bytes = content.encode('utf-8')
         content_b64 = base64.b64encode(content_bytes).decode('utf-8')
 
         payload = {

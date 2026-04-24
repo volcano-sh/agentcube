@@ -44,12 +44,13 @@ class TestAgentCubeSandbox(unittest.TestCase):
     def test_execute_failure(self):
         """Test execute command failure (CommandExecutionError)."""
         self.mock_client.execute_command.side_effect = CommandExecutionError(
-            exit_code=127, stderr="command not found", command="invalid"
+            exit_code=127, stdout="some output", stderr="command not found", command="invalid"
         )
 
         response = self.sandbox.execute("invalid")
 
-        self.assertEqual(response.output, "command not found")
+        # Expect combined output
+        self.assertEqual(response.output, "some output\ncommand not found")
         self.assertEqual(response.exit_code, 127)
         self.mock_client.execute_command.assert_called_once()
 
@@ -73,10 +74,15 @@ class TestAgentCubeSandbox(unittest.TestCase):
         self.mock_client.write_file.assert_any_call(b"hello", "test1.txt")
         self.mock_client.write_file.assert_any_call(b"world", "test2.txt")
 
+    @patch("os.path.exists", return_value=True)
     @patch("os.remove")
     @patch("builtins.open", new_callable=MagicMock)
-    def test_download_files(self, mock_open, mock_remove):
+    @patch("tempfile.NamedTemporaryFile")
+    def test_download_files(self, mock_tmpfile, mock_open, mock_remove, mock_exists):
         """Test downloading files."""
+        # Setup mock temp file
+        mock_tmpfile.return_value.__enter__.return_value.name = "/tmp/fake_path"
+        
         # Mock file content
         file_content = b"file content"
         mock_open.return_value.__enter__.return_value.read.return_value = file_content
@@ -92,6 +98,9 @@ class TestAgentCubeSandbox(unittest.TestCase):
 
         self.mock_client.download_file.assert_called_once()
         self.assertTrue(mock_open.called)
+        # Verify cleanup
+        mock_exists.assert_called_with("/tmp/fake_path")
+        mock_remove.assert_called_with("/tmp/fake_path")
 
 if __name__ == "__main__":
     unittest.main()

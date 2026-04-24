@@ -16,6 +16,9 @@ dependencies = [
     "cryptography"
 ]
 
+[project.optional-dependencies]
+langchain = ["deepagents", "langchain-core", "langchain-tests"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["agentcube*"]

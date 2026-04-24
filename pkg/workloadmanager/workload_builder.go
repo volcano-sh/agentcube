@@ -327,6 +327,45 @@ func buildCodeInterpreterEnvVars(templateEnv []corev1.EnvVar, authMode runtimev1
 	return envVars
 }
 
+// buildWarmPoolObjects constructs the placeholder Sandbox and SandboxClaim for the
+// warm-pool path. It also logs a warning when a NetworkPolicy is configured, because
+// warm-pool pods do not carry SandboxNameLabelKey and enforcement cannot be applied.
+func buildWarmPoolObjects(namespace, sandboxName, sessionID string, idleTimeout time.Duration, ci *runtimev1alpha1.CodeInterpreter, sessionNetworkPolicy *runtimev1alpha1.SandboxNetworkPolicy) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim) {
+	claim := buildSandboxClaimObject(&buildSandboxClaimParams{
+		namespace:           namespace,
+		name:                sandboxName,
+		sandboxTemplateName: ci.Name,
+		sessionID:           sessionID,
+		idleTimeout:         idleTimeout,
+		ownerReference: &metav1.OwnerReference{
+			APIVersion: ci.APIVersion,
+			Kind:       ci.Kind,
+			Name:       ci.Name,
+			UID:        ci.UID,
+		},
+	})
+	sb := &sandboxv1alpha1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      sandboxName,
+			Labels:    map[string]string{SessionIdLabelKey: sessionID},
+		},
+	}
+	if ci.Spec.MaxSessionDuration != nil {
+		shutdownTime := metav1.NewTime(time.Now().Add(ci.Spec.MaxSessionDuration.Duration))
+		sb.Spec.Lifecycle.ShutdownTime = &shutdownTime
+	}
+	// Warm-pool pods are pre-created and do not carry SandboxNameLabelKey, so a
+	// NetworkPolicy PodSelector would never match them. Skip NP creation entirely
+	// to avoid the illusion of enforcement. Future support requires agent-sandbox
+	// to propagate claim labels onto the bound pod (or a post-bind pod patch).
+	if effectiveNetworkPolicy(sessionNetworkPolicy, ci.Spec.Template.NetworkPolicy) != nil {
+		klog.Warningf("network policy configured for %s/%s but warm-pool pods do not carry %s: enforcement skipped for this session",
+			namespace, ci.Name, SandboxNameLabelKey)
+	}
+	return sb, claim
+}
+
 func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers, routerSelector map[string]string, routerNamespace string, sessionNetworkPolicy *runtimev1alpha1.SandboxNetworkPolicy) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *networkingv1.NetworkPolicy, *sandboxEntry, error) {
 	codeInterpreterKey := namespace + "/" + codeInterpreterName
 	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
@@ -380,39 +419,9 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 
 	if codeInterpreterObj.Spec.WarmPoolSize != nil && *codeInterpreterObj.Spec.WarmPoolSize > 0 {
-		sandboxClaim := buildSandboxClaimObject(&buildSandboxClaimParams{
-			namespace:           namespace,
-			name:                sandboxName,
-			sandboxTemplateName: codeInterpreterName,
-			sessionID:           sessionID,
-			idleTimeout:         idleTimeout,
-			ownerReference: &metav1.OwnerReference{
-				APIVersion: codeInterpreterObj.APIVersion,
-				Kind:       codeInterpreterObj.Kind,
-				Name:       codeInterpreterObj.Name,
-				UID:        codeInterpreterObj.UID,
-			},
-		})
-		simpleSandbox := &sandboxv1alpha1.Sandbox{
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: namespace,
-				Name:      sandboxName,
-				Labels: map[string]string{
-					SessionIdLabelKey: sessionID,
-				},
-			},
-		}
-		if codeInterpreterObj.Spec.MaxSessionDuration != nil {
-			shutdownTime := metav1.NewTime(time.Now().Add(codeInterpreterObj.Spec.MaxSessionDuration.Duration))
-			simpleSandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
-		}
 		sandboxEntry.Kind = types.SandboxClaimsKind
-		np := buildNetworkPolicy(sandboxName, namespace, effectiveNetworkPolicy(sessionNetworkPolicy, codeInterpreterObj.Spec.Template.NetworkPolicy), routerSelector, routerNamespace)
-		// TODO: warm-pool pods do not currently carry SandboxNameLabelKey, so the
-		// NP PodSelector won't match them and enforcement is a no-op for this path.
-		// Fix requires agent-sandbox to propagate claim labels onto the bound pod,
-		// or a post-ready pod patch. Tracked in issue #216.
-		return simpleSandbox, sandboxClaim, np, sandboxEntry, nil
+		simpleSandbox, sandboxClaim := buildWarmPoolObjects(namespace, sandboxName, sessionID, idleTimeout, &codeInterpreterObj, sessionNetworkPolicy)
+		return simpleSandbox, sandboxClaim, nil, sandboxEntry, nil
 	}
 
 	// Normalize RuntimeClassName: if it's an empty string, set it to nil

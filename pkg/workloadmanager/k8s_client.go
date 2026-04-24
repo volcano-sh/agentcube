@@ -18,6 +18,7 @@ package workloadmanager
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -407,6 +408,30 @@ func deleteNetworkPolicy(ctx context.Context, clientset kubernetes.Interface, na
 	err := clientset.NetworkingV1().NetworkPolicies(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete network policy %s/%s: %w", namespace, name, err)
+	}
+	return nil
+}
+
+// patchNetworkPolicyOwner patches np's ownerReferences onto the already-created
+// NetworkPolicy object in the cluster. Called after the sandbox UID is known so
+// that Kubernetes GC can cascade-delete the NP if the owner is removed out-of-band.
+func patchNetworkPolicyOwner(ctx context.Context, clientset kubernetes.Interface, np *networkingv1.NetworkPolicy) error {
+	if np == nil || len(np.OwnerReferences) == 0 {
+		return nil
+	}
+	patch := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"ownerReferences": np.OwnerReferences,
+		},
+	}
+	data, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("marshal owner patch for network policy %s/%s: %w", np.Namespace, np.Name, err)
+	}
+	_, err = clientset.NetworkingV1().NetworkPolicies(np.Namespace).Patch(
+		ctx, np.Name, k8stypes.MergePatchType, data, metav1.PatchOptions{})
+	if err != nil {
+		return fmt.Errorf("patch network policy %s/%s owner: %w", np.Namespace, np.Name, err)
 	}
 	return nil
 }

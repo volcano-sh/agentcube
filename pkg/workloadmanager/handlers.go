@@ -25,6 +25,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
@@ -217,6 +218,51 @@ func setNetworkPolicyOwner(np *networkingv1.NetworkPolicy, apiVersion, kind, nam
 	}}
 }
 
+// createNetworkPolicyAndWorkload creates the NetworkPolicy (if non-nil) before the
+// workload so the deny-all is in place before the CNI wires up the pod's network
+// interface. If workload creation fails, the NP is cleaned up inline as defense-in-depth;
+// the rollback defer in createSandbox also covers this path.
+// On success, setNetworkPolicyOwner has populated networkPolicy.OwnerReferences.
+func (s *Server) createNetworkPolicyAndWorkload(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, networkPolicy *networkingv1.NetworkPolicy) error {
+	if networkPolicy != nil {
+		if err := createNetworkPolicy(ctx, s.k8sClient.clientset, networkPolicy); err != nil {
+			return api.NewInternalError(err)
+		}
+	}
+	if err := createWorkload(ctx, dynamicClient, sandbox, sandboxClaim, networkPolicy); err != nil {
+		if networkPolicy != nil {
+			ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if delErr := deleteNetworkPolicy(ctxTimeout, s.k8sClient.clientset, networkPolicy.Namespace, networkPolicy.Name); delErr != nil {
+				klog.Warningf("NetworkPolicy %s/%s cleanup after workload create failure: %v",
+					networkPolicy.Namespace, networkPolicy.Name, delErr)
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+// waitForSandboxResult blocks until the sandbox reports ready, the context is cancelled, or the 2-minute deadline fires.
+func (s *Server) waitForSandboxResult(ctx context.Context, sandbox *sandboxv1alpha1.Sandbox, resultChan <-chan SandboxStatusUpdate) (*sandboxv1alpha1.Sandbox, error) {
+	// Use NewTimer so we can stop it explicitly when another branch wins,
+	// preventing the runtime from retaining the timer until it fires.
+	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
+	select {
+	case result := <-resultChan:
+		timer.Stop()
+		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", result.Sandbox.Namespace, result.Sandbox.Name)
+		return result.Sandbox, nil
+	case <-ctx.Done():
+		timer.Stop()
+		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
+		return nil, ctx.Err()
+	case <-timer.C:
+		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
+		return nil, errSandboxCreationTimeout
+	}
+}
+
 // createSandbox performs sandbox creation and returns the response payload or an error with an HTTP status code.
 func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, networkPolicy *networkingv1.NetworkPolicy, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
 	placeholder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
@@ -227,8 +273,8 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		return nil, api.NewInternalError(fmt.Errorf("store sandbox placeholder failed: %w", err))
 	}
 
-	// Register rollback right after the placeholder is stored so that a K8s
-	// creation failure does not leave an orphaned store entry.
+	// Register rollback right after the placeholder is stored so any subsequent
+	// failure (NP create, workload create, ready wait) cleans up the store entry.
 	needRollbackSandbox := true
 	defer func() {
 		if !needRollbackSandbox {
@@ -237,36 +283,24 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		s.rollbackSandboxCreation(dynamicClient, sandbox, sandboxClaim, networkPolicy, sandboxEntry.SessionID)
 	}()
 
-	if err := createWorkload(ctx, dynamicClient, sandbox, sandboxClaim, networkPolicy); err != nil {
+	if err := s.createNetworkPolicyAndWorkload(ctx, dynamicClient, sandbox, sandboxClaim, networkPolicy); err != nil {
 		return nil, err
 	}
 
-	// Create NetworkPolicy after the workload so the sandbox UID is available in
-	// the OwnerReference set by createWorkload. Uses the workloadmanager's own client.
+	// Patch the already-created NP to add the OwnerReference now that we have the UID.
+	// Best-effort GC safety net: if the sandbox is deleted out-of-band, GC cascade-deletes
+	// the NP. Explicit deletion in handleDeleteSandbox covers the normal path, so a
+	// patch failure is logged but not fatal.
 	if networkPolicy != nil {
-		if err := createNetworkPolicy(ctx, s.k8sClient.clientset, networkPolicy); err != nil {
-			return nil, api.NewInternalError(err)
+		if err := patchNetworkPolicyOwner(ctx, s.k8sClient.clientset, networkPolicy); err != nil {
+			klog.Warningf("NetworkPolicy %s/%s owner patch failed, GC cascade will not apply: %v",
+				networkPolicy.Namespace, networkPolicy.Name, err)
 		}
 	}
 
-	// Use NewTimer so we can stop it explicitly when another branch wins,
-	// preventing the runtime from retaining the timer until it fires.
-	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
-
-
-	var createdSandbox *sandboxv1alpha1.Sandbox
-	select {
-	case result := <-resultChan:
-		timer.Stop()
-		createdSandbox = result.Sandbox
-		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
-	case <-ctx.Done():
-		timer.Stop()
-		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
-		return nil, ctx.Err()
-	case <-timer.C:
-		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
-		return nil, errSandboxCreationTimeout
+	createdSandbox, err := s.waitForSandboxResult(ctx, sandbox, resultChan)
+	if err != nil {
+		return nil, err
 	}
 
 	// agent-sandbox create pod with same name as sandbox if no warmpool is used

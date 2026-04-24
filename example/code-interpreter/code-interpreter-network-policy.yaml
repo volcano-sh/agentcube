@@ -1,15 +1,15 @@
 # Example: CodeInterpreter with NetworkPolicy enabled
 #
-# Three examples are shown below:
+# Set networkPolicy to a non-nil value to enforce isolation. A deny-all baseline
+# is created with automatic allow rules for router ingress and DNS egress.
+# Leave networkPolicy unset (nil) to disable enforcement entirely.
 #
-# 1. Restricted mode  - deny-all baseline, DNS and router ingress always allowed
-# 2. Restricted mode with extra egress - allow outbound to a specific CIDR
-# 3. Custom mode      - bring your own raw NetworkPolicy rules
-#
-# Default mode is "None" (no NetworkPolicy created), so existing setups are unaffected.
+# Two examples are shown:
+#   1. Default enforcement — router ingress and DNS egress only
+#   2. Extra egress        — allow outbound to a specific CIDR/port
 
 ---
-# 1. Restricted mode — simplest secure setup
+# 1. Default enforcement — simplest secure setup
 apiVersion: runtime.agentcube.volcano.sh/v1alpha1
 kind: CodeInterpreter
 metadata:
@@ -30,17 +30,16 @@ spec:
       requests:
         cpu: "100m"
         memory: "128Mi"
-    networkPolicy:
-      mode: Restricted
+    networkPolicy: {}
   sessionTimeout: "15m"
   maxSessionDuration: "8h"
 
 ---
-# 2. Restricted mode with additional egress — allow outbound to 10.0.0.0/8 on port 443
+# 2. Extra egress — allow outbound to 10.0.0.0/8 on port 443
 apiVersion: runtime.agentcube.volcano.sh/v1alpha1
 kind: CodeInterpreter
 metadata:
-  name: interpreter-restricted-egress
+  name: interpreter-extra-egress
   namespace: default
 spec:
   ports:
@@ -58,51 +57,11 @@ spec:
         cpu: "100m"
         memory: "128Mi"
     networkPolicy:
-      mode: Restricted
-      allowedEgress:
+      egress:
         - cidrs:
             - "10.0.0.0/8"
           ports:
             - protocol: TCP
               port: 443
-  sessionTimeout: "15m"
-  maxSessionDuration: "8h"
-
----
-# 3. Custom mode — raw NetworkPolicy rules, full control
-apiVersion: runtime.agentcube.volcano.sh/v1alpha1
-kind: CodeInterpreter
-metadata:
-  name: interpreter-custom
-  namespace: default
-spec:
-  ports:
-    - pathPrefix: "/"
-      port: 8080
-      protocol: "HTTP"
-  template:
-    image: ghcr.io/volcano-sh/picod:latest
-    imagePullPolicy: IfNotPresent
-    resources:
-      limits:
-        cpu: "500m"
-        memory: "512Mi"
-      requests:
-        cpu: "100m"
-        memory: "128Mi"
-    networkPolicy:
-      mode: Custom
-      custom:
-        ingress:
-          - from:
-              - podSelector:
-                  matchLabels:
-                    app: agentcube-router
-        egress:
-          - ports:
-              - protocol: UDP
-                port: 53
-              - protocol: TCP
-                port: 53
   sessionTimeout: "15m"
   maxSessionDuration: "8h"

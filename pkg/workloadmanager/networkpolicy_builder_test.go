@@ -26,7 +26,6 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/utils/ptr"
 )
 
 var (
@@ -34,26 +33,15 @@ var (
 	testRouterNamespace = "agentcube-system"
 )
 
-func TestBuildNetworkPolicy_NoneMode(t *testing.T) {
-	// nil spec → no NP
+func TestBuildNetworkPolicy_NilSpec(t *testing.T) {
+	// nil spec → no NP (no enforcement)
 	np := buildNetworkPolicy("sandbox-1", "default", nil, testRouterSelector, testRouterNamespace)
-	assert.Nil(t, np)
-
-	// explicit None → no NP
-	np = buildNetworkPolicy("sandbox-1", "default", &runtimev1alpha1.SandboxNetworkPolicy{
-		Mode: runtimev1alpha1.NetworkPolicyModeNone,
-	}, testRouterSelector, testRouterNamespace)
-	assert.Nil(t, np)
-
-	// empty mode string → no NP
-	np = buildNetworkPolicy("sandbox-1", "default", &runtimev1alpha1.SandboxNetworkPolicy{}, testRouterSelector, testRouterNamespace)
 	assert.Nil(t, np)
 }
 
 func TestBuildNetworkPolicy_Metadata(t *testing.T) {
-	np := buildNetworkPolicy("my-sandbox", "my-ns", &runtimev1alpha1.SandboxNetworkPolicy{
-		Mode: runtimev1alpha1.NetworkPolicyModeRestricted,
-	}, testRouterSelector, testRouterNamespace)
+	np := buildNetworkPolicy("my-sandbox", "my-ns", &runtimev1alpha1.SandboxNetworkPolicy{},
+		testRouterSelector, testRouterNamespace)
 	require.NotNil(t, np)
 
 	assert.Equal(t, "my-sandbox", np.Name)
@@ -64,10 +52,10 @@ func TestBuildNetworkPolicy_Metadata(t *testing.T) {
 	assert.Contains(t, np.Spec.PolicyTypes, networkingv1.PolicyTypeEgress)
 }
 
-func TestBuildNetworkPolicy_RestrictedDefaults(t *testing.T) {
-	np := buildNetworkPolicy("sb", "ns", &runtimev1alpha1.SandboxNetworkPolicy{
-		Mode: runtimev1alpha1.NetworkPolicyModeRestricted,
-	}, testRouterSelector, testRouterNamespace)
+func TestBuildNetworkPolicy_DefaultRules(t *testing.T) {
+	// Non-nil spec with no extra rules → router ingress + DNS egress
+	np := buildNetworkPolicy("sb", "ns", &runtimev1alpha1.SandboxNetworkPolicy{},
+		testRouterSelector, testRouterNamespace)
 	require.NotNil(t, np)
 
 	// Ingress: only router rule by default
@@ -90,20 +78,10 @@ func TestBuildNetworkPolicy_RestrictedDefaults(t *testing.T) {
 	assert.True(t, ports[corev1.ProtocolTCP], "expected TCP DNS port")
 }
 
-func TestBuildNetworkPolicy_RestrictedDNSDisabled(t *testing.T) {
-	np := buildNetworkPolicy("sb", "ns", &runtimev1alpha1.SandboxNetworkPolicy{
-		Mode:     runtimev1alpha1.NetworkPolicyModeRestricted,
-		AllowDNS: ptr.To(false),
-	}, testRouterSelector, testRouterNamespace)
-	require.NotNil(t, np)
-	assert.Empty(t, np.Spec.Egress, "expected no egress rules when DNS disabled and no AllowedEgress")
-}
-
-func TestBuildNetworkPolicy_RestrictedAllowedEgress(t *testing.T) {
+func TestBuildNetworkPolicy_Egress(t *testing.T) {
 	tcp := corev1.ProtocolTCP
 	np := buildNetworkPolicy("sb", "ns", &runtimev1alpha1.SandboxNetworkPolicy{
-		Mode: runtimev1alpha1.NetworkPolicyModeRestricted,
-		AllowedEgress: []runtimev1alpha1.SandboxEgressRule{
+		Egress: []runtimev1alpha1.SandboxNetworkPolicyRule{
 			{
 				CIDRs: []string{"10.0.0.0/8"},
 				Ports: []runtimev1alpha1.SandboxNetworkPolicyPort{
@@ -124,10 +102,9 @@ func TestBuildNetworkPolicy_RestrictedAllowedEgress(t *testing.T) {
 	assert.Equal(t, corev1.ProtocolTCP, *customRule.Ports[0].Protocol)
 }
 
-func TestBuildNetworkPolicy_RestrictedAllowedIngress(t *testing.T) {
+func TestBuildNetworkPolicy_Ingress(t *testing.T) {
 	np := buildNetworkPolicy("sb", "ns", &runtimev1alpha1.SandboxNetworkPolicy{
-		Mode: runtimev1alpha1.NetworkPolicyModeRestricted,
-		AllowedIngress: []runtimev1alpha1.SandboxIngressRule{
+		Ingress: []runtimev1alpha1.SandboxNetworkPolicyRule{
 			{CIDRs: []string{"192.168.1.0/24"}},
 		},
 	}, testRouterSelector, testRouterNamespace)
@@ -140,46 +117,10 @@ func TestBuildNetworkPolicy_RestrictedAllowedIngress(t *testing.T) {
 	assert.Equal(t, "192.168.1.0/24", customRule.From[0].IPBlock.CIDR)
 }
 
-func TestBuildNetworkPolicy_CustomMode(t *testing.T) {
-	tcp := corev1.ProtocolTCP
-	port80 := intstr.FromInt32(80)
-	np := buildNetworkPolicy("sb", "ns", &runtimev1alpha1.SandboxNetworkPolicy{
-		Mode: runtimev1alpha1.NetworkPolicyModeCustom,
-		Custom: &runtimev1alpha1.SandboxNetworkPolicyCustomRules{
-			Ingress: []networkingv1.NetworkPolicyIngressRule{
-				{
-					From:  []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: "0.0.0.0/0"}}},
-					Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &port80}},
-				},
-			},
-			Egress: []networkingv1.NetworkPolicyEgressRule{
-				{To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: "0.0.0.0/0"}}}},
-			},
-		},
-	}, testRouterSelector, testRouterNamespace)
-	require.NotNil(t, np)
-
-	require.Len(t, np.Spec.Ingress, 1)
-	assert.Equal(t, "0.0.0.0/0", np.Spec.Ingress[0].From[0].IPBlock.CIDR)
-	require.Len(t, np.Spec.Egress, 1)
-	assert.Equal(t, "0.0.0.0/0", np.Spec.Egress[0].To[0].IPBlock.CIDR)
-}
-
-func TestBuildNetworkPolicy_CustomModeNilCustom(t *testing.T) {
-	// Mode=Custom but Custom is nil → NP created with empty rules (deny all)
-	np := buildNetworkPolicy("sb", "ns", &runtimev1alpha1.SandboxNetworkPolicy{
-		Mode: runtimev1alpha1.NetworkPolicyModeCustom,
-	}, testRouterSelector, testRouterNamespace)
-	require.NotNil(t, np)
-	assert.Empty(t, np.Spec.Ingress)
-	assert.Empty(t, np.Spec.Egress)
-}
-
 func TestBuildNetworkPolicy_RouterSelector(t *testing.T) {
 	customSelector := map[string]string{"app": "my-custom-router", "tier": "proxy"}
-	np := buildNetworkPolicy("sb", "ns", &runtimev1alpha1.SandboxNetworkPolicy{
-		Mode: runtimev1alpha1.NetworkPolicyModeRestricted,
-	}, customSelector, testRouterNamespace)
+	np := buildNetworkPolicy("sb", "ns", &runtimev1alpha1.SandboxNetworkPolicy{},
+		customSelector, testRouterNamespace)
 	require.NotNil(t, np)
 
 	require.Len(t, np.Spec.Ingress, 1)
@@ -192,9 +133,8 @@ func TestBuildNetworkPolicy_RouterCrossNamespace(t *testing.T) {
 	// When routerNamespace is set, the router peer must carry a NamespaceSelector
 	// using the standard kubernetes.io/metadata.name label so the rule works when
 	// the sandbox is in a different namespace than the router.
-	np := buildNetworkPolicy("sb", "user-ns", &runtimev1alpha1.SandboxNetworkPolicy{
-		Mode: runtimev1alpha1.NetworkPolicyModeRestricted,
-	}, testRouterSelector, "agentcube-system")
+	np := buildNetworkPolicy("sb", "user-ns", &runtimev1alpha1.SandboxNetworkPolicy{},
+		testRouterSelector, "agentcube-system")
 	require.NotNil(t, np)
 
 	require.Len(t, np.Spec.Ingress, 1)
@@ -204,41 +144,42 @@ func TestBuildNetworkPolicy_RouterCrossNamespace(t *testing.T) {
 	assert.Equal(t, map[string]string{k8sNamespaceLabelKey: "agentcube-system"}, routerPeer.NamespaceSelector.MatchLabels)
 }
 
-func TestBuildNetworkPolicy_RouterNamespaceEmpty(t *testing.T) {
-	// Empty routerNamespace falls back to same-namespace semantics (no NamespaceSelector).
-	np := buildNetworkPolicy("sb", "ns", &runtimev1alpha1.SandboxNetworkPolicy{
-		Mode: runtimev1alpha1.NetworkPolicyModeRestricted,
-	}, testRouterSelector, "")
+func TestBuildNetworkPolicy_RouterNamespaceAlwaysSet(t *testing.T) {
+	// NamespaceSelector must always be present on the router peer so that the rule
+	// works across namespaces. buildIngressRules fatals on empty namespace,
+	// so this test confirms a non-empty namespace produces the expected selector.
+	np := buildNetworkPolicy("sb", "ns", &runtimev1alpha1.SandboxNetworkPolicy{},
+		testRouterSelector, testRouterNamespace)
 	require.NotNil(t, np)
 
 	require.Len(t, np.Spec.Ingress, 1)
 	routerPeer := np.Spec.Ingress[0].From[0]
-	assert.Nil(t, routerPeer.NamespaceSelector)
+	require.NotNil(t, routerPeer.NamespaceSelector)
+	assert.Equal(t, testRouterNamespace, routerPeer.NamespaceSelector.MatchLabels[k8sNamespaceLabelKey])
 }
 
 func TestBuildNetworkPolicy_SandboxNameLabel(t *testing.T) {
-	np := buildNetworkPolicy("unique-sandbox", "test-ns", &runtimev1alpha1.SandboxNetworkPolicy{
-		Mode: runtimev1alpha1.NetworkPolicyModeRestricted,
-	}, testRouterSelector, testRouterNamespace)
+	np := buildNetworkPolicy("unique-sandbox", "test-ns", &runtimev1alpha1.SandboxNetworkPolicy{},
+		testRouterSelector, testRouterNamespace)
 	require.NotNil(t, np)
 
-	// Pod selector must target exactly this sandbox
 	assert.Equal(t, metav1.LabelSelector{
 		MatchLabels: map[string]string{SandboxNameLabelKey: "unique-sandbox"},
 	}, np.Spec.PodSelector)
 }
 
 // TestEffectiveNetworkPolicy verifies "replace, not merge" semantics between
-// template-level default and per-session override (promised to the maintainer).
+// template-level default and per-session override.
 func TestEffectiveNetworkPolicy(t *testing.T) {
 	template := &runtimev1alpha1.SandboxNetworkPolicy{
-		Mode: runtimev1alpha1.NetworkPolicyModeRestricted,
-		AllowedEgress: []runtimev1alpha1.SandboxEgressRule{
+		Egress: []runtimev1alpha1.SandboxNetworkPolicyRule{
 			{CIDRs: []string{"10.0.0.0/8"}},
 		},
 	}
 	session := &runtimev1alpha1.SandboxNetworkPolicy{
-		Mode: runtimev1alpha1.NetworkPolicyModeCustom,
+		Ingress: []runtimev1alpha1.SandboxNetworkPolicyRule{
+			{CIDRs: []string{"192.168.0.0/16"}},
+		},
 	}
 
 	// session nil → template wins

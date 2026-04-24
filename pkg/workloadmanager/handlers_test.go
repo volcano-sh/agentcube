@@ -484,7 +484,7 @@ func TestHandleSandboxCreate(t *testing.T) {
 func TestHandleSandboxCreate_SessionNetworkPolicyOverride(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	body := `{"name":"workload","namespace":"ns","networkPolicy":{"mode":"Restricted","allowDNS":false}}`
+	body := `{"name":"workload","namespace":"ns","networkPolicy":{"egress":[{"cidrs":["10.0.0.0/8"]}]}}`
 
 	for _, kind := range []string{types.AgentRuntimeKind, types.CodeInterpreterKind} {
 		t.Run(kind, func(t *testing.T) {
@@ -519,9 +519,8 @@ func TestHandleSandboxCreate_SessionNetworkPolicyOverride(t *testing.T) {
 
 			require.Equal(t, http.StatusOK, w.Code)
 			require.NotNil(t, capturedNP, "session NetworkPolicy override must reach the builder")
-			assert.Equal(t, runtimev1alpha1.NetworkPolicyModeRestricted, capturedNP.Mode)
-			require.NotNil(t, capturedNP.AllowDNS)
-			assert.False(t, *capturedNP.AllowDNS, "AllowDNS=false from request body should propagate")
+			require.Len(t, capturedNP.Egress, 1)
+			assert.Equal(t, "10.0.0.0/8", capturedNP.Egress[0].CIDRs[0], "egress CIDR from request body should propagate")
 		})
 	}
 }

@@ -22,6 +22,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/klog/v2"
 )
 
 // k8sNamespaceLabelKey is the label automatically applied to every Namespace by
@@ -29,9 +30,11 @@ import (
 // NamespaceSelector key avoids requiring users to manually label namespaces.
 const k8sNamespaceLabelKey = "kubernetes.io/metadata.name"
 
-// buildNetworkPolicy returns a NetworkPolicy for the given sandbox, or nil when Mode=None.
+// buildNetworkPolicy returns a deny-all NetworkPolicy for the given sandbox with
+// explicit allow rules for router ingress and DNS egress, plus any additional rules
+// from spec. Returns nil when spec is nil (no enforcement).
 func buildNetworkPolicy(sandboxName, namespace string, spec *runtimev1alpha1.SandboxNetworkPolicy, routerSelector map[string]string, routerNamespace string) *networkingv1.NetworkPolicy {
-	if spec == nil || spec.Mode == runtimev1alpha1.NetworkPolicyModeNone || spec.Mode == "" {
+	if spec == nil {
 		return nil
 	}
 
@@ -57,37 +60,33 @@ func buildNetworkPolicy(sandboxName, namespace string, spec *runtimev1alpha1.San
 		},
 	}
 
-	switch spec.Mode {
-	case runtimev1alpha1.NetworkPolicyModeRestricted:
-		np.Spec.Ingress = buildRestrictedIngressRules(spec, routerSelector, routerNamespace)
-		np.Spec.Egress = buildRestrictedEgressRules(spec)
-	case runtimev1alpha1.NetworkPolicyModeCustom:
-		if spec.Custom != nil {
-			np.Spec.Ingress = spec.Custom.Ingress
-			np.Spec.Egress = spec.Custom.Egress
-		}
-	}
+	np.Spec.Ingress = buildIngressRules(spec, routerSelector, routerNamespace)
+	np.Spec.Egress = buildEgressRules(spec)
 
 	return np
 }
 
-func buildRestrictedIngressRules(spec *runtimev1alpha1.SandboxNetworkPolicy, routerSelector map[string]string, routerNamespace string) []networkingv1.NetworkPolicyIngressRule {
-	// Router ingress is always allowed in Restricted mode. NamespaceSelector is set
-	// so the rule works even when the router runs in a namespace distinct from the
-	// sandbox (the common production layout: router in agentcube-system, sandboxes
-	// in user namespaces).
+func buildIngressRules(spec *runtimev1alpha1.SandboxNetworkPolicy, routerSelector map[string]string, routerNamespace string) []networkingv1.NetworkPolicyIngressRule {
+	if routerNamespace == "" {
+		// Without a NamespaceSelector the peer only matches pods in the same namespace
+		// as the NetworkPolicy, defeating cross-namespace router ingress. This is a
+		// configuration error that must be caught loudly — silent wrong semantics here
+		// would make the sandbox unreachable in any multi-namespace layout.
+		klog.Fatalf("routerNamespace must not be empty: a missing NamespaceSelector restricts router ingress to the sandbox namespace only")
+	}
+	// Router ingress is always allowed. NamespaceSelector is set so the rule works
+	// when the router runs in a namespace distinct from the sandbox (the common
+	// production layout: router in agentcube-system, sandboxes in user namespaces).
 	routerPeer := networkingv1.NetworkPolicyPeer{
 		PodSelector: &metav1.LabelSelector{MatchLabels: routerSelector},
-	}
-	if routerNamespace != "" {
-		routerPeer.NamespaceSelector = &metav1.LabelSelector{
+		NamespaceSelector: &metav1.LabelSelector{
 			MatchLabels: map[string]string{k8sNamespaceLabelKey: routerNamespace},
-		}
+		},
 	}
 	rules := []networkingv1.NetworkPolicyIngressRule{
 		{From: []networkingv1.NetworkPolicyPeer{routerPeer}},
 	}
-	for _, r := range spec.AllowedIngress {
+	for _, r := range spec.Ingress {
 		rule := networkingv1.NetworkPolicyIngressRule{}
 		for _, cidr := range r.CIDRs {
 			rule.From = append(rule.From, networkingv1.NetworkPolicyPeer{
@@ -100,23 +99,20 @@ func buildRestrictedIngressRules(spec *runtimev1alpha1.SandboxNetworkPolicy, rou
 	return rules
 }
 
-func buildRestrictedEgressRules(spec *runtimev1alpha1.SandboxNetworkPolicy) []networkingv1.NetworkPolicyEgressRule {
+func buildEgressRules(spec *runtimev1alpha1.SandboxNetworkPolicy) []networkingv1.NetworkPolicyEgressRule {
 	var rules []networkingv1.NetworkPolicyEgressRule
 
-	// Allow DNS by default (unless explicitly disabled).
-	if spec.AllowDNS == nil || *spec.AllowDNS {
-		tcp := corev1.ProtocolTCP
-		udp := corev1.ProtocolUDP
-		dnsPort := intstr.FromInt32(53)
-		rules = append(rules, networkingv1.NetworkPolicyEgressRule{
-			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &udp, Port: &dnsPort},
-				{Protocol: &tcp, Port: &dnsPort},
-			},
-		})
-	}
+	tcp := corev1.ProtocolTCP
+	udp := corev1.ProtocolUDP
+	dnsPort := intstr.FromInt32(53)
+	rules = append(rules, networkingv1.NetworkPolicyEgressRule{
+		Ports: []networkingv1.NetworkPolicyPort{
+			{Protocol: &udp, Port: &dnsPort},
+			{Protocol: &tcp, Port: &dnsPort},
+		},
+	})
 
-	for _, r := range spec.AllowedEgress {
+	for _, r := range spec.Egress {
 		rule := networkingv1.NetworkPolicyEgressRule{}
 		for _, cidr := range r.CIDRs {
 			rule.To = append(rule.To, networkingv1.NetworkPolicyPeer{

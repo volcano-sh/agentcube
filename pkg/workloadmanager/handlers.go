@@ -133,8 +133,14 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	response, err := s.createSandbox(c.Request.Context(), dynamicClient, sandbox, sandboxClaim, sandboxEntry, resultChan)
 	if err != nil {
 		// Client disconnected — nothing to write back, avoid a misleading 500 in metrics.
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.Canceled) {
 			klog.Warningf("create sandbox aborted %s/%s: client disconnected", sandbox.Namespace, sandbox.Name)
+			return
+		}
+		// Deadline exceeded — client may still be connected; return 504 so they get a meaningful response.
+		if errors.Is(err, context.DeadlineExceeded) {
+			klog.Warningf("create sandbox timed out %s/%s: request deadline exceeded", sandbox.Namespace, sandbox.Name)
+			respondError(c, http.StatusGatewayTimeout, "request timed out")
 			return
 		}
 		klog.Errorf("create sandbox failed %s/%s: %v", sandbox.Namespace, sandbox.Name, err)

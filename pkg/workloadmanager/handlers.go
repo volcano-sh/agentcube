@@ -36,6 +36,9 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/store"
 )
 
+// errSandboxCreationTimeout is returned when the internal sandbox-ready wait exceeds the 2-minute deadline.
+var errSandboxCreationTimeout = errors.New("sandbox creation timed out")
+
 // handleHealth handles health check requests
 func (s *Server) handleHealth(c *gin.Context) {
 	respondJSON(c, http.StatusOK, map[string]string{
@@ -143,6 +146,12 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 			respondError(c, http.StatusGatewayTimeout, "request timed out")
 			return
 		}
+		// Internal sandbox-ready wait timed out; surface as 504 rather than a generic 500.
+		if errors.Is(err, errSandboxCreationTimeout) {
+			klog.Warningf("create sandbox timed out %s/%s: sandbox did not become ready within deadline", sandbox.Namespace, sandbox.Name)
+			respondError(c, http.StatusGatewayTimeout, err.Error())
+			return
+		}
 		klog.Errorf("create sandbox failed %s/%s: %v", sandbox.Namespace, sandbox.Name, err)
 		// Internal errors (store, K8s API) must not leak system details to callers;
 		// sandbox-level failures (terminal pod state, timeout) are safe to surface.
@@ -204,7 +213,7 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		return nil, ctx.Err()
 	case <-timer.C:
 		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
-		return nil, fmt.Errorf("sandbox creation timed out")
+		return nil, errSandboxCreationTimeout
 	}
 
 	// agent-sandbox create pod with same name as sandbox if no warmpool is used
@@ -218,7 +227,7 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 
 	podIP, err := s.k8sClient.GetSandboxPodIP(ctx, sandbox.Namespace, sandbox.Name, sandboxPodName)
 	if err != nil {
-		return nil, api.NewInternalError(fmt.Errorf("failed to get sandbox %s/%s pod IP: %v", sandbox.Namespace, sandbox.Name, err))
+		return nil, api.NewInternalError(fmt.Errorf("failed to get sandbox %s/%s pod IP: %w", sandbox.Namespace, sandbox.Name, err))
 	}
 	if err := s.waitForSandboxEntryPointsReady(ctx, podIP, sandboxEntry); err != nil {
 		return nil, api.NewInternalError(fmt.Errorf("failed to verify sandbox %s/%s entrypoints: %w", sandbox.Namespace, sandbox.Name, err))
@@ -234,7 +243,7 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	}
 
 	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {
-		return nil, api.NewInternalError(fmt.Errorf("update store cache failed: %v", err))
+		return nil, api.NewInternalError(fmt.Errorf("update store cache failed: %w", err))
 	}
 
 	needRollbackSandbox = false

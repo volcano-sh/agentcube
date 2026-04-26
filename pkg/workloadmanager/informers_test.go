@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
 
 	agentcubeinformers "github.com/volcano-sh/agentcube/client-go/informers/externalversions"
@@ -82,8 +83,8 @@ func newFactory() (informers.SharedInformerFactory, agentcubeinformers.SharedInf
 }
 
 func TestRunAndWaitForCacheSync_ContextCancellation(t *testing.T) {
-	never := func() cache.SharedIndexInformer { return &neverSyncedInformer{} }
-	always := func() cache.SharedIndexInformer { return &alwaysSyncedInformer{} }
+	never := func() *neverSyncedInformer { return &neverSyncedInformer{} }
+	always := func() *alwaysSyncedInformer { return &alwaysSyncedInformer{} }
 
 	tests := []struct {
 		name            string
@@ -94,19 +95,19 @@ func TestRunAndWaitForCacheSync_ContextCancellation(t *testing.T) {
 		{
 			name:            "AgentRuntimeInformer never syncs",
 			agentRuntime:    never(),
-			codeInterpreter: never(),
+			codeInterpreter: &fakeCodeInterpreterInformer{SharedIndexInformer: never()},
 			pod:             never(),
 		},
 		{
 			name:            "CodeInterpreterInformer never syncs",
 			agentRuntime:    always(),
-			codeInterpreter: never(),
+			codeInterpreter: &fakeCodeInterpreterInformer{SharedIndexInformer: never()},
 			pod:             never(),
 		},
 		{
 			name:            "PodInformer never syncs",
 			agentRuntime:    always(),
-			codeInterpreter: always(),
+			codeInterpreter: &fakeCodeInterpreterInformer{SharedIndexInformer: always()},
 			pod:             never(),
 		},
 	}

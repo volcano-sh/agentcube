@@ -82,6 +82,9 @@ func (ifm *Informers) RunAndWaitForCacheSync(ctx context.Context) error {
 
 func (ifm *Informers) run(stopCh <-chan struct{}) {
 	ifm.informerFactory.Start(stopCh)
+	// Instantiate the informers to ensure they are registered with the factory
+	ifm.AgentRuntimeInformer.Informer()
+	ifm.CodeInterpreterInformer.Informer()
 	ifm.agentcubeInformer.Start(stopCh)
 }
 

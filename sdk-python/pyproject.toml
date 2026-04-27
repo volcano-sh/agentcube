@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-langchain = ["deepagents", "langchain-core", "langchain-tests"]
+langchain = ["deepagents", "langchain-core", "langchain-tests", "pytest-asyncio"]
 
 [tool.setuptools.packages.find]
 where = ["."]

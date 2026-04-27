@@ -224,6 +224,9 @@ func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
 	if sandbox.Name != "sandbox-test" {
 		t.Errorf("expected Name sandbox-test, got %s", sandbox.Name)
 	}
+	if sandbox.Kind != types.SandboxKind {
+		t.Errorf("expected Kind %s, got %s", types.SandboxKind, sandbox.Kind)
+	}
 	if len(sandbox.EntryPoints) != 1 {
 		t.Fatalf("expected 1 entry point, got %d", len(sandbox.EntryPoints))
 	}
@@ -403,6 +406,9 @@ func TestGetSandboxBySession_CreateSandbox_CodeInterpreter_Success(t *testing.T)
 	}
 	if sandbox.SessionID != "ci-session-789" {
 		t.Errorf("expected SessionID ci-session-789, got %s", sandbox.SessionID)
+	}
+	if sandbox.Kind != types.SandboxKind {
+		t.Errorf("expected Kind %s, got %s", types.SandboxKind, sandbox.Kind)
 	}
 }
 

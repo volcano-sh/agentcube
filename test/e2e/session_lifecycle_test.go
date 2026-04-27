@@ -133,9 +133,34 @@ func TestCodeInterpreterSessionAutoCreation(t *testing.T) {
 		Command: []string{"python3", "-c", "print(1+1)"},
 	}
 
-	resp, sessionID, err := env.invokeCodeInterpreterWithHeader(namespace, name, "", req)
-	if err != nil {
-		t.Fatalf("B1: unexpected error: %v", err)
+	const maxAutoCreateAttempts = 3
+	var (
+		resp      *CodeInterpreterExecuteResponse
+		sessionID string
+		err       error
+	)
+
+	for attempt := 1; attempt <= maxAutoCreateAttempts; attempt++ {
+		resp, sessionID, err = env.invokeCodeInterpreterWithHeader(namespace, name, "", req)
+		if err == nil {
+			break
+		}
+
+		// Best-effort cleanup for a failed auto-created session from this attempt.
+		if sessionID != "" {
+			_ = env.deleteCodeInterpreterSession(sessionID)
+			sessionID = ""
+		}
+
+		if attempt == maxAutoCreateAttempts ||
+			!strings.Contains(err.Error(), "status 401") ||
+			!strings.Contains(err.Error(), "token signature is invalid") {
+			t.Fatalf("B1: unexpected error: %v", err)
+		}
+
+		t.Logf("B1: transient auth error on auto-create attempt %d/%d, retrying: %v",
+			attempt, maxAutoCreateAttempts, err)
+		time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
 	}
 	if resp == nil {
 		t.Fatal("B1: response is nil")
@@ -152,10 +177,12 @@ func TestCodeInterpreterSessionAutoCreation(t *testing.T) {
 
 	// Assert: session ID header is present.
 	if sessionID == "" {
-		t.Error("B1: expected x-agentcube-session-id header in response, got empty string")
-	} else {
-		t.Logf("B1: session auto-created by Router, session_id=%s", sessionID)
+		t.Fatal("B1: expected x-agentcube-session-id header in response, got empty string")
 	}
+	t.Cleanup(func() {
+		_ = env.deleteCodeInterpreterSession(sessionID)
+	})
+	t.Logf("B1: session auto-created by Router, session_id=%s", sessionID)
 }
 
 // ============================================================

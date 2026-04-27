@@ -154,64 +154,45 @@ func TestGetSandboxBySession_NotFound(t *testing.T) {
 	}
 }
 
-// ---- tests: GetSandboxBySession with empty sessionID (sandbox creation path) ----
+func assertCreateSandboxRequest(t *testing.T, r *http.Request, wantPath, wantKind, wantNamespace, wantName string) {
+	t.Helper()
 
-func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
-	// Mock workload manager server
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify request method and path
-		if r.Method != http.MethodPost {
-			t.Errorf("expected POST request, got %s", r.Method)
-		}
-		if r.URL.Path != "/v1/agent-runtime" {
-			t.Errorf("expected path /v1/agent-runtime, got %s", r.URL.Path)
-		}
-
-		// Verify request body
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("failed to read request body: %v", err)
-		}
-		var req types.CreateSandboxRequest
-		if err := json.Unmarshal(body, &req); err != nil {
-			t.Fatalf("failed to unmarshal request: %v", err)
-		}
-		if req.Kind != types.AgentRuntimeKind {
-			t.Errorf("expected kind %s, got %s", types.AgentRuntimeKind, req.Kind)
-		}
-		if req.Name != "test-runtime" {
-			t.Errorf("expected name test-runtime, got %s", req.Name)
-		}
-		if req.Namespace != "default" {
-			t.Errorf("expected namespace default, got %s", req.Namespace)
-		}
-
-		// Send successful response
-		resp := types.CreateSandboxResponse{
-			SessionID:   "new-session-123",
-			SandboxID:   "sandbox-456",
-			SandboxName: "sandbox-test",
-			EntryPoints: []types.SandboxEntryPoint{
-				{Endpoint: "10.0.0.1:9000", Protocol: "http", Path: "/"},
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer mockServer.Close()
-
-	r := &fakeStoreClient{}
-	m := &manager{
-		storeClient:     r,
-		workloadMgrAddr: mockServer.URL,
-		httpClient:      &http.Client{},
+	if r.Method != http.MethodPost {
+		t.Errorf("expected POST request, got %s", r.Method)
+	}
+	if r.URL.Path != wantPath {
+		t.Errorf("expected path %s, got %s", wantPath, r.URL.Path)
 	}
 
-	sandbox, err := m.GetSandboxBySession(context.Background(), "", "default", "test-runtime", types.AgentRuntimeKind)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
+		t.Fatalf("failed to read request body: %v", err)
 	}
+
+	var req types.CreateSandboxRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatalf("failed to unmarshal request: %v", err)
+	}
+	if req.Kind != wantKind {
+		t.Errorf("expected kind %s, got %s", wantKind, req.Kind)
+	}
+	if req.Name != wantName {
+		t.Errorf("expected name %s, got %s", wantName, req.Name)
+	}
+	if req.Namespace != wantNamespace {
+		t.Errorf("expected namespace %s, got %s", wantNamespace, req.Namespace)
+	}
+}
+
+func writeCreateSandboxResponse(w http.ResponseWriter, resp types.CreateSandboxResponse) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func assertAgentRuntimeCreateSandboxResult(t *testing.T, sandbox *types.SandboxInfo) {
+	t.Helper()
+
 	if sandbox == nil {
 		t.Fatalf("expected non-nil sandbox")
 	}
@@ -233,6 +214,40 @@ func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
 	if sandbox.EntryPoints[0].Endpoint != "10.0.0.1:9000" {
 		t.Errorf("expected endpoint 10.0.0.1:9000, got %s", sandbox.EntryPoints[0].Endpoint)
 	}
+}
+
+// ---- tests: GetSandboxBySession with empty sessionID (sandbox creation path) ----
+
+func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
+	// Mock workload manager server
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertCreateSandboxRequest(t, r, "/v1/agent-runtime", types.AgentRuntimeKind, "default", "test-runtime")
+
+		// Send successful response
+		resp := types.CreateSandboxResponse{
+			SessionID:   "new-session-123",
+			SandboxID:   "sandbox-456",
+			SandboxName: "sandbox-test",
+			EntryPoints: []types.SandboxEntryPoint{
+				{Endpoint: "10.0.0.1:9000", Protocol: "http", Path: "/"},
+			},
+		}
+		writeCreateSandboxResponse(w, resp)
+	}))
+	defer mockServer.Close()
+
+	r := &fakeStoreClient{}
+	m := &manager{
+		storeClient:     r,
+		workloadMgrAddr: mockServer.URL,
+		httpClient:      &http.Client{},
+	}
+
+	sandbox, err := m.GetSandboxBySession(context.Background(), "", "default", "test-runtime", types.AgentRuntimeKind)
+	if err != nil {
+		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
+	}
+	assertAgentRuntimeCreateSandboxResult(t, sandbox)
 }
 
 func TestGetSandboxBySession_CreateSandbox_SetsAuthHeaderFromFile(t *testing.T) {

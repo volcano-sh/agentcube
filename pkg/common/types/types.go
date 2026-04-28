@@ -20,6 +20,7 @@ const (
 	// invoke kind
 	AgentRuntimeKind    = "AgentRuntime"
 	CodeInterpreterKind = "CodeInterpreter"
+	BrowserUseKind      = "BrowserUse"
 
 	// indicates what kind of api the underlying sandbox is created by
 	SandboxKind       = "Sandbox"

@@ -321,6 +321,14 @@ func (s *Server) handleCodeInterpreterInvoke(c *gin.Context) {
 	s.handleInvoke(c, namespace, name, path, types.CodeInterpreterKind)
 }
 
+// handleBrowserUseInvoke handles browser use invocation requests
+func (s *Server) handleBrowserUseInvoke(c *gin.Context) {
+	namespace := c.Param("namespace")
+	name := c.Param("name")
+	path := c.Param("path")
+	s.handleInvoke(c, namespace, name, path, types.BrowserUseKind)
+}
+
 // forwardToSandbox forwards the request to the specified sandbox endpoint
 func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, path string) {
 	targetURL, ok := s.resolveSandboxTarget(c, sandbox, path)

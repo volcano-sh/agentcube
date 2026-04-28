@@ -53,6 +53,11 @@ func (s *Server) handleCodeInterpreterCreate(c *gin.Context) {
 	s.handleSandboxCreate(c, types.CodeInterpreterKind)
 }
 
+// handleBrowserUseCreate handles BrowserUse sandbox creation requests.
+func (s *Server) handleBrowserUseCreate(c *gin.Context) {
+	s.handleSandboxCreate(c, types.BrowserUseKind)
+}
+
 // extractUserK8sClient extracts user information from the context and creates a user-specific Kubernetes client.
 // It returns the dynamic client for the user and an error if authentication fails or client creation fails.
 func (s *Server) extractUserK8sClient(c *gin.Context) (dynamic.Interface, error) {
@@ -97,11 +102,13 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 		sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers)
 	case types.CodeInterpreterKind:
 		sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers)
+	case types.BrowserUseKind:
+		sandbox, sandboxEntry, err = buildSandboxByBrowserUse(sandboxReq.Namespace, sandboxReq.Name, s.informers)
 	}
 
 	if err != nil {
 		klog.Errorf("build sandbox failed %s/%s: %v", sandboxReq.Namespace, sandboxReq.Name, err)
-		if errors.Is(err, api.ErrAgentRuntimeNotFound) || errors.Is(err, api.ErrCodeInterpreterNotFound) {
+		if errors.Is(err, api.ErrAgentRuntimeNotFound) || errors.Is(err, api.ErrCodeInterpreterNotFound) || errors.Is(err, api.ErrBrowserUseNotFound) {
 			respondError(c, http.StatusNotFound, err.Error())
 		} else {
 			respondError(c, http.StatusInternalServerError, "internal server error")

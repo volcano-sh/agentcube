@@ -437,3 +437,63 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	sandbox := buildSandboxObject(buildParams)
 	return sandbox, nil, sandboxEntry, nil
 }
+
+func buildSandboxByBrowserUse(namespace string, name string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
+	browserUseKey := namespace + "/" + name
+	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
+	runtimeObj, exists, _ := ifm.BrowserUseInformer.GetStore().GetByKey(browserUseKey)
+	if !exists {
+		return nil, nil, api.ErrBrowserUseNotFound
+	}
+
+	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
+	if !ok {
+		klog.Errorf("browser use %s type asserting unstructured.Unstructured failed", browserUseKey)
+		return nil, nil, fmt.Errorf("browser use type asserting failed")
+	}
+
+	var browserUseObj runtimev1alpha1.BrowserUse
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.Object, &browserUseObj); err != nil {
+		return nil, nil, fmt.Errorf("failed to convert unstructured to BrowserUse: %w", err)
+	}
+
+	sessionID := uuid.New().String()
+	sandboxName := fmt.Sprintf("%s-%s", name, RandString(8))
+
+	// Normalize RuntimeClassName: if it's an empty string, set it to nil
+	podSpec := browserUseObj.Spec.Template.Spec.DeepCopy()
+	if podSpec.RuntimeClassName != nil && *podSpec.RuntimeClassName == "" {
+		podSpec.RuntimeClassName = nil
+	}
+
+	buildParams := &buildSandboxParams{
+		namespace:    namespace,
+		workloadName: name,
+		sandboxName:  sandboxName,
+		sessionID:    sessionID,
+		podSpec:      *podSpec,
+	}
+	// Apply labels and annotations from BrowserUse template
+	if browserUseObj.Spec.Template.Labels != nil {
+		buildParams.podLabels = browserUseObj.Spec.Template.Labels
+	}
+	if browserUseObj.Spec.Template.Annotations != nil {
+		buildParams.podAnnotations = browserUseObj.Spec.Template.Annotations
+	}
+	if browserUseObj.Spec.MaxSessionDuration != nil {
+		buildParams.ttl = browserUseObj.Spec.MaxSessionDuration.Duration
+	}
+	idleTimeout := DefaultSandboxIdleTimeout
+	if browserUseObj.Spec.SessionTimeout != nil {
+		idleTimeout = browserUseObj.Spec.SessionTimeout.Duration
+	}
+	buildParams.idleTimeout = idleTimeout
+	sandbox := buildSandboxObject(buildParams)
+	entry := &sandboxEntry{
+		Kind:        types.SandboxKind,
+		Ports:       browserUseObj.Spec.Ports,
+		SessionID:   sessionID,
+		IdleTimeout: idleTimeout,
+	}
+	return sandbox, entry, nil
+}

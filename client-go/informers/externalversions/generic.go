@@ -55,6 +55,8 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 	// Group=runtime, Version=v1alpha1
 	case v1alpha1.SchemeGroupVersion.WithResource("agentruntimes"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Runtime().V1alpha1().AgentRuntimes().Informer()}, nil
+	case v1alpha1.SchemeGroupVersion.WithResource("browseruses"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Runtime().V1alpha1().BrowserUses().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("codeinterpreters"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Runtime().V1alpha1().CodeInterpreters().Informer()}, nil
 

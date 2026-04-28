@@ -63,7 +63,7 @@ As a developer using the AgentCube Python SDK, I want a `BrowserUseClient` that 
 
 #### Why a Separate CRD?
 
-The rationale mirrors the original decision to separate `CodeInterpreter` from `AgentRuntime` (see [runtime-template-proposal.md](file:///Users/jagjeevankashid/Developer/lfx/agentcube/docs/design/runtime-template-proposal.md)):
+The rationale mirrors the original decision to separate `CodeInterpreter` from `AgentRuntime` (see [runtime-template-proposal.md](./runtime-template-proposal.md)):
 
 | Concern | AgentRuntime | BrowserUse |
 |---------|-------------|------------|

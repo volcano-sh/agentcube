@@ -39,6 +39,11 @@ import (
 // errSandboxCreationTimeout is returned when the internal sandbox-ready wait exceeds the 2-minute deadline.
 var errSandboxCreationTimeout = errors.New("sandbox creation timed out")
 
+// isContextError reports whether err is a context cancellation or deadline error.
+func isContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
 // handleHealth handles health check requests
 func (s *Server) handleHealth(c *gin.Context) {
 	respondJSON(c, http.StatusOK, map[string]string{
@@ -166,31 +171,37 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	respondJSON(c, http.StatusOK, response)
 }
 
-// createSandbox performs sandbox creation and returns the response payload or an error with an HTTP status code.
-func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
-	// Store placeholder before creating, make sandbox/sandboxClaim GarbageCollection possible
-	sandboxStorePlaceHolder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
-	if err := s.storeClient.StoreSandbox(ctx, sandboxStorePlaceHolder); err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, err
+// createSandboxResources stores the sandbox placeholder and creates the K8s sandbox resource.
+func (s *Server) createSandboxResources(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, placeholder *types.SandboxInfo) error {
+	if err := s.storeClient.StoreSandbox(ctx, placeholder); err != nil {
+		if isContextError(err) {
+			return err
 		}
-		return nil, api.NewInternalError(fmt.Errorf("store sandbox placeholder failed: %v", err))
+		return api.NewInternalError(fmt.Errorf("store sandbox placeholder failed: %v", err))
 	}
-
 	if sandboxClaim != nil {
 		if err := createSandboxClaim(ctx, dynamicClient, sandboxClaim); err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return nil, err
+			if isContextError(err) {
+				return err
 			}
-			return nil, api.NewInternalError(fmt.Errorf("create sandbox claim %s/%s failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err))
+			return api.NewInternalError(fmt.Errorf("create sandbox claim %s/%s failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err))
 		}
 	} else {
 		if _, err := createSandbox(ctx, dynamicClient, sandbox); err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return nil, err
+			if isContextError(err) {
+				return err
 			}
-			return nil, api.NewInternalError(fmt.Errorf("failed to create sandbox: %w", err))
+			return api.NewInternalError(fmt.Errorf("failed to create sandbox: %w", err))
 		}
+	}
+	return nil
+}
+
+// createSandbox performs sandbox creation and returns the response payload or an error with an HTTP status code.
+func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
+	sandboxStorePlaceHolder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
+	if err := s.createSandboxResources(ctx, dynamicClient, sandbox, sandboxClaim, sandboxStorePlaceHolder); err != nil {
+		return nil, err
 	}
 
 	// Register rollback BEFORE waiting for the sandbox to become ready.
@@ -234,13 +245,13 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 
 	podIP, err := s.k8sClient.GetSandboxPodIP(ctx, sandbox.Namespace, sandbox.Name, sandboxPodName)
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if isContextError(err) {
 			return nil, err
 		}
 		return nil, api.NewInternalError(fmt.Errorf("failed to get sandbox %s/%s pod IP: %w", sandbox.Namespace, sandbox.Name, err))
 	}
 	if err := s.waitForSandboxEntryPointsReady(ctx, podIP, sandboxEntry); err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if isContextError(err) {
 			return nil, err
 		}
 		return nil, api.NewInternalError(fmt.Errorf("failed to verify sandbox %s/%s entrypoints: %w", sandbox.Namespace, sandbox.Name, err))
@@ -256,7 +267,7 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	}
 
 	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if isContextError(err) {
 			return nil, err
 		}
 		return nil, api.NewInternalError(fmt.Errorf("update store cache failed: %w", err))

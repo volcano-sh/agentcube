@@ -101,7 +101,7 @@ func makeEntry() *sandboxEntry {
 }
 
 func TestServerCreateSandbox(t *testing.T) {
-	tests := []struct {
+	type testCase struct {
 		name              string
 		sandboxClaim      bool
 		storeErr          error
@@ -116,7 +116,8 @@ func TestServerCreateSandbox(t *testing.T) {
 		expectClaimCalls  int
 		expectDeleteCalls int
 		expectUpdateCalls int
-	}{
+	}
+	tests := []testCase{
 		{
 			name:              "creates sandbox successfully",
 			sendResult:        true,
@@ -140,13 +141,15 @@ func TestServerCreateSandbox(t *testing.T) {
 			createSandboxErr:  errors.New("create sandbox failed"),
 			expectErr:         true,
 			expectCreateCalls: 1,
+			expectDeleteCalls: 1,
 		},
 		{
-			name:             "sandbox claim creation fails",
-			sandboxClaim:     true,
-			createClaimErr:   errors.New("create claim failed"),
-			expectErr:        true,
-			expectClaimCalls: 1,
+			name:              "sandbox claim creation fails",
+			sandboxClaim:      true,
+			createClaimErr:    errors.New("create claim failed"),
+			expectErr:         true,
+			expectClaimCalls:  1,
+			expectDeleteCalls: 1,
 		},
 		{
 			name:              "pod ip lookup fails triggers rollback",
@@ -175,11 +178,58 @@ func TestServerCreateSandbox(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		tt := tt
+	// Apply all patches ONCE at the outer level. Re-patching the same function
+	// per-subtest on arm64 causes gomonkey to silently fail on the second apply
+	// because PC-relative branch instructions don't recalculate correctly after
+	// a reset. A single patch whose closure reads from a shared *testCase pointer
+	// avoids the repeated patch-reset-repatch cycle entirely.
+	var cur *testCase
+	var createCalls, claimCalls, deleteCalls int
+
+	server := &Server{k8sClient: &K8sClient{}}
+
+	patches := gomonkey.NewPatches()
+	defer patches.Reset()
+
+	patches.ApplyFunc(createSandbox, func(_ context.Context, _ dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox) (*SandboxInfo, error) {
+		createCalls++
+		if cur.createSandboxErr != nil {
+			return nil, cur.createSandboxErr
+		}
+		return &SandboxInfo{Name: sandbox.Name, Namespace: sandbox.Namespace}, nil
+	})
+	patches.ApplyFunc(createSandboxClaim, func(_ context.Context, _ dynamic.Interface, _ *extensionsv1alpha1.SandboxClaim) error {
+		claimCalls++
+		return cur.createClaimErr
+	})
+	patches.ApplyFunc(deleteSandbox, func(_ context.Context, _ dynamic.Interface, _, _ string) error {
+		deleteCalls++
+		return nil
+	})
+	patches.ApplyFunc(deleteSandboxClaim, func(_ context.Context, _ dynamic.Interface, _, _ string) error {
+		deleteCalls++
+		return nil
+	})
+	patches.ApplyMethod(reflect.TypeOf((*K8sClient)(nil)), "GetSandboxPodIP", func(_ *K8sClient, _ context.Context, _, _, _ string) (string, error) {
+		if cur.podIPErr != nil {
+			return "", cur.podIPErr
+		}
+		return "10.0.0.9", nil
+	})
+	patches.ApplyPrivateMethod(reflect.TypeOf(server), "waitForSandboxEntryPointsReady", func(_ *Server, _ context.Context, _ string, _ *sandboxEntry) error {
+		return cur.readyErr
+	})
+
+	for i := range tests {
+		tt := &tests[i]
 		t.Run(tt.name, func(t *testing.T) {
-			store := &fakeStore{storeErr: tt.storeErr, updateErr: tt.updateErr}
-			server := &Server{storeClient: store, k8sClient: &K8sClient{}}
+			cur = tt
+			createCalls = 0
+			claimCalls = 0
+			deleteCalls = 0
+
+			fakeStoreInst := &fakeStore{storeErr: tt.storeErr, updateErr: tt.updateErr}
+			server.storeClient = fakeStoreInst
 
 			resultChan := make(chan SandboxStatusUpdate, 1)
 			sb := readySandbox()
@@ -192,52 +242,13 @@ func TestServerCreateSandbox(t *testing.T) {
 				claim = &extensionsv1alpha1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: sb.Name, Namespace: sb.Namespace}}
 			}
 
-			patches := gomonkey.NewPatches()
-			defer patches.Reset()
-
-			createCalls := 0
-			claimCalls := 0
-			deleteCalls := 0
-
-			patches.ApplyFunc(createSandbox, func(_ context.Context, _ dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox) (*SandboxInfo, error) {
-				createCalls++
-				if tt.createSandboxErr != nil {
-					return nil, tt.createSandboxErr
-				}
-				return &SandboxInfo{Name: sandbox.Name, Namespace: sandbox.Namespace}, nil
-			})
-
-			patches.ApplyFunc(createSandboxClaim, func(_ context.Context, _ dynamic.Interface, _ *extensionsv1alpha1.SandboxClaim) error {
-				claimCalls++
-				if tt.createClaimErr != nil {
-					return tt.createClaimErr
-				}
-				return nil
-			})
-
-			patches.ApplyFunc(deleteSandbox, func(_ context.Context, _ dynamic.Interface, _, _ string) error {
-				deleteCalls++
-				return nil
-			})
-
-			patches.ApplyMethod(reflect.TypeOf((*K8sClient)(nil)), "GetSandboxPodIP", func(_ *K8sClient, _ context.Context, _, _, _ string) (string, error) {
-				if tt.podIPErr != nil {
-					return "", tt.podIPErr
-				}
-				return "10.0.0.9", nil
-			})
-
-			patches.ApplyPrivateMethod(reflect.TypeOf(server), "waitForSandboxEntryPointsReady", func(_ *Server, _ context.Context, _ string, _ *sandboxEntry) error {
-				return tt.readyErr
-			})
-
 			resp, err := server.createSandbox(context.Background(), nil, sb, claim, makeEntry(), resultChan)
 
 			require.Equal(t, tt.expectCreateCalls, createCalls, "createSandbox call count")
 			require.Equal(t, tt.expectClaimCalls, claimCalls, "createSandboxClaim call count")
-			require.Equal(t, tt.expectDeleteCalls, deleteCalls, "deleteSandbox call count")
-			require.Equal(t, 1, store.storeCalls, "StoreSandbox call count")
-			require.Equal(t, tt.expectUpdateCalls, store.updateCalls, "UpdateSandbox call count")
+			require.Equal(t, tt.expectDeleteCalls, deleteCalls, "delete call count")
+			require.Equal(t, 1, fakeStoreInst.storeCalls, "StoreSandbox call count")
+			require.Equal(t, tt.expectUpdateCalls, fakeStoreInst.updateCalls, "UpdateSandbox call count")
 
 			if tt.expectErr {
 				require.Error(t, err)
@@ -350,6 +361,32 @@ func TestHandleSandboxCreate(t *testing.T) {
 			expectCreateCalls: 1,
 		},
 		{
+			name:              "context canceled returns 499",
+			kind:              types.AgentRuntimeKind,
+			body:              `{"name":"workload","namespace":"ns"}`,
+			createErr:         context.Canceled,
+			expectStatus:      499,
+			expectCreateCalls: 1,
+		},
+		{
+			name:              "context deadline exceeded returns 504",
+			kind:              types.AgentRuntimeKind,
+			body:              `{"name":"workload","namespace":"ns"}`,
+			createErr:         context.DeadlineExceeded,
+			expectStatus:      http.StatusGatewayTimeout,
+			expectMessage:     "request timed out",
+			expectCreateCalls: 1,
+		},
+		{
+			name:              "sandbox creation timeout returns 504",
+			kind:              types.AgentRuntimeKind,
+			body:              `{"name":"workload","namespace":"ns"}`,
+			createErr:         errSandboxCreationTimeout,
+			expectStatus:      http.StatusGatewayTimeout,
+			expectMessage:     "sandbox creation timed out",
+			expectCreateCalls: 1,
+		},
+		{
 			name:              "create sandbox success agent runtime",
 			kind:              types.AgentRuntimeKind,
 			body:              `{"name":"workload","namespace":"ns"}`,
@@ -422,9 +459,11 @@ func TestHandleSandboxCreate(t *testing.T) {
 			require.Equal(t, tc.expectStatus, w.Code)
 
 			if tc.expectStatus != http.StatusOK {
-				var errResp ErrorResponse
-				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
-				require.Equal(t, tc.expectMessage, errResp.Message)
+				if tc.expectMessage != "" {
+					var errResp ErrorResponse
+					require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+					require.Equal(t, tc.expectMessage, errResp.Message)
+				}
 				return
 			}
 

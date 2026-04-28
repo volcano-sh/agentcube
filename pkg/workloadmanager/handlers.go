@@ -140,9 +140,10 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 
 	response, err := s.createSandbox(c.Request.Context(), dynamicClient, sandbox, sandboxClaim, sandboxEntry, resultChan)
 	if err != nil {
-		// Client disconnected — nothing to write back, avoid a misleading 500 in metrics.
+		// Client disconnected — abort with 499 so logs/metrics reflect the cancellation.
 		if errors.Is(err, context.Canceled) {
 			klog.Warningf("create sandbox aborted %s/%s: client disconnected", sandbox.Namespace, sandbox.Name)
+			c.AbortWithStatus(499)
 			return
 		}
 		// Deadline exceeded — client may still be connected; return 504 so they get a meaningful response.
@@ -171,20 +172,14 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	respondJSON(c, http.StatusOK, response)
 }
 
-// createSandboxResources stores the sandbox placeholder and creates the K8s sandbox resource.
-func (s *Server) createSandboxResources(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, placeholder *types.SandboxInfo) error {
-	if err := s.storeClient.StoreSandbox(ctx, placeholder); err != nil {
-		if isContextError(err) {
-			return err
-		}
-		return api.NewInternalError(fmt.Errorf("store sandbox placeholder failed: %v", err))
-	}
+// createK8sResources creates the K8s sandbox or sandbox claim resource.
+func (s *Server) createK8sResources(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
 	if sandboxClaim != nil {
 		if err := createSandboxClaim(ctx, dynamicClient, sandboxClaim); err != nil {
 			if isContextError(err) {
 				return err
 			}
-			return api.NewInternalError(fmt.Errorf("create sandbox claim %s/%s failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err))
+			return api.NewInternalError(fmt.Errorf("create sandbox claim %s/%s failed: %w", sandboxClaim.Namespace, sandboxClaim.Name, err))
 		}
 	} else {
 		if _, err := createSandbox(ctx, dynamicClient, sandbox); err != nil {
@@ -199,14 +194,16 @@ func (s *Server) createSandboxResources(ctx context.Context, dynamicClient dynam
 
 // createSandbox performs sandbox creation and returns the response payload or an error with an HTTP status code.
 func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
-	sandboxStorePlaceHolder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
-	if err := s.createSandboxResources(ctx, dynamicClient, sandbox, sandboxClaim, sandboxStorePlaceHolder); err != nil {
-		return nil, err
+	placeholder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
+	if err := s.storeClient.StoreSandbox(ctx, placeholder); err != nil {
+		if isContextError(err) {
+			return nil, err
+		}
+		return nil, api.NewInternalError(fmt.Errorf("store sandbox placeholder failed: %w", err))
 	}
 
-	// Register rollback BEFORE waiting for the sandbox to become ready.
-	// This ensures the K8s resource and store placeholder are cleaned up on
-	// timeout, pod-IP failure, or store-update failure — not just on post-creation errors.
+	// Register rollback right after the placeholder is stored so that a K8s
+	// creation failure does not leave an orphaned store entry.
 	needRollbackSandbox := true
 	defer func() {
 		if !needRollbackSandbox {
@@ -214,6 +211,10 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		}
 		s.rollbackSandboxCreation(dynamicClient, sandbox, sandboxClaim, sandboxEntry.SessionID)
 	}()
+
+	if err := s.createK8sResources(ctx, dynamicClient, sandbox, sandboxClaim); err != nil {
+		return nil, err
+	}
 
 	// Use NewTimer so we can stop it explicitly when another branch wins,
 	// preventing the runtime from retaining the timer until it fires.

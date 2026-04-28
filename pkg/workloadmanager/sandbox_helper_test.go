@@ -363,7 +363,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 			expected:    "not-ready",
 		},
 		{
-			name: "ready condition false is treated as unknown",
+			name: "ready condition false with reason is not-ready",
 			sandbox: &sandboxv1alpha1.Sandbox{
 				Status: sandboxv1alpha1.SandboxStatus{
 					Conditions: []metav1.Condition{

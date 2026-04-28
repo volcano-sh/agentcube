@@ -52,7 +52,7 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
-	klog.V(2).Infof("Sandbox %s/%s is running, notifying waiter", sandbox.Namespace, sandbox.Name)
+	klog.V(2).Infof("Sandbox %s/%s is ready, notifying waiter", sandbox.Namespace, sandbox.Name)
 
 	r.mu.Lock()
 	resultChan, exists := r.watchers[req.NamespacedName]

@@ -343,6 +343,7 @@ func (e *testEnv) createCodeInterpreterSession(namespace, name string) (string, 
 
 	const maxRetries = 5
 	backoff := time.Second
+	client := &http.Client{Timeout: 3 * time.Minute}
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		httpReq, err := http.NewRequest("POST", reqURL, bytes.NewBuffer(jsonData))
@@ -354,8 +355,6 @@ func (e *testEnv) createCodeInterpreterSession(namespace, name string) (string, 
 		if e.authToken != "" {
 			httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.authToken))
 		}
-
-		client := &http.Client{Timeout: 3 * time.Minute}
 		resp, err := client.Do(httpReq)
 		if err != nil {
 			if attempt < maxRetries-1 {

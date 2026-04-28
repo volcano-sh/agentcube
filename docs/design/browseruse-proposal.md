@@ -99,7 +99,7 @@ type BrowserUseSpec struct {
     // Ports is a list of ports that the browser runtime will expose.
     // Typically includes the browser automation protocol port (e.g., Playwright MCP on 8931)
     // and optionally a VNC port for visual debugging.
-    Ports []TargetPort `json:"targetPort"`
+    Ports []TargetPort `json:"ports"` 
 
     // PodTemplate describes the template that will be used to create a browser sandbox.
     // Browser workloads typically require:

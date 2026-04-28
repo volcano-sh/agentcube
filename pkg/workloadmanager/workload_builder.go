@@ -441,7 +441,10 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 func buildSandboxByBrowserUse(namespace string, name string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
 	browserUseKey := namespace + "/" + name
 	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
-	runtimeObj, exists, _ := ifm.BrowserUseInformer.GetStore().GetByKey(browserUseKey)
+	runtimeObj, exists, err := ifm.BrowserUseInformer.GetStore().GetByKey(browserUseKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get browser use %s from informer store: %w", browserUseKey, err)
+	}
 	if !exists {
 		return nil, nil, api.ErrBrowserUseNotFound
 	}

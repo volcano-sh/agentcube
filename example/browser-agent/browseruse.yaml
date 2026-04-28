@@ -1,7 +1,7 @@
 apiVersion: runtime.agentcube.volcano.sh/v1alpha1
 kind: BrowserUse
 metadata:
-  name: playwright-mcp
+  name: browser-use-tool
   namespace: default
 spec:
   targetPort:
@@ -10,10 +10,10 @@ spec:
       protocol: "HTTP"
   podTemplate:
     labels:
-      app: playwright-mcp
+      app: browser-use-tool
     spec:
       containers:
-        - name: playwright-mcp
+        - name: browser-use-tool
           image: mcr.microsoft.com/playwright/mcp:latest
           imagePullPolicy: IfNotPresent
           args:

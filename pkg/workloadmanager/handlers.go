@@ -171,17 +171,24 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	// Store placeholder before creating, make sandbox/sandboxClaim GarbageCollection possible
 	sandboxStorePlaceHolder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
 	if err := s.storeClient.StoreSandbox(ctx, sandboxStorePlaceHolder); err != nil {
-		err = api.NewInternalError(fmt.Errorf("store sandbox placeholder failed: %v", err))
-		return nil, err
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, api.NewInternalError(fmt.Errorf("store sandbox placeholder failed: %v", err))
 	}
 
 	if sandboxClaim != nil {
 		if err := createSandboxClaim(ctx, dynamicClient, sandboxClaim); err != nil {
-			err = api.NewInternalError(fmt.Errorf("create sandbox claim %s/%s failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err))
-			return nil, err
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, err
+			}
+			return nil, api.NewInternalError(fmt.Errorf("create sandbox claim %s/%s failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err))
 		}
 	} else {
 		if _, err := createSandbox(ctx, dynamicClient, sandbox); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, err
+			}
 			return nil, api.NewInternalError(fmt.Errorf("failed to create sandbox: %w", err))
 		}
 	}
@@ -227,9 +234,15 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 
 	podIP, err := s.k8sClient.GetSandboxPodIP(ctx, sandbox.Namespace, sandbox.Name, sandboxPodName)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		return nil, api.NewInternalError(fmt.Errorf("failed to get sandbox %s/%s pod IP: %w", sandbox.Namespace, sandbox.Name, err))
 	}
 	if err := s.waitForSandboxEntryPointsReady(ctx, podIP, sandboxEntry); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		return nil, api.NewInternalError(fmt.Errorf("failed to verify sandbox %s/%s entrypoints: %w", sandbox.Namespace, sandbox.Name, err))
 	}
 
@@ -243,6 +256,9 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	}
 
 	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		return nil, api.NewInternalError(fmt.Errorf("update store cache failed: %w", err))
 	}
 

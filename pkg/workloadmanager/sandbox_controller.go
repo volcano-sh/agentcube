@@ -48,7 +48,7 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	if getSandboxStatus(sandbox) != sandboxStatusRunning {
+	if getSandboxStatus(sandbox) != sandboxStatusReady {
 		return ctrl.Result{}, nil
 	}
 

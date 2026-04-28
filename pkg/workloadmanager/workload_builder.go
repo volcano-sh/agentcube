@@ -463,6 +463,10 @@ func buildSandboxByBrowserUse(namespace string, name string, ifm *Informers) (*s
 	sessionID := uuid.New().String()
 	sandboxName := fmt.Sprintf("%s-%s", name, RandString(8))
 
+	if browserUseObj.Spec.Template == nil {
+		return nil, nil, api.ErrTemplateMissing
+	}
+
 	// Normalize RuntimeClassName: if it's an empty string, set it to nil
 	podSpec := browserUseObj.Spec.Template.Spec.DeepCopy()
 	if podSpec.RuntimeClassName != nil && *podSpec.RuntimeClassName == "" {

@@ -297,8 +297,8 @@ func (s *Server) DownloadFileHandler(c *gin.Context) {
 	c.File(safePath)
 }
 
-// FileEntry defines a single file entry in the list response
-type FileEntry struct {
+// NativeFileEntry defines a single file entry in the native list response
+type NativeFileEntry struct {
 	Name     string    `json:"name"`
 	Size     int64     `json:"size"`
 	Modified time.Time `json:"modified"`
@@ -308,7 +308,7 @@ type FileEntry struct {
 
 // ListFilesResponse defines file listing response body
 type ListFilesResponse struct {
-	Files []FileEntry `json:"files"`
+	Files []NativeFileEntry `json:"files"`
 }
 
 // ListFilesHandler handles file listing requests
@@ -348,14 +348,14 @@ func (s *Server) ListFilesHandler(c *gin.Context) {
 		return
 	}
 
-	files := make([]FileEntry, 0, len(entries))
+	files := make([]NativeFileEntry, 0, len(entries))
 	for _, entry := range entries {
 		info, err := entry.Info()
 		if err != nil {
 			klog.Warningf("Failed to get info for entry '%s': %v", entry.Name(), err)
 			continue // Skip files with errors
 		}
-		files = append(files, FileEntry{
+		files = append(files, NativeFileEntry{
 			Name:     entry.Name(),
 			Size:     info.Size(),
 			Modified: info.ModTime(),

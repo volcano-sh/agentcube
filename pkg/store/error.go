@@ -21,6 +21,6 @@ import (
 )
 
 var (
-	ErrNotFound  = errors.New("store: not found")
+	ErrNotFound   = errors.New("store: not found")
 	ErrIDConflict = errors.New("store: id conflict")
 )

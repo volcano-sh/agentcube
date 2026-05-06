@@ -31,9 +31,19 @@ jobs:
           # Simplest is to install kind and let script run.
           install_only: true
 
+      - name: Setup E2B API Keys
+        run: |
+          # Ensure E2B_API_KEYS is set in router before running tests
+          echo "Setting E2B_API_KEYS environment variable in router..."
+          kubectl -n agentcube set env deployment/agentcube-router E2B_API_KEYS="e2e-test-api-key:e2e-test-client" || true
+          kubectl -n agentcube rollout restart deployment/agentcube-router || true
+          kubectl -n agentcube rollout status deployment/agentcube-router --timeout=120s || true
+          echo "E2B_API_KEYS configuration complete"
+
       - name: Run E2E Tests
         run: |
           export ARTIFACTS_PATH=${{ github.workspace }}/e2e-logs
+          export E2B_API_KEY="e2e-test-api-key"
           make e2e
 
       - name: Upload E2E Component Logs

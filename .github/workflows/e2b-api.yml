@@ -1,0 +1,438 @@
+name: E2B API Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+      - "release-*"
+  push:
+    branches:
+      - main
+      - "release-*"
+      - "feature/*"
+  workflow_dispatch:
+
+env:
+  GO_VERSION: "1.24"
+  KIND_VERSION: "v0.30.0"
+  AGENT_SANDBOX_VERSION: "v0.1.1"
+  AGENTCUBE_NAMESPACE: "agentcube"
+  E2E_CLUSTER_NAME: "agentcube-e2e"
+
+jobs:
+  e2b-api-test:
+    name: E2B API Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create Kind Cluster
+        uses: helm/kind-action@v1
+        with:
+          version: ${{ env.KIND_VERSION }}
+          cluster_name: ${{ env.E2E_CLUSTER_NAME }}
+          wait: 120s
+
+      - name: Verify Kind Cluster
+        run: |
+          kubectl cluster-info
+          kubectl get nodes -o wide
+
+      - name: Pre-pull required images
+        run: |
+          # Pre-pull images to avoid timeout issues during deployment
+          docker pull registry.k8s.io/agent-sandbox/agent-sandbox-controller:${{ env.AGENT_SANDBOX_VERSION }} || true
+          docker pull python:3.9-slim || true
+          docker pull redis:7-alpine || true
+
+      - name: Install agent-sandbox
+        run: |
+          echo "Installing agent-sandbox ${{ env.AGENT_SANDBOX_VERSION }}..."
+          kubectl apply --validate=false -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${{ env.AGENT_SANDBOX_VERSION }}/manifest.yaml
+          kubectl apply --validate=false -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${{ env.AGENT_SANDBOX_VERSION }}/extensions.yaml
+
+          # Wait for agent-sandbox to be ready
+          echo "Waiting for agent-sandbox controller..."
+          kubectl -n agent-sandbox wait --for=condition=available --timeout=300s deployment/agent-sandbox-controller || true
+
+      - name: Build Docker images
+        run: |
+          make docker-build
+          make docker-build-router
+          make docker-build-picod
+
+      - name: Load images into Kind
+        run: |
+          kind load docker-image workloadmanager:latest --name ${{ env.E2E_CLUSTER_NAME }}
+          kind load docker-image agentcube-router:latest --name ${{ env.E2E_CLUSTER_NAME }}
+          kind load docker-image picod:latest --name ${{ env.E2E_CLUSTER_NAME }}
+
+      - name: Deploy Redis
+        run: |
+          # Create namespace
+          kubectl create namespace ${{ env.AGENTCUBE_NAMESPACE }} || true
+
+          # Deploy Redis
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} create deployment redis \
+            --image=redis:7-alpine \
+            --port=6379 \
+            --dry-run=client -o yaml | kubectl apply --validate=false -f -
+
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} expose deployment redis \
+            --port=6379 \
+            --target-port=6379 \
+            --name=redis \
+            --dry-run=client -o yaml | kubectl apply --validate=false -f -
+
+          # Wait for Redis
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} rollout status deployment/redis --timeout=180s
+
+          # Verify Redis is responding
+          for i in {1..30}; do
+            if kubectl exec -n ${{ env.AGENTCUBE_NAMESPACE }} deployment/redis -- redis-cli ping 2>/dev/null | grep -q "PONG"; then
+              echo "Redis is ready"
+              break
+            fi
+            echo "Waiting for Redis... (attempt $i/30)"
+            sleep 2
+          done
+
+      - name: Deploy AgentCube
+        run: |
+          # Prepare extra environment variables as JSON for Helm
+          WM_EXTRA_ENV='[{"name":"REDIS_PASSWORD_REQUIRED","value":"false"},{"name":"JWT_KEY_SECRET_NAMESPACE","value":"${{ env.AGENTCUBE_NAMESPACE }}"}]'
+          ROUTER_EXTRA_ENV='[{"name":"REDIS_PASSWORD_REQUIRED","value":"false"},{"name":"E2B_API_KEYS","value":"e2e-test-api-key:e2e-test-client"}]'
+
+          echo "=== Deploying AgentCube via Helm ==="
+          if ! helm upgrade --install agentcube manifests/charts/base \
+            --namespace ${{ env.AGENTCUBE_NAMESPACE }} \
+            --create-namespace \
+            --set redis.addr="redis.${{ env.AGENTCUBE_NAMESPACE }}.svc.cluster.local:6379" \
+            --set redis.password="" \
+            --set workloadmanager.image.repository="workloadmanager" \
+            --set workloadmanager.image.tag="latest" \
+            --set-json "workloadmanager.extraEnv=${WM_EXTRA_ENV}" \
+            --set router.image.repository="agentcube-router" \
+            --set router.image.tag="latest" \
+            --set router.rbac.create=true \
+            --set router.serviceAccountName="agentcube-router" \
+            --set-json "router.extraEnv=${ROUTER_EXTRA_ENV}" \
+            --wait --timeout 10m; then
+            echo "[FAIL] Helm install timed out or failed"
+            exit 1
+          fi
+
+          echo "=== Waiting for deployments to be ready ==="
+          if ! kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} rollout status deployment/workloadmanager --timeout=300s; then
+            echo "[FAIL] WorkloadManager rollout failed"
+            exit 1
+          fi
+
+          if ! kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} rollout status deployment/agentcube-router --timeout=300s; then
+            echo "[FAIL] Router rollout failed"
+            exit 1
+          fi
+
+      - name: Debug Deploy Failure
+        if: failure()
+        run: |
+          echo "========================================"
+          echo "=== Debug: Deploy Failure Diagnostics ==="
+          echo "========================================"
+
+          echo ""
+          echo "=== All Pods ==="
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} get pods -o wide || true
+
+          echo ""
+          echo "=== RBAC Resources ==="
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} get role,rolebinding,serviceaccount || true
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} get role agentcube-router-identity -o yaml || true
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} get rolebinding agentcube-router-identity -o yaml || true
+
+          echo ""
+          echo "=== All Events (sorted by time) ==="
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} get events --sort-by='.lastTimestamp' || true
+
+          echo ""
+          echo "=== Router Deployment Describe ==="
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} describe deployment agentcube-router || true
+
+          echo ""
+          echo "=== WorkloadManager Deployment Describe ==="
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} describe deployment workloadmanager || true
+
+          echo ""
+          echo "=== Router Pod Describe ==="
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} describe pods -l app=agentcube-router || true
+
+          echo ""
+          echo "=== WorkloadManager Pod Describe ==="
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} describe pods -l app=workloadmanager || true
+
+          echo ""
+          echo "=== Router Logs ==="
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} logs deployment/agentcube-router --tail=200 || true
+
+          echo ""
+          echo "=== WorkloadManager Logs ==="
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} logs deployment/workloadmanager --tail=200 || true
+
+          echo ""
+          echo "=== Redis Logs ==="
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} logs deployment/redis --tail=50 || true
+
+          echo ""
+          echo "=== Helm Release Status ==="
+          helm status agentcube -n ${{ env.AGENTCUBE_NAMESPACE }} || true
+
+          echo ""
+          echo "=== Helm Release History ==="
+          helm history agentcube -n ${{ env.AGENTCUBE_NAMESPACE }} || true
+
+          echo ""
+          echo "=== Node Status ==="
+          kubectl get nodes -o wide || true
+
+          echo ""
+          echo "=== All Services ==="
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} get svc || true
+
+          echo ""
+          echo "=== Image Check ==="
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} get pods -o jsonpath='{range .items[*]}{"Pod: "}{.metadata.name}{"\n"}{range .spec.containers[*]}{"  Image: "}{.image}{"\n"}{end}{end}' || true
+
+      - name: Setup E2B API Keys
+        run: |
+          echo "Configuring E2B API Keys for Router..."
+
+          # Verify E2B_API_KEYS is set in the deployment
+          echo "Checking Router deployment environment variables..."
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} get deployment agentcube-router -o yaml | grep -A 2 "E2B_API_KEYS" || {
+            echo "[FAIL] E2B_API_KEYS not found in Router deployment"
+            exit 1
+          }
+
+          # Restart router to ensure env vars are loaded
+          echo "Restarting Router to apply E2B API Keys..."
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} rollout restart deployment/agentcube-router
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} rollout status deployment/agentcube-router --timeout=120s
+
+          echo "[OK] E2B API Keys configured successfully"
+
+      - name: Verifying E2B API configuration
+        run: |
+          echo "Verifying E2B API configuration..."
+
+          # Check if the router pod has the environment variable set
+          ROUTER_POD=$(kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} get pods -l app=agentcube-router -o jsonpath='{.items[0].metadata.name}')
+          echo "Router pod: $ROUTER_POD"
+
+          # Verify environment variable inside the pod
+          echo "Checking E2B_API_KEYS env var inside Router pod..."
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} exec $ROUTER_POD -- env | grep -E "(E2B_API_KEYS|API_KEY)" || {
+            echo "[WARN]  E2B_API_KEYS not found in pod environment (this may be expected if running as non-root)"
+          }
+
+          # Check router logs for E2B initialization
+          echo "Checking Router logs for E2B initialization..."
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} logs deployment/agentcube-router --tail=50 | grep -i "e2b\|api.*key" || {
+            echo "[INFO]  No E2B-specific logs found yet, may need to wait for first request"
+          }
+
+          echo "[OK] E2B API configuration verification complete"
+
+      - name: Checking Router logs for API key loading
+        run: |
+          echo "Checking Router logs for API key loading..."
+
+          # Wait a bit for the router to fully initialize
+          sleep 3
+
+          # Get recent router logs and grep for E2B/API key related messages
+          echo "=== Router Logs (E2B/API Key related) ==="
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} logs deployment/agentcube-router --tail=100 | \
+            grep -iE "(e2b|api.*key|template|loaded|initialized)" || \
+            echo "[INFO]  No E2B/API key related log entries found in recent logs"
+
+          # Check if router is healthy
+          echo ""
+          echo "=== Router Health Check ==="
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} get pods -l app=agentcube-router
+
+          # Verify the router is responding
+          echo ""
+          echo "Testing Router health endpoint..."
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} exec deployment/agentcube-router -- \
+            wget -qO- --timeout=5 http://localhost:8080/health/live 2>/dev/null || \
+            echo "[WARN]  Could not reach health endpoint from inside pod"
+
+          echo ""
+          echo "[OK] Router log check complete"
+
+      - name: Setup test resources
+        run: |
+          # Create ServiceAccount and RBAC
+          kubectl create serviceaccount e2e-test -n ${{ env.AGENTCUBE_NAMESPACE }} || true
+          kubectl create clusterrolebinding e2e-test-binding \
+            --clusterrole=workloadmanager \
+            --serviceaccount=${{ env.AGENTCUBE_NAMESPACE }}:e2e-test || true
+
+          # Create test resources
+          kubectl apply --validate=false -f test/e2e/echo_agent.yaml || true
+          kubectl apply --validate=false -f test/e2e/e2e_code_interpreter.yaml || true
+
+          # Create echo-agent-short-ttl with 30s TTL for session TTL testing
+          sed 's/name: echo-agent/name: echo-agent-short-ttl/; s/app: echo-agent/app: echo-agent-short-ttl/; s/sessionTimeout: "15m"/sessionTimeout: "30s"/' \
+            test/e2e/echo_agent.yaml | kubectl apply --validate=false -f - || true
+
+          # Create template test resources
+          kubectl apply --validate=false -f test/e2e/test_templates.yaml || true
+
+          # Wait for templates to be ready
+          echo "Waiting for templates to be ready..."
+          kubectl get codeinterpreter -n ${{ env.AGENTCUBE_NAMESPACE }} || true
+
+      - name: Setup port forwarding
+        run: |
+          # Start port forwarding in background
+          kubectl port-forward svc/workloadmanager -n ${{ env.AGENTCUBE_NAMESPACE }} 8080:8080 &
+          echo "WORKLOAD_PID=$!" >> $GITHUB_ENV
+
+          kubectl port-forward svc/agentcube-router -n ${{ env.AGENTCUBE_NAMESPACE }} 8081:8081 &
+          echo "ROUTER_PID=$!" >> $GITHUB_ENV
+
+          # Wait for port-forwards to be ready
+          sleep 5
+
+          # Verify port-forwards
+          for i in {1..30}; do
+            if curl -sf -o /dev/null http://localhost:8080/health && curl -sf -o /dev/null http://localhost:8081/health/live; then
+              echo "Port-forwards are ready"
+              break
+            fi
+            echo "Waiting for port-forwards... (attempt $i/30)"
+            sleep 2
+          done
+
+      - name: Create API Token
+        run: |
+          API_TOKEN=$(kubectl create token e2e-test -n ${{ env.AGENTCUBE_NAMESPACE }} --duration=24h)
+          echo "API_TOKEN=$API_TOKEN" >> $GITHUB_ENV
+
+      - name: Setup Python SDK
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ./sdk-python
+
+          # Install E2B SDK for compatibility testing
+          echo "Installing E2B Python SDK..."
+          python -m pip install e2b-code-interpreter
+
+          # Verify installation
+          python -c "from e2b_code_interpreter import Sandbox; print('E2B SDK installed successfully')"
+
+      - name: Run E2E Go tests
+        env:
+          WORKLOAD_MANAGER_URL: http://localhost:8080
+          ROUTER_URL: http://localhost:8081
+          API_TOKEN: ${{ env.API_TOKEN }}
+          E2B_API_KEYS: "e2e-test-api-key:e2e-test-client"
+        run: |
+          go test -tags e2e -v ./test/e2e/... -timeout 20m
+
+      - name: Run E2E Python tests
+        env:
+          WORKLOAD_MANAGER_URL: http://localhost:8080
+          ROUTER_URL: http://localhost:8081
+          API_TOKEN: ${{ env.API_TOKEN }}
+          AGENTCUBE_NAMESPACE: ${{ env.AGENTCUBE_NAMESPACE }}
+        run: |
+          cd test/e2e
+          python test_codeinterpreter.py
+
+      - name: Run E2B SDK Compatibility Tests
+        env:
+          E2B_API_KEY: "e2e-test-api-key"
+          E2B_BASE_URL: "http://localhost:8081"
+          E2B_TEMPLATE_ID: "default/code-interpreter"
+        run: |
+          echo "Running E2B SDK Compatibility Tests..."
+          cd test/e2e
+          python test_e2b_sdk.py
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          mkdir -p ${{ github.workspace }}/e2e-logs
+
+          # Collect workloadmanager logs
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} logs deployment/workloadmanager > ${{ github.workspace }}/e2e-logs/workloadmanager.log 2>&1 || true
+
+          # Collect router logs
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} logs deployment/agentcube-router > ${{ github.workspace }}/e2e-logs/router.log 2>&1 || true
+
+          # Collect sandbox pod logs
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} get pods -o wide > ${{ github.workspace }}/e2e-logs/pods.txt 2>&1 || true
+
+          # Collect events
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} get events --sort-by='.lastTimestamp' > ${{ github.workspace }}/e2e-logs/events.txt 2>&1 || true
+
+      - name: Upload E2E logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2b-api-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ github.workspace }}/e2e-logs/
+          if-no-files-found: ignore
+
+      - name: Cleanup
+        if: always()
+        run: |
+          # Kill port-forward processes
+          if [ -n "${{ env.WORKLOAD_PID }}" ]; then
+            kill ${{ env.WORKLOAD_PID }} 2>/dev/null || true
+          fi
+          if [ -n "${{ env.ROUTER_PID }}" ]; then
+            kill ${{ env.ROUTER_PID }} 2>/dev/null || true
+          fi
+
+          # Delete Kind cluster
+          kind delete cluster --name ${{ env.E2E_CLUSTER_NAME }} || true
+
+      - name: Generate test report
+        if: always()
+        run: |
+          echo "## E2B API Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "[OK] All E2B API tests passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "[FAIL] E2B API tests failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Go version: ${{ env.GO_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Kind version: ${{ env.KIND_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Agent-sandbox version: ${{ env.AGENT_SANDBOX_VERSION }}" >> $GITHUB_STEP_SUMMARY

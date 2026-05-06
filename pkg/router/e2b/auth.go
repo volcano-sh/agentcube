@@ -67,9 +67,9 @@ func DefaultAuthConfig() *AuthConfig {
 
 // Authenticator handles API key authentication
 type Authenticator struct {
-	config    *AuthConfig
-	apiKeys   map[string]*APIKeyCacheEntry // hash -> entry
-	mu        sync.RWMutex
+	config            *AuthConfig
+	apiKeys           map[string]*APIKeyCacheEntry // hash -> entry
+	mu                sync.RWMutex
 	k8sClient         kubernetes.Interface // Kubernetes client for informer
 	informer          cache.SharedInformer // Secret informer for watching API key changes
 	configMapInformer cache.SharedInformer // ConfigMap informer for watching namespace mapping changes

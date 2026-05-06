@@ -59,6 +59,7 @@ func main() {
 		tlsCert          = flag.String("tls-cert", "", "Path to TLS certificate file")
 		tlsKey           = flag.String("tls-key", "", "Path to TLS key file")
 		enableAuth       = flag.Bool("enable-auth", false, "Enable Authentication")
+		enableMTLS       = flag.Bool("enable-mtls", false, "Enable mutual TLS on the WorkloadManager listener")
 
 		// mTLS flags (certificate source abstraction)
 		mtlsCertFile, mtlsKeyFile, mtlsCAFile string
@@ -121,6 +122,7 @@ func main() {
 		TLSCert:          *tlsCert,
 		TLSKey:           *tlsKey,
 		EnableAuth:       *enableAuth,
+		EnableMTLS:       *enableMTLS,
 		MTLSCertFile:     mtlsCertFile,
 		MTLSKeyFile:      mtlsKeyFile,
 		MTLSCAFile:       mtlsCAFile,

@@ -18,7 +18,9 @@ package workloadmanager
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -26,6 +28,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
 
+	"github.com/volcano-sh/agentcube/pkg/mtls"
 	"github.com/volcano-sh/agentcube/pkg/store"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -42,6 +45,7 @@ type Server struct {
 	informers         *Informers
 	storeClient       store.Store
 	wg                sync.WaitGroup
+	certWatcher       *mtls.CertWatcher // mTLS cert watcher for graceful cleanup
 }
 
 type Config struct {
@@ -62,6 +66,10 @@ type Config struct {
 	SandboxReadyProbeTimeout time.Duration
 	// SandboxReadyProbeInterval is the retry interval for sandbox entrypoint probes.
 	SandboxReadyProbeInterval time.Duration
+
+	// EnableMTLS enables mutual TLS on the WorkloadManager listener.
+	// When true, --mtls-cert-file, --mtls-key-file, and --mtls-ca-file must be provided.
+	EnableMTLS bool
 
 	// mTLS configuration (certificate source abstraction)
 
@@ -150,15 +158,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	addr := ":" + s.config.Port
 
-	// Create HTTP/2 server for better performance
-	h2s := &http2.Server{}
-
-	// Wrap handler with h2c for HTTP/2 cleartext support
-	h2cHandler := h2c.NewHandler(s.router, h2s)
-
 	s.httpServer = &http.Server{
 		Addr:        addr,
-		Handler:     h2cHandler,
+		Handler:     s.router,
 		ReadTimeout: 15 * time.Second,
 		IdleTimeout: 90 * time.Second, // golang http default transport's idletimeout is 90s
 	}
@@ -172,9 +174,9 @@ func (s *Server) Start(ctx context.Context) error {
 		gc.run(ctx.Done())
 	}()
 
-	// Start HTTP or HTTPS server
-	if s.config.MTLSCertFile != "" || s.config.MTLSKeyFile != "" || s.config.MTLSCAFile != "" {
-		klog.Warningf("TODO(mahil-2040): wire mTLS in follow-up PR. mTLS flags are currently parsed but not consumed by the WorkloadManager listener.")
+	// Start mTLS, TLS, or plain HTTP server
+	if s.config.EnableMTLS {
+		return s.startMTLSServer(addr)
 	}
 
 	if s.config.EnableTLS {
@@ -184,7 +186,40 @@ func (s *Server) Start(ctx context.Context) error {
 		return s.httpServer.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
 	}
 
+	// Plain HTTP with h2c (HTTP/2 cleartext) support
+	h2s := &http2.Server{}
+	s.httpServer.Handler = h2c.NewHandler(s.router, h2s)
 	return s.httpServer.ListenAndServe()
+}
+
+// startMTLSServer configures and starts the server with mutual TLS.
+// It requires client certificates and verifies the caller presents the Router's SPIFFE ID.
+func (s *Server) startMTLSServer(addr string) error {
+	mtlsCfg := &mtls.Config{
+		CertFile: s.config.MTLSCertFile,
+		KeyFile:  s.config.MTLSKeyFile,
+		CAFile:   s.config.MTLSCAFile,
+	}
+	if !mtlsCfg.Enabled() {
+		return fmt.Errorf("--enable-mtls requires --mtls-cert-file, --mtls-key-file, and --mtls-ca-file to be set")
+	}
+
+	// Only the Router is allowed to call WorkloadManager
+	serverTLS, watcher, err := mtls.LoadServerConfig(mtlsCfg, []string{mtls.RouterSPIFFEID})
+	if err != nil {
+		return fmt.Errorf("failed to load mTLS server config: %w", err)
+	}
+	s.certWatcher = watcher
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		watcher.Stop()
+		return fmt.Errorf("failed to listen on %s: %w", addr, err)
+	}
+	tlsListener := tls.NewListener(ln, serverTLS)
+
+	klog.Infof("WorkloadManager mTLS enabled: accepting only clients with SPIFFE ID %s", mtls.RouterSPIFFEID)
+	return s.httpServer.Serve(tlsListener)
 }
 
 // Shutdown performs graceful shutdown of the HTTP server.
@@ -199,6 +234,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	} else {
 		klog.Info("HTTP server not initialized, skipping HTTP shutdown")
 	}
+
+	// Stop the mTLS certificate watcher to release file descriptors
+	if s.certWatcher != nil {
+		s.certWatcher.Stop()
+	}
+
 	return nil
 }
 

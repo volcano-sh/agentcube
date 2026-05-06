@@ -30,6 +30,10 @@ from kubernetes.client.rest import ApiException
 logger = logging.getLogger(__name__)
 
 
+class NamespaceNotFoundError(Exception):
+    """Raised when the target namespace is missing and auto-create is off."""
+
+
 class KubernetesProvider:
     """Service for deploying agents to Kubernetes cluster."""
 
@@ -37,15 +41,19 @@ class KubernetesProvider:
         self,
         namespace: str = "default",
         verbose: bool = False,
-        kubeconfig: Optional[str] = None
+        kubeconfig: Optional[str] = None,
+        auto_create_namespace: bool = True,
     ) -> None:
-        """
-        Initialize Kubernetes provider.
+        """Initialize Kubernetes provider.
 
         Args:
             namespace: Kubernetes namespace for agent deployments
             verbose: Enable verbose logging
             kubeconfig: Path to kubeconfig file (uses default if not specified)
+            auto_create_namespace: If True (default), create the target
+                namespace when missing. The apikey commands set this to
+                False so they can surface a "AgentCube not installed" error
+                instead of silently creating ``agentcube-system``.
         """
         self.namespace = namespace
         self.verbose = verbose
@@ -53,12 +61,10 @@ class KubernetesProvider:
         if verbose:
             logging.basicConfig(level=logging.DEBUG)
 
-        # Load Kubernetes configuration
         try:
             if kubeconfig:
                 config.load_kube_config(config_file=kubeconfig)
             else:
-                # Try in-cluster config first, then local kubeconfig
                 try:
                     config.load_incluster_config()
                     if self.verbose:
@@ -68,18 +74,18 @@ class KubernetesProvider:
                     if self.verbose:
                         logger.info("Loaded local Kubernetes config")
 
-            # Initialize API clients
             self.core_api = client.CoreV1Api()
             self.apps_api = client.AppsV1Api()
 
             if self.verbose:
-                logger.info(f"Kubernetes provider initialized for namespace: {namespace}")
-
+                logger.info(
+                    f"Kubernetes provider initialized for namespace: {namespace}"
+                )
         except Exception as e:
             raise RuntimeError(f"Failed to initialize Kubernetes client: {str(e)}")
 
-        # Ensure namespace exists
-        self._ensure_namespace()
+        if auto_create_namespace:
+            self._ensure_namespace()
 
     def _ensure_namespace(self) -> None:
         """Ensure the target namespace exists, create if it doesn't."""
@@ -89,7 +95,6 @@ class KubernetesProvider:
                 logger.debug(f"Namespace {self.namespace} already exists")
         except ApiException as e:
             if e.status == 404:
-                # Namespace doesn't exist, create it
                 namespace = client.V1Namespace(
                     metadata=client.V1ObjectMeta(name=self.namespace)
                 )
@@ -98,6 +103,17 @@ class KubernetesProvider:
                     logger.info(f"Created namespace: {self.namespace}")
             else:
                 raise
+
+    def verify_namespace_exists(self, namespace: str) -> None:
+        """Raise :class:`NamespaceNotFoundError` if ``namespace`` is missing."""
+        try:
+            self.core_api.read_namespace(name=namespace)
+        except ApiException as e:
+            if e.status == 404:
+                raise NamespaceNotFoundError(
+                    f"namespace {namespace!r} not found"
+                ) from e
+            raise
 
     def deploy_agent(
         self,
@@ -506,3 +522,142 @@ class KubernetesProvider:
             sanitized = "agent"
 
         return sanitized
+
+    APIKEY_LABELS = {
+        "app.kubernetes.io/managed-by": "kubectl-agentcube",
+        "app.kubernetes.io/component": "e2b-api-keys",
+    }
+
+    def get_or_create_secret(self, namespace: str, name: str):
+        """Read Secret ``name`` in ``namespace``; create empty if 404."""
+        try:
+            return self.core_api.read_namespaced_secret(name=name, namespace=namespace)
+        except ApiException as e:
+            if e.status != 404:
+                raise
+        body = client.V1Secret(
+            api_version="v1",
+            kind="Secret",
+            type="Opaque",
+            metadata=client.V1ObjectMeta(
+                name=name,
+                namespace=namespace,
+                labels=dict(self.APIKEY_LABELS),
+            ),
+            data={},
+        )
+        return self.core_api.create_namespaced_secret(namespace=namespace, body=body)
+
+    def get_or_create_configmap(self, namespace: str, name: str):
+        """Read ConfigMap ``name`` in ``namespace``; create empty if 404."""
+        try:
+            return self.core_api.read_namespaced_config_map(name=name, namespace=namespace)
+        except ApiException as e:
+            if e.status != 404:
+                raise
+        body = client.V1ConfigMap(
+            api_version="v1",
+            kind="ConfigMap",
+            metadata=client.V1ObjectMeta(
+                name=name,
+                namespace=namespace,
+                labels=dict(self.APIKEY_LABELS),
+            ),
+            data={},
+        )
+        return self.core_api.create_namespaced_config_map(namespace=namespace, body=body)
+
+    _CONFLICT_RETRIES = 1  # one retry on 409, per spec
+
+    def patch_secret_data(
+        self,
+        namespace: str,
+        name: str,
+        data: Dict[str, str],
+        annotations: Dict[str, str],
+    ):
+        """Strategic-merge PATCH the Secret with new ``stringData`` and annotations.
+
+        Retries once on a 409 conflict before propagating.
+        """
+        body: Dict[str, Any] = {"stringData": dict(data)}
+        if annotations:
+            body["metadata"] = {"annotations": dict(annotations)}
+
+        attempts = self._CONFLICT_RETRIES + 1
+        last_exc: Optional[ApiException] = None
+        for attempt in range(attempts):
+            try:
+                return self.core_api.patch_namespaced_secret(
+                    name=name, namespace=namespace, body=body,
+                )
+            except ApiException as e:
+                if e.status == 409 and attempt < attempts - 1:
+                    last_exc = e
+                    continue
+                raise
+        # Defensive — loop should always return or raise above.
+        raise last_exc  # type: ignore[misc]
+
+    def patch_configmap_data(
+        self,
+        namespace: str,
+        name: str,
+        data: Dict[str, str],
+    ):
+        """Strategic-merge PATCH the ConfigMap with new ``data`` entries."""
+        body = {"data": dict(data)}
+        attempts = self._CONFLICT_RETRIES + 1
+        last_exc: Optional[ApiException] = None
+        for attempt in range(attempts):
+            try:
+                return self.core_api.patch_namespaced_config_map(
+                    name=name, namespace=namespace, body=body,
+                )
+            except ApiException as e:
+                if e.status == 409 and attempt < attempts - 1:
+                    last_exc = e
+                    continue
+                raise
+        raise last_exc  # type: ignore[misc]
+
+    def remove_configmap_data_key(
+        self,
+        namespace: str,
+        name: str,
+        key: str,
+    ) -> None:
+        """Best-effort delete a single ``data`` key from the ConfigMap.
+
+        Uses strategic-merge-patch's null-value-deletes semantics. 404 is
+        swallowed because rollback should never re-raise on already-clean state.
+        """
+        body = {"data": {key: None}}
+        try:
+            self.core_api.patch_namespaced_config_map(
+                name=name, namespace=namespace, body=body,
+            )
+        except ApiException as e:
+            if e.status == 404:
+                return
+            raise
+
+    def read_secret_decoded_data(self, namespace: str, name: str) -> Dict[str, str]:
+        """Return the Secret's ``data`` map decoded from base64 to plain strings.
+
+        Returns an empty dict if the Secret has no ``data`` field.
+        """
+        import base64
+
+        secret = self.core_api.read_namespaced_secret(name=name, namespace=namespace)
+        raw = secret.data or {}
+        out: Dict[str, str] = {}
+        for k, v in raw.items():
+            if v is None:
+                out[k] = ""
+            else:
+                try:
+                    out[k] = base64.b64decode(v).decode("utf-8")
+                except Exception:
+                    out[k] = ""
+        return out

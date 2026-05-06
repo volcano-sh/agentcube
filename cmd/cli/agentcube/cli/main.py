@@ -30,6 +30,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from agentcube.models.pack_models import MetadataOptions
+from agentcube.cli.apikey_commands import apikey_app
 from agentcube.runtime.build_runtime import BuildRuntime
 from agentcube.runtime.invoke_runtime import InvokeRuntime
 from agentcube.runtime.pack_runtime import PackRuntime
@@ -49,6 +50,8 @@ app = typer.Typer(
     rich_markup_mode="rich",
     add_completion=False,
 )
+
+app.add_typer(apikey_app, name="apikey")
 
 # Version callback
 def version_callback(value: bool) -> None:

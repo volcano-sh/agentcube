@@ -129,6 +129,16 @@ test:
 	@echo "Running tests..."
 	go test -v ./...
 
+.PHONY: test-cli
+test-cli: ## Run kubectl-agentcube CLI Python unit and CLI tests
+	@echo "Running kubectl-agentcube unit + CLI tests..."
+	cd cmd/cli && python3 -m pytest tests/unit tests/cli -v
+
+.PHONY: test-cli-integration
+test-cli-integration: ## Run kubectl-agentcube integration tests (requires Kind cluster)
+	@echo "Running kubectl-agentcube integration tests..."
+	cd cmd/cli && python3 -m pytest tests/integration -v
+
 # Format code
 fmt: ## Format code
 	@echo "Formatting code..."

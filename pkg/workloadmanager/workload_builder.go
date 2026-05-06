@@ -241,7 +241,7 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 	return sandboxClaim
 }
 
-func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
+func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers, enableMTLS bool) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
 	agentRuntimeKey := namespace + "/" + name
 	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
 	runtimeObj, exists, _ := ifm.AgentRuntimeInformer.GetStore().GetByKey(agentRuntimeKey)
@@ -291,6 +291,11 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 		idleTimeout = agentRuntimeObj.Spec.SessionTimeout.Duration
 	}
 	buildParams.idleTimeout = idleTimeout
+
+	if enableMTLS {
+		injectMTLSVolumes(&buildParams.podSpec)
+	}
+
 	sandbox := buildSandboxObject(buildParams)
 	entry := &sandboxEntry{
 		Kind:        types.SandboxKind,
@@ -315,7 +320,7 @@ func buildCodeInterpreterEnvVars(templateEnv []corev1.EnvVar, authMode runtimev1
 	return envVars
 }
 
-func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers, enableMTLS bool) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
 	codeInterpreterKey := namespace + "/" + codeInterpreterName
 	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
 	runtimeObj, exists, err := informer.CodeInterpreterInformer.GetStore().GetByKey(codeInterpreterKey)
@@ -406,8 +411,6 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 
 	envVars := buildCodeInterpreterEnvVars(codeInterpreterObj.Spec.Template.Environment, codeInterpreterObj.Spec.AuthMode)
 
-	// TODO(mahil-2040): wire mTLS volume mounts (e.g., SPIRE CSI driver or spiffe-helper sidecar) 
-	// into the podSpec so that the PicoD container can access its dynamically provisioned certificates.
 	podSpec := corev1.PodSpec{
 		ImagePullSecrets: codeInterpreterObj.Spec.Template.ImagePullSecrets,
 		RuntimeClassName: runtimeClassName,
@@ -424,6 +427,10 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		},
 	}
 
+	if enableMTLS {
+		injectMTLSVolumes(&podSpec)
+	}
+
 	buildParams := &buildSandboxParams{
 		sandboxName:    sandboxName,
 		namespace:      namespace,
@@ -438,4 +445,109 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 	sandbox := buildSandboxObject(buildParams)
 	return sandbox, nil, sandboxEntry, nil
+}
+
+const (
+	// spireCertVolumeName is the shared emptyDir volume where spiffe-helper writes SVIDs.
+	spireCertVolumeName = "spire-certs"
+	// spireCertMountPath is where both the sidecar and PicoD container mount the cert volume.
+	// Matches the certDir value from values.yaml (spire.spiffeHelper.certDir).
+	spireCertMountPath = "/run/spire/certs"
+	// spireAgentSocketVolumeName is the volume exposing the SPIRE Agent socket.
+	spireAgentSocketVolumeName = "spire-agent-socket"
+	// spireAgentSocketPath is the host path where the SPIRE Agent socket lives.
+	spireAgentSocketPath = "/run/spire/sockets"
+	// spiffeHelperConfigVolumeName is the volume holding the spiffe-helper configuration.
+	spiffeHelperConfigVolumeName = "spiffe-helper-config"
+	// spiffeHelperConfigMapName is the ConfigMap name created by the Helm chart.
+	spiffeHelperConfigMapName = "spiffe-helper-config"
+	// spiffeHelperImage is the container image for the spiffe-helper sidecar.
+	spiffeHelperImage = "ghcr.io/spiffe/spiffe-helper:0.8.0"
+
+	// SVID file names written by spiffe-helper (must match values.yaml).
+	svidCertFileName   = "svid.pem"
+	svidKeyFileName    = "svid_key.pem"
+	svidBundleFileName = "svid_bundle.pem"
+)
+
+// injectMTLSVolumes injects a spiffe-helper sidecar and the necessary volumes
+// into the pod spec so PicoD can receive dynamically provisioned SPIRE SVIDs.
+// This follows the same pattern used by the Router and WorkloadManager Helm charts.
+func injectMTLSVolumes(podSpec *corev1.PodSpec) {
+	// 1. Add volumes: SPIRE agent socket, spiffe-helper config, shared cert emptyDir
+	podSpec.Volumes = append(podSpec.Volumes,
+		corev1.Volume{
+			Name: spireAgentSocketVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: spireAgentSocketPath,
+					Type: hostPathType(corev1.HostPathDirectoryOrCreate),
+				},
+			},
+		},
+		corev1.Volume{
+			Name: spiffeHelperConfigVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: spiffeHelperConfigMapName,
+					},
+				},
+			},
+		},
+		corev1.Volume{
+			Name: spireCertVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+	)
+
+	// 2. Add spiffe-helper sidecar container
+	sidecar := corev1.Container{
+		Name:            "spiffe-helper",
+		Image:           spiffeHelperImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Args:            []string{"-config", "/etc/spiffe-helper/spiffe-helper.conf"},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      spiffeHelperConfigVolumeName,
+				MountPath: "/etc/spiffe-helper",
+				ReadOnly:  true,
+			},
+			{
+				Name:      spireAgentSocketVolumeName,
+				MountPath: spireAgentSocketPath,
+				ReadOnly:  true,
+			},
+			{
+				Name:      spireCertVolumeName,
+				MountPath: spireCertMountPath,
+			},
+		},
+	}
+	// Prepend sidecar so it starts before the main container
+	podSpec.Containers = append([]corev1.Container{sidecar}, podSpec.Containers...)
+
+	// 3. Mount the shared cert volume into the main PicoD container (now at index 1)
+	if len(podSpec.Containers) > 1 {
+		podSpec.Containers[1].VolumeMounts = append(podSpec.Containers[1].VolumeMounts, corev1.VolumeMount{
+			Name:      spireCertVolumeName,
+			MountPath: spireCertMountPath,
+			ReadOnly:  true,
+		})
+
+		// Append mTLS flags to PicoD container args
+		podSpec.Containers[1].Args = append(podSpec.Containers[1].Args,
+			"--enable-mtls",
+			"--mtls-cert-file="+spireCertMountPath+"/"+svidCertFileName,
+			"--mtls-key-file="+spireCertMountPath+"/"+svidKeyFileName,
+			"--mtls-ca-file="+spireCertMountPath+"/"+svidBundleFileName,
+		)
+	}
+}
+
+// hostPathType is a helper to get a pointer to a HostPathType.
+func hostPathType(t corev1.HostPathType) *corev1.HostPathType {
+	return &t
 }

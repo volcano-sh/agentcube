@@ -18,10 +18,18 @@ package router
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,6 +38,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
+	"github.com/volcano-sh/agentcube/pkg/mtls"
 	"github.com/volcano-sh/agentcube/pkg/store"
 )
 
@@ -535,5 +544,133 @@ func TestGetSandboxBySession_CreateSandbox_EmptySessionID(t *testing.T) {
 	}
 	if !apierrors.IsInternalError(err) {
 		t.Errorf("expected internal error, got %v", err)
+	}
+}
+
+// ---- tests: NewSessionManager mTLS wiring ----
+
+func TestNewSessionManager_MTLSEnabled_ValidCerts(t *testing.T) {
+	// Generate test certs using a temp self-signed CA
+	dir := t.TempDir()
+	certFile, keyFile, caFile := generateTestCertsForRouter(t, dir)
+
+	t.Setenv("WORKLOAD_MANAGER_URL", "https://localhost:8080")
+
+	cfg := &mtls.Config{CertFile: certFile, KeyFile: keyFile, CAFile: caFile}
+	sm, err := NewSessionManager(&fakeStoreClient{}, true, cfg)
+	if err != nil {
+		t.Fatalf("NewSessionManager with mTLS failed: %v", err)
+	}
+	if sm == nil {
+		t.Fatal("expected non-nil SessionManager")
+	}
+
+	// Verify the underlying manager has a certWatcher set
+	m, ok := sm.(*manager)
+	if !ok {
+		t.Fatal("expected *manager type")
+	}
+	if m.certWatcher == nil {
+		t.Error("expected certWatcher to be non-nil when mTLS is enabled")
+	}
+	m.certWatcher.Stop()
+}
+
+func TestNewSessionManager_MTLSEnabled_MissingCerts(t *testing.T) {
+	t.Setenv("WORKLOAD_MANAGER_URL", "https://localhost:8080")
+
+	// enableMTLS=true but nil config
+	_, err := NewSessionManager(&fakeStoreClient{}, true, nil)
+	if err == nil {
+		t.Fatal("expected error when mTLS enabled with nil config")
+	}
+
+	// enableMTLS=true but empty config
+	_, err = NewSessionManager(&fakeStoreClient{}, true, &mtls.Config{})
+	if err == nil {
+		t.Fatal("expected error when mTLS enabled with empty config")
+	}
+}
+
+func TestNewSessionManager_MTLSDisabled(t *testing.T) {
+	t.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
+
+	sm, err := NewSessionManager(&fakeStoreClient{}, false, nil)
+	if err != nil {
+		t.Fatalf("NewSessionManager without mTLS failed: %v", err)
+	}
+
+	m, ok := sm.(*manager)
+	if !ok {
+		t.Fatal("expected *manager type")
+	}
+	if m.certWatcher != nil {
+		t.Error("expected certWatcher to be nil when mTLS is disabled")
+	}
+}
+
+// generateTestCertsForRouter creates a self-signed CA and leaf cert for testing.
+func generateTestCertsForRouter(t *testing.T, dir string) (certFile, keyFile, caFile string) {
+	t.Helper()
+
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate CA key: %v", err)
+	}
+	caTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{Organization: []string{"Test CA"}},
+		NotBefore:             time.Now().Add(-1 * time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+	}
+	caCertDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create CA cert: %v", err)
+	}
+	caFile = filepath.Join(dir, "ca.pem")
+	writePEMFile(t, caFile, "CERTIFICATE", caCertDER)
+
+	caCert, _ := x509.ParseCertificate(caCertDER)
+
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate leaf key: %v", err)
+	}
+	spiffeURL, _ := url.Parse("spiffe://cluster.local/ns/agentcube-system/sa/agentcube-router")
+	leafTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{Organization: []string{"Test Router"}},
+		NotBefore:    time.Now().Add(-1 * time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		URIs:         []*url.URL{spiffeURL},
+	}
+	leafCertDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caCert, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create leaf cert: %v", err)
+	}
+	certFile = filepath.Join(dir, "cert.pem")
+	writePEMFile(t, certFile, "CERTIFICATE", leafCertDER)
+
+	keyDER, _ := x509.MarshalECPrivateKey(leafKey)
+	keyFile = filepath.Join(dir, "key.pem")
+	writePEMFile(t, keyFile, "EC PRIVATE KEY", keyDER)
+
+	return certFile, keyFile, caFile
+}
+
+func writePEMFile(t *testing.T, path, blockType string, data []byte) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create %s: %v", path, err)
+	}
+	defer f.Close()
+	if err := pem.Encode(f, &pem.Block{Type: blockType, Bytes: data}); err != nil {
+		t.Fatalf("encode PEM %s: %v", path, err)
 	}
 }

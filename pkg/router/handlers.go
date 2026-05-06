@@ -331,8 +331,13 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 	// Create reverse proxy with reusable transport
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 
-	// Use the shared HTTP transport for connection pooling
-	proxy.Transport = s.httpTransport
+	// Use mTLS transport for PicoD when available, otherwise plain HTTP
+	if s.mtlsPicodTransport != nil {
+		proxy.Transport = s.mtlsPicodTransport
+		targetURL.Scheme = "https"
+	} else {
+		proxy.Transport = s.httpTransport
+	}
 
 	jwtToken, ok := s.generateSandboxJWT(c, sandbox)
 	if !ok {

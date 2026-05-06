@@ -33,13 +33,15 @@ import (
 
 // Server is the main structure for Router apiserver
 type Server struct {
-	config         *Config
-	engine         *gin.Engine
-	httpServer     *http.Server
-	sessionManager SessionManager
-	storeClient    store.Store
-	httpTransport  *http.Transport // Reusable HTTP transport for connection pooling
-	jwtManager     *JWTManager     // JWT manager for signing requests to sandboxes
+	config              *Config
+	engine              *gin.Engine
+	httpServer          *http.Server
+	sessionManager      SessionManager
+	storeClient         store.Store
+	httpTransport       *http.Transport // Reusable HTTP transport for connection pooling
+	jwtManager          *JWTManager     // JWT manager for signing requests to sandboxes
+	mtlsPicodTransport  *http.Transport // mTLS transport for proxying to PicoD (nil when mTLS disabled)
+	picodCertWatcher    *mtls.CertWatcher
 }
 
 // NewServer creates a new Router API server instance
@@ -88,6 +90,21 @@ func NewServer(config *Config) (*Server, error) {
 		sessionManager: sessionManager,
 		storeClient:    store.Storage(),
 		httpTransport:  httpTransport,
+	}
+
+	// When mTLS is enabled, create a dedicated transport for proxying to PicoD sandboxes
+	if config.EnableMTLS && mtlsCfg.Enabled() {
+		picodTLS, watcher, err := mtls.LoadClientConfig(mtlsCfg, mtls.SandboxSPIFFEID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load mTLS client config for PicoD: %w", err)
+		}
+		server.mtlsPicodTransport = &http.Transport{
+			TLSClientConfig:    picodTLS,
+			IdleConnTimeout:    0,
+			DisableCompression: false,
+		}
+		server.picodCertWatcher = watcher
+		klog.Infof("Router→PicoD mTLS enabled: expecting server SPIFFE ID %s", mtls.SandboxSPIFFEID)
 	}
 
 	// Initialize JWT manager for signing requests to sandboxes
@@ -184,6 +201,10 @@ func (s *Server) Start(ctx context.Context) error {
 		defer cancel()
 		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
 			klog.Errorf("Server shutdown error: %v", err)
+		}
+		// Stop PicoD cert watcher to release file descriptors
+		if s.picodCertWatcher != nil {
+			s.picodCertWatcher.Stop()
 		}
 	}()
 

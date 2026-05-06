@@ -331,17 +331,24 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 	// Create reverse proxy with reusable transport
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 
-	// Use mTLS transport for PicoD when available, otherwise plain HTTP
-	if s.mtlsPicodTransport != nil {
+	// Choose transport and auth based on picod-auth-mode
+	useMTLS := s.config.PicodAuthMode == PicodAuthModeMTLS && s.mtlsPicodTransport != nil
+	if useMTLS {
 		proxy.Transport = s.mtlsPicodTransport
 		targetURL.Scheme = "https"
 	} else {
 		proxy.Transport = s.httpTransport
 	}
 
-	jwtToken, ok := s.generateSandboxJWT(c, sandbox)
-	if !ok {
-		return
+	// In mTLS mode, the TLS handshake authenticates the Router — no JWT needed.
+	// In JWT mode (or when mTLS is not available), sign the request with a JWT.
+	var jwtToken string
+	if !useMTLS {
+		var ok bool
+		jwtToken, ok = s.generateSandboxJWT(c, sandbox)
+		if !ok {
+			return
+		}
 	}
 
 	configureProxyDirector(proxy, c, targetURL, path, jwtToken, sandbox.SessionID)

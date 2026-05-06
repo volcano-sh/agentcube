@@ -51,6 +51,11 @@ type Config struct {
 	// EnableMTLS enables mutual TLS for Router's outbound connections.
 	EnableMTLS bool
 
+	// PicodAuthMode controls how the Router authenticates to PicoD sandboxes.
+	// "mtls" (default): use mTLS transport, skip JWT signing.
+	// "jwt": use plain HTTP with JWT tokens (low-latency path).
+	PicodAuthMode string
+
 	// mTLS configuration (certificate source abstraction)
 
 	// MTLSCertFile is the path to the mTLS certificate (--mtls-cert-file)
@@ -60,3 +65,10 @@ type Config struct {
 	// MTLSCAFile is the path to the mTLS CA bundle (--mtls-ca-file)
 	MTLSCAFile string
 }
+
+const (
+	// PicodAuthModeMTLS uses mutual TLS for Router→PicoD authentication.
+	PicodAuthModeMTLS = "mtls"
+	// PicodAuthModeJWT uses JWT token signing for Router→PicoD authentication.
+	PicodAuthModeJWT = "jwt"
+)

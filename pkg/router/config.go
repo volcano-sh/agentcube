@@ -47,6 +47,10 @@ type Config struct {
 
 	// InitialConnectRetryInterval is the delay between preflight retries.
 	InitialConnectRetryInterval time.Duration
+
+	// EnableMTLS enables mutual TLS for Router's outbound connections.
+	EnableMTLS bool
+
 	// mTLS configuration (certificate source abstraction)
 
 	// MTLSCertFile is the path to the mTLS certificate (--mtls-cert-file)

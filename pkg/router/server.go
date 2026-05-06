@@ -25,6 +25,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
 
+	"github.com/volcano-sh/agentcube/pkg/mtls"
 	"github.com/volcano-sh/agentcube/pkg/store"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -58,8 +59,13 @@ func NewServer(config *Config) (*Server, error) {
 		config.InitialConnectRetryInterval = 200 * time.Millisecond
 	}
 
-	// Create session manager with store client
-	sessionManager, err := NewSessionManager(store.Storage())
+	// Create session manager with store client and mTLS config
+	mtlsCfg := &mtls.Config{
+		CertFile: config.MTLSCertFile,
+		KeyFile:  config.MTLSKeyFile,
+		CAFile:   config.MTLSCAFile,
+	}
+	sessionManager, err := NewSessionManager(store.Storage(), config.EnableMTLS, mtlsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session manager: %w", err)
 	}
@@ -184,10 +190,6 @@ func (s *Server) Start(ctx context.Context) error {
 	klog.Infof("Router server listening on %s", addr)
 
 	// Start HTTP or HTTPS server
-	if s.config.MTLSCertFile != "" || s.config.MTLSKeyFile != "" || s.config.MTLSCAFile != "" {
-		klog.Warningf("TODO(mahil-2040): wire mTLS in follow-up PR. mTLS flags are currently parsed but not consumed by the Router listener.")
-	}
-
 	if s.config.EnableTLS {
 		if s.config.TLSCert == "" || s.config.TLSKey == "" {
 			return fmt.Errorf("TLS enabled but cert/key not provided")

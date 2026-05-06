@@ -17,19 +17,27 @@ limitations under the License.
 package picod
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
+	
+	"github.com/volcano-sh/agentcube/pkg/mtls"
 )
 
 // Config defines server configuration
 type Config struct {
 	Port      int    `json:"port"`
 	Workspace string `json:"workspace"`
+
+	// EnableMTLS enables mutual TLS on the PicoD listener.
+	// When true, JWT-based authentication is bypassed (transport-layer auth).
+	EnableMTLS bool `json:"enableMTLS"`
 
 	// mTLS configuration (certificate source abstraction)
 
@@ -48,6 +56,7 @@ type Server struct {
 	authManager  *AuthManager
 	startTime    time.Time
 	workspaceDir string
+	certWatcher  *mtls.CertWatcher // mTLS cert watcher for graceful cleanup
 }
 
 // NewServer creates a new PicoD server instance
@@ -82,14 +91,23 @@ func NewServer(config Config) *Server {
 	engine.Use(gin.Logger())   // Request logging
 	engine.Use(gin.Recovery()) // Crash recovery
 
-	// Load public key from environment variable (required)
-	if err := s.authManager.LoadPublicKeyFromEnv(); err != nil {
-		klog.Fatalf("Failed to load public key from environment: %v", err)
+	// When mTLS is enabled, transport-layer auth replaces JWT-based auth.
+	// The TLS handshake itself authenticates the caller (Router) via SPIFFE ID.
+	if config.EnableMTLS {
+		klog.Info("mTLS mode: skipping JWT public key loading (transport-layer auth)")
+	} else {
+		// Load public key from environment variable (required for JWT mode)
+		if err := s.authManager.LoadPublicKeyFromEnv(); err != nil {
+			klog.Fatalf("Failed to load public key from environment: %v", err)
+		}
 	}
 
-	// API route group (Authenticated)
+	// API route group
 	api := engine.Group("/api")
-	api.Use(s.authManager.AuthMiddleware())
+	if !config.EnableMTLS {
+		// Only apply JWT auth middleware when NOT using mTLS
+		api.Use(s.authManager.AuthMiddleware())
+	}
 	{
 		api.POST("/execute", s.ExecuteHandler)
 		api.POST("/files", s.UploadFileHandler)
@@ -115,11 +133,40 @@ func (s *Server) Run() error {
 		ReadHeaderTimeout: 10 * time.Second, // Prevent Slowloris attacks
 	}
 
-	if s.config.MTLSCertFile != "" || s.config.MTLSKeyFile != "" || s.config.MTLSCAFile != "" {
-		klog.Warningf("TODO(mahil-2040): wire mTLS in follow-up PR. mTLS flags are currently parsed but not consumed by the PicoD listener.")
+	if s.config.EnableMTLS {
+		return s.serveMTLS(server, addr)
 	}
 
 	return server.ListenAndServe()
+}
+
+// serveMTLS configures and starts the server with mutual TLS.
+func (s *Server) serveMTLS(server *http.Server, addr string) error {
+	mtlsCfg := &mtls.Config{
+		CertFile: s.config.MTLSCertFile,
+		KeyFile:  s.config.MTLSKeyFile,
+		CAFile:   s.config.MTLSCAFile,
+	}
+	if !mtlsCfg.Enabled() {
+		return fmt.Errorf("--enable-mtls requires --mtls-cert-file, --mtls-key-file, and --mtls-ca-file to be set")
+	}
+
+	// Only the Router is allowed to connect to PicoD
+	serverTLS, watcher, err := mtls.LoadServerConfig(mtlsCfg, []string{mtls.RouterSPIFFEID})
+	if err != nil {
+		return fmt.Errorf("failed to load mTLS server config: %w", err)
+	}
+	s.certWatcher = watcher
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		watcher.Stop()
+		return fmt.Errorf("failed to listen on %s: %w", addr, err)
+	}
+	tlsListener := tls.NewListener(ln, serverTLS)
+
+	klog.Infof("PicoD mTLS enabled: accepting only clients with SPIFFE ID %s", mtls.RouterSPIFFEID)
+	return server.Serve(tlsListener)
 }
 
 // HealthCheckHandler handles health check requests

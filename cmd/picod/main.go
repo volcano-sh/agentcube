@@ -28,6 +28,7 @@ import (
 func main() {
 	port := flag.Int("port", 8080, "Port for the PicoD server to listen on")
 	workspace := flag.String("workspace", "", "Root directory for file operations (default: current working directory)")
+	enableMTLS := flag.Bool("enable-mtls", false, "Enable mutual TLS on the PicoD listener")
 
 	// mTLS flags (certificate source abstraction)
 	var mtlsCertFile, mtlsKeyFile, mtlsCAFile string
@@ -52,6 +53,7 @@ func main() {
 	config := picod.Config{
 		Port:           *port,
 		Workspace:      *workspace,
+		EnableMTLS:     *enableMTLS,
 		MTLSCertFile:   mtlsCertFile,
 		MTLSKeyFile:    mtlsKeyFile,
 		MTLSCAFile:     mtlsCAFile,

@@ -42,18 +42,23 @@ type SandboxInfo struct {
 	// during ListInactiveSandboxes. It is intentionally excluded from JSON serialization.
 	LastActivityAt time.Time `json:"-"`
 	Status         string    `json:"status"`
+	E2BSandboxID   string    `json:"e2bSandboxId"`
+	APIKeyHash     string    `json:"apiKeyHash"`
+	TemplateID     string    `json:"templateId"`
 }
 
 type SandboxEntryPoint struct {
 	Path     string `json:"path"`
 	Protocol string `json:"protocol"`
 	Endpoint string `json:"endpoint"`
+	Port     int    `json:"port"`
 }
 
 type CreateSandboxRequest struct {
-	Kind      string `json:"kind"`
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
+	Kind      string            `json:"kind"`
+	Name      string            `json:"name"`
+	Namespace string            `json:"namespace"`
+	EnvVars   map[string]string `json:"envVars,omitempty"`
 }
 
 type CreateSandboxResponse struct {

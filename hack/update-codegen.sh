@@ -65,15 +65,18 @@ kube::codegen::gen_client \
   "${SCRIPT_ROOT}/pkg/apis"
 
 # Fix lister-gen bug: Resource() returns GroupVersionResource but listers.New needs GroupResource
-# This is a workaround for https://github.com/kubernetes/code-generator/issues/XXX
+# code-generator v0.34.1 does not add .GroupResource(), so we add it here and then deduplicate
+# in case the generator behavior changes in future versions.
 echo "Fixing lister-gen GroupResource issue..."
 find "${SCRIPT_ROOT}/client-go/listers" -name "*.go" -type f | while read -r file; do
   if [[ "$OSTYPE" == "darwin"* ]]; then
     sed -i '' 's/runtimev1alpha1\.Resource("codeinterpreter")/runtimev1alpha1.Resource("codeinterpreter").GroupResource()/g' "$file"
     sed -i '' 's/runtimev1alpha1\.Resource("agentruntime")/runtimev1alpha1.Resource("agentruntime").GroupResource()/g' "$file"
+    sed -i '' 's/\.GroupResource()\.GroupResource()/.GroupResource()/g' "$file"
   else
     sed -i 's/runtimev1alpha1\.Resource("codeinterpreter")/runtimev1alpha1.Resource("codeinterpreter").GroupResource()/g' "$file"
     sed -i 's/runtimev1alpha1\.Resource("agentruntime")/runtimev1alpha1.Resource("agentruntime").GroupResource()/g' "$file"
+    sed -i 's/\.GroupResource()\.GroupResource()/.GroupResource()/g' "$file"
   fi
 done
 

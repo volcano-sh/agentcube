@@ -40,6 +40,12 @@ type Store interface {
 	ListInactiveSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error)
 	// UpdateSessionLastActivity updates the last-activity index for the given session
 	UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error
+	// GetSandboxByE2BSandboxID reverse lookup by short ID
+	GetSandboxByE2BSandboxID(ctx context.Context, e2bSandboxID string) (*types.SandboxInfo, error)
+	// ListSandboxesByAPIKeyHash list sandboxes owned by an API Key via secondary index
+	ListSandboxesByAPIKeyHash(ctx context.Context, apiKeyHash string) ([]*types.SandboxInfo, error)
+	// UpdateSandboxTTL update both sandbox object and expiry sorted set atomically
+	UpdateSandboxTTL(ctx context.Context, sessionID string, expiresAt time.Time) error
 	// Close releases all resources held by the store (e.g. connection pools)
 	Close() error
 }

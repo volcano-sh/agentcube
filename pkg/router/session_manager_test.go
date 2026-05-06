@@ -94,6 +94,18 @@ func (f *fakeStoreClient) UpdateSandboxLastActivity(_ context.Context, _ string,
 	return nil
 }
 
+func (f *fakeStoreClient) GetSandboxByE2BSandboxID(_ context.Context, _ string) (*types.SandboxInfo, error) {
+	return nil, nil
+}
+
+func (f *fakeStoreClient) ListSandboxesByAPIKeyHash(_ context.Context, _ string) ([]*types.SandboxInfo, error) {
+	return nil, nil
+}
+
+func (f *fakeStoreClient) UpdateSandboxTTL(_ context.Context, _ string, _ time.Time) error {
+	return nil
+}
+
 func (f *fakeStoreClient) Close() error {
 	return nil
 }
@@ -118,7 +130,7 @@ func TestGetSandboxBySession_Success(t *testing.T) {
 		storeClient: r,
 	}
 
-	got, err := m.GetSandboxBySession(context.Background(), "sess-1", "default", "test", "AgentRuntime")
+	got, err := m.GetSandboxBySession(context.Background(), "sess-1", "default", "test", "AgentRuntime", nil)
 	if err != nil {
 		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
 	}
@@ -145,7 +157,7 @@ func TestGetSandboxBySession_NotFound(t *testing.T) {
 		storeClient: r,
 	}
 
-	_, err := m.GetSandboxBySession(context.Background(), "sess-1", "default", "test", "AgentRuntime")
+	_, err := m.GetSandboxBySession(context.Background(), "sess-1", "default", "test", "AgentRuntime", nil)
 	if err == nil {
 		t.Fatalf("expected error for not found session")
 	}
@@ -208,7 +220,7 @@ func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
 		httpClient:      &http.Client{},
 	}
 
-	sandbox, err := m.GetSandboxBySession(context.Background(), "", "default", "test-runtime", types.AgentRuntimeKind)
+	sandbox, err := m.GetSandboxBySession(context.Background(), "", "default", "test-runtime", types.AgentRuntimeKind, nil)
 	if err != nil {
 		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
 	}
@@ -270,7 +282,7 @@ func TestGetSandboxBySession_CreateSandbox_SetsAuthHeaderFromFile(t *testing.T) 
 		httpClient:      &http.Client{},
 	}
 
-	if _, err := m.GetSandboxBySession(context.Background(), "", "default", "test-runtime", types.AgentRuntimeKind); err != nil {
+	if _, err := m.GetSandboxBySession(context.Background(), "", "default", "test-runtime", types.AgentRuntimeKind, nil); err != nil {
 		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
 	}
 }
@@ -307,7 +319,7 @@ func TestGetSandboxBySession_CreateSandbox_NoAuthHeaderWhenNoToken(t *testing.T)
 		httpClient:      &http.Client{},
 	}
 
-	if _, err := m.GetSandboxBySession(context.Background(), "", "default", "test-runtime", types.AgentRuntimeKind); err != nil {
+	if _, err := m.GetSandboxBySession(context.Background(), "", "default", "test-runtime", types.AgentRuntimeKind, nil); err != nil {
 		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
 	}
 }
@@ -343,7 +355,7 @@ func TestGetSandboxBySession_CreateSandbox_TokenFileReadError(t *testing.T) {
 		httpClient:      &http.Client{},
 	}
 
-	if _, err := m.GetSandboxBySession(context.Background(), "", "default", "test-runtime", types.AgentRuntimeKind); err != nil {
+	if _, err := m.GetSandboxBySession(context.Background(), "", "default", "test-runtime", types.AgentRuntimeKind, nil); err != nil {
 		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
 	}
 }
@@ -394,7 +406,7 @@ func TestGetSandboxBySession_CreateSandbox_CodeInterpreter_Success(t *testing.T)
 		httpClient:      &http.Client{},
 	}
 
-	sandbox, err := m.GetSandboxBySession(context.Background(), "", "default", "test-ci", types.CodeInterpreterKind)
+	sandbox, err := m.GetSandboxBySession(context.Background(), "", "default", "test-ci", types.CodeInterpreterKind, nil)
 	if err != nil {
 		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
 	}
@@ -414,7 +426,7 @@ func TestGetSandboxBySession_CreateSandbox_UnsupportedKind(t *testing.T) {
 		httpClient:      &http.Client{},
 	}
 
-	_, err := m.GetSandboxBySession(context.Background(), "", "default", "test", "UnsupportedKind")
+	_, err := m.GetSandboxBySession(context.Background(), "", "default", "test", "UnsupportedKind", nil)
 	if err == nil {
 		t.Fatalf("expected error for unsupported kind")
 	}
@@ -447,7 +459,7 @@ func TestGetSandboxBySession_CreateSandbox_WorkloadManagerUnavailable(t *testing
 		httpClient:      &http.Client{},
 	}
 
-	_, err := m.GetSandboxBySession(context.Background(), "", "default", "test", types.AgentRuntimeKind)
+	_, err := m.GetSandboxBySession(context.Background(), "", "default", "test", types.AgentRuntimeKind, nil)
 	if err == nil {
 		t.Fatalf("expected error for unavailable workload manager")
 	}
@@ -471,7 +483,7 @@ func TestGetSandboxBySession_CreateSandbox_NonOKStatus(t *testing.T) {
 		httpClient:      &http.Client{},
 	}
 
-	_, err := m.GetSandboxBySession(context.Background(), "", "default", "test", types.AgentRuntimeKind)
+	_, err := m.GetSandboxBySession(context.Background(), "", "default", "test", types.AgentRuntimeKind, nil)
 	if err == nil {
 		t.Fatalf("expected error for non-OK status")
 	}
@@ -496,7 +508,7 @@ func TestGetSandboxBySession_CreateSandbox_InvalidJSON(t *testing.T) {
 		httpClient:      &http.Client{},
 	}
 
-	_, err := m.GetSandboxBySession(context.Background(), "", "default", "test", types.AgentRuntimeKind)
+	_, err := m.GetSandboxBySession(context.Background(), "", "default", "test", types.AgentRuntimeKind, nil)
 	if err == nil {
 		t.Fatalf("expected error for invalid JSON")
 	}
@@ -529,11 +541,64 @@ func TestGetSandboxBySession_CreateSandbox_EmptySessionID(t *testing.T) {
 		httpClient:      &http.Client{},
 	}
 
-	_, err := m.GetSandboxBySession(context.Background(), "", "default", "test", types.AgentRuntimeKind)
+	_, err := m.GetSandboxBySession(context.Background(), "", "default", "test", types.AgentRuntimeKind, nil)
 	if err == nil {
 		t.Fatalf("expected error for empty sessionID in response")
 	}
 	if !apierrors.IsInternalError(err) {
 		t.Errorf("expected internal error, got %v", err)
+	}
+}
+
+// TestGetSandboxBySession_CreateSandbox_WithEnvVars verifies that envVars from the E2B request
+// are forwarded to the workload manager in the CreateSandboxRequest body.
+func TestGetSandboxBySession_CreateSandbox_WithEnvVars(t *testing.T) {
+	expectedEnvVars := map[string]string{"FOO": "bar", "BAZ": "qux"}
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read request body: %v", err)
+		}
+		var req types.CreateSandboxRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("failed to unmarshal request: %v", err)
+		}
+		if len(req.EnvVars) != 2 {
+			t.Errorf("expected 2 env vars, got %d", len(req.EnvVars))
+		}
+		for k, v := range expectedEnvVars {
+			if req.EnvVars[k] != v {
+				t.Errorf("expected env var %s=%s, got %s", k, v, req.EnvVars[k])
+			}
+		}
+
+		resp := types.CreateSandboxResponse{
+			SessionID:   "session-with-env",
+			SandboxID:   "sb-env",
+			SandboxName: "sandbox-env",
+			EntryPoints: []types.SandboxEntryPoint{
+				{Endpoint: "10.0.0.1:8080", Protocol: "http", Path: "/"},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	r := &fakeStoreClient{}
+	m := &manager{
+		storeClient:     r,
+		workloadMgrAddr: mockServer.URL,
+		httpClient:      &http.Client{},
+	}
+
+	sandbox, err := m.GetSandboxBySession(context.Background(), "", "default", "test-ci", types.CodeInterpreterKind, expectedEnvVars)
+	if err != nil {
+		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
+	}
+	if sandbox.SessionID != "session-with-env" {
+		t.Errorf("expected SessionID session-with-env, got %s", sandbox.SessionID)
 	}
 }

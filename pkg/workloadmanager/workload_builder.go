@@ -184,7 +184,7 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 			Labels: map[string]string{
 				SessionIdLabelKey:    params.sessionID,
 				WorkloadNameLabelKey: params.workloadName,
-				"managed-by":        "agentcube-workload-manager",
+				"managed-by":         "agentcube-workload-manager",
 			},
 			Annotations: map[string]string{
 				IdleTimeoutAnnotationKey: params.idleTimeout.String(),
@@ -241,7 +241,7 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 	return sandboxClaim
 }
 
-func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
+func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers, extraEnvVars map[string]string) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
 	agentRuntimeKey := namespace + "/" + name
 	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
 	runtimeObj, exists, _ := ifm.AgentRuntimeInformer.GetStore().GetByKey(agentRuntimeKey)
@@ -267,6 +267,16 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	podSpec := agentRuntimeObj.Spec.Template.Spec.DeepCopy()
 	if podSpec.RuntimeClassName != nil && *podSpec.RuntimeClassName == "" {
 		podSpec.RuntimeClassName = nil
+	}
+
+	// Merge extra env vars into the first container
+	if len(podSpec.Containers) > 0 && len(extraEnvVars) > 0 {
+		for k, v := range extraEnvVars {
+			podSpec.Containers[0].Env = append(podSpec.Containers[0].Env, corev1.EnvVar{
+				Name:  k,
+				Value: v,
+			})
+		}
 	}
 
 	buildParams := &buildSandboxParams{
@@ -315,7 +325,51 @@ func buildCodeInterpreterEnvVars(templateEnv []corev1.EnvVar, authMode runtimev1
 	return envVars
 }
 
-func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+func buildWarmPoolSandbox(
+	codeInterpreterObj runtimev1alpha1.CodeInterpreter,
+	namespace, codeInterpreterName, sandboxName, sessionID string,
+	idleTimeout time.Duration,
+	extraEnvVars map[string]string,
+	sandboxEntry *sandboxEntry,
+) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+	sandboxClaim := buildSandboxClaimObject(&buildSandboxClaimParams{
+		namespace:           namespace,
+		name:                sandboxName,
+		sandboxTemplateName: codeInterpreterName,
+		sessionID:           sessionID,
+		idleTimeout:         idleTimeout,
+		ownerReference: &metav1.OwnerReference{
+			APIVersion: codeInterpreterObj.APIVersion,
+			Kind:       codeInterpreterObj.Kind,
+			Name:       codeInterpreterObj.Name,
+			UID:        codeInterpreterObj.UID,
+		},
+	})
+	simpleSandbox := &sandboxv1alpha1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      sandboxName,
+			Labels: map[string]string{
+				SessionIdLabelKey: sessionID,
+			},
+		},
+	}
+	if codeInterpreterObj.Spec.MaxSessionDuration != nil {
+		shutdownTime := metav1.NewTime(time.Now().Add(codeInterpreterObj.Spec.MaxSessionDuration.Duration))
+		simpleSandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
+	}
+	// Store extra env vars in annotation for potential downstream use
+	if len(extraEnvVars) > 0 {
+		if simpleSandbox.Annotations == nil {
+			simpleSandbox.Annotations = make(map[string]string)
+		}
+		simpleSandbox.Annotations["agentcube.io/extra-env-vars"] = "true"
+	}
+	sandboxEntry.Kind = types.SandboxClaimsKind
+	return simpleSandbox, sandboxClaim, sandboxEntry, nil
+}
+
+func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers, extraEnvVars map[string]string) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
 	codeInterpreterKey := namespace + "/" + codeInterpreterName
 	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
 	runtimeObj, exists, err := informer.CodeInterpreterInformer.GetStore().GetByKey(codeInterpreterKey)
@@ -368,34 +422,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 
 	if codeInterpreterObj.Spec.WarmPoolSize != nil && *codeInterpreterObj.Spec.WarmPoolSize > 0 {
-		sandboxClaim := buildSandboxClaimObject(&buildSandboxClaimParams{
-			namespace:           namespace,
-			name:                sandboxName,
-			sandboxTemplateName: codeInterpreterName,
-			sessionID:           sessionID,
-			idleTimeout:         idleTimeout,
-			ownerReference: &metav1.OwnerReference{
-				APIVersion: codeInterpreterObj.APIVersion,
-				Kind:       codeInterpreterObj.Kind,
-				Name:       codeInterpreterObj.Name,
-				UID:        codeInterpreterObj.UID,
-			},
-		})
-		simpleSandbox := &sandboxv1alpha1.Sandbox{
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: namespace,
-				Name:      sandboxName,
-				Labels: map[string]string{
-					SessionIdLabelKey: sessionID,
-				},
-			},
-		}
-		if codeInterpreterObj.Spec.MaxSessionDuration != nil {
-			shutdownTime := metav1.NewTime(time.Now().Add(codeInterpreterObj.Spec.MaxSessionDuration.Duration))
-			simpleSandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
-		}
-		sandboxEntry.Kind = types.SandboxClaimsKind
-		return simpleSandbox, sandboxClaim, sandboxEntry, nil
+		return buildWarmPoolSandbox(codeInterpreterObj, namespace, codeInterpreterName, sandboxName, sessionID, idleTimeout, extraEnvVars, sandboxEntry)
 	}
 
 	// Normalize RuntimeClassName: if it's an empty string, set it to nil
@@ -405,6 +432,11 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 
 	envVars := buildCodeInterpreterEnvVars(codeInterpreterObj.Spec.Template.Environment, codeInterpreterObj.Spec.AuthMode)
+
+	// Merge extra env vars from the creation request
+	for k, v := range extraEnvVars {
+		envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
+	}
 
 	podSpec := corev1.PodSpec{
 		ImagePullSecrets: codeInterpreterObj.Spec.Template.ImagePullSecrets,

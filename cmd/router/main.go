@@ -31,6 +31,7 @@ import (
 func main() {
 	var (
 		port                  = flag.String("port", "8080", "Router API server port")
+		e2bPort               = flag.String("e2b-port", "8081", "E2B API server port")
 		enableTLS             = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
 		tlsCert               = flag.String("tls-cert", "", "Path to TLS certificate file")
 		tlsKey                = flag.String("tls-key", "", "Path to TLS key file")
@@ -47,6 +48,7 @@ func main() {
 	// Create Router API server configuration
 	config := &router.Config{
 		Port:                  *port,
+		E2BPort:               *e2bPort,
 		Debug:                 *debug,
 		EnableTLS:             *enableTLS,
 		TLSCert:               *tlsCert,

@@ -20,11 +20,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
 
+	"github.com/volcano-sh/agentcube/pkg/router/e2b"
 	"github.com/volcano-sh/agentcube/pkg/store"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -35,6 +37,9 @@ type Server struct {
 	config         *Config
 	engine         *gin.Engine
 	httpServer     *http.Server
+	e2bEngine      *gin.Engine
+	e2bHTTPServer  *http.Server
+	e2bServer      *e2b.Server
 	sessionManager SessionManager
 	storeClient    store.Store
 	httpTransport  *http.Transport // Reusable HTTP transport for connection pooling
@@ -50,6 +55,9 @@ func NewServer(config *Config) (*Server, error) {
 	// Set default values for concurrency settings
 	if config.MaxConcurrentRequests <= 0 {
 		config.MaxConcurrentRequests = 1000 // Default limit
+	}
+	if config.E2BPort == "" {
+		config.E2BPort = "8081"
 	}
 	if config.InitialConnectRetryCount < 0 {
 		config.InitialConnectRetryCount = 0
@@ -144,52 +152,170 @@ func (s *Server) setupRoutes() {
 
 	v1.Use(s.concurrencyLimitMiddleware()) // Apply concurrency limit to API routes
 
-	// Agent invoke requests (support GET/POST, since downstream uses these methods)
-	v1.GET("/namespaces/:namespace/agent-runtimes/:name/invocations/*path", s.handleAgentInvoke)
-	v1.POST("/namespaces/:namespace/agent-runtimes/:name/invocations/*path", s.handleAgentInvoke)
+	// Invocation routes accept all HTTP methods used by Envd downstream
+	// (Envd exposes filesystem operations that use DELETE/PUT in addition
+	// to GET/POST). Without these, the router returns 404 even though
+	// PicoD can serve the request.
+	invokeMethods := []string{
+		http.MethodGet,
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodPatch,
+		http.MethodDelete,
+	}
+	for _, m := range invokeMethods {
+		v1.Handle(m, "/namespaces/:namespace/agent-runtimes/:name/invocations/*path", s.handleAgentInvoke)
+		v1.Handle(m, "/namespaces/:namespace/code-interpreters/:name/invocations/*path", s.handleCodeInterpreterInvoke)
+	}
 
-	// Code interpreter invoke requests (support GET/POST, since downstream uses GET for file download)
-	v1.GET("/namespaces/:namespace/code-interpreters/:name/invocations/*path", s.handleCodeInterpreterInvoke)
-	v1.POST("/namespaces/:namespace/code-interpreters/:name/invocations/*path", s.handleCodeInterpreterInvoke)
+	// E2B API routes run on a separate listener (:8081 by default)
+	s.e2bEngine = gin.New()
+
+	// Health check endpoints (no authentication required, no concurrency limit)
+	s.e2bEngine.GET("/health/live", s.handleHealthLive)
+	s.e2bEngine.GET("/health/ready", s.handleHealthReady)
+
+	s.e2bEngine.Use(gin.Logger())
+	s.e2bEngine.Use(gin.Recovery())
+	s.e2bEngine.Use(s.concurrencyLimitMiddleware())
+
+	// Native invocation routes are also exposed on the E2B engine so that
+	// callers using the E2B port (8081) can reach Envd via the standard
+	// /v1/namespaces/.../invocations/* path. These routes are registered
+	// outside the e2bGroup so they bypass the API key middleware applied
+	// inside e2b.NewServer (native callers authenticate via JWT/SA tokens).
+	v1OnE2B := s.e2bEngine.Group("/v1")
+	for _, m := range invokeMethods {
+		v1OnE2B.Handle(m, "/namespaces/:namespace/agent-runtimes/:name/invocations/*path", s.handleAgentInvoke)
+		v1OnE2B.Handle(m, "/namespaces/:namespace/code-interpreters/:name/invocations/*path", s.handleCodeInterpreterInvoke)
+	}
+
+	e2bGroup := s.e2bEngine.Group("")
+	klog.Infof("Setting up E2B Platform API routes (storeClient=%v, sessionManager=%v)", s.storeClient != nil, s.sessionManager != nil)
+	e2bSrv, err := e2b.NewServer(e2bGroup, s.storeClient, s.sessionManager)
+	if err != nil {
+		// Log at high severity so the error is visible in kubectl logs even
+		// though we keep the router running for native routes.
+		klog.Errorf("E2B server initialization FAILED: %v. Platform API routes (/templates, /sandboxes) will NOT be available.", err)
+	} else {
+		s.e2bServer = e2bSrv
+		klog.Info("E2B server initialized successfully")
+	}
+
+	// Always set NoRoute so unmatched requests on the E2B port get a clear
+	// 503/400 response instead of gin's default "404 page not found".
+	s.e2bEngine.NoRoute(s.handleE2BSandboxProxy)
+
+	// Log all registered E2B routes for diagnostics — this makes it trivial to
+	// verify in kubectl logs whether Platform API routes were actually wired up.
+	for _, route := range s.e2bEngine.Routes() {
+		klog.Infof("E2B route registered: %s %s", route.Method, route.Path)
+	}
 }
 
-// Start starts the Router API server
+// Start starts the Router API server (both Native and E2B listeners)
 func (s *Server) Start(ctx context.Context) error {
-	addr := ":" + s.config.Port
+	if err := s.initServers(); err != nil {
+		return err
+	}
+	s.runShutdownWatcher(ctx)
+	return s.runListeners()
+}
 
-	// Create HTTP/2 server for better performance
+func (s *Server) initServers() error {
+	nativeAddr := ":" + s.config.Port
+
 	h2s := &http2.Server{}
-
-	// Wrap handler with h2c for HTTP/2 cleartext support
 	h2cHandler := h2c.NewHandler(s.engine, h2s)
 
 	s.httpServer = &http.Server{
-		Addr:        addr,
+		Addr:        nativeAddr,
 		Handler:     h2cHandler,
-		ReadTimeout: 30 * time.Second, // Longer timeout for potential long-running requests
-		IdleTimeout: 90 * time.Second, // golang http default transport's idletimeout is 90s
+		ReadTimeout: 30 * time.Second,
+		IdleTimeout: 90 * time.Second,
 	}
 
-	// Listen for shutdown signal in goroutine
-	go func() {
-		<-ctx.Done()
-		klog.Info("Shutting down Router server...")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
-			klog.Errorf("Server shutdown error: %v", err)
+	if s.e2bEngine != nil {
+		e2bAddr := ":" + s.config.E2BPort
+		s.e2bHTTPServer = &http.Server{
+			Addr:        e2bAddr,
+			Handler:     s.e2bEngine,
+			ReadTimeout: 30 * time.Second,
+			IdleTimeout: 90 * time.Second,
 		}
-	}()
+	}
 
-	klog.Infof("Router server listening on %s", addr)
-
-	// Start HTTP or HTTPS server
 	if s.config.EnableTLS {
 		if s.config.TLSCert == "" || s.config.TLSKey == "" {
 			return fmt.Errorf("TLS enabled but cert/key not provided")
 		}
-		return s.httpServer.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
+	}
+	return nil
+}
+
+func (s *Server) runShutdownWatcher(ctx context.Context) {
+	go func() {
+		<-ctx.Done()
+		klog.Info("Shutting down Router servers...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if s.httpServer != nil {
+			if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
+				klog.Errorf("Native server shutdown error: %v", err)
+			}
+		}
+		if s.e2bHTTPServer != nil {
+			if err := s.e2bHTTPServer.Shutdown(shutdownCtx); err != nil {
+				klog.Errorf("E2B server shutdown error: %v", err)
+			}
+		}
+	}()
+}
+
+func (s *Server) runListeners() error {
+	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
+
+	startServer := func(name string, srv *http.Server, tls bool) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			klog.Infof("%s Router server listening on %s", name, srv.Addr)
+			var err error
+			if tls {
+				err = srv.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
+			} else {
+				err = srv.ListenAndServe()
+			}
+			if err != nil && err != http.ErrServerClosed {
+				errCh <- fmt.Errorf("%s server: %w", name, err)
+			}
+		}()
 	}
 
-	return s.httpServer.ListenAndServe()
+	startServer("Native", s.httpServer, s.config.EnableTLS)
+	if s.e2bHTTPServer != nil {
+		startServer("E2B", s.e2bHTTPServer, false)
+	}
+
+	go func() {
+		wg.Wait()
+		close(errCh)
+	}()
+
+	err, ok := <-errCh
+	if !ok {
+		return http.ErrServerClosed
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if s.httpServer != nil {
+		_ = s.httpServer.Shutdown(shutdownCtx)
+	}
+	if s.e2bHTTPServer != nil {
+		_ = s.e2bHTTPServer.Shutdown(shutdownCtx)
+	}
+	<-errCh
+	return err
 }

@@ -47,4 +47,22 @@ type Config struct {
 
 	// InitialConnectRetryInterval is the delay between preflight retries.
 	InitialConnectRetryInterval time.Duration
+
+	// E2BPort is the E2B listener port (Platform API + Sandbox API Proxy)
+	E2BPort string
+
+	// E2BAPIKeySecret is the K8s Secret name for API key status
+	E2BAPIKeySecret string
+
+	// E2BAPIKeyConfigMap is the K8s ConfigMap name for API key namespace mapping
+	E2BAPIKeyConfigMap string
+
+	// E2BDefaultTTL is the default sandbox TTL in seconds
+	E2BDefaultTTL int
+
+	// E2BDefaultNamespace is the fallback namespace for API Keys without explicit mapping
+	E2BDefaultNamespace string
+
+	// E2BSandboxDomain is the domain suffix for Sandbox API subdomains
+	E2BSandboxDomain string
 }

@@ -52,7 +52,14 @@ func (nopStore) ListInactiveSandboxes(_ context.Context, _ time.Time, _ int64) (
 func (nopStore) UpdateSessionLastActivity(_ context.Context, _ string, _ time.Time) error {
 	return nil
 }
-func (nopStore) Close() error { return nil }
+func (nopStore) GetSandboxByE2BSandboxID(_ context.Context, _ string) (*types.SandboxInfo, error) {
+	return nil, nil
+}
+func (nopStore) ListSandboxesByAPIKeyHash(_ context.Context, _ string) ([]*types.SandboxInfo, error) {
+	return nil, nil
+}
+func (nopStore) UpdateSandboxTTL(_ context.Context, _ string, _ time.Time) error { return nil }
+func (nopStore) Close() error                                                    { return nil }
 
 // gcFakeStore is a controllable store for GC tests.
 type gcFakeStore struct {

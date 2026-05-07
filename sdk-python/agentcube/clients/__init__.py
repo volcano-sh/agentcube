@@ -15,10 +15,16 @@
 from .control_plane import ControlPlaneClient
 from .code_interpreter_data_plane import CodeInterpreterDataPlaneClient
 from .agent_runtime_data_plane import AgentRuntimeDataPlaneClient
+from .async_control_plane import AsyncControlPlaneClient
+from .async_code_interpreter_data_plane import AsyncCodeInterpreterDataPlaneClient
+from .async_agent_runtime_data_plane import AsyncAgentRuntimeDataPlaneClient
 
 __all__ = [
     "ControlPlaneClient",
     "CodeInterpreterDataPlaneClient",
     "AgentRuntimeDataPlaneClient",
+    "AsyncControlPlaneClient",
+    "AsyncCodeInterpreterDataPlaneClient",
+    "AsyncAgentRuntimeDataPlaneClient",
 ]
 

@@ -7,8 +7,7 @@ Thank you for your interest in improving AgentCube! This guide outlines how to g
 * Join the conversation on GitHub:
   * [Issues](https://github.com/volcano-sh/agentcube/issues) for bug reports and feature requests
   * [Discussions](https://github.com/volcano-sh/agentcube/discussions) for design questions and ideas
-* Chat with maintainers via Slack (link in the project README)
-* Review the [code of conduct](https://github.com/volcano-sh/community/blob/master/code_of_conduct.md) before participating
+* Review the [code of conduct](https://github.com/volcano-sh/community/blob/main/code_of_conduct.md) before participating
 
 ##  Contribution Workflow
 
@@ -92,7 +91,7 @@ To make it easier for your PR to receive reviews, consider the reviewers will ne
 
 ##  Coding Standards
 
-* Follow Go `gofmt` formatting automatically (run `go fmt ./...`)
+* Follow Go gofmt formatting automatically (run make fmt)
 * Maintain consistent log semantics via the shared logging packages under `pkg/`
 * Keep public API changes backward compatible; update CRDs and generated clients when fields change (`make generate`)
 * Document new features under `docs/` and update READMEs/examples when behavior changes
@@ -109,7 +108,7 @@ Using AI tools to help write your PR is acceptable, but as the author, you are r
 
 ##  Documentation Expectations
 
-* Update relevant docs under `docs/agentcube/docs/`
+* Update relevant docs under `docs/`
 * Provide getting-started examples if introducing new CRDs or CLI commands
 * Refresh charts/examples under `example/` when changing deployments
 * Include release notes summary for significant changes (tag `release-note`) in PRs

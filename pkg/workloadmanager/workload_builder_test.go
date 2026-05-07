@@ -19,6 +19,8 @@ package workloadmanager
 import (
 	"testing"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 // TestBuildSandboxObject_DoesNotMutateCallerLabels verifies that buildSandboxObject
@@ -102,3 +104,122 @@ func TestBuildSandboxObject_NilLabels(t *testing.T) {
 		t.Errorf("expected %s=sandbox-xyz, got %q", SandboxNameLabelKey, podLabels[SandboxNameLabelKey])
 	}
 }
+
+// ---- tests: injectMTLSVolumes (spiffe-helper sidecar injection) ----
+
+func TestInjectMTLSVolumes_InjectsSidecarAndVolumes(t *testing.T) {
+	podSpec := corev1.PodSpec{
+		Containers: []corev1.Container{
+			{
+				Name:  "code-interpreter",
+				Image: "picod:latest",
+				Args:  []string{"--port=8080"},
+			},
+		},
+	}
+
+	injectMTLSVolumes(&podSpec)
+
+	// 3 volumes: spire-agent-socket, spiffe-helper-config, spire-certs
+	if len(podSpec.Volumes) != 3 {
+		t.Fatalf("expected 3 volumes, got %d", len(podSpec.Volumes))
+	}
+	if podSpec.Volumes[0].Name != spireAgentSocketVolumeName {
+		t.Errorf("expected volume %q, got %q", spireAgentSocketVolumeName, podSpec.Volumes[0].Name)
+	}
+	if podSpec.Volumes[1].Name != spiffeHelperConfigVolumeName {
+		t.Errorf("expected volume %q, got %q", spiffeHelperConfigVolumeName, podSpec.Volumes[1].Name)
+	}
+	if podSpec.Volumes[2].Name != spireCertVolumeName {
+		t.Errorf("expected volume %q, got %q", spireCertVolumeName, podSpec.Volumes[2].Name)
+	}
+
+	// 2 containers: spiffe-helper sidecar (index 0) + original (index 1)
+	if len(podSpec.Containers) != 2 {
+		t.Fatalf("expected 2 containers, got %d", len(podSpec.Containers))
+	}
+	if podSpec.Containers[0].Name != "spiffe-helper" {
+		t.Errorf("expected sidecar name 'spiffe-helper', got %q", podSpec.Containers[0].Name)
+	}
+	if podSpec.Containers[1].Name != "code-interpreter" {
+		t.Errorf("expected main container name 'code-interpreter', got %q", podSpec.Containers[1].Name)
+	}
+
+	// Sidecar has 3 volume mounts
+	if len(podSpec.Containers[0].VolumeMounts) != 3 {
+		t.Fatalf("expected 3 sidecar volume mounts, got %d", len(podSpec.Containers[0].VolumeMounts))
+	}
+
+	// Main container has spire-certs mount
+	foundCertMount := false
+	for _, vm := range podSpec.Containers[1].VolumeMounts {
+		if vm.Name == spireCertVolumeName && vm.MountPath == spireCertMountPath {
+			foundCertMount = true
+		}
+	}
+	if !foundCertMount {
+		t.Error("expected main container to have spire-certs volume mount")
+	}
+
+	// Main container args include mTLS flags
+	args := podSpec.Containers[1].Args
+	expectedFlags := []string{
+		"--enable-mtls",
+		"--mtls-cert-file=" + spireCertMountPath + "/" + svidCertFileName,
+		"--mtls-key-file=" + spireCertMountPath + "/" + svidKeyFileName,
+		"--mtls-ca-file=" + spireCertMountPath + "/" + svidBundleFileName,
+	}
+	for _, flag := range expectedFlags {
+		found := false
+		for _, arg := range args {
+			if arg == flag {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected flag %q in container args, got %v", flag, args)
+		}
+	}
+}
+
+func TestInjectMTLSVolumes_PreservesExistingArgs(t *testing.T) {
+	podSpec := corev1.PodSpec{
+		Containers: []corev1.Container{
+			{
+				Name: "picod",
+				Args: []string{"--port=8080", "--workspace=/tmp"},
+			},
+		},
+	}
+
+	injectMTLSVolumes(&podSpec)
+
+	// Original args should still be present at the start (now on container[1])
+	args := podSpec.Containers[1].Args
+	if len(args) < 6 { // 2 original + 4 mTLS flags
+		t.Fatalf("expected at least 6 args, got %d: %v", len(args), args)
+	}
+	if args[0] != "--port=8080" || args[1] != "--workspace=/tmp" {
+		t.Errorf("original args should be preserved at the start: %v", args)
+	}
+}
+
+func TestInjectMTLSVolumes_EmptyContainers(t *testing.T) {
+	podSpec := corev1.PodSpec{
+		Containers: []corev1.Container{},
+	}
+
+	// Should not panic with empty containers
+	injectMTLSVolumes(&podSpec)
+
+	// Volumes are still added
+	if len(podSpec.Volumes) != 3 {
+		t.Errorf("expected 3 volumes even with empty containers, got %d", len(podSpec.Volumes))
+	}
+	// Only the sidecar container exists
+	if len(podSpec.Containers) != 1 {
+		t.Errorf("expected 1 container (sidecar only), got %d", len(podSpec.Containers))
+	}
+}
+

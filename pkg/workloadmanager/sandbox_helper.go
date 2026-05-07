@@ -33,6 +33,9 @@ const (
 	defaultSandboxReadyProbeTimeout  = 15 * time.Second
 	defaultSandboxReadyProbeInterval = 1 * time.Second
 	defaultSandboxReadyDialTimeout   = 1 * time.Second
+
+	sandboxStatusReady    = "ready"
+	sandboxStatusNotReady = "not-ready"
 )
 
 var sandboxEntrypointDial = func(ctx context.Context, endpoint string, timeout time.Duration) error {
@@ -98,15 +101,15 @@ func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *san
 	}
 }
 
-// getSandboxStatus extracts status from Sandbox CRD conditions
+// getSandboxStatus extracts status from Sandbox CRD conditions.
+// Returns sandboxStatusReady when the sandbox is ready, sandboxStatusNotReady otherwise.
 func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) string {
-	// Check conditions for Ready status
 	for _, condition := range sandbox.Status.Conditions {
 		if condition.Type == string(sandboxv1alpha1.SandboxConditionReady) && condition.Status == metav1.ConditionTrue {
-			return "running"
+			return sandboxStatusReady
 		}
 	}
-	return "unknown"
+	return sandboxStatusNotReady
 }
 
 func (s *Server) waitForSandboxEntryPointsReady(ctx context.Context, podIP string, entry *sandboxEntry) error {

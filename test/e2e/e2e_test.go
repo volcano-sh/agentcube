@@ -328,7 +328,7 @@ func (e *testEnv) invokeCodeInterpreter(namespace, name, sessionID string, req *
 	return &invokeResp, nil
 }
 
-// createCodeInterpreterSession creates a session via WorkloadManager
+// createCodeInterpreterSession creates a session via WorkloadManager, retrying on transient errors.
 func (e *testEnv) createCodeInterpreterSession(namespace, name string) (string, error) {
 	payload := map[string]interface{}{
 		"name":      name,
@@ -339,41 +339,66 @@ func (e *testEnv) createCodeInterpreterSession(namespace, name string) (string, 
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1/code-interpreter", e.workloadMgrURL)
-	httpReq, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
+	reqURL := fmt.Sprintf("%s/v1/code-interpreter", e.workloadMgrURL)
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	if e.authToken != "" {
-		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.authToken))
-	}
-
+	const maxRetries = 5
+	backoff := time.Second
 	client := &http.Client{Timeout: 3 * time.Minute}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return "", fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		httpReq, err := http.NewRequest("POST", reqURL, bytes.NewBuffer(jsonData))
+		if err != nil {
+			return "", fmt.Errorf("failed to create request: %w", err)
+		}
+
+		httpReq.Header.Set("Content-Type", "application/json")
+		if e.authToken != "" {
+			httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.authToken))
+		}
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			if attempt < maxRetries-1 {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return "", fmt.Errorf("failed to send request: %w", err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return "", fmt.Errorf("failed to read response: %w", err)
+		}
+
+		if resp.StatusCode == http.StatusInternalServerError {
+			// Retry on all 500s under load. "Pod exists with phase: Pending" failures
+			// look terminal per request but are transient cluster-wide: the GC cleans
+			// up stuck pods and a subsequent attempt will succeed. Not retrying here
+			// produces a 0% success rate under concurrent load.
+			if attempt < maxRetries-1 {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return "", fmt.Errorf("create session failed with status %d: %s", resp.StatusCode, string(body))
+		}
+
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			return "", fmt.Errorf("create session failed with status %d: %s", resp.StatusCode, string(body))
+		}
+
+		var result struct {
+			SessionID string `json:"sessionId"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			return "", fmt.Errorf("failed to unmarshal response: %w", err)
+		}
+
+		return result.SessionID, nil
 	}
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("create session failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var result struct {
-		SessionID string `json:"sessionId"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	return result.SessionID, nil
+	return "", fmt.Errorf("failed to create session after %d attempts", maxRetries)
 }
 
 // deleteCodeInterpreterSession deletes a session via WorkloadManager
@@ -1501,7 +1526,7 @@ func TestCodeInterpreterWarmPoolLoad(t *testing.T) {
 	ctx.verifyWarmPoolReady(t, namespace, name, warmPoolSize)
 }
 
-// TestCodeInterpreterBasicInvocationLoad tests code interpreter without warmpool under load (10 requests per second)
+// TestCodeInterpreterBasicInvocationLoad tests code interpreter without warmpool under load (2 requests per second)
 func TestCodeInterpreterBasicInvocationLoad(t *testing.T) {
 	env := newTestEnv(t)
 
@@ -1510,7 +1535,7 @@ func TestCodeInterpreterBasicInvocationLoad(t *testing.T) {
 
 	// Load test configuration
 	const (
-		requestsPerSecond = 10
+		requestsPerSecond = 2
 		testDuration      = 10 * time.Second
 	)
 

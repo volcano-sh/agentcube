@@ -205,7 +205,7 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 				},
 			},
 			validateResult: func(t *testing.T, result *types.SandboxInfo) {
-				assert.Equal(t, "running", result.Status)
+				assert.Equal(t, "ready", result.Status)
 				assert.Len(t, result.EntryPoints, 2)
 				assert.Equal(t, "/api", result.EntryPoints[0].Path)
 				assert.Equal(t, sandboxHelperTestPodIP+":8080", result.EntryPoints[0].Endpoint)
@@ -346,10 +346,10 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected: "running",
+			expected:    "ready",
 		},
 		{
-			name: "ready condition false",
+			name: "ready condition false without reason",
 			sandbox: &sandboxv1alpha1.Sandbox{
 				Status: sandboxv1alpha1.SandboxStatus{
 					Conditions: []metav1.Condition{
@@ -360,7 +360,23 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected: "unknown",
+			expected:    "not-ready",
+		},
+		{
+			name: "ready condition false with reason is not-ready",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				Status: sandboxv1alpha1.SandboxStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:    string(sandboxv1alpha1.SandboxConditionReady),
+							Status:  metav1.ConditionFalse,
+							Reason:  "ErrImagePull",
+							Message: "Back-off pulling image",
+						},
+					},
+				},
+			},
+			expected:    "not-ready",
 		},
 		{
 			name: "ready condition unknown",
@@ -374,7 +390,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected: "unknown",
+			expected:    "not-ready",
 		},
 		{
 			name: "no conditions",
@@ -383,7 +399,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					Conditions: []metav1.Condition{},
 				},
 			},
-			expected: "unknown",
+			expected:    "not-ready",
 		},
 		{
 			name: "nil conditions",
@@ -392,7 +408,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					Conditions: nil,
 				},
 			},
-			expected: "unknown",
+			expected:    "not-ready",
 		},
 		{
 			name: "other condition type",
@@ -406,7 +422,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected: "unknown",
+			expected:    "not-ready",
 		},
 		{
 			name: "multiple conditions with ready true",
@@ -424,7 +440,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected: "running",
+			expected:    "ready",
 		},
 	}
 

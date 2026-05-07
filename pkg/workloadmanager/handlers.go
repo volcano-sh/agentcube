@@ -36,6 +36,14 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/store"
 )
 
+// errSandboxCreationTimeout is returned when the internal sandbox-ready wait exceeds the 2-minute deadline.
+var errSandboxCreationTimeout = errors.New("sandbox creation timed out")
+
+// isContextError reports whether err is a context cancellation or deadline error.
+func isContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
 // handleHealth handles health check requests
 func (s *Server) handleHealth(c *gin.Context) {
 	respondJSON(c, http.StatusOK, map[string]string{
@@ -132,53 +140,99 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 
 	response, err := s.createSandbox(c.Request.Context(), dynamicClient, sandbox, sandboxClaim, sandboxEntry, resultChan)
 	if err != nil {
+		// Client disconnected — abort with 499 so logs/metrics reflect the cancellation.
+		if errors.Is(err, context.Canceled) {
+			klog.Warningf("create sandbox aborted %s/%s: client disconnected", sandbox.Namespace, sandbox.Name)
+			c.AbortWithStatus(499)
+			return
+		}
+		// Deadline exceeded — client may still be connected; return 504 so they get a meaningful response.
+		if errors.Is(err, context.DeadlineExceeded) {
+			klog.Warningf("create sandbox timed out %s/%s: request deadline exceeded", sandbox.Namespace, sandbox.Name)
+			respondError(c, http.StatusGatewayTimeout, "request timed out")
+			return
+		}
+		// Internal sandbox-ready wait timed out; surface as 504 rather than a generic 500.
+		if errors.Is(err, errSandboxCreationTimeout) {
+			klog.Warningf("create sandbox timed out %s/%s: sandbox did not become ready within deadline", sandbox.Namespace, sandbox.Name)
+			respondError(c, http.StatusGatewayTimeout, err.Error())
+			return
+		}
 		klog.Errorf("create sandbox failed %s/%s: %v", sandbox.Namespace, sandbox.Name, err)
-		respondError(c, http.StatusInternalServerError, "internal server error")
+		// Internal errors (store, K8s API) must not leak system details to callers;
+		// sandbox-level failures (terminal pod state, timeout) are safe to surface.
+		msg := err.Error()
+		if apierrors.IsInternalError(err) {
+			msg = "internal server error"
+		}
+		respondError(c, http.StatusInternalServerError, msg)
 		return
 	}
 
 	respondJSON(c, http.StatusOK, response)
 }
 
-// createSandbox performs sandbox creation and returns the response payload or an error with an HTTP status code.
-func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
-	// Store placeholder before creating, make sandbox/sandboxClaim GarbageCollection possible
-	sandboxStorePlaceHolder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
-	if err := s.storeClient.StoreSandbox(ctx, sandboxStorePlaceHolder); err != nil {
-		err = api.NewInternalError(fmt.Errorf("store sandbox placeholder failed: %v", err))
-		return nil, err
-	}
-
+// createK8sResources creates the K8s sandbox or sandbox claim resource.
+func (s *Server) createK8sResources(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
 	if sandboxClaim != nil {
 		if err := createSandboxClaim(ctx, dynamicClient, sandboxClaim); err != nil {
-			err = api.NewInternalError(fmt.Errorf("create sandbox claim %s/%s failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err))
-			return nil, err
+			if isContextError(err) {
+				return err
+			}
+			return api.NewInternalError(fmt.Errorf("create sandbox claim %s/%s failed: %w", sandboxClaim.Namespace, sandboxClaim.Name, err))
 		}
 	} else {
 		if _, err := createSandbox(ctx, dynamicClient, sandbox); err != nil {
-			return nil, api.NewInternalError(fmt.Errorf("failed to create sandbox: %w", err))
+			if isContextError(err) {
+				return err
+			}
+			return api.NewInternalError(fmt.Errorf("failed to create sandbox: %w", err))
 		}
 	}
+	return nil
+}
 
-	// Register rollback BEFORE waiting for the sandbox to become ready.
-	// This ensures the K8s resource and store placeholder are cleaned up on
-	// timeout, pod-IP failure, or store-update failure — not just on post-creation errors.
+// createSandbox performs sandbox creation and returns the response payload or an error with an HTTP status code.
+func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
+	placeholder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
+	if err := s.storeClient.StoreSandbox(ctx, placeholder); err != nil {
+		if isContextError(err) {
+			return nil, err
+		}
+		return nil, api.NewInternalError(fmt.Errorf("store sandbox placeholder failed: %w", err))
+	}
+
+	// Register rollback right after the placeholder is stored so that a K8s
+	// creation failure does not leave an orphaned store entry.
 	needRollbackSandbox := true
 	defer func() {
 		if !needRollbackSandbox {
 			return
 		}
-		s.sandboxRollback(sandboxClaim, dynamicClient, sandbox, sandboxEntry)
+		s.rollbackSandboxCreation(dynamicClient, sandbox, sandboxClaim, sandboxEntry.SessionID)
 	}()
+
+	if err := s.createK8sResources(ctx, dynamicClient, sandbox, sandboxClaim); err != nil {
+		return nil, err
+	}
+
+	// Use NewTimer so we can stop it explicitly when another branch wins,
+	// preventing the runtime from retaining the timer until it fires.
+	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
 
 	var createdSandbox *sandboxv1alpha1.Sandbox
 	select {
 	case result := <-resultChan:
+		timer.Stop()
 		createdSandbox = result.Sandbox
 		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
-	case <-time.After(2 * time.Minute): // consistent with router settings
+	case <-ctx.Done():
+		timer.Stop()
+		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
+		return nil, ctx.Err()
+	case <-timer.C:
 		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
-		return nil, fmt.Errorf("sandbox creation timed out")
+		return nil, errSandboxCreationTimeout
 	}
 
 	// agent-sandbox create pod with same name as sandbox if no warmpool is used
@@ -192,10 +246,16 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 
 	podIP, err := s.k8sClient.GetSandboxPodIP(ctx, sandbox.Namespace, sandbox.Name, sandboxPodName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get sandbox %s/%s pod IP: %v", sandbox.Namespace, sandbox.Name, err)
+		if isContextError(err) {
+			return nil, err
+		}
+		return nil, api.NewInternalError(fmt.Errorf("failed to get sandbox %s/%s pod IP: %w", sandbox.Namespace, sandbox.Name, err))
 	}
 	if err := s.waitForSandboxEntryPointsReady(ctx, podIP, sandboxEntry); err != nil {
-		return nil, fmt.Errorf("failed to verify sandbox %s/%s entrypoints: %w", sandbox.Namespace, sandbox.Name, err)
+		if isContextError(err) {
+			return nil, err
+		}
+		return nil, api.NewInternalError(fmt.Errorf("failed to verify sandbox %s/%s entrypoints: %w", sandbox.Namespace, sandbox.Name, err))
 	}
 
 	storeCacheInfo := buildSandboxInfo(createdSandbox, podIP, sandboxEntry)
@@ -208,7 +268,10 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	}
 
 	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {
-		return nil, fmt.Errorf("update store cache failed: %v", err)
+		if isContextError(err) {
+			return nil, err
+		}
+		return nil, api.NewInternalError(fmt.Errorf("update store cache failed: %w", err))
 	}
 
 	needRollbackSandbox = false
@@ -217,25 +280,26 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	return response, nil
 }
 
-func (s *Server) sandboxRollback(sandboxClaim *extensionsv1alpha1.SandboxClaim, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxEntry *sandboxEntry) {
+// rollbackSandboxCreation deletes the sandbox (or sandbox claim) and its store
+// placeholder when creation fails. It runs in a fresh context so that a
+// canceled request context does not prevent cleanup.
+func (s *Server) rollbackSandboxCreation(dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sessionID string) {
 	ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	var err error
 	if sandboxClaim != nil {
-		// Rollback SandboxClaim
-		err = deleteSandboxClaim(ctxTimeout, dynamicClient, sandboxClaim.Namespace, sandboxClaim.Name)
-		if err != nil {
+		if err := deleteSandboxClaim(ctxTimeout, dynamicClient, sandboxClaim.Namespace, sandboxClaim.Name); err != nil {
 			klog.Infof("sandbox claim %s/%s rollback failed: %v", sandboxClaim.Namespace, sandboxClaim.Name, err)
+		} else {
+			klog.Infof("sandbox claim %s/%s rollback succeeded", sandboxClaim.Namespace, sandboxClaim.Name)
 		}
 	} else {
-		// Rollback Sandbox
-		err = deleteSandbox(ctxTimeout, dynamicClient, sandbox.Namespace, sandbox.Name)
-		if err != nil {
+		if err := deleteSandbox(ctxTimeout, dynamicClient, sandbox.Namespace, sandbox.Name); err != nil {
 			klog.Infof("sandbox %s/%s rollback failed: %v", sandbox.Namespace, sandbox.Name, err)
+		} else {
+			klog.Infof("sandbox %s/%s rollback succeeded", sandbox.Namespace, sandbox.Name)
 		}
 	}
-	// Clean up the store placeholder so it does not pollute GC queries
-	if delErr := s.storeClient.DeleteSandboxBySessionID(ctxTimeout, sandboxEntry.SessionID); delErr != nil {
+	if delErr := s.storeClient.DeleteSandboxBySessionID(ctxTimeout, sessionID); delErr != nil {
 		klog.Infof("sandbox %s/%s store placeholder cleanup failed: %v", sandbox.Namespace, sandbox.Name, delErr)
 	}
 }

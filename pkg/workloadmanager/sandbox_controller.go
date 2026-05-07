@@ -48,30 +48,30 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	status := getSandboxStatus(sandbox)
+	if getSandboxStatus(sandbox) != sandboxStatusReady {
+		return ctrl.Result{}, nil
+	}
 
-	// Check for pending requests with proper locking
-	if status == "running" {
-		klog.V(2).Infof("Sandbox %s/%s is running, sending notification", sandbox.Namespace, sandbox.Name)
-		r.mu.Lock()
-		resultChan, exists := r.watchers[req.NamespacedName]
-		if exists {
-			klog.V(2).Infof("Found %d pending requests for sandbox %s/%s", len(r.watchers), sandbox.Namespace, sandbox.Name)
-			// Remove from map before sending to avoid memory leak
-			delete(r.watchers, req.NamespacedName)
-		} else {
-			klog.V(2).Infof("No pending requests found for sandbox %s/%s", sandbox.Namespace, sandbox.Name)
-		}
-		r.mu.Unlock()
+	klog.V(2).Infof("Sandbox %s/%s is ready, notifying waiter", sandbox.Namespace, sandbox.Name)
 
-		if exists {
-			// Send notification outside the lock to avoid deadlock
-			select {
-			case resultChan <- SandboxStatusUpdate{Sandbox: sandbox}:
-				klog.V(2).Infof("Notified waiter about sandbox %s/%s reaching Running state", sandbox.Namespace, sandbox.Name)
-			default:
-				klog.Warningf("Failed to notify watcher for sandbox %s/%s: channel buffer full or not receiving", sandbox.Namespace, sandbox.Name)
-			}
+	r.mu.Lock()
+	resultChan, exists := r.watchers[req.NamespacedName]
+	if exists {
+		delete(r.watchers, req.NamespacedName)
+	}
+	r.mu.Unlock()
+
+	if exists {
+		// WatchSandboxOnce always creates a buffered channel of size 1, and the
+		// map entry is deleted before this point so only one sender can ever
+		// reach here for a given key. The buffer is therefore always empty and
+		// this send never blocks. The default branch guards against the unlikely
+		// case where the receiver has already gone away (e.g. context canceled).
+		select {
+		case resultChan <- SandboxStatusUpdate{Sandbox: sandbox}:
+			klog.V(2).Infof("Notified waiter about sandbox %s/%s", sandbox.Namespace, sandbox.Name)
+		default:
+			klog.V(2).Infof("No receiver for sandbox %s/%s notification, skipping", sandbox.Namespace, sandbox.Name)
 		}
 	}
 

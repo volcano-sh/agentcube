@@ -299,6 +299,7 @@ func TestHandleSandboxCreate(t *testing.T) {
 		expectStatus      int
 		expectMessage     string
 		expectCreateCalls int
+		expectEnvVars     map[string]string
 	}{
 		{
 			name:          "invalid json",
@@ -356,6 +357,18 @@ func TestHandleSandboxCreate(t *testing.T) {
 			expectStatus:      http.StatusOK,
 			expectCreateCalls: 1,
 		},
+		{
+			name:              "create sandbox with env vars",
+			kind:              types.AgentRuntimeKind,
+			body:              `{"name":"workload","namespace":"ns","envVars":{"FOO":"bar","BAZ":"qux"}}`,
+			createResp:        &types.CreateSandboxResponse{SessionID: "sess-1", SandboxID: "id-1", SandboxName: "sandbox-1"},
+			expectStatus:      http.StatusOK,
+			expectCreateCalls: 1,
+			expectEnvVars: map[string]string{
+				"FOO": "bar",
+				"BAZ": "qux",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -375,20 +388,23 @@ func TestHandleSandboxCreate(t *testing.T) {
 			patches := gomonkey.NewPatches()
 			defer patches.Reset()
 
-			patches.ApplyFunc(buildSandboxByAgentRuntime, func(_, _ string, _ *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
+			var capturedEnvVars map[string]string
+			patches.ApplyFunc(buildSandboxByAgentRuntime, func(_, _ string, _ *Informers, extraEnvVars map[string]string) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
 				if tc.kind != types.AgentRuntimeKind {
 					return nil, nil, errors.New("unexpected kind")
 				}
+				capturedEnvVars = extraEnvVars
 				if tc.buildErr != nil {
 					return nil, nil, tc.buildErr
 				}
 				return sb, entry, nil
 			})
 
-			patches.ApplyFunc(buildSandboxByCodeInterpreter, func(_, _ string, _ *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+			patches.ApplyFunc(buildSandboxByCodeInterpreter, func(_, _ string, _ *Informers, extraEnvVars map[string]string) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
 				if tc.kind != types.CodeInterpreterKind {
 					return nil, nil, nil, errors.New("unexpected kind")
 				}
+				capturedEnvVars = extraEnvVars
 				if tc.buildErr != nil {
 					return nil, nil, nil, tc.buildErr
 				}
@@ -423,6 +439,9 @@ func TestHandleSandboxCreate(t *testing.T) {
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 			if tc.createResp != nil {
 				require.Equal(t, *tc.createResp, resp)
+			}
+			if tc.expectEnvVars != nil {
+				require.Equal(t, tc.expectEnvVars, capturedEnvVars, "envVars should be passed to builder")
 			}
 		})
 	}

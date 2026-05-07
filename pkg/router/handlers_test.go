@@ -24,9 +24,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/volcano-sh/agentcube/pkg/api"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
@@ -37,26 +39,43 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
+// testRedis is the global miniredis instance for testing
+var testRedis *miniredis.Miniredis
+var testRedisOnce sync.Once
+
+// getTestRedis returns the global miniredis instance, creating it if necessary
+func getTestRedis() *miniredis.Miniredis {
+	testRedisOnce.Do(func() {
+		var err error
+		testRedis, err = miniredis.Run()
+		if err != nil {
+			panic(fmt.Sprintf("failed to start miniredis: %v", err))
+		}
+	})
+	return testRedis
+}
+
 // Mock SessionManager for testing
 type mockSessionManager struct {
 	sandbox *types.SandboxInfo
 	err     error
 }
 
-func (m *mockSessionManager) GetSandboxBySession(_ context.Context, _ string, _ string, _ string, _ string) (*types.SandboxInfo, error) {
+func (m *mockSessionManager) GetSandboxBySession(_ context.Context, _ string, _ string, _ string, _ string, _ map[string]string) (*types.SandboxInfo, error) {
 	return m.sandbox, m.err
 }
 
 func setupEnv() {
-	os.Setenv("REDIS_ADDR", "localhost:6379")
-	os.Setenv("REDIS_PASSWORD", "test-password")
+	mr := getTestRedis()
+	os.Setenv("REDIS_ADDR", mr.Addr())
+	os.Setenv("REDIS_PASSWORD", "")
+	os.Setenv("REDIS_PASSWORD_REQUIRED", "false")
 	os.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
 }
 
 func teardownEnv() {
-	os.Unsetenv("REDIS_ADDR")
-	os.Unsetenv("REDIS_PASSWORD")
-	os.Unsetenv("WORKLOAD_MANAGER_URL")
+	// Note: We don't close miniredis here as it's shared across tests via sync.Once
+	// It will be automatically cleaned up when the test process exits
 }
 
 func TestHandleHealth(t *testing.T) {
@@ -480,6 +499,123 @@ func TestWaitForUpstreamReachable_RetriesUntilReady(t *testing.T) {
 	<-serveDone
 }
 
+// TestRouterAcceptsAllInvocationMethods verifies that invocation routes
+// accept GET, POST, PUT, PATCH, and DELETE on both code-interpreters and
+// agent-runtimes paths. The Envd API exposes endpoints (e.g. filesystem/remove)
+// that require methods beyond GET/POST, so the router must forward them.
+func TestRouterAcceptsAllInvocationMethods(t *testing.T) {
+	setupEnv()
+	defer teardownEnv()
+
+	methods := []string{"GET", "POST", "PUT", "PATCH", "DELETE"}
+	resourceTypes := []struct {
+		name string
+		path string
+	}{
+		{"code-interpreters", "/v1/namespaces/default/code-interpreters/test-ci/invocations/envd/filesystem/remove"},
+		{"agent-runtimes", "/v1/namespaces/default/agent-runtimes/test-agent/invocations/envd/filesystem/remove"},
+	}
+
+	for _, rt := range resourceTypes {
+		for _, method := range methods {
+			t.Run(rt.name+"/"+method, func(t *testing.T) {
+				testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusOK)
+				}))
+				defer testServer.Close()
+
+				config := &Config{Port: "8080"}
+				server, err := NewServer(config)
+				if err != nil {
+					t.Fatalf("Failed to create server: %v", err)
+				}
+
+				server.sessionManager = &mockSessionManager{
+					sandbox: &types.SandboxInfo{
+						SandboxID: "test-sandbox",
+						SessionID: "test-session",
+						Name:      "test-sandbox",
+						EntryPoints: []types.SandboxEntryPoint{
+							{Endpoint: testServer.URL, Path: "/envd"},
+						},
+					},
+				}
+
+				routerSrv := httptest.NewServer(server.engine)
+				defer routerSrv.Close()
+
+				req, _ := http.NewRequest(method, routerSrv.URL+rt.path, nil)
+				client := &http.Client{Timeout: 5 * time.Second}
+				resp, err := client.Do(req)
+				if err != nil {
+					t.Fatalf("Failed to make request: %v", err)
+				}
+				defer resp.Body.Close()
+
+				if resp.StatusCode == http.StatusNotFound {
+					t.Fatalf("Method %s on %s returned 404; route is not registered", method, rt.path)
+				}
+			})
+		}
+	}
+}
+
+// TestE2BEngineAcceptsInvocationRoutes verifies that the E2B engine (port 8081
+// in production) also serves /v1/.../invocations/* routes. Tests use a single
+// ROUTER_URL and need both the Platform API (templates/sandboxes) and the
+// native invocation API on the same listener.
+func TestE2BEngineAcceptsInvocationRoutes(t *testing.T) {
+	setupEnv()
+	defer teardownEnv()
+
+	methods := []string{"GET", "POST", "PUT", "PATCH", "DELETE"}
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer testServer.Close()
+
+			config := &Config{Port: "8080"}
+			server, err := NewServer(config)
+			if err != nil {
+				t.Fatalf("Failed to create server: %v", err)
+			}
+
+			server.sessionManager = &mockSessionManager{
+				sandbox: &types.SandboxInfo{
+					SandboxID: "test-sandbox",
+					SessionID: "test-session",
+					Name:      "test-sandbox",
+					EntryPoints: []types.SandboxEntryPoint{
+						{Endpoint: testServer.URL, Path: "/envd"},
+					},
+				},
+			}
+
+			if server.e2bEngine == nil {
+				t.Skip("e2b engine not initialized; skipping")
+			}
+
+			routerSrv := httptest.NewServer(server.e2bEngine)
+			defer routerSrv.Close()
+
+			path := "/v1/namespaces/default/code-interpreters/test-ci/invocations/envd/filesystem/remove"
+			req, _ := http.NewRequest(method, routerSrv.URL+path, nil)
+			client := &http.Client{Timeout: 5 * time.Second}
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatalf("Failed to make request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode == http.StatusNotFound {
+				t.Fatalf("Method %s on E2B engine returned 404; native invocation route is not registered", method)
+			}
+		})
+	}
+}
+
 func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 	// Set required environment variables
 	setupEnv()
@@ -548,4 +684,50 @@ func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 
 	// Wait for first request to complete
 	<-done
+}
+
+// TestE2BEngineRegistersPlatformRoutes verifies that the E2B engine serves
+// Platform API routes (/templates, /sandboxes) in addition to native
+// invocation routes. A 404 here means e2b.NewServer failed silently during
+// router startup.
+func TestE2BEngineRegistersPlatformRoutes(t *testing.T) {
+	setupEnv()
+	defer teardownEnv()
+
+	// Provide an API key so the middleware allows the request through.
+	t.Setenv("E2B_API_KEYS", "test-api-key:test-namespace")
+
+	config := &Config{Port: "8080"}
+	server, err := NewServer(config)
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+
+	if server.e2bEngine == nil {
+		t.Fatal("e2bEngine is nil")
+	}
+
+	tests := []struct {
+		method string
+		path   string
+	}{
+		{"GET", "/templates"},
+		{"POST", "/templates"},
+		{"GET", "/templates/some-id"},
+		{"GET", "/sandboxes"},
+		{"POST", "/sandboxes"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.method+"_"+tc.path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(tc.method, tc.path, nil)
+			req.Header.Set("X-API-Key", "test-api-key")
+			server.e2bEngine.ServeHTTP(w, req)
+
+			if w.Code == http.StatusNotFound {
+				t.Fatalf("%s %s returned 404; E2B Platform API route is not registered", tc.method, tc.path)
+			}
+		})
+	}
 }

@@ -43,7 +43,8 @@ type SessionManager interface {
 	// GetSandboxBySession returns the sandbox associated with the given sessionID.
 	// When sessionID is empty, it creates a new sandbox by calling the external API.
 	// When sessionID is not empty, it queries store for the sandbox.
-	GetSandboxBySession(ctx context.Context, sessionID string, namespace string, name string, kind string) (*types.SandboxInfo, error)
+	// envVars is injected into the sandbox container when creating a new sandbox.
+	GetSandboxBySession(ctx context.Context, sessionID string, namespace string, name string, kind string, envVars map[string]string) (*types.SandboxInfo, error)
 }
 
 // manager is the default implementation of the SessionManager interface.
@@ -94,10 +95,10 @@ func NewSessionManager(storeClient store.Store) (SessionManager, error) {
 // GetSandboxBySession returns the sandbox associated with the given sessionID.
 // When sessionID is empty, it creates a new sandbox by calling the external API.
 // When sessionID is not empty, it queries store for the sandbox.
-func (m *manager) GetSandboxBySession(ctx context.Context, sessionID string, namespace string, name string, kind string) (*types.SandboxInfo, error) {
+func (m *manager) GetSandboxBySession(ctx context.Context, sessionID string, namespace string, name string, kind string, envVars map[string]string) (*types.SandboxInfo, error) {
 	// When sessionID is empty, create a new sandbox
 	if sessionID == "" {
-		return m.createSandbox(ctx, namespace, name, kind)
+		return m.createSandbox(ctx, namespace, name, kind, envVars)
 	}
 
 	// When sessionID is not empty, query store
@@ -113,7 +114,7 @@ func (m *manager) GetSandboxBySession(ctx context.Context, sessionID string, nam
 }
 
 // createSandbox creates a new sandbox by calling the external workload manager API.
-func (m *manager) createSandbox(ctx context.Context, namespace string, name string, kind string) (*types.SandboxInfo, error) {
+func (m *manager) createSandbox(ctx context.Context, namespace string, name string, kind string, envVars map[string]string) (*types.SandboxInfo, error) {
 	// Determine the API endpoint based on kind
 	var endpoint string
 	switch kind {
@@ -130,6 +131,7 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 		Kind:      kind,
 		Name:      name,
 		Namespace: namespace,
+		EnvVars:   envVars,
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)

@@ -360,3 +360,122 @@ func TestValkeyStore_UpdateSandboxLastActivity(t *testing.T) {
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotFound))
 }
+
+func TestValkeyStore_GetSandboxByE2BSandboxID(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newValkeyTestClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	sb := newTestSandboxWithE2B("sb-1", "sess-1", now.Add(10*time.Minute), "e2b-123", "hash-abc", "tpl-1")
+
+	assert.NoError(t, c.StoreSandbox(ctx, sb))
+
+	got, err := c.GetSandboxByE2BSandboxID(ctx, "e2b-123")
+	assert.NoError(t, err)
+	assert.Equal(t, "sess-1", got.SessionID)
+
+	_, err = c.GetSandboxByE2BSandboxID(ctx, "non-existent")
+	assert.True(t, errors.Is(err, ErrNotFound))
+}
+
+func TestValkeyStore_ListSandboxesByAPIKeyHash(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newValkeyTestClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	sb1 := newTestSandboxWithE2B("sb-1", "sess-1", now.Add(10*time.Minute), "e2b-1", "hash-abc", "tpl-1")
+	sb2 := newTestSandboxWithE2B("sb-2", "sess-2", now.Add(10*time.Minute), "e2b-2", "hash-abc", "tpl-1")
+	sb3 := newTestSandboxWithE2B("sb-3", "sess-3", now.Add(10*time.Minute), "e2b-3", "hash-def", "tpl-2")
+
+	assert.NoError(t, c.StoreSandbox(ctx, sb1))
+	assert.NoError(t, c.StoreSandbox(ctx, sb2))
+	assert.NoError(t, c.StoreSandbox(ctx, sb3))
+
+	list, err := c.ListSandboxesByAPIKeyHash(ctx, "hash-abc")
+	assert.NoError(t, err)
+	assert.Len(t, list, 2)
+	ids := map[string]bool{}
+	for _, sb := range list {
+		ids[sb.SandboxID] = true
+	}
+	assert.True(t, ids["sb-1"])
+	assert.True(t, ids["sb-2"])
+
+	list, err = c.ListSandboxesByAPIKeyHash(ctx, "hash-def")
+	assert.NoError(t, err)
+	assert.Len(t, list, 1)
+	assert.Equal(t, "sb-3", list[0].SandboxID)
+
+	list, err = c.ListSandboxesByAPIKeyHash(ctx, "hash-nonexistent")
+	assert.NoError(t, err)
+	assert.Len(t, list, 0)
+}
+
+func TestValkeyStore_UpdateSandboxTTL(t *testing.T) {
+	ctx := context.Background()
+	c, mr := newValkeyTestClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	sb := newTestSandbox("sb-1", "sess-1", now.Add(10*time.Minute))
+
+	assert.NoError(t, c.StoreSandbox(ctx, sb))
+
+	newExpiresAt := now.Add(30 * time.Minute)
+	assert.NoError(t, c.UpdateSandboxTTL(ctx, "sess-1", newExpiresAt))
+
+	got, err := c.GetSandboxBySessionID(ctx, "sess-1")
+	assert.NoError(t, err)
+	assert.Equal(t, newExpiresAt.Unix(), got.ExpiresAt.Unix())
+
+	score, err := mr.ZScore(c.expiryIndexKey, "sess-1")
+	assert.NoError(t, err)
+	assert.Equal(t, newExpiresAt.Unix(), int64(score))
+}
+
+func TestValkeyStore_DeleteSandboxBySessionID_CleansIndexes(t *testing.T) {
+	ctx := context.Background()
+	c, mr := newValkeyTestClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	sb := newTestSandboxWithE2B("sb-1", "sess-1", now.Add(10*time.Minute), "e2b-123", "hash-abc", "tpl-1")
+
+	assert.NoError(t, c.StoreSandbox(ctx, sb))
+	assert.NoError(t, c.DeleteSandboxBySessionID(ctx, "sess-1"))
+
+	_, err := mr.Get(c.e2bIDKey("e2b-123"))
+	assert.True(t, errors.Is(err, miniredis.ErrKeyNotFound))
+
+	members, err := mr.SMembers(c.apiKeySetKey("hash-abc"))
+	if err != nil {
+		assert.True(t, errors.Is(err, miniredis.ErrKeyNotFound))
+	}
+	assert.Len(t, members, 0)
+}
+
+func TestValkeyStore_StoreSandbox_E2BIDConflict(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newValkeyTestClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	sb1 := newTestSandboxWithE2B("sb-1", "sess-1", now.Add(10*time.Minute), "e2b-conflict", "hash-1", "tpl-1")
+	sb2 := newTestSandboxWithE2B("sb-2", "sess-2", now.Add(10*time.Minute), "e2b-conflict", "hash-2", "tpl-2")
+
+	assert.NoError(t, c.StoreSandbox(ctx, sb1))
+
+	err := c.StoreSandbox(ctx, sb2)
+	assert.True(t, errors.Is(err, ErrIDConflict), "expected ErrIDConflict, got %v", err)
+}
+
+func TestValkeyStore_StoreSandbox_SessionConflict(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newValkeyTestClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	sb1 := newTestSandboxWithE2B("sb-1", "sess-conflict", now.Add(10*time.Minute), "e2b-1", "hash-1", "tpl-1")
+	sb2 := newTestSandboxWithE2B("sb-2", "sess-conflict", now.Add(10*time.Minute), "e2b-2", "hash-2", "tpl-2")
+
+	assert.NoError(t, c.StoreSandbox(ctx, sb1))
+
+	err := c.StoreSandbox(ctx, sb2)
+	assert.True(t, errors.Is(err, ErrIDConflict), "expected ErrIDConflict, got %v", err)
+}

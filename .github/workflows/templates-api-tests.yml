@@ -1,0 +1,181 @@
+name: Templates API Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+      - "release-*"
+    paths:
+      - 'pkg/router/e2b/templates*'
+      - 'pkg/apis/runtime/**'
+      - 'test/e2e/templates*'
+      - '.github/workflows/templates-api*'
+  push:
+    branches:
+      - main
+      - "release-*"
+    paths:
+      - 'pkg/router/e2b/templates*'
+      - 'pkg/apis/runtime/**'
+      - 'test/e2e/templates*'
+
+env:
+  GO_VERSION: "1.24"
+  KIND_VERSION: "v0.30.0"
+  AGENTCUBE_NAMESPACE: "agentcube"
+  E2B_API_KEY: "test-api-key"
+
+jobs:
+  templates-api-test:
+    name: Templates API Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run unit tests
+        run: |
+          go test -v ./pkg/router/e2b/... -run "Template" -timeout 10m
+
+      - name: Create Kind Cluster
+        uses: helm/kind-action@v1
+        with:
+          version: ${{ env.KIND_VERSION }}
+          cluster_name: agentcube-templates-test
+
+      - name: Deploy components
+        run: |
+          # Create namespace
+          kubectl create namespace ${{ env.AGENTCUBE_NAMESPACE }} || true
+
+          # Deploy Redis
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} create deployment redis \
+            --image=redis:7-alpine --port=6379 --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} expose deployment redis --port=6379
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} rollout status deployment/redis --timeout=120s
+
+          # Build and load router image
+          make build-router
+          make docker-build-router ROUTER_IMAGE=agentcube-router:test
+          kind load docker-image agentcube-router:test --name agentcube-templates-test
+
+          # Deploy Router with E2B_API_KEYS configured
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: agentcube-router
+            namespace: ${{ env.AGENTCUBE_NAMESPACE }}
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          metadata:
+            name: agentcube-router
+            namespace: ${{ env.AGENTCUBE_NAMESPACE }}
+          rules:
+            - apiGroups: [""]
+              resources: ["secrets", "configmaps"]
+              verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+            - apiGroups: ["runtime.agentcube.volcano.sh"]
+              resources: ["codeinterpreters", "agentruntimes"]
+              verbs: ["get", "list", "watch"]
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: agentcube-router
+            namespace: ${{ env.AGENTCUBE_NAMESPACE }}
+          subjects:
+            - kind: ServiceAccount
+              name: agentcube-router
+              namespace: ${{ env.AGENTCUBE_NAMESPACE }}
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: Role
+            name: agentcube-router
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: agentcube-router
+            namespace: ${{ env.AGENTCUBE_NAMESPACE }}
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: agentcube-router
+            template:
+              metadata:
+                labels:
+                  app: agentcube-router
+              spec:
+                serviceAccountName: agentcube-router
+                containers:
+                - name: router
+                  image: agentcube-router:test
+                  imagePullPolicy: Never
+                  ports:
+                  - containerPort: 8080
+                  env:
+                  - name: REDIS_ADDR
+                    value: "redis.${{ env.AGENTCUBE_NAMESPACE }}.svc.cluster.local:6379"
+                  - name: REDIS_PASSWORD_REQUIRED
+                    value: "false"
+                  - name: E2B_API_KEYS
+                    value: "${{ env.E2B_API_KEY }}:test-client"
+                  - name: PORT
+                    value: "8080"
+                  - name: AGENTCUBE_NAMESPACE
+                    value: "${{ env.AGENTCUBE_NAMESPACE }}"
+                  - name: WORKLOAD_MANAGER_URL
+                    value: "http://workload-manager.${{ env.AGENTCUBE_NAMESPACE }}.svc.cluster.local:8080"
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: agentcube-router
+            namespace: ${{ env.AGENTCUBE_NAMESPACE }}
+          spec:
+            selector:
+              app: agentcube-router
+            ports:
+            - port: 8080
+              targetPort: 8080
+          EOF
+
+          # Wait for router to be ready
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} rollout status deployment/agentcube-router --timeout=120s
+
+      - name: Run integration tests
+        run: |
+          # Start port-forward in background
+          kubectl -n ${{ env.AGENTCUBE_NAMESPACE }} port-forward svc/agentcube-router 8081:8081 &
+          PF_PID=$!
+
+          # Wait for port-forward to be ready
+          sleep 5
+
+          # Wait for router to be healthy
+          for i in {1..30}; do
+            if curl -sf http://localhost:8081/health/live; then
+              echo "Router is ready"
+              break
+            fi
+            echo "Waiting for router... (attempt $i/30)"
+            sleep 2
+          done
+
+          # Run template-specific E2E tests with API key
+          export ROUTER_URL=http://localhost:8081
+          export E2B_API_KEY=${{ env.E2B_API_KEY }}
+          go test -v ./test/e2e/... -run "Template" -timeout 10m
+
+          # Clean up port-forward
+          kill $PF_PID || true

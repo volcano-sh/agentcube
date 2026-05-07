@@ -53,6 +53,9 @@ spec:
             - name: http
               containerPort: {{ .Values.router.service.targetPort }}
               protocol: TCP
+            - name: e2b
+              containerPort: {{ .Values.router.e2bService.targetPort }}
+              protocol: TCP
           env:
             - name: AGENTCUBE_NAMESPACE
               valueFrom:
@@ -69,6 +72,7 @@ spec:
             {{- end }}
           args:
             - --port={{ .Values.router.service.targetPort }}
+            - --e2b-port={{ .Values.router.e2bService.targetPort }}
             - --debug
           resources:
             {{- toYaml .Values.router.resources | nindent 12 }}
@@ -112,5 +116,9 @@ spec:
       targetPort: {{ .Values.router.service.targetPort }}
       protocol: TCP
       name: http
+    - port: {{ .Values.router.e2bService.port }}
+      targetPort: {{ .Values.router.e2bService.targetPort }}
+      protocol: TCP
+      name: e2b
   selector:
     app: agentcube-router

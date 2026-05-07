@@ -1,0 +1,64 @@
+# Public template for testing
+apiVersion: runtime.agentcube.volcano.sh/v1alpha1
+kind: CodeInterpreter
+metadata:
+  name: e2e-test-template
+  namespace: agentcube
+  annotations:
+    e2b.agentcube.io/description: "E2E test template for Templates API"
+    e2b.agentcube.io/aliases: "e2e-template,test-ci"
+  labels:
+    e2b.agentcube.io/public: "true"
+spec:
+  template:
+    image: python:3.9-slim
+    command: ["python3", "-m", "http.server", "8080"]
+    resources:
+      requests:
+        memory: "4Gi"
+        cpu: "2"
+      limits:
+        memory: "4Gi"
+        cpu: "2"
+---
+# Private template for testing
+apiVersion: runtime.agentcube.volcano.sh/v1alpha1
+kind: CodeInterpreter
+metadata:
+  name: e2e-private-template
+  namespace: agentcube
+  annotations:
+    e2b.agentcube.io/description: "Private E2E test template"
+  labels:
+    e2b.agentcube.io/public: "false"
+spec:
+  template:
+    image: python:3.9-slim
+    resources:
+      requests:
+        memory: "2Gi"
+        cpu: "1"
+      limits:
+        memory: "2Gi"
+        cpu: "1"
+---
+# Template for build tests
+apiVersion: runtime.agentcube.volcano.sh/v1alpha1
+kind: CodeInterpreter
+metadata:
+  name: e2e-build-template
+  namespace: agentcube
+  annotations:
+    e2b.agentcube.io/description: "Template for build tests"
+  labels:
+    e2b.agentcube.io/public: "true"
+spec:
+  template:
+    image: python:3.9-slim
+    resources:
+      requests:
+        memory: "4Gi"
+        cpu: "2"
+      limits:
+        memory: "4Gi"
+        cpu: "2"

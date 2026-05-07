@@ -15,13 +15,14 @@ AgentCube aims to provide a specialized control plane and data plane components 
 2. **Stateful Lifecycle Management**: Implementing smart sleep/resume mechanisms for resource efficiency.
 3. **High-Density Resource Utilization**: Advanced bin-packing under the constraint of guaranteed performance isolation.
 4. **Command-style API**: Providing a synchronous, imperative API experience for Agent execution.
+5. **E2B API Compatible**: Supporting E2B-compatible REST API for seamless migration from E2B services.
 
 ## Why AgentCube
 
 Volcano, designed for high-performance batch scheduling in the cloud-native ecosystem, is ideal for managing complex, compute-intensive workloads. While AI Agent applications represent the next generation of AI workloads, characterized by unique demands:
 
-* **Intermittent Activity**: Requiring fast resource release when idle and rapid recovery upon interaction.
-* **High Latency Sensitivity**: Demanding sub-second responses for optimal user experience.
-* **State Persistence**: Requiring context and state to be preserved across long, multi-turn sessions.
+- **Intermittent Activity**: Requiring fast resource release when idle and rapid recovery upon interaction.
+- **High Latency Sensitivity**: Demanding sub-second responses for optimal user experience.
+- **State Persistence**: Requiring context and state to be preserved across long, multi-turn sessions.
 
 Introducing AgentCube allows Volcano to complete its support for the full AI lifecycle, enabling users to efficiently orchestrate and manage AI Agent workloads on Kubernetes. This significantly improves management efficiency and optimizes cluster resource utilization by handling these "bursty" Agent applications.

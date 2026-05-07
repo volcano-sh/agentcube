@@ -38,6 +38,8 @@ type valkeyStore struct {
 	sessionPrefix        string
 	expiryIndexKey       string
 	lastActivityIndexKey string
+	e2bIDPrefix          string
+	apiKeySetPrefix      string
 }
 
 // initValkeyStore init valkey store client
@@ -56,6 +58,8 @@ func initValkeyStore() (*valkeyStore, error) {
 		sessionPrefix:        "session:",
 		expiryIndexKey:       "session:expiry",
 		lastActivityIndexKey: "session:last_activity",
+		e2bIDPrefix:          "e2bID:",
+		apiKeySetPrefix:      "set:sandboxes:apikey:",
 	}, nil
 }
 
@@ -98,6 +102,16 @@ func makeValkeyOptions() (*valkey.ClientOption, error) {
 // sessionKey make sessionKey by sessionID
 func (vs *valkeyStore) sessionKey(sessionID string) string {
 	return vs.sessionPrefix + sessionID
+}
+
+// e2bIDKey makes the reverse-lookup key for E2BSandboxID.
+func (vs *valkeyStore) e2bIDKey(e2bSandboxID string) string {
+	return vs.e2bIDPrefix + e2bSandboxID
+}
+
+// apiKeySetKey makes the secondary index key for APIKeyHash.
+func (vs *valkeyStore) apiKeySetKey(apiKeyHash string) string {
+	return vs.apiKeySetPrefix + apiKeyHash
 }
 
 // loadSandboxesBySessionIDs loads sandbox objects for the given session IDs.
@@ -190,10 +204,47 @@ func (vs *valkeyStore) StoreSandbox(ctx context.Context, sandboxStore *types.San
 		ScoreMember(float64(sandboxStore.ExpiresAt.Unix()), sandboxStore.SessionID).Build())
 	commands = append(commands, vs.cli.B().Zadd().Key(vs.lastActivityIndexKey).ScoreMember().
 		ScoreMember(float64(time.Now().Unix()), sandboxStore.SessionID).Build())
+	e2bIDCmdIdx := -1
+	if sandboxStore.E2BSandboxID != "" {
+		e2bIDCmdIdx = len(commands)
+		commands = append(commands, vs.cli.B().Set().Key(vs.e2bIDKey(sandboxStore.E2BSandboxID)).Value(sandboxStore.SessionID).Nx().Build())
+	}
+	if sandboxStore.APIKeyHash != "" {
+		commands = append(commands, vs.cli.B().Sadd().Key(vs.apiKeySetKey(sandboxStore.APIKeyHash)).Member(sandboxStore.SessionID).Build())
+	}
 
-	for i, resp := range vs.cli.DoMulti(ctx, commands...) {
-		if err = resp.Error(); err != nil {
+	responses := vs.cli.DoMulti(ctx, commands...)
+	return checkValkeyStoreSandboxResponses(responses, e2bIDCmdIdx)
+}
+
+func checkValkeyStoreSandboxResponses(responses []valkey.ValkeyResult, e2bIDCmdIdx int) error {
+	for i, resp := range responses {
+		if err := resp.Error(); err != nil {
+			// Nil response from SET NX means key already exists — not a real error
+			if i == e2bIDCmdIdx && valkey.IsValkeyNil(err) {
+				continue
+			}
 			return fmt.Errorf("StoreSandbox: DoMulti failed: %w, command index: %v", err, i)
+		}
+	}
+
+	// Check session SetNX result (command index 0)
+	sessionSet, err := responses[0].ToInt64()
+	if err != nil {
+		return fmt.Errorf("StoreSandbox: unexpected session SetNX response: %w", err)
+	}
+	if sessionSet == 0 {
+		return ErrIDConflict
+	}
+
+	// Check e2bID SET NX result if present
+	if e2bIDCmdIdx >= 0 {
+		msg, err := responses[e2bIDCmdIdx].ToString()
+		if err != nil && !valkey.IsValkeyNil(err) {
+			return fmt.Errorf("StoreSandbox: unexpected e2bID SET NX response: %w", err)
+		}
+		if msg != "OK" {
+			return ErrIDConflict
 		}
 	}
 
@@ -228,10 +279,22 @@ func (vs *valkeyStore) UpdateSandbox(ctx context.Context, sandboxStore *types.Sa
 func (vs *valkeyStore) DeleteSandboxBySessionID(ctx context.Context, sessionID string) error {
 	sessionKey := vs.sessionKey(sessionID)
 
-	commands := make(valkey.Commands, 0, 4)
+	// Load sandbox to get E2BSandboxID and APIKeyHash for index cleanup.
+	sandbox, err := vs.GetSandboxBySessionID(ctx, sessionID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("DeleteSandboxBySessionID: get sandbox failed: %w", err)
+	}
+
+	commands := make(valkey.Commands, 0, 5)
 	commands = append(commands, vs.cli.B().Del().Key(sessionKey).Build())
 	commands = append(commands, vs.cli.B().Zrem().Key(vs.expiryIndexKey).Member(sessionID).Build())
 	commands = append(commands, vs.cli.B().Zrem().Key(vs.lastActivityIndexKey).Member(sessionID).Build())
+	if sandbox != nil && sandbox.E2BSandboxID != "" {
+		commands = append(commands, vs.cli.B().Del().Key(vs.e2bIDKey(sandbox.E2BSandboxID)).Build())
+	}
+	if sandbox != nil && sandbox.APIKeyHash != "" {
+		commands = append(commands, vs.cli.B().Srem().Key(vs.apiKeySetKey(sandbox.APIKeyHash)).Member(sessionID).Build())
+	}
 
 	for i, resp := range vs.cli.DoMulti(ctx, commands...) {
 		if err := resp.Error(); err != nil {
@@ -298,6 +361,62 @@ func (vs *valkeyStore) ListInactiveSandboxes(ctx context.Context, before time.Ti
 // Close releases all resources held by the valkey store.
 func (vs *valkeyStore) Close() error {
 	vs.cli.Close()
+	return nil
+}
+
+// GetSandboxByE2BSandboxID reverse lookup by short ID.
+func (vs *valkeyStore) GetSandboxByE2BSandboxID(ctx context.Context, e2bSandboxID string) (*types.SandboxInfo, error) {
+	sessionID, err := vs.cli.Do(ctx, vs.cli.B().Get().Key(vs.e2bIDKey(e2bSandboxID)).Build()).ToString()
+	if err != nil {
+		if valkey.IsValkeyNil(err) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("GetSandboxByE2BSandboxID: valkey GET %s failed: %w", vs.e2bIDKey(e2bSandboxID), err)
+	}
+	return vs.GetSandboxBySessionID(ctx, sessionID)
+}
+
+// ListSandboxesByAPIKeyHash list sandboxes owned by an API Key via secondary index.
+func (vs *valkeyStore) ListSandboxesByAPIKeyHash(ctx context.Context, apiKeyHash string) ([]*types.SandboxInfo, error) {
+	sessionIDs, err := vs.cli.Do(ctx, vs.cli.B().Smembers().Key(vs.apiKeySetKey(apiKeyHash)).Build()).AsStrSlice()
+	if err != nil {
+		return nil, fmt.Errorf("ListSandboxesByAPIKeyHash: SMEMBERS failed: %w", err)
+	}
+	return vs.loadSandboxesBySessionIDs(ctx, sessionIDs)
+}
+
+// UpdateSandboxTTL update both sandbox object and expiry sorted set atomically.
+func (vs *valkeyStore) UpdateSandboxTTL(ctx context.Context, sessionID string, expiresAt time.Time) error {
+	if sessionID == "" {
+		return errors.New("UpdateSandboxTTL: sessionID is empty")
+	}
+	if expiresAt.IsZero() {
+		return errors.New("UpdateSandboxTTL: expiresAt is zero")
+	}
+
+	sandbox, err := vs.GetSandboxBySessionID(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("UpdateSandboxTTL: get sandbox failed: %w", err)
+	}
+
+	sandbox.ExpiresAt = expiresAt
+
+	sessionKey := vs.sessionKey(sessionID)
+	b, err := json.Marshal(sandbox)
+	if err != nil {
+		return fmt.Errorf("UpdateSandboxTTL: marshal sandbox failed: %w", err)
+	}
+
+	commands := make(valkey.Commands, 0, 2)
+	commands = append(commands, vs.cli.B().Set().Key(sessionKey).Value(string(b)).Build())
+	commands = append(commands, vs.cli.B().Zadd().Key(vs.expiryIndexKey).ScoreMember().
+		ScoreMember(float64(expiresAt.Unix()), sessionID).Build())
+
+	for i, resp := range vs.cli.DoMulti(ctx, commands...) {
+		if err := resp.Error(); err != nil {
+			return fmt.Errorf("UpdateSandboxTTL: DoMulti failed: %w, command index: %v", err, i)
+		}
+	}
 	return nil
 }
 

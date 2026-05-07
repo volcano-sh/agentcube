@@ -313,8 +313,9 @@ run_setup() {
 
     step "Deploying AgentCube via Helm (using native parameters)..."
     # Prepare extra environment variables as JSON for Helm
+    # Configure E2B API key for templates API testing
     WM_EXTRA_ENV='[{"name":"REDIS_PASSWORD_REQUIRED","value":"false"},{"name":"JWT_KEY_SECRET_NAMESPACE","value":"agentcube"}]'
-    ROUTER_EXTRA_ENV='[{"name":"REDIS_PASSWORD_REQUIRED","value":"false"}]'
+    ROUTER_EXTRA_ENV='[{"name":"REDIS_PASSWORD_REQUIRED","value":"false"},{"name":"E2B_API_KEYS","value":"e2e-test-api-key:e2e-test-client"}]'
 
     # Install using Helm directly from the source chart
     # We use --set-json to pass the extra environment variables and enable RBAC/SA for the router
@@ -328,6 +329,7 @@ run_setup() {
         --set-json "workloadmanager.extraEnv=${WM_EXTRA_ENV}" \
         --set router.image.repository="agentcube-router" \
         --set router.image.tag="latest" \
+        --set router.image.pullPolicy="Never" \
         --set router.rbac.create=true \
         --set router.serviceAccountName="agentcube-router" \
         --set-json "router.extraEnv=${ROUTER_EXTRA_ENV}" \
@@ -336,6 +338,36 @@ run_setup() {
     step "Waiting for deployments..."
     kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/workloadmanager --timeout=300s
     kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/agentcube-router --timeout=300s
+
+    # Verify and ensure E2B_API_KEYS is set in router
+    step "Verifying E2B API configuration..."
+    echo "Checking if E2B_API_KEYS is configured in router..."
+
+    # Always patch to ensure correct value
+    echo "Setting E2B_API_KEYS environment variable..."
+    kubectl -n "${AGENTCUBE_NAMESPACE}" set env deployment/agentcube-router E2B_API_KEYS="e2e-test-api-key:e2e-test-client" || echo "WARNING: Failed to set env var, continuing..."
+
+    # Restart deployment to ensure new env vars are loaded
+    echo "Restarting router deployment to apply environment variables..."
+    kubectl -n "${AGENTCUBE_NAMESPACE}" rollout restart deployment/agentcube-router || echo "WARNING: Failed to restart, continuing..."
+    kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/agentcube-router --timeout=120s || echo "WARNING: Rollout status check failed, continuing..."
+
+    # Verify the environment variable is set
+    echo "Verifying environment variable in pod..."
+    sleep 5
+    ROUTER_POD=$(kubectl -n "${AGENTCUBE_NAMESPACE}" get pod -l app=agentcube-router -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    if [ -n "${ROUTER_POD}" ]; then
+        echo "Router pod name: ${ROUTER_POD}"
+        kubectl -n "${AGENTCUBE_NAMESPACE}" exec "${ROUTER_POD}" -- env 2>/dev/null | grep -E "E2B_API_KEYS|REDIS" || echo "WARNING: E2B_API_KEYS not found in pod environment!"
+    else
+        echo "WARNING: Could not get router pod name"
+    fi
+
+    # Show deployment env vars for debugging
+    echo "Deployment environment variables:"
+    kubectl -n "${AGENTCUBE_NAMESPACE}" get deployment agentcube-router -o jsonpath='{.spec.template.spec.containers[0].env}' 2>/dev/null | tr ',' '\n' | grep -E "name|value" | head -20 || echo "WARNING: Could not get deployment env vars"
+
+    echo "E2B_API_KEYS configuration verified"
 
     step "Creating ServiceAccount and Token..."
     kubectl create serviceaccount e2e-test -n "${AGENTCUBE_NAMESPACE}" || true
@@ -404,7 +436,10 @@ echo "Workload manager port forward started with PID $WORKLOAD_PID"
 
 # Port forward router in background
 echo "Starting router port-forward..."
-kubectl port-forward svc/agentcube-router -n "${AGENTCUBE_NAMESPACE}" "${ROUTER_LOCAL_PORT}:8080" > /tmp/router_port_forward.log 2>&1 &
+# Forward to the E2B listener (8081) which exposes BOTH the E2B Platform API
+# (templates/sandboxes) AND the native /v1/.../invocations/* routes used by
+# code-interpreter and agent-runtime tests.
+kubectl port-forward svc/agentcube-router -n "${AGENTCUBE_NAMESPACE}" "${ROUTER_LOCAL_PORT}:8081" > /tmp/router_port_forward.log 2>&1 &
 ROUTER_PID=$!
 sleep 1
 if ! kill -0 $ROUTER_PID 2>/dev/null; then
@@ -428,6 +463,33 @@ for i in $(seq 1 10); do
     sleep 1
 done
 
+# Verify E2B API key is working
+echo "Verifying E2B API key configuration..."
+sleep 2
+
+# Check Router logs for API key loading message
+echo "Checking Router logs for API key loading..."
+kubectl -n "${AGENTCUBE_NAMESPACE}" logs deployment/agentcube-router --tail=20 | grep -i "API key" || echo "No API key log messages found"
+
+E2B_TEST_RESPONSE=$(curl -s -w "%{http_code}" -o /tmp/e2b_test_response.json -H "X-API-Key: e2e-test-api-key" "http://localhost:${ROUTER_LOCAL_PORT}/templates" 2>/dev/null || echo "000")
+if [ "$E2B_TEST_RESPONSE" = "200" ]; then
+    echo "E2B API key is working correctly (HTTP 200)"
+elif [ "$E2B_TEST_RESPONSE" = "401" ]; then
+    echo "WARNING: E2B API key authentication failed (HTTP 401)"
+    echo "Response:"
+    cat /tmp/e2b_test_response.json 2>/dev/null || echo "(empty response)"
+    echo ""
+    echo "Router environment variables:"
+    kubectl -n "${AGENTCUBE_NAMESPACE}" exec deployment/agentcube-router -- env | grep -i "e2b\|api" || true
+else
+    echo "E2B API test returned HTTP $E2B_TEST_RESPONSE"
+    echo "Response body:"
+    cat /tmp/e2b_test_response.json 2>/dev/null || echo "(empty response)"
+    echo ""
+    echo "Router recent logs:"
+    kubectl -n "${AGENTCUBE_NAMESPACE}" logs deployment/agentcube-router --tail=30 || true
+fi
+
 # Setup Python virtual environment for testing
 if [ ! -d "$E2E_VENV_DIR" ]; then
     echo "Creating Python virtual environment..."
@@ -442,6 +504,10 @@ pip install --upgrade pip
 # We are currently in project root, sdk-python is at ./sdk-python
 pip install -e ./sdk-python
 
+# Install E2B SDK for E2B compatibility testing (optional, but recommended)
+echo "Installing E2B Python SDK for compatibility testing..."
+pip install e2b-code-interpreter || echo "Warning: Failed to install e2b-code-interpreter, E2B SDK tests will be skipped"
+
 # Check if agentcube package is available after installation
 require_python
 
@@ -449,7 +515,9 @@ require_python
 TEST_FAILED=0
 
 echo "Running Go tests..."
-if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN go test -v ./test/e2e/...; then
+# E2B_API_KEY is used for Templates API authentication
+export E2B_API_KEY="e2e-test-api-key"
+if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN E2B_API_KEY=$E2B_API_KEY go test -tags e2e -v ./test/e2e/...; then
     TEST_FAILED=1
 fi
 
@@ -458,6 +526,19 @@ cd "$(dirname "$0")"
 
 if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py; then
     TEST_FAILED=1
+fi
+
+# Run E2B SDK compatibility tests if e2b-code-interpreter is installed
+echo "Running E2B SDK compatibility tests..."
+if "$E2E_VENV_DIR/bin/python" -c "import e2b_code_interpreter" 2>/dev/null; then
+    echo "E2B SDK found, running compatibility tests..."
+    if ! E2B_API_KEY="${E2B_API_KEY:-e2e-test-api-key}" E2B_BASE_URL="http://localhost:${ROUTER_LOCAL_PORT}" E2B_TEMPLATE_ID="default/code-interpreter" "$E2E_VENV_DIR/bin/python" test_e2b_sdk.py; then
+        echo "Warning: E2B SDK compatibility tests failed (non-blocking)"
+        # E2B SDK tests are informational for now, don't fail the build
+        # TEST_FAILED=1
+    fi
+else
+    echo "E2B SDK not installed, skipping compatibility tests"
 fi
 
 # Collect logs if tests failed

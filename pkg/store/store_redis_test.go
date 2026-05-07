@@ -85,6 +85,21 @@ func newTestSandbox(id string, sessionID string, expiresAt time.Time) *types.San
 	}
 }
 
+func newTestSandboxWithE2B(id string, sessionID string, expiresAt time.Time, e2bID string, apiKeyHash string, templateID string) *types.SandboxInfo {
+	return &types.SandboxInfo{
+		SandboxID:    id,
+		Name:         "test-sandbox-" + id,
+		EntryPoints:  nil,
+		SessionID:    sessionID,
+		CreatedAt:    time.Now().UTC(),
+		ExpiresAt:    expiresAt,
+		Status:       "running",
+		E2BSandboxID: e2bID,
+		APIKeyHash:   apiKeyHash,
+		TemplateID:   templateID,
+	}
+}
+
 func TestRedisStore_Ping(t *testing.T) {
 	ctx := context.Background()
 	c, _ := newTestRedisClient(t)
@@ -342,5 +357,182 @@ func TestUpdateSandboxLastActivity(t *testing.T) {
 	}
 	if int64(score) != newLastActivity.Unix() {
 		t.Fatalf("unexpected lastActivity score after update: got %v, want %v", score, newLastActivity.Unix())
+	}
+}
+
+func TestRedisStore_GetSandboxByE2BSandboxID(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newTestRedisClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	sb := newTestSandboxWithE2B("sb-1", "sess-1", now.Add(10*time.Minute), "e2b-123", "hash-abc", "tpl-1")
+
+	if err := c.StoreSandbox(ctx, sb); err != nil {
+		t.Fatalf("StoreSandbox error: %v", err)
+	}
+
+	got, err := c.GetSandboxByE2BSandboxID(ctx, "e2b-123")
+	if err != nil {
+		t.Fatalf("GetSandboxByE2BSandboxID error: %v", err)
+	}
+	if got.SessionID != "sess-1" {
+		t.Fatalf("expected sessionID sess-1, got %s", got.SessionID)
+	}
+
+	_, err = c.GetSandboxByE2BSandboxID(ctx, "non-existent")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestRedisStore_ListSandboxesByAPIKeyHash(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newTestRedisClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	sb1 := newTestSandboxWithE2B("sb-1", "sess-1", now.Add(10*time.Minute), "e2b-1", "hash-abc", "tpl-1")
+	sb2 := newTestSandboxWithE2B("sb-2", "sess-2", now.Add(10*time.Minute), "e2b-2", "hash-abc", "tpl-1")
+	sb3 := newTestSandboxWithE2B("sb-3", "sess-3", now.Add(10*time.Minute), "e2b-3", "hash-def", "tpl-2")
+
+	if err := c.StoreSandbox(ctx, sb1); err != nil {
+		t.Fatalf("StoreSandbox sb1 error: %v", err)
+	}
+	if err := c.StoreSandbox(ctx, sb2); err != nil {
+		t.Fatalf("StoreSandbox sb2 error: %v", err)
+	}
+	if err := c.StoreSandbox(ctx, sb3); err != nil {
+		t.Fatalf("StoreSandbox sb3 error: %v", err)
+	}
+
+	list, err := c.ListSandboxesByAPIKeyHash(ctx, "hash-abc")
+	if err != nil {
+		t.Fatalf("ListSandboxesByAPIKeyHash error: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 sandboxes, got %d", len(list))
+	}
+	ids := map[string]bool{}
+	for _, sb := range list {
+		ids[sb.SandboxID] = true
+	}
+	if !ids["sb-1"] || !ids["sb-2"] {
+		t.Fatalf("unexpected sandbox IDs in result: %+v", ids)
+	}
+
+	list, err = c.ListSandboxesByAPIKeyHash(ctx, "hash-def")
+	if err != nil {
+		t.Fatalf("ListSandboxesByAPIKeyHash error: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 sandbox, got %d", len(list))
+	}
+	if list[0].SandboxID != "sb-3" {
+		t.Fatalf("expected sb-3, got %s", list[0].SandboxID)
+	}
+
+	list, err = c.ListSandboxesByAPIKeyHash(ctx, "hash-nonexistent")
+	if err != nil {
+		t.Fatalf("ListSandboxesByAPIKeyHash error: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("expected 0 sandboxes, got %d", len(list))
+	}
+}
+
+func TestRedisStore_UpdateSandboxTTL(t *testing.T) {
+	ctx := context.Background()
+	c, mr := newTestRedisClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	sb := newTestSandbox("sb-1", "sess-1", now.Add(10*time.Minute))
+
+	if err := c.StoreSandbox(ctx, sb); err != nil {
+		t.Fatalf("StoreSandbox error: %v", err)
+	}
+
+	newExpiresAt := now.Add(30 * time.Minute)
+	if err := c.UpdateSandboxTTL(ctx, "sess-1", newExpiresAt); err != nil {
+		t.Fatalf("UpdateSandboxTTL error: %v", err)
+	}
+
+	got, err := c.GetSandboxBySessionID(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("GetSandboxBySessionID error: %v", err)
+	}
+	if got.ExpiresAt.Unix() != newExpiresAt.Unix() {
+		t.Fatalf("expected ExpiresAt %v, got %v", newExpiresAt.Unix(), got.ExpiresAt.Unix())
+	}
+
+	score, err := mr.ZScore(c.expiryIndexKey, "sess-1")
+	if err != nil {
+		t.Fatalf("ZScore error: %v", err)
+	}
+	if int64(score) != newExpiresAt.Unix() {
+		t.Fatalf("expected expiry score %v, got %v", newExpiresAt.Unix(), int64(score))
+	}
+}
+
+func TestRedisStore_DeleteSandboxBySessionID_CleansIndexes(t *testing.T) {
+	ctx := context.Background()
+	c, mr := newTestRedisClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	sb := newTestSandboxWithE2B("sb-1", "sess-1", now.Add(10*time.Minute), "e2b-123", "hash-abc", "tpl-1")
+
+	if err := c.StoreSandbox(ctx, sb); err != nil {
+		t.Fatalf("StoreSandbox error: %v", err)
+	}
+
+	if err := c.DeleteSandboxBySessionID(ctx, "sess-1"); err != nil {
+		t.Fatalf("DeleteSandboxBySessionID error: %v", err)
+	}
+
+	_, err := mr.Get(c.e2bIDKey("e2b-123"))
+	if !errors.Is(err, miniredis.ErrKeyNotFound) {
+		t.Fatalf("expected e2bID key deleted, got err=%v", err)
+	}
+
+	members, err := mr.SMembers(c.apiKeySetKey("hash-abc"))
+	if err != nil && !errors.Is(err, miniredis.ErrKeyNotFound) {
+		t.Fatalf("SMembers error: %v", err)
+	}
+	if len(members) != 0 {
+		t.Fatalf("expected apikey set empty, got %v", members)
+	}
+}
+
+func TestRedisStore_StoreSandbox_E2BIDConflict(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newTestRedisClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	sb1 := newTestSandboxWithE2B("sb-1", "sess-1", now.Add(10*time.Minute), "e2b-conflict", "hash-1", "tpl-1")
+	sb2 := newTestSandboxWithE2B("sb-2", "sess-2", now.Add(10*time.Minute), "e2b-conflict", "hash-2", "tpl-2")
+
+	if err := c.StoreSandbox(ctx, sb1); err != nil {
+		t.Fatalf("StoreSandbox first sandbox error: %v", err)
+	}
+
+	err := c.StoreSandbox(ctx, sb2)
+	if !errors.Is(err, ErrIDConflict) {
+		t.Fatalf("expected ErrIDConflict, got %v", err)
+	}
+}
+
+func TestRedisStore_StoreSandbox_SessionConflict(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newTestRedisClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	sb1 := newTestSandboxWithE2B("sb-1", "sess-conflict", now.Add(10*time.Minute), "e2b-1", "hash-1", "tpl-1")
+	sb2 := newTestSandboxWithE2B("sb-2", "sess-conflict", now.Add(10*time.Minute), "e2b-2", "hash-2", "tpl-2")
+
+	if err := c.StoreSandbox(ctx, sb1); err != nil {
+		t.Fatalf("StoreSandbox first sandbox error: %v", err)
+	}
+
+	err := c.StoreSandbox(ctx, sb2)
+	if !errors.Is(err, ErrIDConflict) {
+		t.Fatalf("expected ErrIDConflict, got %v", err)
 	}
 }

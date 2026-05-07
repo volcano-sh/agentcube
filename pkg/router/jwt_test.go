@@ -183,7 +183,11 @@ func TestGetPrivateKeyPEM(t *testing.T) {
 	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 	assert.NoError(t, err)
 	assert.NotNil(t, privateKey)
-	assert.Equal(t, manager.privateKey, privateKey)
+
+	// Compare key components (not the entire struct, as precomputed values may differ between Go versions)
+	assert.Equal(t, manager.privateKey.PublicKey.N, privateKey.PublicKey.N, "Public key N should match")
+	assert.Equal(t, manager.privateKey.PublicKey.E, privateKey.PublicKey.E, "Public key E should match")
+	assert.Equal(t, manager.privateKey.D, privateKey.D, "Private key D should match")
 }
 
 func TestLoadPrivateKeyPEM(t *testing.T) {

@@ -1,0 +1,311 @@
+name: Code Quality Checks
+
+on:
+  pull_request:
+    branches:
+      - main
+      - "release-*"
+  push:
+    branches:
+      - main
+      - "release-*"
+      - "feature/*"
+  workflow_dispatch:
+
+env:
+  GO_VERSION_LATEST: "1.24"
+  GO_VERSION_PREVIOUS: "1.23"
+
+jobs:
+  # Job 1: Code Format Check
+  fmt-check:
+    name: Format Check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION_LATEST }}
+
+      - name: Check code formatting
+        run: |
+          echo "Checking Go code formatting..."
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "[FAIL] The following files are not formatted:"
+            echo "$UNFORMATTED"
+            echo ""
+            echo "Please run 'make fmt' to fix formatting issues."
+            exit 1
+          fi
+          echo "[OK] All Go files are properly formatted"
+
+      - name: Run go fmt
+        run: |
+          make fmt
+          git diff --exit-code || {
+            echo "[FAIL] Code formatting issues detected"
+            echo "Please run 'make fmt' locally and commit the changes"
+            exit 1
+          }
+
+  # Job 2: Vet Check
+  vet-check:
+    name: Go Vet
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION_LATEST }}
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run go vet
+        run: |
+          echo "Running go vet..."
+          make vet
+          echo "[OK] Go vet passed"
+
+  # Job 3: Lint Check
+  lint-check:
+    name: Lint Check
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Filter paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            lint:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+              - '.golangci.yml'
+              - '.github/workflows/code-quality.yml'
+
+      - name: Set up Go
+        if: steps.changes.outputs.lint == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION_LATEST }}
+
+      - name: Download dependencies
+        if: steps.changes.outputs.lint == 'true'
+        run: go mod download
+
+      - name: Run golangci-lint
+        if: steps.changes.outputs.lint == 'true'
+        run: |
+          echo "Running golangci-lint..."
+          make lint
+          echo "[OK] Lint check passed"
+
+  # Job 4: Unit Tests (Go 1.24)
+  unit-tests-latest:
+    name: Unit Tests (Go 1.24)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION_LATEST }}
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run unit tests
+        run: |
+          echo "Running unit tests with Go ${{ env.GO_VERSION_LATEST }}..."
+          go test -v -race -coverprofile=coverage.out ./...
+          echo "[OK] Unit tests passed"
+
+      - name: Generate coverage report
+        run: |
+          go tool cover -html=coverage.out -o coverage.html
+          go tool cover -func=coverage.out
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-go${{ env.GO_VERSION_LATEST }}
+          path: |
+            coverage.out
+            coverage.html
+          if-no-files-found: ignore
+
+  # Job 5: Unit Tests (Go 1.23) - Multi-version testing
+  unit-tests-previous:
+    name: Unit Tests (Go 1.23)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION_PREVIOUS }}
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run unit tests
+        run: |
+          echo "Running unit tests with Go ${{ env.GO_VERSION_PREVIOUS }}..."
+          go test -v -race ./...
+          echo "[OK] Unit tests passed (Go ${{ env.GO_VERSION_PREVIOUS }})"
+
+  # Job 6: Build Check
+  build-check:
+    name: Build Check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION_LATEST }}
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build all binaries
+        run: |
+          echo "Building all binaries..."
+          make build-all
+          echo "[OK] Build successful"
+
+      - name: Verify binaries
+        run: |
+          echo "Verifying built binaries..."
+          ls -lh bin/
+          file bin/workloadmanager
+          file bin/agentd
+          file bin/agentcube-router
+
+  # Job 7: Go Mod Tidy Check
+  go-mod-tidy-check:
+    name: Go Mod Tidy Check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION_LATEST }}
+
+      - name: Check go mod tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum || {
+            echo "[FAIL] go.mod or go.sum is not tidy"
+            echo "Please run 'go mod tidy' locally and commit the changes"
+            exit 1
+          }
+          echo "[OK] go.mod and go.sum are tidy"
+
+  # Job 8: Generate Check
+  generate-check:
+    name: Generate Check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION_LATEST }}
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Install controller-gen
+        run: |
+          make controller-gen
+
+      - name: Check generated code
+        run: |
+          make generate
+          git diff --exit-code || {
+            echo "[FAIL] Generated code is out of date"
+            echo "Please run 'make generate' locally and commit the changes"
+            exit 1
+          }
+          echo "[OK] Generated code is up to date"
+
+  # Summary job
+  code-quality-summary:
+    name: Code Quality Summary
+    runs-on: ubuntu-24.04
+    needs: [fmt-check, vet-check, lint-check, unit-tests-latest, unit-tests-previous, build-check, go-mod-tidy-check, generate-check]
+    if: always()
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## Code Quality Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          RESULT_FMT="${{ needs.fmt-check.result }}"
+          RESULT_VET="${{ needs.vet-check.result }}"
+          RESULT_LINT="${{ needs.lint-check.result }}"
+          RESULT_TEST_LATEST="${{ needs.unit-tests-latest.result }}"
+          RESULT_TEST_PREVIOUS="${{ needs.unit-tests-previous.result }}"
+          RESULT_BUILD="${{ needs.build-check.result }}"
+          RESULT_MOD="${{ needs.go-mod-tidy-check.result }}"
+          RESULT_GEN="${{ needs.generate-check.result }}"
+
+          # Function to format result
+          format_result() {
+            if [ "$1" == "success" ]; then
+              echo "[OK]"
+            elif [ "$1" == "failure" ]; then
+              echo "[FAIL]"
+            else
+              echo "⏭️"
+            fi
+          }
+
+          echo "| Check | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Format Check | $(format_result $RESULT_FMT) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Go Vet | $(format_result $RESULT_VET) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint Check | $(format_result $RESULT_LINT) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Unit Tests (Go 1.24) | $(format_result $RESULT_TEST_LATEST) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Unit Tests (Go 1.23) | $(format_result $RESULT_TEST_PREVIOUS) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Check | $(format_result $RESULT_BUILD) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Go Mod Tidy | $(format_result $RESULT_MOD) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Generate Check | $(format_result $RESULT_GEN) |" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check if all jobs passed
+          if [ "$RESULT_FMT" == "success" ] && [ "$RESULT_VET" == "success" ] && [ "$RESULT_LINT" == "success" ] && \
+             [ "$RESULT_TEST_LATEST" == "success" ] && [ "$RESULT_TEST_PREVIOUS" == "success" ] && \
+             [ "$RESULT_BUILD" == "success" ] && [ "$RESULT_MOD" == "success" ] && [ "$RESULT_GEN" == "success" ]; then
+            echo "🎉 All code quality checks passed!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "[WARN] Some code quality checks failed. Please review the results above." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi

@@ -34,19 +34,21 @@ type Config struct {
 
 // Server defines the PicoD HTTP server
 type Server struct {
-	engine       *gin.Engine
-	config       Config
-	authManager  *AuthManager
-	startTime    time.Time
-	workspaceDir string
+	engine          *gin.Engine
+	config          Config
+	authManager     *AuthManager
+	startTime       time.Time
+	workspaceDir    string
+	processRegistry *ProcessRegistry
 }
 
 // NewServer creates a new PicoD server instance
 func NewServer(config Config) *Server {
 	s := &Server{
-		config:      config,
-		startTime:   time.Now(),
-		authManager: NewAuthManager(),
+		config:          config,
+		startTime:       time.Now(),
+		authManager:     NewAuthManager(),
+		processRegistry: NewProcessRegistry(),
 	}
 
 	// Initialize workspace directory
@@ -91,8 +93,40 @@ func NewServer(config Config) *Server {
 	// Health check (no authentication required)
 	engine.GET("/health", s.HealthCheckHandler)
 
+	// E2B envd API routes
+	s.setupEnvdRoutes(engine)
+
 	s.engine = engine
 	return s
+}
+
+// setupEnvdRoutes registers E2B envd-compatible endpoints.
+func (s *Server) setupEnvdRoutes(engine *gin.Engine) {
+	// Health check (no authentication)
+	engine.GET("/envd/health", s.EnvdHealthHandler)
+
+	envd := engine.Group("/envd")
+	envd.Use(s.authManager.AuthMiddleware())
+	{
+		// Environment
+		envd.GET("/env", s.EnvdEnvHandler)
+
+		// Filesystem
+		envd.POST("/filesystem/upload", s.EnvdUploadHandler)
+		envd.GET("/filesystem/download", s.EnvdDownloadHandler)
+		envd.GET("/filesystem/list", s.EnvdListHandler)
+		envd.POST("/filesystem/mkdir", s.EnvdMkdirHandler)
+		envd.POST("/filesystem/move", s.EnvdMoveHandler)
+		envd.DELETE("/filesystem/remove", s.EnvdRemoveHandler)
+		envd.GET("/filesystem/stat", s.EnvdStatHandler)
+
+		// Process
+		envd.POST("/process/start", s.EnvdProcessStartHandler)
+		envd.POST("/process/input", s.EnvdProcessInputHandler)
+		envd.POST("/process/close-stdin", s.EnvdProcessCloseStdinHandler)
+		envd.POST("/process/signal", s.EnvdProcessSignalHandler)
+		envd.GET("/process/list", s.EnvdProcessListHandler)
+	}
 }
 
 // Run starts the server

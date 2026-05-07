@@ -1,23 +1,39 @@
+{{- if .Values.router.rbac.create }}
+# E2B system namespace for shared API key resources
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.router.e2bSystemNamespace | default "agentcube-system" }}
+  labels:
+    app.kubernetes.io/name: agentcube
+    app.kubernetes.io/component: e2b-system
+---
+{{- end }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}
   namespace: {{ .Release.Namespace }}
 ---
+# Router Role in its own namespace: limited to JWT identity secret management
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}
+  name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}-identity
   namespace: {{ .Release.Namespace }}
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "create"]
+    resourceNames: ["picod-router-identity"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}
+  name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}-identity
   namespace: {{ .Release.Namespace }}
 subjects:
   - kind: ServiceAccount
@@ -26,4 +42,94 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}
+  name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}-identity
+---
+# Router Role in E2B system namespace: read-only access to API Key resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}-e2b-keys
+  namespace: {{ .Values.router.e2bSystemNamespace | default "agentcube-system" }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["e2b-api-keys"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["e2b-api-key-config"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}-e2b-keys
+  namespace: {{ .Values.router.e2bSystemNamespace | default "agentcube-system" }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}-e2b-keys
+---
+# Admin Role: full CRUD on API Key resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agentcube-e2b-admin
+  namespace: {{ .Values.router.e2bSystemNamespace | default "agentcube-system" }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["e2b-api-keys"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["e2b-api-key-config"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agentcube-e2b-admin
+  namespace: {{ .Values.router.e2bSystemNamespace | default "agentcube-system" }}
+subjects:
+  - kind: Group
+    name: {{ .Values.router.e2bAdminGroup | default "agentcube-admins" }}
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agentcube-e2b-admin
+---
+# Revoker Role: can revoke keys (patch Secret status) and read namespace mappings
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agentcube-e2b-revoker
+  namespace: {{ .Values.router.e2bSystemNamespace | default "agentcube-system" }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["e2b-api-keys"]
+    verbs: ["get", "list", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["e2b-api-key-config"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agentcube-e2b-revoker
+  namespace: {{ .Values.router.e2bSystemNamespace | default "agentcube-system" }}
+subjects:
+  - kind: Group
+    name: {{ .Values.router.e2bRevokerGroup | default "agentcube-e2b-revokers" }}
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agentcube-e2b-revoker

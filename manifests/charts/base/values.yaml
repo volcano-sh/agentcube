@@ -22,6 +22,12 @@ router:
     type: ClusterIP
     port: 8080
     targetPort: 8080
+  e2bService:
+    port: 8081
+    targetPort: 8081
+  e2bSystemNamespace: agentcube-system
+  e2bAdminGroup: agentcube-admins
+  e2bRevokerGroup: agentcube-e2b-revokers
   resources:
     limits:
       cpu: 500m
@@ -32,6 +38,8 @@ router:
   config: {}
   extraEnv: []
   serviceAccountName: "agentcube-router"
+  rbac:
+    create: true
 
 # AgentCube Workload Manager
 workloadmanager:
@@ -127,4 +135,3 @@ spire:
       requests:
         cpu: 50m
         memory: 64Mi
-

@@ -35,6 +35,8 @@ type redisStore struct {
 	sessionPrefix        string
 	expiryIndexKey       string
 	lastActivityIndexKey string
+	e2bIDPrefix          string
+	apiKeySetPrefix      string
 }
 
 // initRedisStore init redis store client
@@ -49,6 +51,8 @@ func initRedisStore() (*redisStore, error) {
 		sessionPrefix:        "session:",
 		expiryIndexKey:       "session:expiry",
 		lastActivityIndexKey: "session:last_activity",
+		e2bIDPrefix:          "e2bID:",
+		apiKeySetPrefix:      "set:sandboxes:apikey:",
 	}, nil
 }
 
@@ -74,6 +78,16 @@ func makeRedisOptions() (*redisv9.Options, error) {
 // sessionKey make sessionKey by sessionID
 func (rs *redisStore) sessionKey(sessionID string) string {
 	return rs.sessionPrefix + sessionID
+}
+
+// e2bIDKey makes the reverse-lookup key for E2BSandboxID.
+func (rs *redisStore) e2bIDKey(e2bSandboxID string) string {
+	return rs.e2bIDPrefix + e2bSandboxID
+}
+
+// apiKeySetKey makes the secondary index key for APIKeyHash.
+func (rs *redisStore) apiKeySetKey(apiKeyHash string) string {
+	return rs.apiKeySetPrefix + apiKeyHash
 }
 
 // loadSandboxesBySessionIDs loads sandbox objects for the given session IDs.
@@ -160,7 +174,7 @@ func (rs *redisStore) StoreSandbox(ctx context.Context, sandboxRedis *types.Sand
 	}
 
 	pipe := rs.cli.Pipeline()
-	pipe.SetNX(ctx, sessionKey, b, 0)
+	sessionCmd := pipe.SetNX(ctx, sessionKey, b, 0)
 	pipe.ZAdd(ctx, rs.expiryIndexKey, redisv9.Z{
 		Score:  float64(sandboxRedis.ExpiresAt.Unix()),
 		Member: sandboxRedis.SessionID,
@@ -169,20 +183,24 @@ func (rs *redisStore) StoreSandbox(ctx context.Context, sandboxRedis *types.Sand
 		Score:  float64(time.Now().Unix()),
 		Member: sandboxRedis.SessionID,
 	})
+	var e2bIDCmd *redisv9.BoolCmd
+	if sandboxRedis.E2BSandboxID != "" {
+		e2bIDCmd = pipe.SetNX(ctx, rs.e2bIDKey(sandboxRedis.E2BSandboxID), sandboxRedis.SessionID, 0)
+	}
+	if sandboxRedis.APIKeyHash != "" {
+		pipe.SAdd(ctx, rs.apiKeySetKey(sandboxRedis.APIKeyHash), sandboxRedis.SessionID)
+	}
 
-	cmder, err := pipe.Exec(ctx)
+	_, err = pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("StoreSandbox: redis Pipeline EXEC: %w", err)
 	}
 
-	if len(cmder) == 0 {
-		return errors.New("StoreSandbox: unexpected empty cmder")
+	if !sessionCmd.Val() {
+		return ErrIDConflict
 	}
-
-	for i, cmd := range cmder {
-		if err = cmd.Err(); err != nil {
-			return fmt.Errorf("StoreSandbox: EXEC pipeline failed: %w, cmder index: %v", err, i)
-		}
+	if e2bIDCmd != nil && !e2bIDCmd.Val() {
+		return ErrIDConflict
 	}
 
 	return nil
@@ -216,10 +234,22 @@ func (rs *redisStore) UpdateSandbox(ctx context.Context, sandboxRedis *types.San
 func (rs *redisStore) DeleteSandboxBySessionID(ctx context.Context, sessionID string) error {
 	sessionKey := rs.sessionKey(sessionID)
 
+	// Load sandbox to get E2BSandboxID and APIKeyHash for index cleanup.
+	sandbox, err := rs.GetSandboxBySessionID(ctx, sessionID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("DeleteSandboxBySessionID: get sandbox failed: %w", err)
+	}
+
 	pipe := rs.cli.Pipeline()
 	pipe.Del(ctx, sessionKey)
 	pipe.ZRem(ctx, rs.expiryIndexKey, sessionID)
 	pipe.ZRem(ctx, rs.lastActivityIndexKey, sessionID)
+	if sandbox != nil && sandbox.E2BSandboxID != "" {
+		pipe.Del(ctx, rs.e2bIDKey(sandbox.E2BSandboxID))
+	}
+	if sandbox != nil && sandbox.APIKeyHash != "" {
+		pipe.SRem(ctx, rs.apiKeySetKey(sandbox.APIKeyHash), sessionID)
+	}
 
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("DeleteSandboxBySessionID: pipeline EXEC: %w", err)
@@ -295,6 +325,68 @@ func (rs *redisStore) ListInactiveSandboxes(ctx context.Context, before time.Tim
 // Close releases all resources held by the redis store.
 func (rs *redisStore) Close() error {
 	return rs.cli.Close()
+}
+
+// GetSandboxByE2BSandboxID reverse lookup by short ID.
+func (rs *redisStore) GetSandboxByE2BSandboxID(ctx context.Context, e2bSandboxID string) (*types.SandboxInfo, error) {
+	sessionID, err := rs.cli.Get(ctx, rs.e2bIDKey(e2bSandboxID)).Result()
+	if errors.Is(err, redisv9.Nil) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("GetSandboxByE2BSandboxID: redis GET %s failed: %w", rs.e2bIDKey(e2bSandboxID), err)
+	}
+	return rs.GetSandboxBySessionID(ctx, sessionID)
+}
+
+// ListSandboxesByAPIKeyHash list sandboxes owned by an API Key via secondary index.
+func (rs *redisStore) ListSandboxesByAPIKeyHash(ctx context.Context, apiKeyHash string) ([]*types.SandboxInfo, error) {
+	sessionIDs, err := rs.cli.SMembers(ctx, rs.apiKeySetKey(apiKeyHash)).Result()
+	if err != nil {
+		return nil, fmt.Errorf("ListSandboxesByAPIKeyHash: SMEMBERS failed: %w", err)
+	}
+	return rs.loadSandboxesBySessionIDs(ctx, sessionIDs)
+}
+
+// UpdateSandboxTTL update both sandbox object and expiry sorted set atomically.
+func (rs *redisStore) UpdateSandboxTTL(ctx context.Context, sessionID string, expiresAt time.Time) error {
+	if sessionID == "" {
+		return errors.New("UpdateSandboxTTL: sessionID is empty")
+	}
+	if expiresAt.IsZero() {
+		return errors.New("UpdateSandboxTTL: expiresAt is zero")
+	}
+
+	sandbox, err := rs.GetSandboxBySessionID(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("UpdateSandboxTTL: get sandbox failed: %w", err)
+	}
+
+	sandbox.ExpiresAt = expiresAt
+
+	sessionKey := rs.sessionKey(sessionID)
+	b, err := json.Marshal(sandbox)
+	if err != nil {
+		return fmt.Errorf("UpdateSandboxTTL: marshal sandbox failed: %w", err)
+	}
+
+	pipe := rs.cli.Pipeline()
+	pipe.Set(ctx, sessionKey, b, 0)
+	pipe.ZAdd(ctx, rs.expiryIndexKey, redisv9.Z{
+		Score:  float64(expiresAt.Unix()),
+		Member: sessionID,
+	})
+
+	cmder, err := pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("UpdateSandboxTTL: pipeline EXEC failed: %w", err)
+	}
+	for i, cmd := range cmder {
+		if err = cmd.Err(); err != nil {
+			return fmt.Errorf("UpdateSandboxTTL: EXEC pipeline failed: %w, cmder index: %v", err, i)
+		}
+	}
+	return nil
 }
 
 // UpdateSessionLastActivity updates the last-activity index for the given session.

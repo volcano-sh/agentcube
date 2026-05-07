@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
+	"github.com/volcano-sh/agentcube/pkg/store"
 )
 
 // handleHealthLive handles liveness probe
@@ -62,7 +64,7 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	sessionID := c.GetHeader("x-agentcube-session-id")
 
 	// Get sandbox info from session manager
-	sandbox, err := s.sessionManager.GetSandboxBySession(c.Request.Context(), sessionID, namespace, name, kind)
+	sandbox, err := s.sessionManager.GetSandboxBySession(c.Request.Context(), sessionID, namespace, name, kind, nil)
 	if err != nil {
 		klog.Errorf("Failed to get or create sandbox info: %v, session id %s", err, sessionID)
 		s.handleGetSandboxError(c, err)
@@ -345,4 +347,104 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 
 	// Use the proxy to serve the request
 	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
+// parseE2BHost extracts port and e2bSandboxID from the Host header.
+// Expected format: {port}-{e2bSandboxID}.{domainSuffix}
+func parseE2BHost(host string, domainSuffix string) (port int, e2bSandboxID string, err error) {
+	prefix := strings.TrimSuffix(host, "."+domainSuffix)
+	parts := strings.SplitN(prefix, "-", 2)
+	if len(parts) == 1 {
+		// Missing port, default to 80
+		return 80, parts[0], nil
+	}
+	if len(parts) != 2 {
+		return 0, "", fmt.Errorf("invalid e2b host format")
+	}
+	if parts[0] == "" {
+		port = 80
+	} else {
+		var perr error
+		port, perr = strconv.Atoi(parts[0])
+		if perr != nil {
+			return 0, "", fmt.Errorf("invalid port: %w", perr)
+		}
+	}
+	if parts[1] == "" {
+		return 0, "", fmt.Errorf("missing sandbox id")
+	}
+	return port, parts[1], nil
+}
+
+// determineUpstreamURLByPort finds the sandbox entrypoint matching the given port.
+func determineUpstreamURLByPort(sandbox *types.SandboxInfo, port int) (*url.URL, error) {
+	for _, ep := range sandbox.EntryPoints {
+		if ep.Port == port {
+			return buildURL(ep.Protocol, ep.Endpoint)
+		}
+	}
+	return nil, fmt.Errorf("no entry point found for port %d", port)
+}
+
+func (s *Server) resolveSandboxTargetByPort(c *gin.Context, sandbox *types.SandboxInfo, port int) (*url.URL, bool) {
+	targetURL, err := determineUpstreamURLByPort(sandbox, port)
+	if err != nil {
+		klog.Errorf("Failed to get sandbox access address by port %d: %v", port, err)
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return nil, false
+	}
+
+	if err := s.waitForUpstreamReachable(c.Request.Context(), targetURL); err != nil {
+		klog.Errorf("Sandbox preflight failed (session: %s): %v", sandbox.SessionID, err)
+		statusCode, response := upstreamUnavailableResponse(err)
+		c.JSON(statusCode, response)
+		return nil, false
+	}
+
+	return targetURL, true
+}
+
+func (s *Server) forwardToSandboxByPort(c *gin.Context, sandbox *types.SandboxInfo, port int) {
+	targetURL, ok := s.resolveSandboxTargetByPort(c, sandbox, port)
+	if !ok {
+		return
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	proxy.Transport = s.httpTransport
+
+	jwtToken, ok := s.generateSandboxJWT(c, sandbox)
+	if !ok {
+		return
+	}
+
+	configureProxyDirector(proxy, c, targetURL, c.Request.URL.Path, jwtToken, sandbox.SessionID)
+	configureProxyErrorHandler(proxy, c, sandbox.SessionID)
+	configureProxyResponse(proxy, sandbox.SessionID)
+
+	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
+// handleE2BSandboxProxy handles Sandbox API requests that arrive via
+// Host: {port}-{e2bSandboxID}.{E2B_SANDBOX_DOMAIN} and forwards them to PicoD.
+func (s *Server) handleE2BSandboxProxy(c *gin.Context) {
+	port, e2bSandboxID, err := parseE2BHost(c.Request.Host, s.config.E2BSandboxDomain)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx := c.Request.Context()
+	sandbox, err := s.storeClient.GetSandboxByE2BSandboxID(ctx, e2bSandboxID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "sandbox not found"})
+			return
+		}
+		klog.Errorf("Failed to get sandbox by e2b id %s: %v", e2bSandboxID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+
+	s.forwardToSandboxByPort(c, sandbox, port)
 }

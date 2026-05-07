@@ -320,26 +320,36 @@ func buildCodeInterpreterEnvVars(templateEnv []corev1.EnvVar, authMode runtimev1
 	return envVars
 }
 
-func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers, enableMTLS bool) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
-	codeInterpreterKey := namespace + "/" + codeInterpreterName
+func getCodeInterpreterFromInformer(namespace, name string, informer *Informers) (*runtimev1alpha1.CodeInterpreter, error) {
+	key := namespace + "/" + name
 	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
-	runtimeObj, exists, err := informer.CodeInterpreterInformer.GetStore().GetByKey(codeInterpreterKey)
+	runtimeObj, exists, err := informer.CodeInterpreterInformer.GetStore().GetByKey(key)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to get code interpreter %s from informer cache: %w", codeInterpreterKey, err)
+		return nil, fmt.Errorf("failed to get code interpreter %s from informer cache: %w", key, err)
 	}
 	if !exists {
-		return nil, nil, nil, api.ErrCodeInterpreterNotFound
+		return nil, api.ErrCodeInterpreterNotFound
 	}
 	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
 	if !ok {
-		klog.Errorf("code interpreter %s type asserting unstructured.Unstructured failed", codeInterpreterKey)
-		return nil, nil, nil, fmt.Errorf("code interpreter type asserting failed")
+		klog.Errorf("code interpreter %s type asserting unstructured.Unstructured failed", key)
+		return nil, fmt.Errorf("code interpreter type asserting failed")
 	}
 
 	var codeInterpreterObj runtimev1alpha1.CodeInterpreter
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.Object, &codeInterpreterObj); err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to convert unstructured to CodeInterpreter: %w", err)
+		return nil, fmt.Errorf("failed to convert unstructured to CodeInterpreter: %w", err)
 	}
+	return &codeInterpreterObj, nil
+}
+
+func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers, enableMTLS bool) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+	codeInterpreterObjPtr, err := getCodeInterpreterFromInformer(namespace, codeInterpreterName, informer)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	codeInterpreterObj := *codeInterpreterObjPtr
+
 
 	// Check public key available if authMode is picod
 	if codeInterpreterObj.Spec.AuthMode == runtimev1alpha1.AuthModePicoD && !IsPublicKeyCached() {

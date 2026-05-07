@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -121,34 +123,18 @@ func TestInjectMTLSVolumes_InjectsSidecarAndVolumes(t *testing.T) {
 	injectMTLSVolumes(&podSpec)
 
 	// 3 volumes: spire-agent-socket, spiffe-helper-config, spire-certs
-	if len(podSpec.Volumes) != 3 {
-		t.Fatalf("expected 3 volumes, got %d", len(podSpec.Volumes))
-	}
-	if podSpec.Volumes[0].Name != spireAgentSocketVolumeName {
-		t.Errorf("expected volume %q, got %q", spireAgentSocketVolumeName, podSpec.Volumes[0].Name)
-	}
-	if podSpec.Volumes[1].Name != spiffeHelperConfigVolumeName {
-		t.Errorf("expected volume %q, got %q", spiffeHelperConfigVolumeName, podSpec.Volumes[1].Name)
-	}
-	if podSpec.Volumes[2].Name != spireCertVolumeName {
-		t.Errorf("expected volume %q, got %q", spireCertVolumeName, podSpec.Volumes[2].Name)
-	}
+	require.Len(t, podSpec.Volumes, 3)
+	assert.Equal(t, spireAgentSocketVolumeName, podSpec.Volumes[0].Name)
+	assert.Equal(t, spiffeHelperConfigVolumeName, podSpec.Volumes[1].Name)
+	assert.Equal(t, spireCertVolumeName, podSpec.Volumes[2].Name)
 
 	// 2 containers: spiffe-helper sidecar (index 0) + original (index 1)
-	if len(podSpec.Containers) != 2 {
-		t.Fatalf("expected 2 containers, got %d", len(podSpec.Containers))
-	}
-	if podSpec.Containers[0].Name != "spiffe-helper" {
-		t.Errorf("expected sidecar name 'spiffe-helper', got %q", podSpec.Containers[0].Name)
-	}
-	if podSpec.Containers[1].Name != "code-interpreter" {
-		t.Errorf("expected main container name 'code-interpreter', got %q", podSpec.Containers[1].Name)
-	}
+	require.Len(t, podSpec.Containers, 2)
+	assert.Equal(t, "spiffe-helper", podSpec.Containers[0].Name)
+	assert.Equal(t, "code-interpreter", podSpec.Containers[1].Name)
 
 	// Sidecar has 3 volume mounts
-	if len(podSpec.Containers[0].VolumeMounts) != 3 {
-		t.Fatalf("expected 3 sidecar volume mounts, got %d", len(podSpec.Containers[0].VolumeMounts))
-	}
+	assert.Len(t, podSpec.Containers[0].VolumeMounts, 3)
 
 	// Main container has spire-certs mount
 	foundCertMount := false
@@ -157,9 +143,7 @@ func TestInjectMTLSVolumes_InjectsSidecarAndVolumes(t *testing.T) {
 			foundCertMount = true
 		}
 	}
-	if !foundCertMount {
-		t.Error("expected main container to have spire-certs volume mount")
-	}
+	assert.True(t, foundCertMount, "expected main container to have spire-certs volume mount")
 
 	// Main container args include mTLS flags
 	args := podSpec.Containers[1].Args
@@ -170,16 +154,7 @@ func TestInjectMTLSVolumes_InjectsSidecarAndVolumes(t *testing.T) {
 		"--mtls-ca-file=" + spireCertMountPath + "/" + svidBundleFileName,
 	}
 	for _, flag := range expectedFlags {
-		found := false
-		for _, arg := range args {
-			if arg == flag {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected flag %q in container args, got %v", flag, args)
-		}
+		assert.Contains(t, args, flag)
 	}
 }
 

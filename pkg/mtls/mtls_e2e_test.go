@@ -395,3 +395,113 @@ func TestMTLS_E2E_NoClientCert(t *testing.T) {
 	}
 	t.Logf("Server correctly rejected client with no certificate: %v", err)
 }
+
+// --- Production-pattern e2e tests using real SPIFFE ID constants ---
+
+// TestMTLS_E2E_RouterToWorkloadManager verifies the Router→WorkloadManager
+// mTLS channel using the production SPIFFE IDs from spiffeid.go.
+func TestMTLS_E2E_RouterToWorkloadManager(t *testing.T) {
+	serverCert, serverKey, clientCert, clientKey, caFile := generateMTLSTestPKI(
+		t, WorkloadManagerSPIFFEID, RouterSPIFFEID,
+	)
+
+	// WM server accepts only Router identity
+	serverCfg := &Config{CertFile: serverCert, KeyFile: serverKey, CAFile: caFile}
+	serverTLS, serverWatcher, err := LoadServerConfig(serverCfg, []string{RouterSPIFFEID})
+	if err != nil {
+		t.Fatalf("LoadServerConfig: %v", err)
+	}
+	defer serverWatcher.Stop()
+
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", serverTLS)
+	if err != nil {
+		t.Fatalf("tls.Listen: %v", err)
+	}
+	defer ln.Close()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "healthy")
+	})
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Close()
+
+	// Router client expects WM identity
+	clientCfg := &Config{CertFile: clientCert, KeyFile: clientKey, CAFile: caFile}
+	clientTLS, clientWatcher, err := LoadClientConfig(clientCfg, WorkloadManagerSPIFFEID)
+	if err != nil {
+		t.Fatalf("LoadClientConfig: %v", err)
+	}
+	defer clientWatcher.Stop()
+
+	httpClient := &http.Client{
+		Transport: &http.Transport{TLSClientConfig: clientTLS},
+		Timeout:   5 * time.Second,
+	}
+	resp, err := httpClient.Get(fmt.Sprintf("https://%s/health", ln.Addr().String()))
+	if err != nil {
+		t.Fatalf("Router→WM handshake failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "healthy" {
+		t.Errorf("expected 'healthy', got %q", string(body))
+	}
+	t.Logf("Router→WM mTLS handshake succeeded")
+}
+
+// TestMTLS_E2E_RouterToPicoD verifies the Router→PicoD mTLS channel
+// using the production SPIFFE IDs from spiffeid.go.
+func TestMTLS_E2E_RouterToPicoD(t *testing.T) {
+	serverCert, serverKey, clientCert, clientKey, caFile := generateMTLSTestPKI(
+		t, SandboxSPIFFEID, RouterSPIFFEID,
+	)
+
+	// PicoD server accepts only Router identity
+	serverCfg := &Config{CertFile: serverCert, KeyFile: serverKey, CAFile: caFile}
+	serverTLS, serverWatcher, err := LoadServerConfig(serverCfg, []string{RouterSPIFFEID})
+	if err != nil {
+		t.Fatalf("LoadServerConfig: %v", err)
+	}
+	defer serverWatcher.Stop()
+
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", serverTLS)
+	if err != nil {
+		t.Fatalf("tls.Listen: %v", err)
+	}
+	defer ln.Close()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/execute", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"result":"ok"}`)
+	})
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Close()
+
+	// Router client expects Sandbox/PicoD identity
+	clientCfg := &Config{CertFile: clientCert, KeyFile: clientKey, CAFile: caFile}
+	clientTLS, clientWatcher, err := LoadClientConfig(clientCfg, SandboxSPIFFEID)
+	if err != nil {
+		t.Fatalf("LoadClientConfig: %v", err)
+	}
+	defer clientWatcher.Stop()
+
+	httpClient := &http.Client{
+		Transport: &http.Transport{TLSClientConfig: clientTLS},
+		Timeout:   5 * time.Second,
+	}
+	resp, err := httpClient.Get(fmt.Sprintf("https://%s/api/execute", ln.Addr().String()))
+	if err != nil {
+		t.Fatalf("Router→PicoD handshake failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != `{"result":"ok"}` {
+		t.Errorf("expected '{\"result\":\"ok\"}', got %q", string(body))
+	}
+	t.Logf("Router→PicoD mTLS handshake succeeded")
+}

@@ -332,12 +332,19 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 
 	// Choose transport and auth based on picod-auth-mode
-	useMTLS := s.config.PicodAuthMode == PicodAuthModeMTLS && s.mtlsPicodTransport != nil
-	if useMTLS {
+	var useMTLS bool
+	if s.config.PicodAuthMode == PicodAuthModeMTLS {
+		if s.mtlsPicodTransport == nil {
+			klog.Error("CRITICAL: picod-auth-mode is 'mtls' but mTLS transport is nil. Refusing to downgrade to JWT.")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "mTLS authentication is requested but mTLS transport is not configured"})
+			return
+		}
 		proxy.Transport = s.mtlsPicodTransport
 		targetURL.Scheme = "https"
+		useMTLS = true
 	} else {
 		proxy.Transport = s.httpTransport
+		useMTLS = false
 	}
 
 	// In mTLS mode, the TLS handshake authenticates the Router — no JWT needed.

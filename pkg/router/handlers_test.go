@@ -286,7 +286,8 @@ func TestHandleAgentInvoke(t *testing.T) {
 	defer testServer.Close()
 
 	config := &Config{
-		Port: "8080",
+		PicodAuthMode: PicodAuthModeJWT,
+		Port:          "8080",
 	}
 
 	server, err := NewServer(config)
@@ -351,7 +352,8 @@ func TestHandleCodeInterpreterInvoke(t *testing.T) {
 	defer testServer.Close()
 
 	config := &Config{
-		Port: "8080",
+		PicodAuthMode: PicodAuthModeJWT,
+		Port:          "8080",
 	}
 
 	server, err := NewServer(config)
@@ -401,7 +403,7 @@ func TestForwardToSandbox_InvalidEndpoint(t *testing.T) {
 	setupEnv()
 	defer teardownEnv()
 
-	config := &Config{Port: "8080"}
+	config := &Config{Port: "8080", PicodAuthMode: PicodAuthModeJWT}
 	server, err := NewServer(config)
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
@@ -461,7 +463,7 @@ func TestWaitForUpstreamReachable_RetriesUntilReady(t *testing.T) {
 		}
 	}()
 
-	server := &Server{config: &Config{InitialConnectRetryCount: 5, InitialConnectRetryInterval: 100 * time.Millisecond}}
+	server := &Server{config: &Config{InitialConnectRetryCount: 5, InitialConnectRetryInterval: 100 * time.Millisecond, PicodAuthMode: PicodAuthModeJWT}}
 
 	go func() {
 		time.Sleep(150 * time.Millisecond)
@@ -494,6 +496,7 @@ func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 	config := &Config{
 		Port:                  "8080",
 		MaxConcurrentRequests: 1, // Set to 1 to easily trigger overload
+		PicodAuthMode:         PicodAuthModeJWT,
 	}
 
 	server, err := NewServer(config)

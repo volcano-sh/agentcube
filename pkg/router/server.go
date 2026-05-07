@@ -60,6 +60,9 @@ func NewServer(config *Config) (*Server, error) {
 	if config.InitialConnectRetryInterval <= 0 {
 		config.InitialConnectRetryInterval = 200 * time.Millisecond
 	}
+	if config.PicodAuthMode == "" {
+		config.PicodAuthMode = PicodAuthModeMTLS
+	}
 
 	// Create session manager with store client and mTLS config
 	mtlsCfg := &mtls.Config{

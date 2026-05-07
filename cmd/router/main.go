@@ -64,6 +64,10 @@ func main() {
 		klog.Fatalf("Invalid mTLS configuration: %v", err)
 	}
 
+	if *enableMTLS && !mTLSCfg.Enabled() {
+ 		klog.Fatalf("Invalid mTLS configuration: --enable-mtls requires --mtls-cert-file, --mtls-key-file, and --mtls-ca-file")
+ 	}
+	
 	// Create Router API server configuration
 	// Validate picod-auth-mode
 	switch *picodAuthMode {

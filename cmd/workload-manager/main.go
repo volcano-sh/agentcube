@@ -86,6 +86,10 @@ func main() {
 		klog.Fatalf("Invalid mTLS configuration: %v", err)
 	}
 
+	if *enableMTLS && !mTLSCfg.Enabled() {
+ 		klog.Fatalf("Invalid mTLS configuration: --enable-mtls requires --mtls-cert-file, --mtls-key-file, and --mtls-ca-file")
+ 	}
+	
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{

@@ -293,7 +293,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers, e
 	buildParams.idleTimeout = idleTimeout
 
 	if enableMTLS {
-		injectMTLSVolumes(&buildParams.podSpec)
+		injectMTLSVolumes(buildParams)
 	}
 
 	sandbox := buildSandboxObject(buildParams)
@@ -437,10 +437,6 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		},
 	}
 
-	if enableMTLS {
-		injectMTLSVolumes(&podSpec)
-	}
-
 	buildParams := &buildSandboxParams{
 		sandboxName:    sandboxName,
 		namespace:      namespace,
@@ -449,6 +445,10 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		podLabels:      codeInterpreterObj.Spec.Template.Labels,
 		podAnnotations: codeInterpreterObj.Spec.Template.Annotations,
 		idleTimeout:    idleTimeout,
+	}
+
+	if enableMTLS {
+		injectMTLSVolumes(buildParams)
 	}
 	if codeInterpreterObj.Spec.MaxSessionDuration != nil {
 		buildParams.ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration
@@ -469,8 +469,8 @@ const (
 	spireAgentSocketPath = "/run/spire/sockets"
 	// spiffeHelperConfigVolumeName is the volume holding the spiffe-helper configuration.
 	spiffeHelperConfigVolumeName = "spiffe-helper-config"
-	// spiffeHelperConfigMapName is the ConfigMap name created by the Helm chart.
-	spiffeHelperConfigMapName = "spiffe-helper-config"
+	// spiffeHelperConfigAnnotationKey is the pod annotation key used to inject the config inline.
+	spiffeHelperConfigAnnotationKey = "agentcube.volcano.sh/spiffe-helper-config"
 	// spiffeHelperImage is the container image for the spiffe-helper sidecar.
 	spiffeHelperImage = "ghcr.io/spiffe/spiffe-helper:0.8.0"
 
@@ -478,15 +478,53 @@ const (
 	svidCertFileName   = "svid.pem"
 	svidKeyFileName    = "svid_key.pem"
 	svidBundleFileName = "svid_bundle.pem"
+
+	// spiffeHelperConfigContent is the inline configuration for the spiffe-helper sidecar.
+	spiffeHelperConfigContent = `
+agent_address = "/run/spire/sockets/agent.sock"
+cmd = ""
+cmd_args = ""
+cert_dir = "/run/spire/certs"
+renew_signal = ""
+svid_file_name = "svid.pem"
+svid_key_file_name = "svid_key.pem"
+svid_bundle_file_name = "svid_bundle.pem"
+`
 )
 
 // injectMTLSVolumes injects a spiffe-helper sidecar and the necessary volumes
 // into the pod spec so PicoD can receive dynamically provisioned SPIRE SVIDs.
-// This follows the same pattern used by the Router and WorkloadManager Helm charts.
-func injectMTLSVolumes(podSpec *corev1.PodSpec) {
-	// 1. Add volumes: SPIRE agent socket, spiffe-helper config, shared cert emptyDir
-	podSpec.Volumes = append(podSpec.Volumes,
-		corev1.Volume{
+// It uses DownwardAPI to inline the sidecar configuration.
+func injectMTLSVolumes(params *buildSandboxParams) {
+	podSpec := &params.podSpec
+
+	// Avoid duplicate injection
+	for _, c := range podSpec.Containers {
+		if c.Name == "spiffe-helper" {
+			klog.V(4).InfoS("Skipping mTLS injection because spiffe-helper container already exists")
+			return
+		}
+	}
+
+	addMTLSVolumes(params, podSpec)
+	addMTLSSidecar(podSpec)
+	injectWorkloadMTLS(podSpec)
+}
+
+func addMTLSVolumes(params *buildSandboxParams, podSpec *corev1.PodSpec) {
+	existingVolumes := make(map[string]bool)
+	for _, v := range podSpec.Volumes {
+		existingVolumes[v.Name] = true
+	}
+
+	// Add annotation for DownwardAPI inline config
+	if params.podAnnotations == nil {
+		params.podAnnotations = make(map[string]string)
+	}
+	params.podAnnotations[spiffeHelperConfigAnnotationKey] = spiffeHelperConfigContent
+
+	if !existingVolumes[spireAgentSocketVolumeName] {
+		podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{
 			Name: spireAgentSocketVolumeName,
 			VolumeSource: corev1.VolumeSource{
 				HostPath: &corev1.HostPathVolumeSource{
@@ -494,26 +532,38 @@ func injectMTLSVolumes(podSpec *corev1.PodSpec) {
 					Type: hostPathType(corev1.HostPathDirectoryOrCreate),
 				},
 			},
-		},
-		corev1.Volume{
+		})
+	}
+	
+	if !existingVolumes[spiffeHelperConfigVolumeName] {
+		podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{
 			Name: spiffeHelperConfigVolumeName,
 			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: spiffeHelperConfigMapName,
+				DownwardAPI: &corev1.DownwardAPIVolumeSource{
+					Items: []corev1.DownwardAPIVolumeFile{
+						{
+							Path: "spiffe-helper.conf",
+							FieldRef: &corev1.ObjectFieldSelector{
+								FieldPath: fmt.Sprintf("metadata.annotations['%s']", spiffeHelperConfigAnnotationKey),
+							},
+						},
 					},
 				},
 			},
-		},
-		corev1.Volume{
+		})
+	}
+
+	if !existingVolumes[spireCertVolumeName] {
+		podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{
 			Name: spireCertVolumeName,
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
-		},
-	)
+		})
+	}
+}
 
-	// 2. Add spiffe-helper sidecar container
+func addMTLSSidecar(podSpec *corev1.PodSpec) {
 	sidecar := corev1.Container{
 		Name:            "spiffe-helper",
 		Image:           spiffeHelperImage,
@@ -536,29 +586,46 @@ func injectMTLSVolumes(podSpec *corev1.PodSpec) {
 			},
 		},
 	}
-	// Prepend sidecar so it starts before the main container
 	podSpec.Containers = append([]corev1.Container{sidecar}, podSpec.Containers...)
+}
 
-	// 3. Mount the shared cert volume into all workload containers
+func injectWorkloadMTLS(podSpec *corev1.PodSpec) {
 	for i := range podSpec.Containers {
 		if podSpec.Containers[i].Name == "spiffe-helper" {
 			continue
 		}
 
-		podSpec.Containers[i].VolumeMounts = append(podSpec.Containers[i].VolumeMounts, corev1.VolumeMount{
-			Name:      spireCertVolumeName,
-			MountPath: spireCertMountPath,
-			ReadOnly:  true,
-		})
+		hasCertMount := false
+		for _, vm := range podSpec.Containers[i].VolumeMounts {
+			if vm.Name == spireCertVolumeName {
+				hasCertMount = true
+				break
+			}
+		}
+		if !hasCertMount {
+			podSpec.Containers[i].VolumeMounts = append(podSpec.Containers[i].VolumeMounts, corev1.VolumeMount{
+				Name:      spireCertVolumeName,
+				MountPath: spireCertMountPath,
+				ReadOnly:  true,
+			})
+		}
 
-		// Append mTLS flags ONLY if the container is a known PicoD entrypoint
 		if podSpec.Containers[i].Name == "picod" || podSpec.Containers[i].Name == "code-interpreter" {
-			podSpec.Containers[i].Args = append(podSpec.Containers[i].Args,
-				"--enable-mtls",
-				"--mtls-cert-file="+spireCertMountPath+"/"+svidCertFileName,
-				"--mtls-key-file="+spireCertMountPath+"/"+svidKeyFileName,
-				"--mtls-ca-file="+spireCertMountPath+"/"+svidBundleFileName,
-			)
+			hasMTLSFlag := false
+			for _, arg := range podSpec.Containers[i].Args {
+				if arg == "--enable-mtls" {
+					hasMTLSFlag = true
+					break
+				}
+			}
+			if !hasMTLSFlag {
+				podSpec.Containers[i].Args = append(podSpec.Containers[i].Args,
+					"--enable-mtls",
+					"--mtls-cert-file="+spireCertMountPath+"/"+svidCertFileName,
+					"--mtls-key-file="+spireCertMountPath+"/"+svidKeyFileName,
+					"--mtls-ca-file="+spireCertMountPath+"/"+svidBundleFileName,
+				)
+			}
 		}
 	}
 }

@@ -50,6 +50,10 @@ func main() {
 		klog.Fatalf("Invalid mTLS configuration: %v", err)
 	}
 
+	if *enableMTLS && !mTLSCfg.Enabled() {
+ 		klog.Fatalf("Invalid mTLS configuration: --enable-mtls requires --mtls-cert-file, --mtls-key-file, and --mtls-ca-file")
+ 	}
+	
 	config := picod.Config{
 		Port:           *port,
 		Workspace:      *workspace,

@@ -110,17 +110,20 @@ func TestBuildSandboxObject_NilLabels(t *testing.T) {
 // ---- tests: injectMTLSVolumes (spiffe-helper sidecar injection) ----
 
 func TestInjectMTLSVolumes_InjectsSidecarAndVolumes(t *testing.T) {
-	podSpec := corev1.PodSpec{
-		Containers: []corev1.Container{
-			{
-				Name:  "code-interpreter",
-				Image: "picod:latest",
-				Args:  []string{"--port=8080"},
+	params := &buildSandboxParams{
+		podSpec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "code-interpreter",
+					Image: "picod:latest",
+					Args:  []string{"--port=8080"},
+				},
 			},
 		},
 	}
 
-	injectMTLSVolumes(&podSpec)
+	injectMTLSVolumes(params)
+	podSpec := params.podSpec
 
 	// 3 volumes: spire-agent-socket, spiffe-helper-config, spire-certs
 	require.Len(t, podSpec.Volumes, 3)
@@ -159,16 +162,19 @@ func TestInjectMTLSVolumes_InjectsSidecarAndVolumes(t *testing.T) {
 }
 
 func TestInjectMTLSVolumes_PreservesExistingArgs(t *testing.T) {
-	podSpec := corev1.PodSpec{
-		Containers: []corev1.Container{
-			{
-				Name: "picod",
-				Args: []string{"--port=8080", "--workspace=/tmp"},
+	params := &buildSandboxParams{
+		podSpec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "picod",
+					Args: []string{"--port=8080", "--workspace=/tmp"},
+				},
 			},
 		},
 	}
 
-	injectMTLSVolumes(&podSpec)
+	injectMTLSVolumes(params)
+	podSpec := params.podSpec
 
 	// Original args should still be present at the start (now on container[1])
 	args := podSpec.Containers[1].Args
@@ -181,12 +187,15 @@ func TestInjectMTLSVolumes_PreservesExistingArgs(t *testing.T) {
 }
 
 func TestInjectMTLSVolumes_EmptyContainers(t *testing.T) {
-	podSpec := corev1.PodSpec{
-		Containers: []corev1.Container{},
+	params := &buildSandboxParams{
+		podSpec: corev1.PodSpec{
+			Containers: []corev1.Container{},
+		},
 	}
 
 	// Should not panic with empty containers
-	injectMTLSVolumes(&podSpec)
+	injectMTLSVolumes(params)
+	podSpec := params.podSpec
 
 	// Volumes are still added
 	if len(podSpec.Volumes) != 3 {

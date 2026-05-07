@@ -330,6 +330,7 @@ run_setup() {
         --set router.image.tag="latest" \
         --set router.rbac.create=true \
         --set router.serviceAccountName="agentcube-router" \
+        --set router.picodAuthMode="jwt" \
         --set-json "router.extraEnv=${ROUTER_EXTRA_ENV}" \
         --wait
 

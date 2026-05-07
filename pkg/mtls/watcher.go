@@ -168,11 +168,24 @@ func (cw *CertWatcher) handleRenameEvent(targetFile string) {
 	go func() {
 		delay := 100 * time.Millisecond
 		for i := 0; i < 5; i++ {
+			// Exit early if the watcher is intentionally stopped
+			select {
+			case <-cw.done:
+				return
+			default:
+			}
+
 			if err := cw.watcher.Add(targetFile); err == nil {
 				return // Success
 			}
 			klog.V(4).Infof("Failed to re-watch %s (attempt %d/5). Retrying in %v...", targetFile, i+1, delay)
-			time.Sleep(delay)
+			
+			// Wait for delay, or exit immediately if stopped
+			select {
+			case <-cw.done:
+				return
+			case <-time.After(delay):
+			}
 			delay *= 2 // Exponential backoff (100, 200, 400, 800, 1600ms)
 		}
 		

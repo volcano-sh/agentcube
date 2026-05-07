@@ -206,6 +206,9 @@ func (s *Server) Start(ctx context.Context) error {
 		if s.picodCertWatcher != nil {
 			s.picodCertWatcher.Stop()
 		}
+		if s.sessionManager != nil {
+			_ = s.sessionManager.Close()
+		}
 	}()
 
 	klog.Infof("Router server listening on %s", addr)

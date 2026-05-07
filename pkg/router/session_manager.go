@@ -45,6 +45,9 @@ type SessionManager interface {
 	// When sessionID is empty, it creates a new sandbox by calling the external API.
 	// When sessionID is not empty, it queries store for the sandbox.
 	GetSandboxBySession(ctx context.Context, sessionID string, namespace string, name string, kind string) (*types.SandboxInfo, error)
+	
+	// Close cleans up any background resources (like mTLS certificate watchers)
+	Close() error
 }
 
 // manager is the default implementation of the SessionManager interface.
@@ -74,6 +77,15 @@ func NewSessionManager(storeClient store.Store, enableMTLS bool, mtlsCfg *mtls.C
 	var certWatcher *mtls.CertWatcher
 
 	if enableMTLS {
+		// Ensure the URL uses https:// to prevent plaintext bypass of mTLS
+		if strings.HasPrefix(workloadMgrAddr, "http://") {
+			workloadMgrAddr = strings.Replace(workloadMgrAddr, "http://", "https://", 1)
+			klog.Infof("Rewriting WORKLOAD_MANAGER_URL to use https:// due to mTLS being enabled")
+		} else if !strings.HasPrefix(workloadMgrAddr, "https://") {
+			workloadMgrAddr = "https://" + workloadMgrAddr
+			klog.Infof("Prepending https:// to WORKLOAD_MANAGER_URL due to mTLS being enabled")
+		}
+
 		if mtlsCfg == nil || !mtlsCfg.Enabled() {
 			return nil, fmt.Errorf("--enable-mtls requires --mtls-cert-file, --mtls-key-file, and --mtls-ca-file to be set")
 		}
@@ -111,6 +123,14 @@ func NewSessionManager(storeClient store.Store, enableMTLS bool, mtlsCfg *mtls.C
 			Transport: transport,
 		},
 	}, nil
+}
+
+// Close cleans up any background resources like the mTLS certWatcher.
+func (m *manager) Close() error {
+	if m.certWatcher != nil {
+		m.certWatcher.Stop()
+	}
+	return nil
 }
 
 // GetSandboxBySession returns the sandbox associated with the given sessionID.

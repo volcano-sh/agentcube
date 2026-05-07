@@ -539,21 +539,27 @@ func injectMTLSVolumes(podSpec *corev1.PodSpec) {
 	// Prepend sidecar so it starts before the main container
 	podSpec.Containers = append([]corev1.Container{sidecar}, podSpec.Containers...)
 
-	// 3. Mount the shared cert volume into the main PicoD container (now at index 1)
-	if len(podSpec.Containers) > 1 {
-		podSpec.Containers[1].VolumeMounts = append(podSpec.Containers[1].VolumeMounts, corev1.VolumeMount{
+	// 3. Mount the shared cert volume into all workload containers
+	for i := range podSpec.Containers {
+		if podSpec.Containers[i].Name == "spiffe-helper" {
+			continue
+		}
+
+		podSpec.Containers[i].VolumeMounts = append(podSpec.Containers[i].VolumeMounts, corev1.VolumeMount{
 			Name:      spireCertVolumeName,
 			MountPath: spireCertMountPath,
 			ReadOnly:  true,
 		})
 
-		// Append mTLS flags to PicoD container args
-		podSpec.Containers[1].Args = append(podSpec.Containers[1].Args,
-			"--enable-mtls",
-			"--mtls-cert-file="+spireCertMountPath+"/"+svidCertFileName,
-			"--mtls-key-file="+spireCertMountPath+"/"+svidKeyFileName,
-			"--mtls-ca-file="+spireCertMountPath+"/"+svidBundleFileName,
-		)
+		// Append mTLS flags ONLY if the container is a known PicoD entrypoint
+		if podSpec.Containers[i].Name == "picod" || podSpec.Containers[i].Name == "code-interpreter" {
+			podSpec.Containers[i].Args = append(podSpec.Containers[i].Args,
+				"--enable-mtls",
+				"--mtls-cert-file="+spireCertMountPath+"/"+svidCertFileName,
+				"--mtls-key-file="+spireCertMountPath+"/"+svidKeyFileName,
+				"--mtls-ca-file="+spireCertMountPath+"/"+svidBundleFileName,
+			)
+		}
 	}
 }
 

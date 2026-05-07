@@ -26,7 +26,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
-	
+
 	"github.com/volcano-sh/agentcube/pkg/mtls"
 )
 
@@ -151,10 +151,25 @@ func (s *Server) serveMTLS(server *http.Server, addr string) error {
 		return fmt.Errorf("--enable-mtls requires --mtls-cert-file, --mtls-key-file, and --mtls-ca-file to be set")
 	}
 
-	// Only the Router is allowed to connect to PicoD
-	serverTLS, watcher, err := mtls.LoadServerConfig(mtlsCfg, []string{mtls.RouterSPIFFEID})
+	// The spiffe-helper sidecar writes the certificates asynchronously on startup.
+	// We must retry loading them here to avoid crashing before the sidecar has provisioned them.
+	var serverTLS *tls.Config
+	var watcher *mtls.CertWatcher
+	var err error
+	backoff := 10 * time.Millisecond
+	for i := 0; i < 50; i++ {
+		serverTLS, watcher, err = mtls.LoadServerConfig(mtlsCfg, []string{mtls.RouterSPIFFEID})
+		if err == nil {
+			break
+		}
+		time.Sleep(backoff)
+		backoff *= 2
+		if backoff > 1*time.Second {
+			backoff = 1 * time.Second
+		}
+	}
 	if err != nil {
-		return fmt.Errorf("failed to load mTLS server config: %w", err)
+		return fmt.Errorf("failed to load mTLS server config after retries: %w", err)
 	}
 	s.certWatcher = watcher
 

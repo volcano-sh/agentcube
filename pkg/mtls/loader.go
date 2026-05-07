@@ -143,7 +143,7 @@ func verifyPeerChainAndSPIFFEID(caPool *x509.CertPool, expectedID string) func([
 		opts := x509.VerifyOptions{
 			Roots:         caPool,
 			Intermediates: intermediates,
-			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		}
 		if _, err := peerCert.Verify(opts); err != nil {
 			return fmt.Errorf("verify peer certificate chain: %w", err)

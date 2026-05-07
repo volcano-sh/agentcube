@@ -58,8 +58,9 @@ func main() {
 		enableTLS        = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
 		tlsCert          = flag.String("tls-cert", "", "Path to TLS certificate file")
 		tlsKey           = flag.String("tls-key", "", "Path to TLS key file")
-		enableAuth       = flag.Bool("enable-auth", false, "Enable Authentication")
-		enableMTLS       = flag.Bool("enable-mtls", false, "Enable mutual TLS on the WorkloadManager listener")
+		enableAuth        = flag.Bool("enable-auth", false, "Enable Authentication")
+		enableMTLS        = flag.Bool("enable-mtls", false, "Enable mutual TLS on the WorkloadManager listener")
+		enableSandboxMTLS = flag.Bool("enable-sandbox-mtls", false, "Enable automatic injection of SPIRE mTLS sidecars into sandbox pods")
 
 		// mTLS flags (certificate source abstraction)
 		mtlsCertFile, mtlsKeyFile, mtlsCAFile string
@@ -121,9 +122,10 @@ func main() {
 		EnableTLS:        *enableTLS,
 		TLSCert:          *tlsCert,
 		TLSKey:           *tlsKey,
-		EnableAuth:       *enableAuth,
-		EnableMTLS:       *enableMTLS,
-		MTLSCertFile:     mtlsCertFile,
+		EnableAuth:        *enableAuth,
+		EnableMTLS:        *enableMTLS,
+		EnableSandboxMTLS: *enableSandboxMTLS,
+		MTLSCertFile:      mtlsCertFile,
 		MTLSKeyFile:      mtlsKeyFile,
 		MTLSCAFile:       mtlsCAFile,
 	}

@@ -17,11 +17,24 @@ limitations under the License.
 package mtls
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestConfig_Validate(t *testing.T) {
+	// Create temp files for valid-path tests
+	tmpDir := t.TempDir()
+	certFile := filepath.Join(tmpDir, "cert.pem")
+	keyFile := filepath.Join(tmpDir, "key.pem")
+	caFile := filepath.Join(tmpDir, "ca.pem")
+	for _, f := range []string{certFile, keyFile, caFile} {
+		if err := os.WriteFile(f, []byte("test"), 0600); err != nil {
+			t.Fatalf("failed to create temp file: %v", err)
+		}
+	}
+
 	tests := []struct {
 		name      string
 		config    Config
@@ -34,18 +47,18 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "all three paths is valid",
+			name: "all three paths with existing files is valid",
 			config: Config{
-				CertFile: "/path/cert.pem",
-				KeyFile:  "/path/key.pem",
-				CAFile:   "/path/ca.pem",
+				CertFile: certFile,
+				KeyFile:  keyFile,
+				CAFile:   caFile,
 			},
 			wantErr: false,
 		},
 		{
 			name: "only one path returns error",
 			config: Config{
-				CertFile: "/path/cert.pem",
+				CertFile: certFile,
 			},
 			wantErr:   true,
 			errSubstr: "must all be specified together",
@@ -53,11 +66,21 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "two paths returns error",
 			config: Config{
-				CertFile: "/path/cert.pem",
-				KeyFile:  "/path/key.pem",
+				CertFile: certFile,
+				KeyFile:  keyFile,
 			},
 			wantErr:   true,
 			errSubstr: "must all be specified together",
+		},
+		{
+			name: "non-existent files returns error",
+			config: Config{
+				CertFile: "/nonexistent/cert.pem",
+				KeyFile:  "/nonexistent/key.pem",
+				CAFile:   "/nonexistent/ca.pem",
+			},
+			wantErr:   true,
+			errSubstr: "not found",
 		},
 	}
 

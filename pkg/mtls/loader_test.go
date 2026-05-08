@@ -131,11 +131,13 @@ func TestLoadServerConfig(t *testing.T) {
 		t.Fatalf("LoadServerConfig() error: %v", err)
 	}
 	defer watcher.Stop()
-	if tlsCfg.ClientAuth != tls.RequireAndVerifyClientCert {
-		t.Errorf("ClientAuth = %v, want RequireAndVerifyClientCert", tlsCfg.ClientAuth)
+	// RequireAnyClientCert: require a cert, but verify it manually via VerifyPeerCertificate
+	if tlsCfg.ClientAuth != tls.RequireAnyClientCert {
+		t.Errorf("ClientAuth = %v, want RequireAnyClientCert", tlsCfg.ClientAuth)
 	}
-	if tlsCfg.ClientCAs == nil {
-		t.Error("ClientCAs is nil")
+	// ClientCAs is nil — chain verification happens dynamically via watcher.GetCAPool()
+	if tlsCfg.ClientCAs != nil {
+		t.Error("ClientCAs should be nil (CA verification is done dynamically)")
 	}
 	if tlsCfg.GetCertificate == nil {
 		t.Error("GetCertificate callback is nil")
@@ -143,9 +145,9 @@ func TestLoadServerConfig(t *testing.T) {
 	if tlsCfg.MinVersion != tls.VersionTLS13 {
 		t.Errorf("MinVersion = %d, want TLS 1.3", tlsCfg.MinVersion)
 	}
-	// No SPIFFE IDs → no VerifyPeerCertificate
-	if tlsCfg.VerifyPeerCertificate != nil {
-		t.Error("VerifyPeerCertificate should be nil when no expectedClientIDs")
+	// VerifyPeerCertificate is always set (chain verification + optional SPIFFE check)
+	if tlsCfg.VerifyPeerCertificate == nil {
+		t.Error("VerifyPeerCertificate should always be set for dynamic CA verification")
 	}
 }
 
@@ -164,16 +166,17 @@ func TestLoadServerConfig_WithExpectedClientIDs(t *testing.T) {
 		t.Fatal("VerifyPeerCertificate should be set when expectedClientIDs provided")
 	}
 
-	// Exercise the callback directly with a valid matching certificate
-	chains := verifyAndGetChains(t, certFile, caFile)
-	if err := tlsCfg.VerifyPeerCertificate(nil, chains); err != nil {
+	// Exercise the callback with raw cert bytes (RequireAnyClientCert means
+	// the TLS stack passes rawCerts, not verified chains)
+	rawCert := readRawCert(t, certFile)
+	if err := tlsCfg.VerifyPeerCertificate([][]byte{rawCert}, nil); err != nil {
 		t.Errorf("VerifyPeerCertificate rejected valid SPIFFE ID: %v", err)
 	}
 
 	// Exercise the callback directly with an invalid/mismatching certificate
-	invalidCertFile, _, invalidCAFile := generateTestCertsWithSPIFFEID(t, "spiffe://cluster.local/wrong")
-	invalidChains := verifyAndGetChains(t, invalidCertFile, invalidCAFile)
-	if err := tlsCfg.VerifyPeerCertificate(nil, invalidChains); err == nil {
+	invalidCertFile, _, _ := generateTestCertsWithSPIFFEID(t, "spiffe://cluster.local/wrong")
+	invalidRawCert := readRawCert(t, invalidCertFile)
+	if err := tlsCfg.VerifyPeerCertificate([][]byte{invalidRawCert}, nil); err == nil {
 		t.Error("VerifyPeerCertificate accepted invalid SPIFFE ID")
 	}
 }
@@ -263,83 +266,90 @@ func TestLoadServerConfig_InvalidCAPEM(t *testing.T) {
 
 // --- SPIFFE ID verification ---
 
-func TestVerifyPeerSPIFFEID_MatchingID(t *testing.T) {
+func TestVerifyClientCert_MatchingID(t *testing.T) {
 	spiffeID := "spiffe://cluster.local/ns/agentcube-system/sa/agentcube-router"
-	certFile, _, caFile := generateTestCertsWithSPIFFEID(t, spiffeID)
-
-	chains := verifyAndGetChains(t, certFile, caFile)
-	verifyFn := verifyPeerSPIFFEID([]string{spiffeID})
-	if err := verifyFn(nil, chains); err != nil {
-		t.Errorf("should accept matching ID, got: %v", err)
-	}
-}
-
-func TestVerifyPeerSPIFFEID_NonMatchingID(t *testing.T) {
-	spiffeID := "spiffe://cluster.local/ns/agentcube-system/sa/agentcube-router"
-	certFile, _, caFile := generateTestCertsWithSPIFFEID(t, spiffeID)
-
-	chains := verifyAndGetChains(t, certFile, caFile)
-	verifyFn := verifyPeerSPIFFEID([]string{"spiffe://cluster.local/sa/wrong"})
-	if err := verifyFn(nil, chains); err == nil {
-		t.Error("should reject non-matching SPIFFE ID")
-	}
-}
-
-func TestVerifyPeerChainAndSPIFFEID_MatchingID(t *testing.T) {
-	spiffeID := "spiffe://cluster.local/ns/agentcube-system/sa/workloadmanager"
 	certFile, _, caFile := generateTestCertsWithSPIFFEID(t, spiffeID)
 
 	rawCert := readRawCert(t, certFile)
-	caPool := loadTestCAPool(t, caFile)
 
-	verifyFn := verifyPeerChainAndSPIFFEID(caPool, spiffeID)
+	// Create a watcher with the CA file for dynamic verification
+	serverCertFile, serverKeyFile, _ := generateTestCerts(t)
+	cw, err := NewCertWatcher(serverCertFile, serverKeyFile, caFile)
+	if err != nil {
+		t.Fatalf("NewCertWatcher() error: %v", err)
+	}
+	defer cw.Stop()
+
+	verifyFn := verifyClientCert(cw, []string{spiffeID})
 	if err := verifyFn([][]byte{rawCert}, nil); err != nil {
 		t.Errorf("should accept matching ID, got: %v", err)
 	}
 }
 
-func TestVerifyPeerChainAndSPIFFEID_UntrustedCA(t *testing.T) {
+func TestVerifyClientCert_NonMatchingID(t *testing.T) {
+	spiffeID := "spiffe://cluster.local/ns/agentcube-system/sa/agentcube-router"
+	certFile, _, caFile := generateTestCertsWithSPIFFEID(t, spiffeID)
+
+	rawCert := readRawCert(t, certFile)
+
+	serverCertFile, serverKeyFile, _ := generateTestCerts(t)
+	cw, err := NewCertWatcher(serverCertFile, serverKeyFile, caFile)
+	if err != nil {
+		t.Fatalf("NewCertWatcher() error: %v", err)
+	}
+	defer cw.Stop()
+
+	verifyFn := verifyClientCert(cw, []string{"spiffe://cluster.local/sa/wrong"})
+	if err := verifyFn([][]byte{rawCert}, nil); err == nil {
+		t.Error("should reject non-matching SPIFFE ID")
+	}
+}
+
+func TestVerifyServerCert_MatchingID(t *testing.T) {
+	spiffeID := "spiffe://cluster.local/ns/agentcube-system/sa/workloadmanager"
+	certFile, _, caFile := generateTestCertsWithSPIFFEID(t, spiffeID)
+
+	rawCert := readRawCert(t, certFile)
+
+	clientCertFile, clientKeyFile, _ := generateTestCerts(t)
+	cw, err := NewCertWatcher(clientCertFile, clientKeyFile, caFile)
+	if err != nil {
+		t.Fatalf("NewCertWatcher() error: %v", err)
+	}
+	defer cw.Stop()
+
+	verifyFn := verifyServerCert(cw, spiffeID)
+	if err := verifyFn([][]byte{rawCert}, nil); err != nil {
+		t.Errorf("should accept matching ID, got: %v", err)
+	}
+}
+
+func TestVerifyServerCert_UntrustedCA(t *testing.T) {
 	spiffeID := "spiffe://cluster.local/ns/agentcube-system/sa/workloadmanager"
 	certFile, _, _ := generateTestCertsWithSPIFFEID(t, spiffeID)
 
 	// Use a DIFFERENT CA — chain verification should fail
 	_, _, differentCAFile := generateTestCerts(t)
-	differentPool := loadTestCAPool(t, differentCAFile)
+
+	clientCertFile, clientKeyFile, _ := generateTestCerts(t)
+	cw, err := NewCertWatcher(clientCertFile, clientKeyFile, differentCAFile)
+	if err != nil {
+		t.Fatalf("NewCertWatcher() error: %v", err)
+	}
+	defer cw.Stop()
 
 	rawCert := readRawCert(t, certFile)
-	verifyFn := verifyPeerChainAndSPIFFEID(differentPool, spiffeID)
-	err := verifyFn([][]byte{rawCert}, nil)
+	verifyFn := verifyServerCert(cw, spiffeID)
+	err = verifyFn([][]byte{rawCert}, nil)
 	if err == nil {
 		t.Error("should reject cert signed by untrusted CA")
 	}
-	if !strings.Contains(err.Error(), "verify peer certificate chain") {
+	if !strings.Contains(err.Error(), "verify server certificate chain") {
 		t.Errorf("error = %q, want chain verification error", err.Error())
 	}
 }
 
 // --- test helpers ---
-
-func verifyAndGetChains(t *testing.T, certFile, caFile string) [][]*x509.Certificate {
-	t.Helper()
-	certPEM, err := os.ReadFile(certFile)
-	if err != nil {
-		t.Fatalf("verifyAndGetChains: failed to read cert: %v", err)
-	}
-	block, _ := pem.Decode(certPEM)
-	if block == nil {
-		t.Fatalf("verifyAndGetChains: failed to decode PEM block from cert")
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		t.Fatalf("verifyAndGetChains: failed to parse certificate: %v", err)
-	}
-	caPool := loadTestCAPool(t, caFile)
-	chains, err := cert.Verify(x509.VerifyOptions{Roots: caPool})
-	if err != nil {
-		t.Fatalf("verifyAndGetChains: verify cert: %v", err)
-	}
-	return chains
-}
 
 func readRawCert(t *testing.T, certFile string) []byte {
 	t.Helper()

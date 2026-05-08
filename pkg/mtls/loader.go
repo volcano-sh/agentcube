@@ -20,50 +20,39 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"os"
 )
 
 // LoadServerConfig returns a tls.Config for a server that requires mTLS.
-// Certs are loaded dynamically via GetCertificate to support rotation.
-//
-// TODO(mahil-2040): CA bundles (cfg.CAFile) are currently loaded statically at startup.
-// Trust bundle rotation will require a process restart until a dynamic CAWatcher is implemented.
-//
+// Certs and the CA bundle are loaded dynamically via CertWatcher to support
+// zero-downtime rotation of both identity certificates and trust bundles.
 // If expectedClientIDs is non-empty, clients must present a matching SPIFFE ID.
 func LoadServerConfig(cfg *Config, expectedClientIDs []string) (*tls.Config, *CertWatcher, error) {
 	if cfg == nil {
 		return nil, nil, fmt.Errorf("server TLS config: mtls.Config is nil")
 	}
 
-	caPool, err := loadCAPool(cfg.CAFile)
-	if err != nil {
-		return nil, nil, fmt.Errorf("server TLS config: %w", err)
-	}
-
-	watcher, err := NewCertWatcher(cfg.CertFile, cfg.KeyFile)
+	watcher, err := NewCertWatcher(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
 	if err != nil {
 		return nil, nil, fmt.Errorf("server TLS cert watcher: %w", err)
 	}
 
 	tlsCfg := &tls.Config{
 		GetCertificate: watcher.GetCertificate,
-		ClientCAs:      caPool,
-		ClientAuth:     tls.RequireAndVerifyClientCert,
-		MinVersion:     tls.VersionTLS13,
-	}
-
-	if len(expectedClientIDs) > 0 {
-		tlsCfg.VerifyPeerCertificate = verifyPeerSPIFFEID(expectedClientIDs)
+		// Use RequireAnyClientCert instead of RequireAndVerifyClientCert so we can
+		// verify the chain against the dynamically-reloaded CA pool in VerifyPeerCertificate.
+		ClientAuth: tls.RequireAnyClientCert,
+		MinVersion: tls.VersionTLS13,
+		// Manually verify the client certificate chain and SPIFFE ID against the
+		// watcher's dynamic CA pool, enabling trust bundle rotation without restart.
+		VerifyPeerCertificate: verifyClientCert(watcher, expectedClientIDs),
 	}
 
 	return tlsCfg, watcher, nil
 }
 
 // LoadClientConfig returns a tls.Config for a client that presents its cert and verifies the server.
-// Certs are loaded dynamically via GetClientCertificate to support rotation.
-//
-// TODO(mahil-2040): CA bundles (cfg.CAFile) are currently loaded statically at startup.
-// Trust bundle rotation will require a process restart until a dynamic CAWatcher is implemented.
+// Certs and the CA bundle are loaded dynamically via CertWatcher to support
+// zero-downtime rotation of both identity certificates and trust bundles.
 //
 // The expectedServerID is required; the server must present a matching SPIFFE ID in its URI SAN.
 // This sets InsecureSkipVerify=true to bypass standard DNS hostname checking
@@ -77,76 +66,103 @@ func LoadClientConfig(cfg *Config, expectedServerID string) (*tls.Config, *CertW
 		return nil, nil, fmt.Errorf("client TLS config: mtls.Config is nil")
 	}
 
-	caPool, err := loadCAPool(cfg.CAFile)
-	if err != nil {
-		return nil, nil, fmt.Errorf("client TLS config: %w", err)
-	}
-
-	watcher, err := NewCertWatcher(cfg.CertFile, cfg.KeyFile)
+	watcher, err := NewCertWatcher(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
 	if err != nil {
 		return nil, nil, fmt.Errorf("client TLS cert watcher: %w", err)
 	}
 
 	tlsCfg := &tls.Config{
 		GetClientCertificate: watcher.GetClientCertificate,
-		RootCAs:              caPool,
 		MinVersion:           tls.VersionTLS13,
 		//nolint:gosec // G402: we use VerifyPeerCertificate for custom SPIFFE ID verification instead
-		InsecureSkipVerify:    true,
-		VerifyPeerCertificate: verifyPeerChainAndSPIFFEID(caPool, expectedServerID),
+		InsecureSkipVerify: true,
+		// Manually verify the server certificate chain and SPIFFE ID against the
+		// watcher's dynamic CA pool, enabling trust bundle rotation without restart.
+		VerifyPeerCertificate: verifyServerCert(watcher, expectedServerID),
 	}
 
 	return tlsCfg, watcher, nil
 }
 
-// verifyPeerSPIFFEID checks the peer's URI SAN against expected SPIFFE IDs.
-// Used server-side where the stdlib already verified the chain.
-func verifyPeerSPIFFEID(expectedIDs []string) func([][]byte, [][]*x509.Certificate) error {
-	return func(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
-		if len(verifiedChains) == 0 || len(verifiedChains[0]) == 0 {
-			return fmt.Errorf("no verified peer certificate")
-		}
-		peerCert := verifiedChains[0][0]
-		for _, uri := range peerCert.URIs {
-			for _, expected := range expectedIDs {
-				if uri.String() == expected {
-					return nil
-				}
-			}
-		}
-		return fmt.Errorf("peer certificate SPIFFE ID does not match any expected ID %v", expectedIDs)
-	}
-}
-
-// verifyPeerChainAndSPIFFEID manually verifies the chain against the CA pool
-// and checks the SPIFFE ID. Used client-side where InsecureSkipVerify is true.
-func verifyPeerChainAndSPIFFEID(caPool *x509.CertPool, expectedID string) func([][]byte, [][]*x509.Certificate) error {
+// verifyClientCert verifies the client's certificate chain against the dynamic CA pool
+// and optionally checks the client's SPIFFE ID. Used server-side where ClientAuth is
+// RequireAnyClientCert (chain verification is done manually, not by the TLS stack).
+func verifyClientCert(watcher *CertWatcher, expectedIDs []string) func([][]byte, [][]*x509.Certificate) error {
 	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 		if len(rawCerts) == 0 {
-			return fmt.Errorf("no peer certificate presented")
+			return fmt.Errorf("no client certificate presented")
 		}
 
 		peerCert, err := x509.ParseCertificate(rawCerts[0])
 		if err != nil {
-			return fmt.Errorf("parse peer certificate: %w", err)
+			return fmt.Errorf("parse client certificate: %w", err)
+		}
+
+		intermediates := x509.NewCertPool()
+		for i, rawCert := range rawCerts[1:] {
+			ic, err := x509.ParseCertificate(rawCert)
+			if err != nil {
+				return fmt.Errorf("parse client intermediate certificate %d: %w", i+1, err)
+			}
+			intermediates.AddCert(ic)
+		}
+
+		caPool := watcher.GetCAPool()
+		opts := x509.VerifyOptions{
+			Roots:         caPool,
+			Intermediates: intermediates,
+			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		}
+		if _, err := peerCert.Verify(opts); err != nil {
+			return fmt.Errorf("verify client certificate chain: %w", err)
+		}
+
+		if len(expectedIDs) > 0 {
+			for _, uri := range peerCert.URIs {
+				for _, expected := range expectedIDs {
+					if uri.String() == expected {
+						return nil
+					}
+				}
+			}
+			return fmt.Errorf("client certificate SPIFFE ID does not match any expected ID %v", expectedIDs)
+		}
+
+		return nil
+	}
+}
+
+// verifyServerCert verifies the server's certificate chain against the dynamic CA pool
+// and checks the server's SPIFFE ID. Used client-side where InsecureSkipVerify is true
+// (chain verification and SPIFFE ID check are done manually).
+func verifyServerCert(watcher *CertWatcher, expectedID string) func([][]byte, [][]*x509.Certificate) error {
+	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		if len(rawCerts) == 0 {
+			return fmt.Errorf("no server certificate presented")
+		}
+
+		peerCert, err := x509.ParseCertificate(rawCerts[0])
+		if err != nil {
+			return fmt.Errorf("parse server certificate: %w", err)
 		}
 
 		intermediates := x509.NewCertPool()
 		for i, rawCert := range rawCerts[1:] {
 			intermediateCert, err := x509.ParseCertificate(rawCert)
 			if err != nil {
-				return fmt.Errorf("parse peer intermediate certificate %d: %w", i+1, err)
+				return fmt.Errorf("parse server intermediate certificate %d: %w", i+1, err)
 			}
 			intermediates.AddCert(intermediateCert)
 		}
 
+		caPool := watcher.GetCAPool()
 		opts := x509.VerifyOptions{
 			Roots:         caPool,
 			Intermediates: intermediates,
 			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		}
 		if _, err := peerCert.Verify(opts); err != nil {
-			return fmt.Errorf("verify peer certificate chain: %w", err)
+			return fmt.Errorf("verify server certificate chain: %w", err)
 		}
 
 		for _, uri := range peerCert.URIs {
@@ -158,17 +174,3 @@ func verifyPeerChainAndSPIFFEID(caPool *x509.CertPool, expectedID string) func([
 	}
 }
 
-// loadCAPool reads and parses the CA certificate file into a CertPool.
-func loadCAPool(caFile string) (*x509.CertPool, error) {
-	caCert, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, fmt.Errorf("read CA file %s: %w", caFile, err)
-	}
-
-	caPool := x509.NewCertPool()
-	if !caPool.AppendCertsFromPEM(caCert) {
-		return nil, fmt.Errorf("no valid CA certificates found in %s", caFile)
-	}
-
-	return caPool, nil
-}

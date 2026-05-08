@@ -33,38 +33,37 @@ func main() {
 	var (
 		port                  = flag.String("port", "8080", "Router API server port")
 		enableTLS             = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
-		tlsCert               = flag.String("tls-cert", "", "Path to TLS certificate file")
-		tlsKey                = flag.String("tls-key", "", "Path to TLS key file")
+		tlsCert               = flag.String("tls-cert", "", "Path to TLS certificate file for the Router listener")
+		tlsKey                = flag.String("tls-key", "", "Path to TLS key file for the Router listener")
 		debug                 = flag.Bool("debug", false, "Enable debug mode")
 		maxConcurrentRequests = flag.Int("max-concurrent-requests", 1000, "Maximum number of concurrent requests that a router server can handle (0 = unlimited)")
 		enableMTLS            = flag.Bool("enable-mtls", false, "Enable mutual TLS on the Router listener and for Router-to-WorkloadManager connections")
 
-		// mTLS flags (certificate source abstraction)
-		mtlsCertFile, mtlsKeyFile, mtlsCAFile string
+		// mTLS client certificates used by the Router to authenticate with upstream WorkloadManager.
+		// These are distinct from --tls-cert/--tls-key which serve the Router's own HTTPS listener.
+		mtlsCert = flag.String("mtls-cert", "", "Path to mTLS client certificate for upstream WorkloadManager connections")
+		mtlsKey  = flag.String("mtls-key", "", "Path to mTLS client key for upstream WorkloadManager connections")
+		mtlsCA   = flag.String("mtls-ca", "", "Path to mTLS CA bundle for verifying upstream WorkloadManager identity")
 	)
 
 	// Initialize klog flags
 	klog.InitFlags(nil)
 
-	flag.StringVar(&mtlsCertFile, "mtls-cert-file", "", "Path to mTLS certificate file")
-	flag.StringVar(&mtlsKeyFile, "mtls-key-file", "", "Path to mTLS private key file")
-	flag.StringVar(&mtlsCAFile, "mtls-ca-file", "", "Path to mTLS CA bundle file")
-
 	// Parse command line flags
 	flag.Parse()
 
 	// Validate mTLS configuration early (fail fast on bad flags)
-	mTLSCfg := mtls.Config{
-		CertFile: mtlsCertFile,
-		KeyFile:  mtlsKeyFile,
-		CAFile:   mtlsCAFile,
+	tlsConfig := mtls.Config{
+		CertFile: *mtlsCert,
+		KeyFile:  *mtlsKey,
+		CAFile:   *mtlsCA,
 	}
-	if err := mTLSCfg.Validate(); err != nil {
+	if err := tlsConfig.Validate(); err != nil {
 		klog.Fatalf("Invalid mTLS configuration: %v", err)
 	}
 
-	if *enableMTLS && !mTLSCfg.Enabled() {
-		klog.Fatalf("Invalid mTLS configuration: --enable-mtls requires --mtls-cert-file, --mtls-key-file, and --mtls-ca-file")
+	if *enableMTLS && !tlsConfig.Enabled() {
+		klog.Fatalf("Invalid mTLS configuration: --enable-mtls requires --mtls-cert, --mtls-key, and --mtls-ca")
 	}
 
 	// Create Router API server configuration
@@ -76,7 +75,7 @@ func main() {
 		TLSKey:                *tlsKey,
 		MaxConcurrentRequests: *maxConcurrentRequests,
 		EnableMTLS:            *enableMTLS,
-		MTLSConfig:            mTLSCfg,
+		MTLSConfig:            tlsConfig,
 	}
 
 	// Create Router API server

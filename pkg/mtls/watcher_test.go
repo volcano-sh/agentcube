@@ -90,7 +90,7 @@ func TestNewCertWatcher_InitialLoad(t *testing.T) {
 	dir := t.TempDir()
 	certFile, keyFile := generateWatcherTestCerts(t, dir)
 
-	cw, err := NewCertWatcher(certFile, keyFile)
+	cw, err := NewCertWatcher(certFile, keyFile, "")
 	if err != nil {
 		t.Fatalf("NewCertWatcher() error: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestNewCertWatcher_FileUpdate(t *testing.T) {
 	dir := t.TempDir()
 	certFile, keyFile := generateWatcherTestCerts(t, dir)
 
-	cw, err := NewCertWatcher(certFile, keyFile)
+	cw, err := NewCertWatcher(certFile, keyFile, "")
 	if err != nil {
 		t.Fatalf("NewCertWatcher() error: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestCertWatcher_StopIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	certFile, keyFile := generateWatcherTestCerts(t, dir)
 
-	cw, err := NewCertWatcher(certFile, keyFile)
+	cw, err := NewCertWatcher(certFile, keyFile, "")
 	if err != nil {
 		t.Fatalf("NewCertWatcher() error: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestNewCertWatcher_InvalidCertFile(t *testing.T) {
 		t.Fatalf("write key: %v", err)
 	}
 
-	_, err = NewCertWatcher("/nonexistent/cert.pem", keyFile)
+	_, err = NewCertWatcher("/nonexistent/cert.pem", keyFile, "")
 	if err == nil {
 		t.Fatal("NewCertWatcher() expected error for nonexistent cert, got nil")
 	}

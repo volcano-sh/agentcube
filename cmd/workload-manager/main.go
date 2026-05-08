@@ -58,37 +58,31 @@ func main() {
 		enableTLS         = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
 		tlsCert           = flag.String("tls-cert", "", "Path to TLS certificate file")
 		tlsKey            = flag.String("tls-key", "", "Path to TLS key file")
-		enableAuth        = flag.Bool("enable-auth", false, "Enable Authentication")
-		enableMTLS        = flag.Bool("enable-mtls", false, "Enable mutual TLS on the WorkloadManager listener")
+		tlsCA             = flag.String("tls-ca", "", "Path to TLS CA certificate file")
+		enableAuth        = flag.Bool("enable-auth", false, "Enable authorization")
+		enableMTLS        = flag.Bool("enable-mtls", false, "Whether to enable mutual TLS on the WorkloadManager api server, default to false and start a plain text http server.")
 		enableSandboxMTLS = flag.Bool("enable-sandbox-mtls", false, "Enable automatic injection of SPIRE mTLS sidecars into sandbox pods")
 		spiffeHelperImage = flag.String("spiffe-helper-image", "", "Container image for the spiffe-helper sidecar (default: "+workloadmanager.DefaultSPIFFEHelperImage+")")
-
-		// mTLS flags (certificate source abstraction)
-		mtlsCertFile, mtlsKeyFile, mtlsCAFile string
 	)
 
 	// Initialize klog flags
 	klog.InitFlags(nil)
 
-	flag.StringVar(&mtlsCertFile, "mtls-cert-file", "", "Path to mTLS certificate file")
-	flag.StringVar(&mtlsKeyFile, "mtls-key-file", "", "Path to mTLS private key file")
-	flag.StringVar(&mtlsCAFile, "mtls-ca-file", "", "Path to mTLS CA bundle file")
-
 	// Parse command line flags
 	flag.Parse()
 
 	// Validate mTLS configuration early (fail fast on bad flags)
-	mTLSCfg := mtls.Config{
-		CertFile: mtlsCertFile,
-		KeyFile:  mtlsKeyFile,
-		CAFile:   mtlsCAFile,
+	tlsConfig := mtls.Config{
+		CertFile: *tlsCert,
+		KeyFile:  *tlsKey,
+		CAFile:   *tlsCA,
 	}
-	if err := mTLSCfg.Validate(); err != nil {
+	if err := tlsConfig.Validate(); err != nil {
 		klog.Fatalf("Invalid mTLS configuration: %v", err)
 	}
 
-	if *enableMTLS && !mTLSCfg.Enabled() {
-		klog.Fatalf("Invalid mTLS configuration: --enable-mtls requires --mtls-cert-file, --mtls-key-file, and --mtls-ca-file")
+	if *enableMTLS && !tlsConfig.Enabled() {
+		klog.Fatalf("Invalid mTLS configuration: --enable-mtls requires --tls-cert, --tls-key, and --tls-ca")
 	}
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
@@ -131,9 +125,7 @@ func main() {
 		EnableMTLS:        *enableMTLS,
 		EnableSandboxMTLS: *enableSandboxMTLS,
 		SPIFFEHelperImage: *spiffeHelperImage,
-		MTLSCertFile:      mtlsCertFile,
-		MTLSKeyFile:       mtlsKeyFile,
-		MTLSCAFile:        mtlsCAFile,
+		MTLSConfig:        tlsConfig,
 	}
 
 	// Create and initialize API server

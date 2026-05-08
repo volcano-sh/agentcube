@@ -75,14 +75,9 @@ type Config struct {
 	// volume mounts into newly created sandbox pods.
 	EnableSandboxMTLS bool
 
-	// mTLS configuration (certificate source abstraction)
-
-	// MTLSCertFile is the path to the mTLS certificate (--mtls-cert-file)
-	MTLSCertFile string
-	// MTLSKeyFile is the path to the mTLS private key (--mtls-key-file)
-	MTLSKeyFile string
-	// MTLSCAFile is the path to the mTLS CA bundle (--mtls-ca-file)
-	MTLSCAFile string
+	// MTLSConfig holds the mutual TLS certificate paths (cert, key, CA bundle).
+	// When EnableMTLS is true, this configuration must be valid.
+	MTLSConfig mtls.Config
 
 	// SPIFFEHelperImage is the container image for the spiffe-helper sidecar injected into
 	// sandbox pods. Defaults to DefaultSPIFFEHelperImage if empty.
@@ -204,17 +199,12 @@ func (s *Server) Start(ctx context.Context) error {
 // startMTLSServer configures and starts the server with mutual TLS.
 // It requires client certificates and verifies the caller presents the Router's SPIFFE ID.
 func (s *Server) startMTLSServer(addr string) error {
-	mtlsCfg := &mtls.Config{
-		CertFile: s.config.MTLSCertFile,
-		KeyFile:  s.config.MTLSKeyFile,
-		CAFile:   s.config.MTLSCAFile,
-	}
-	if !mtlsCfg.Enabled() {
-		return fmt.Errorf("--enable-mtls requires --mtls-cert-file, --mtls-key-file, and --mtls-ca-file to be set")
+	if !s.config.MTLSConfig.Enabled() {
+		return fmt.Errorf("--enable-mtls requires --tls-cert, --tls-key, and --tls-ca to be set")
 	}
 
 	// Only the Router is allowed to call WorkloadManager
-	serverTLS, watcher, err := mtls.LoadServerConfig(mtlsCfg, []string{mtls.RouterSPIFFEID})
+	serverTLS, watcher, err := mtls.LoadServerConfig(&s.config.MTLSConfig, []string{mtls.RouterSPIFFEID})
 	if err != nil {
 		return fmt.Errorf("failed to load mTLS server config: %w", err)
 	}

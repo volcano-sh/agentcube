@@ -18,7 +18,9 @@ package mtls
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -26,32 +28,44 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// CertWatcher watches certificate files and reloads them on change.
-// It provides a GetCertificate callback for use with tls.Config.
+// CertWatcher watches certificate and CA files and reloads them on change.
+// It provides GetCertificate and GetCAPool callbacks for use with tls.Config,
+// enabling zero-downtime rotation for both identity certificates and trust bundles.
 type CertWatcher struct {
 	certFile string
 	keyFile  string
+	caFile   string // optional; empty if no CA watching needed
 
-	mu   sync.RWMutex
-	cert *tls.Certificate
-	once sync.Once
+	mu     sync.RWMutex
+	cert   *tls.Certificate
+	caPool *x509.CertPool // nil if caFile is empty
+	once   sync.Once
 
 	watcher *fsnotify.Watcher
 	done    chan struct{}
 }
 
-// NewCertWatcher creates a CertWatcher that monitors the given cert/key files.
-// It loads the initial certificate and starts watching for changes.
-func NewCertWatcher(certFile, keyFile string) (*CertWatcher, error) {
+// NewCertWatcher creates a CertWatcher that monitors the given cert/key files
+// and optionally a CA bundle file. It loads the initial certificate (and CA pool
+// if caFile is non-empty) and starts watching for changes.
+func NewCertWatcher(certFile, keyFile, caFile string) (*CertWatcher, error) {
 	cw := &CertWatcher{
 		certFile: certFile,
 		keyFile:  keyFile,
+		caFile:   caFile,
 		done:     make(chan struct{}),
 	}
 
 	// Load initial certificate
 	if err := cw.reload(); err != nil {
 		return nil, fmt.Errorf("initial cert load: %w", err)
+	}
+
+	// Load initial CA pool if configured
+	if caFile != "" {
+		if err := cw.reloadCA(); err != nil {
+			return nil, fmt.Errorf("initial CA load: %w", err)
+		}
 	}
 
 	// Setup file watcher
@@ -69,6 +83,12 @@ func NewCertWatcher(certFile, keyFile string) (*CertWatcher, error) {
 	if err := watcher.Add(keyFile); err != nil {
 		watcher.Close()
 		return nil, fmt.Errorf("watch key file %s: %w", keyFile, err)
+	}
+	if caFile != "" {
+		if err := watcher.Add(caFile); err != nil {
+			watcher.Close()
+			return nil, fmt.Errorf("watch CA file %s: %w", caFile, err)
+		}
 	}
 
 	go cw.watchLoop()
@@ -89,6 +109,14 @@ func (cw *CertWatcher) GetClientCertificate(_ *tls.CertificateRequestInfo) (*tls
 	cw.mu.RLock()
 	defer cw.mu.RUnlock()
 	return cw.cert, nil
+}
+
+// GetCAPool returns the current CA certificate pool. Safe for concurrent use.
+// Returns nil if no CA file is being watched.
+func (cw *CertWatcher) GetCAPool() *x509.CertPool {
+	cw.mu.RLock()
+	defer cw.mu.RUnlock()
+	return cw.caPool
 }
 
 // Stop stops the file watcher. Safe to call multiple times.
@@ -114,6 +142,35 @@ func (cw *CertWatcher) reload() error {
 	return nil
 }
 
+// reloadCA reloads the CA bundle from disk. Must not be called while cw.mu is held.
+func (cw *CertWatcher) reloadCA() error {
+	caCert, err := os.ReadFile(cw.caFile)
+	if err != nil {
+		return fmt.Errorf("read CA file %s: %w", cw.caFile, err)
+	}
+	caPool := x509.NewCertPool()
+	if !caPool.AppendCertsFromPEM(caCert) {
+		return fmt.Errorf("no valid CA certificates found in %s", cw.caFile)
+	}
+	cw.mu.Lock()
+	cw.caPool = caPool
+	cw.mu.Unlock()
+	klog.V(2).Infof("Reloaded CA bundle from %s", cw.caFile)
+	return nil
+}
+
+// reloadAll reloads the cert/key pair and (if configured) the CA bundle.
+func (cw *CertWatcher) reloadAll() {
+	if err := cw.reload(); err != nil {
+		klog.Errorf("Failed to reload certificate: %v", err)
+	}
+	if cw.caFile != "" {
+		if err := cw.reloadCA(); err != nil {
+			klog.Errorf("Failed to reload CA bundle: %v", err)
+		}
+	}
+}
+
 func (cw *CertWatcher) watchLoop() {
 	var debounceTimer *time.Timer
 	scheduleReload := func() {
@@ -126,9 +183,7 @@ func (cw *CertWatcher) watchLoop() {
 				return
 			default:
 			}
-			if err := cw.reload(); err != nil {
-				klog.Errorf("Failed to reload certificate: %v", err)
-			}
+			cw.reloadAll()
 		})
 	}
 
@@ -197,3 +252,4 @@ func (cw *CertWatcher) handleRenameEvent(targetFile string) {
 		klog.Errorf("CRITICAL: Exhausted retry budget attempting to re-watch %s. Certificate rotation is permanently broken! Process restart required.", targetFile)
 	}()
 }
+

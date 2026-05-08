@@ -369,43 +369,6 @@ func TestNewServer_DifferentPorts(t *testing.T) {
 	}
 }
 
-// ---- tests: PicoD mTLS mode ----
-
-func TestNewServer_MTLSMode_SkipsJWTAuth(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	// Do NOT set the JWT public key env var — mTLS mode should skip it
-	os.Unsetenv(PublicKeyEnvVar)
-
-	config := Config{
-		Port:       8080,
-		Workspace:  tmpDir,
-		EnableMTLS: true,
-	}
-
-	server := NewServer(config)
-	assert.NotNil(t, server)
-
-	// API routes should be accessible without JWT when mTLS is enabled
-	ts := httptest.NewServer(server.engine)
-	defer ts.Close()
-
-	// Health endpoint still works
-	resp, err := http.Get(ts.URL + "/health")
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	resp.Body.Close()
-
-	// API endpoint should NOT return 401 (no JWT middleware applied)
-	resp, err = http.Post(ts.URL+"/api/execute", "application/json", nil)
-	require.NoError(t, err)
-	// It should NOT be 401 Unauthorized — it may be 400 or other, but not 401
-	assert.NotEqual(t, http.StatusUnauthorized, resp.StatusCode, "mTLS mode should skip JWT auth middleware")
-	resp.Body.Close()
-}
-
 func TestNewServer_JWTMode_RequiresAuth(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
 	require.NoError(t, err)
@@ -416,9 +379,8 @@ func TestNewServer_JWTMode_RequiresAuth(t *testing.T) {
 	defer os.Unsetenv(PublicKeyEnvVar)
 
 	config := Config{
-		Port:       8080,
-		Workspace:  tmpDir,
-		EnableMTLS: false,
+		Port:      8080,
+		Workspace: tmpDir,
 	}
 
 	server := NewServer(config)

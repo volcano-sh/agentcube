@@ -83,6 +83,11 @@ type Config struct {
 	MTLSKeyFile string
 	// MTLSCAFile is the path to the mTLS CA bundle (--mtls-ca-file)
 	MTLSCAFile string
+
+	// SPIFFEHelperImage is the container image for the spiffe-helper sidecar injected into
+	// sandbox pods. Defaults to DefaultSPIFFEHelperImage if empty.
+	// Useful for air-gapped environments or version upgrades without recompiling.
+	SPIFFEHelperImage string
 }
 
 // NewServer creates a new API server instance

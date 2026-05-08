@@ -382,7 +382,7 @@ func TestMTLS_E2E_NoClientCert(t *testing.T) {
 	// Plain TLS client — no client cert, just trust the CA
 	plainTLS := &tls.Config{
 		RootCAs:    loadTestCAPool(t, caFile),
-		MinVersion: tls.VersionTLS12,
+		MinVersion: tls.VersionTLS13,
 	}
 
 	httpClient := &http.Client{

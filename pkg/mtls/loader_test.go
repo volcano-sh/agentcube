@@ -140,8 +140,8 @@ func TestLoadServerConfig(t *testing.T) {
 	if tlsCfg.GetCertificate == nil {
 		t.Error("GetCertificate callback is nil")
 	}
-	if tlsCfg.MinVersion != tls.VersionTLS12 {
-		t.Errorf("MinVersion = %d, want TLS 1.2", tlsCfg.MinVersion)
+	if tlsCfg.MinVersion != tls.VersionTLS13 {
+		t.Errorf("MinVersion = %d, want TLS 1.3", tlsCfg.MinVersion)
 	}
 	// No SPIFFE IDs → no VerifyPeerCertificate
 	if tlsCfg.VerifyPeerCertificate != nil {

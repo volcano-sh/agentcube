@@ -121,6 +121,11 @@ func (cw *CertWatcher) watchLoop() {
 			debounceTimer.Stop()
 		}
 		debounceTimer = time.AfterFunc(200*time.Millisecond, func() {
+			select {
+			case <-cw.done:
+				return
+			default:
+			}
 			if err := cw.reload(); err != nil {
 				klog.Errorf("Failed to reload certificate: %v", err)
 			}

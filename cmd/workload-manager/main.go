@@ -60,7 +60,8 @@ func main() {
 		tlsKey           = flag.String("tls-key", "", "Path to TLS key file")
 		enableAuth        = flag.Bool("enable-auth", false, "Enable Authentication")
 		enableMTLS        = flag.Bool("enable-mtls", false, "Enable mutual TLS on the WorkloadManager listener")
-		enableSandboxMTLS = flag.Bool("enable-sandbox-mtls", false, "Enable automatic injection of SPIRE mTLS sidecars into sandbox pods")
+		enableSandboxMTLS  = flag.Bool("enable-sandbox-mtls", false, "Enable automatic injection of SPIRE mTLS sidecars into sandbox pods")
+		spiffeHelperImage  = flag.String("spiffe-helper-image", "", "Container image for the spiffe-helper sidecar (default: "+workloadmanager.DefaultSPIFFEHelperImage+")")
 
 		// mTLS flags (certificate source abstraction)
 		mtlsCertFile, mtlsKeyFile, mtlsCAFile string
@@ -129,6 +130,7 @@ func main() {
 		EnableAuth:        *enableAuth,
 		EnableMTLS:        *enableMTLS,
 		EnableSandboxMTLS: *enableSandboxMTLS,
+		SPIFFEHelperImage: *spiffeHelperImage,
 		MTLSCertFile:      mtlsCertFile,
 		MTLSKeyFile:      mtlsKeyFile,
 		MTLSCAFile:       mtlsCAFile,

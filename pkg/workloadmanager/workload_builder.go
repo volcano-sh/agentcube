@@ -130,15 +130,16 @@ func loadPublicKeyFromSecret(clientset kubernetes.Interface) error {
 }
 
 type buildSandboxParams struct {
-	namespace      string
-	workloadName   string
-	sandboxName    string
-	sessionID      string
-	ttl            time.Duration
-	idleTimeout    time.Duration
-	podSpec        corev1.PodSpec
-	podLabels      map[string]string
-	podAnnotations map[string]string
+	namespace          string
+	workloadName       string
+	sandboxName        string
+	sessionID          string
+	ttl                time.Duration
+	idleTimeout        time.Duration
+	podSpec            corev1.PodSpec
+	podLabels          map[string]string
+	podAnnotations     map[string]string
+	spiffeHelperImage  string
 }
 
 type buildSandboxClaimParams struct {
@@ -241,7 +242,7 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 	return sandboxClaim
 }
 
-func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers, enableMTLS bool) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
+func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers, enableMTLS bool, spiffeHelperImageOverride string) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
 	agentRuntimeKey := namespace + "/" + name
 	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
 	runtimeObj, exists, _ := ifm.AgentRuntimeInformer.GetStore().GetByKey(agentRuntimeKey)
@@ -293,6 +294,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers, e
 	buildParams.idleTimeout = idleTimeout
 
 	if enableMTLS {
+		buildParams.spiffeHelperImage = spiffeHelperImageOrDefault(spiffeHelperImageOverride)
 		injectMTLSVolumes(buildParams)
 	}
 
@@ -343,7 +345,7 @@ func getCodeInterpreterFromInformer(namespace, name string, informer *Informers)
 	return &codeInterpreterObj, nil
 }
 
-func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers, enableMTLS bool) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers, enableMTLS bool, spiffeHelperImageOverride string) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
 	codeInterpreterObjPtr, err := getCodeInterpreterFromInformer(namespace, codeInterpreterName, informer)
 	if err != nil {
 		return nil, nil, nil, err
@@ -383,6 +385,19 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 
 	if codeInterpreterObj.Spec.WarmPoolSize != nil && *codeInterpreterObj.Spec.WarmPoolSize > 0 {
+		// NOTE(mTLS + warm-pool): The SandboxClaim path provisions pods via the external
+		// agent-sandbox controller using the SandboxTemplate embedded in the CodeInterpreter CRD.
+		// WorkloadManager only creates a placeholder Sandbox (empty PodSpec) here — the real
+		// pod spec is never passed through injectMTLSVolumes. If mTLS is required for warm-pool
+		// sandboxes, the spiffe-helper sidecar, cert volumes, and --enable-mtls flags must be
+		// embedded directly in the CodeInterpreter spec.template by the operator.
+		if enableMTLS {
+			klog.Warningf("CodeInterpreter %s/%s uses a warm pool (WarmPoolSize=%d) with mTLS enabled. "+
+				"The spiffe-helper sidecar will NOT be auto-injected into warm-pool sandboxes. "+
+				"Ensure the spiffe-helper sidecar and --enable-mtls flags are configured in the "+
+				"CodeInterpreter spec.template directly.",
+				namespace, codeInterpreterName, *codeInterpreterObj.Spec.WarmPoolSize)
+		}
 		sandboxClaim := buildSandboxClaimObject(&buildSandboxClaimParams{
 			namespace:           namespace,
 			name:                sandboxName,
@@ -448,6 +463,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 
 	if enableMTLS {
+		buildParams.spiffeHelperImage = spiffeHelperImageOrDefault(spiffeHelperImageOverride)
 		injectMTLSVolumes(buildParams)
 	}
 	if codeInterpreterObj.Spec.MaxSessionDuration != nil {
@@ -471,8 +487,10 @@ const (
 	spiffeHelperConfigVolumeName = "spiffe-helper-config"
 	// spiffeHelperConfigAnnotationKey is the pod annotation key used to inject the config inline.
 	spiffeHelperConfigAnnotationKey = "agentcube.volcano.sh/spiffe-helper-config"
-	// spiffeHelperImage is the container image for the spiffe-helper sidecar.
-	spiffeHelperImage = "ghcr.io/spiffe/spiffe-helper:0.8.0"
+	// DefaultSPIFFEHelperImage is the default container image for the spiffe-helper sidecar.
+	// Operators in air-gapped environments or upgrading versions can override this via
+	// --spiffe-helper-image flag (Config.SPIFFEHelperImage).
+	DefaultSPIFFEHelperImage = "ghcr.io/spiffe/spiffe-helper:0.8.0"
 
 	// SVID file names written by spiffe-helper (must match values.yaml).
 	svidCertFileName   = "svid.pem"
@@ -492,6 +510,14 @@ svid_bundle_file_name = "svid_bundle.pem"
 `
 )
 
+// spiffeHelperImageOrDefault returns the override image if non-empty, otherwise DefaultSPIFFEHelperImage.
+func spiffeHelperImageOrDefault(override string) string {
+	if override != "" {
+		return override
+	}
+	return DefaultSPIFFEHelperImage
+}
+
 // injectMTLSVolumes injects a spiffe-helper sidecar and the necessary volumes
 // into the pod spec so PicoD can receive dynamically provisioned SPIRE SVIDs.
 // It uses DownwardAPI to inline the sidecar configuration.
@@ -507,7 +533,7 @@ func injectMTLSVolumes(params *buildSandboxParams) {
 	}
 
 	addMTLSVolumes(params, podSpec)
-	addMTLSSidecar(podSpec)
+	addMTLSSidecar(params, podSpec)
 	injectWorkloadMTLS(podSpec)
 }
 
@@ -563,10 +589,10 @@ func addMTLSVolumes(params *buildSandboxParams, podSpec *corev1.PodSpec) {
 	}
 }
 
-func addMTLSSidecar(podSpec *corev1.PodSpec) {
+func addMTLSSidecar(params *buildSandboxParams, podSpec *corev1.PodSpec) {
 	sidecar := corev1.Container{
 		Name:            "spiffe-helper",
-		Image:           spiffeHelperImage,
+		Image:           spiffeHelperImageOrDefault(params.spiffeHelperImage),
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Args:            []string{"-config", "/etc/spiffe-helper/spiffe-helper.conf"},
 		VolumeMounts: []corev1.VolumeMount{
@@ -590,6 +616,7 @@ func addMTLSSidecar(podSpec *corev1.PodSpec) {
 }
 
 func injectWorkloadMTLS(podSpec *corev1.PodSpec) {
+	injectedMTLSFlags := false
 	for i := range podSpec.Containers {
 		if podSpec.Containers[i].Name == "spiffe-helper" {
 			continue
@@ -626,7 +653,14 @@ func injectWorkloadMTLS(podSpec *corev1.PodSpec) {
 					"--mtls-ca-file="+spireCertMountPath+"/"+svidBundleFileName,
 				)
 			}
+			injectedMTLSFlags = true
 		}
+	}
+
+	if !injectedMTLSFlags {
+		klog.Warningf("mTLS sidecar injected but no container named 'picod' or 'code-interpreter' was found. "+
+			"The --enable-mtls flags were NOT injected into any workload container. "+
+			"If your container uses a different name, mTLS will not be active despite the cert volume being mounted.")
 	}
 }
 

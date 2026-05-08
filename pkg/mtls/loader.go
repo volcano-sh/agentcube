@@ -49,7 +49,7 @@ func LoadServerConfig(cfg *Config, expectedClientIDs []string) (*tls.Config, *Ce
 		GetCertificate: watcher.GetCertificate,
 		ClientCAs:      caPool,
 		ClientAuth:     tls.RequireAndVerifyClientCert,
-		MinVersion:     tls.VersionTLS12,
+		MinVersion:     tls.VersionTLS13,
 	}
 
 	if len(expectedClientIDs) > 0 {
@@ -90,7 +90,7 @@ func LoadClientConfig(cfg *Config, expectedServerID string) (*tls.Config, *CertW
 	tlsCfg := &tls.Config{
 		GetClientCertificate:  watcher.GetClientCertificate,
 		RootCAs:               caPool,
-		MinVersion:            tls.VersionTLS12,
+		MinVersion:            tls.VersionTLS13,
 		//nolint:gosec // G402: we use VerifyPeerCertificate for custom SPIFFE ID verification instead
 		InsecureSkipVerify:    true,
 		VerifyPeerCertificate: verifyPeerChainAndSPIFFEID(caPool, expectedServerID),

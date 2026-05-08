@@ -17,6 +17,7 @@ limitations under the License.
 package picod
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -122,22 +123,37 @@ func NewServer(config Config) *Server {
 	return s
 }
 
-// Run starts the server
-func (s *Server) Run() error {
+// Start starts the server and blocks until ctx is cancelled or a fatal error occurs.
+func (s *Server) Start(ctx context.Context) error {
 	addr := fmt.Sprintf(":%d", s.config.Port)
 	klog.Infof("PicoD server starting on %s", addr)
 
-	server := &http.Server{
+	httpServer := &http.Server{
 		Addr:              addr,
 		Handler:           s.engine,
 		ReadHeaderTimeout: 10 * time.Second, // Prevent Slowloris attacks
 	}
 
+	// Listen for shutdown signal and gracefully stop the HTTP server.
+	go func() {
+		<-ctx.Done()
+		klog.Info("Shutting down PicoD server...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			klog.Errorf("PicoD server shutdown error: %v", err)
+		}
+		// Stop cert watcher to release fsnotify goroutine and file descriptors.
+		if s.certWatcher != nil {
+			s.certWatcher.Stop()
+		}
+	}()
+
 	if s.config.EnableMTLS {
-		return s.serveMTLS(server, addr)
+		return s.serveMTLS(httpServer, addr)
 	}
 
-	return server.ListenAndServe()
+	return httpServer.ListenAndServe()
 }
 
 // serveMTLS configures and starts the server with mutual TLS.
@@ -156,12 +172,13 @@ func (s *Server) serveMTLS(server *http.Server, addr string) error {
 	var serverTLS *tls.Config
 	var watcher *mtls.CertWatcher
 	var err error
-	backoff := 10 * time.Millisecond
+	backoff := 100 * time.Millisecond
 	for i := 0; i < 50; i++ {
 		serverTLS, watcher, err = mtls.LoadServerConfig(mtlsCfg, []string{mtls.RouterSPIFFEID})
 		if err == nil {
 			break
 		}
+		klog.V(2).Infof("Waiting for SPIRE certs (attempt %d/50): %v. Retrying in %v...", i+1, err, backoff)
 		time.Sleep(backoff)
 		backoff *= 2
 		if backoff > 1*time.Second {

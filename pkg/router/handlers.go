@@ -76,7 +76,7 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 
 	// Forward request to sandbox with session ID
 	klog.V(2).Infof("Forwarding to sandbox: sessionID=%s namespace=%s name=%s path=%s", sandbox.SessionID, namespace, name, path)
-	s.forwardToSandbox(c, sandbox, path, kind)
+	s.forwardToSandbox(c, sandbox, path)
 
 	if err := s.storeClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
 		klog.Warningf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
@@ -321,10 +321,8 @@ func (s *Server) handleCodeInterpreterInvoke(c *gin.Context) {
 	s.handleInvoke(c, namespace, name, path, types.CodeInterpreterKind)
 }
 
-// forwardToSandbox forwards the request to the specified sandbox endpoint.
-// kind must be types.AgentRuntimeKind or types.CodeInterpreterKind; mTLS is
-// only applied for CodeInterpreter/PicoD sandboxes.
-func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, path, kind string) {
+// forwardToSandbox forwards the request to the specified sandbox endpoint
+func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, path string) {
 	targetURL, ok := s.resolveSandboxTarget(c, sandbox, path)
 	if !ok {
 		return
@@ -332,33 +330,12 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 
 	// Create reverse proxy with reusable transport
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	proxy.Transport = s.httpTransport
 
-	// mTLS is only applicable to CodeInterpreter/PicoD sandboxes. AgentRuntime
-	// sandboxes use arbitrary user containers with no TLS — always use plain HTTP.
-	var useMTLS bool
-	if kind == types.CodeInterpreterKind && s.config.PicodAuthMode == PicodAuthModeMTLS {
-		if s.mtlsPicodTransport == nil {
-			klog.Error("CRITICAL: picod-auth-mode is 'mtls' but mTLS transport is nil. Refusing to downgrade to JWT.")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "mTLS authentication is requested but mTLS transport is not configured"})
-			return
-		}
-		proxy.Transport = s.mtlsPicodTransport
-		targetURL.Scheme = "https"
-		useMTLS = true
-	} else {
-		proxy.Transport = s.httpTransport
-		useMTLS = false
-	}
-
-	// In mTLS mode, the TLS handshake authenticates the Router — no JWT needed.
-	// In JWT mode (or when mTLS is not available), sign the request with a JWT.
-	var jwtToken string
-	if !useMTLS {
-		var ok bool
-		jwtToken, ok = s.generateSandboxJWT(c, sandbox)
-		if !ok {
-			return
-		}
+	// Sign the request with a JWT for sandbox authentication
+	jwtToken, ok := s.generateSandboxJWT(c, sandbox)
+	if !ok {
+		return
 	}
 
 	configureProxyDirector(proxy, c, targetURL, path, jwtToken, sandbox.SessionID)

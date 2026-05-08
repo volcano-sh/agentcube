@@ -38,7 +38,6 @@ func main() {
 		debug                 = flag.Bool("debug", false, "Enable debug mode")
 		maxConcurrentRequests = flag.Int("max-concurrent-requests", 1000, "Maximum number of concurrent requests that a router server can handle (0 = unlimited)")
 		enableMTLS            = flag.Bool("enable-mtls", false, "Enable mutual TLS on the Router listener and for Router-to-WorkloadManager connections")
-		picodAuthMode         = flag.String("picod-auth-mode", "mtls", "Authentication mode for Router->PicoD: 'mtls' (default) or 'jwt'")
 
 		// mTLS flags (certificate source abstraction)
 		mtlsCertFile, mtlsKeyFile, mtlsCAFile string
@@ -69,14 +68,6 @@ func main() {
 	}
 
 	// Create Router API server configuration
-	// Validate picod-auth-mode
-	switch *picodAuthMode {
-	case router.PicodAuthModeMTLS, router.PicodAuthModeJWT:
-		// valid
-	default:
-		klog.Fatalf("invalid --picod-auth-mode %q: must be %q or %q", *picodAuthMode, router.PicodAuthModeMTLS, router.PicodAuthModeJWT)
-	}
-
 	config := &router.Config{
 		Port:                  *port,
 		Debug:                 *debug,
@@ -85,10 +76,7 @@ func main() {
 		TLSKey:                *tlsKey,
 		MaxConcurrentRequests: *maxConcurrentRequests,
 		EnableMTLS:            *enableMTLS,
-		PicodAuthMode:         *picodAuthMode,
-		MTLSCertFile:          mtlsCertFile,
-		MTLSKeyFile:           mtlsKeyFile,
-		MTLSCAFile:            mtlsCAFile,
+		MTLSConfig:            mTLSCfg,
 	}
 
 	// Create Router API server

@@ -25,7 +25,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
 
-	"github.com/volcano-sh/agentcube/pkg/mtls"
 	"github.com/volcano-sh/agentcube/pkg/store"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -33,15 +32,13 @@ import (
 
 // Server is the main structure for Router apiserver
 type Server struct {
-	config             *Config
-	engine             *gin.Engine
-	httpServer         *http.Server
-	sessionManager     SessionManager
-	storeClient        store.Store
-	httpTransport      *http.Transport // Reusable HTTP transport for connection pooling
-	jwtManager         *JWTManager     // JWT manager for signing requests to sandboxes
-	mtlsPicodTransport *http.Transport // mTLS transport for proxying to PicoD (nil when mTLS disabled)
-	picodCertWatcher   *mtls.CertWatcher
+	config         *Config
+	engine         *gin.Engine
+	httpServer     *http.Server
+	sessionManager SessionManager
+	storeClient    store.Store
+	httpTransport  *http.Transport // Reusable HTTP transport for connection pooling
+	jwtManager     *JWTManager     // JWT manager for signing requests to sandboxes
 }
 
 // NewServer creates a new Router API server instance
@@ -60,17 +57,9 @@ func NewServer(config *Config) (*Server, error) {
 	if config.InitialConnectRetryInterval <= 0 {
 		config.InitialConnectRetryInterval = 200 * time.Millisecond
 	}
-	if config.PicodAuthMode == "" {
-		config.PicodAuthMode = PicodAuthModeMTLS
-	}
 
 	// Create session manager with store client and mTLS config
-	mtlsCfg := &mtls.Config{
-		CertFile: config.MTLSCertFile,
-		KeyFile:  config.MTLSKeyFile,
-		CAFile:   config.MTLSCAFile,
-	}
-	sessionManager, err := NewSessionManager(store.Storage(), config.EnableMTLS, mtlsCfg)
+	sessionManager, err := NewSessionManager(store.Storage(), config.EnableMTLS, &config.MTLSConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session manager: %w", err)
 	}
@@ -93,21 +82,6 @@ func NewServer(config *Config) (*Server, error) {
 		sessionManager: sessionManager,
 		storeClient:    store.Storage(),
 		httpTransport:  httpTransport,
-	}
-
-	// When mTLS is enabled, create a dedicated transport for proxying to PicoD sandboxes
-	if config.EnableMTLS && mtlsCfg.Enabled() {
-		picodTLS, watcher, err := mtls.LoadClientConfig(mtlsCfg, mtls.SandboxSPIFFEID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load mTLS client config for PicoD: %w", err)
-		}
-		server.mtlsPicodTransport = &http.Transport{
-			TLSClientConfig:    picodTLS,
-			IdleConnTimeout:    0,
-			DisableCompression: false,
-		}
-		server.picodCertWatcher = watcher
-		klog.Infof("Router→PicoD mTLS enabled: expecting server SPIFFE ID %s", mtls.SandboxSPIFFEID)
 	}
 
 	// Initialize JWT manager for signing requests to sandboxes
@@ -204,10 +178,6 @@ func (s *Server) Start(ctx context.Context) error {
 		defer cancel()
 		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
 			klog.Errorf("Server shutdown error: %v", err)
-		}
-		// Stop PicoD cert watcher to release file descriptors
-		if s.picodCertWatcher != nil {
-			s.picodCertWatcher.Stop()
 		}
 		if s.sessionManager != nil {
 			_ = s.sessionManager.Close()

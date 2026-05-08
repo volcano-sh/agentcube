@@ -70,9 +70,6 @@ spec:
           args:
             - --port={{ .Values.router.service.targetPort }}
             - --debug
-            {{- if .Values.router.picodAuthMode }}
-            - --picod-auth-mode={{ .Values.router.picodAuthMode }}
-            {{- end }}
           resources:
             {{- toYaml .Values.router.resources | nindent 12 }}
           livenessProbe:

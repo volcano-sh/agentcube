@@ -21,6 +21,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/volcano-sh/agentcube/pkg/mtls"
 )
 
 func TestLastActivityAnnotationKey(t *testing.T) {
@@ -147,10 +149,12 @@ func TestConfig(t *testing.T) {
 		{
 			name: "mTLS file mode configuration",
 			config: Config{
-				Port:         "8080",
-				MTLSCertFile: "/certs/cert.pem",
-				MTLSKeyFile:  "/certs/key.pem",
-				MTLSCAFile:   "/certs/ca.pem",
+				Port: "8080",
+				MTLSConfig: mtls.Config{
+					CertFile: "/certs/cert.pem",
+					KeyFile:  "/certs/key.pem",
+					CAFile:   "/certs/ca.pem",
+				},
 			},
 			description: "mTLS with file-based certificates",
 		},
@@ -199,14 +203,14 @@ func TestConfig(t *testing.T) {
 				t.Errorf("MaxConcurrentRequests not preserved: got %d, want %d",
 					decoded.MaxConcurrentRequests, tt.config.MaxConcurrentRequests)
 			}
-			if decoded.MTLSCertFile != tt.config.MTLSCertFile {
-				t.Errorf("MTLSCertFile not preserved: got %q, want %q", decoded.MTLSCertFile, tt.config.MTLSCertFile)
+			if decoded.MTLSConfig.CertFile != tt.config.MTLSConfig.CertFile {
+				t.Errorf("MTLSConfig.CertFile not preserved: got %q, want %q", decoded.MTLSConfig.CertFile, tt.config.MTLSConfig.CertFile)
 			}
-			if decoded.MTLSKeyFile != tt.config.MTLSKeyFile {
-				t.Errorf("MTLSKeyFile not preserved: got %q, want %q", decoded.MTLSKeyFile, tt.config.MTLSKeyFile)
+			if decoded.MTLSConfig.KeyFile != tt.config.MTLSConfig.KeyFile {
+				t.Errorf("MTLSConfig.KeyFile not preserved: got %q, want %q", decoded.MTLSConfig.KeyFile, tt.config.MTLSConfig.KeyFile)
 			}
-			if decoded.MTLSCAFile != tt.config.MTLSCAFile {
-				t.Errorf("MTLSCAFile not preserved: got %q, want %q", decoded.MTLSCAFile, tt.config.MTLSCAFile)
+			if decoded.MTLSConfig.CAFile != tt.config.MTLSConfig.CAFile {
+				t.Errorf("MTLSConfig.CAFile not preserved: got %q, want %q", decoded.MTLSConfig.CAFile, tt.config.MTLSConfig.CAFile)
 			}
 		})
 	}

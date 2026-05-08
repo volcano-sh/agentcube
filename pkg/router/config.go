@@ -16,7 +16,11 @@ limitations under the License.
 
 package router
 
-import "time"
+import (
+	"time"
+
+	"github.com/volcano-sh/agentcube/pkg/mtls"
+)
 
 // LastActivityAnnotationKey is the annotation key for tracking last activity
 const LastActivityAnnotationKey = "agentcube.volcano.sh/last-activity"
@@ -48,27 +52,10 @@ type Config struct {
 	// InitialConnectRetryInterval is the delay between preflight retries.
 	InitialConnectRetryInterval time.Duration
 
-	// EnableMTLS enables mutual TLS for Router's outbound connections.
+	// EnableMTLS enables mutual TLS on the Router listener and for
+	// Router-to-WorkloadManager connections.
 	EnableMTLS bool
 
-	// PicodAuthMode controls how the Router authenticates to PicoD sandboxes.
-	// "mtls" (default): use mTLS transport, skip JWT signing.
-	// "jwt": use plain HTTP with JWT tokens (low-latency path).
-	PicodAuthMode string
-
-	// mTLS configuration (certificate source abstraction)
-
-	// MTLSCertFile is the path to the mTLS certificate (--mtls-cert-file)
-	MTLSCertFile string
-	// MTLSKeyFile is the path to the mTLS private key (--mtls-key-file)
-	MTLSKeyFile string
-	// MTLSCAFile is the path to the mTLS CA bundle (--mtls-ca-file)
-	MTLSCAFile string
+	// MTLSConfig holds the mTLS certificate paths (cert, key, CA bundle).
+	MTLSConfig mtls.Config
 }
-
-const (
-	// PicodAuthModeMTLS uses mutual TLS for Router→PicoD authentication.
-	PicodAuthModeMTLS = "mtls"
-	// PicodAuthModeJWT uses JWT token signing for Router→PicoD authentication.
-	PicodAuthModeJWT = "jwt"
-)

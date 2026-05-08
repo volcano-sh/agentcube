@@ -94,7 +94,12 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	var err error
 	switch sandboxReq.Kind {
 	case types.AgentRuntimeKind:
-		sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers, s.config.EnableSandboxMTLS, s.config.SPIFFEHelperImage)
+		// Do not inject mTLS sidecars into AgentRuntime sandboxes: they use arbitrary
+		// user-defined containers that are not PicoD and won't have TLS enabled.
+		// Injecting spiffe-helper would add unnecessary overhead and fail on nodes
+		// where the SPIRE agent socket is absent. mTLS injection is scoped to
+		// CodeInterpreter/PicoD sandboxes only.
+		sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers, false, "")
 	case types.CodeInterpreterKind:
 		sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers, s.config.EnableSandboxMTLS, s.config.SPIFFEHelperImage)
 	}

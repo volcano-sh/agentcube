@@ -33,15 +33,15 @@ import (
 
 // Server is the main structure for Router apiserver
 type Server struct {
-	config              *Config
-	engine              *gin.Engine
-	httpServer          *http.Server
-	sessionManager      SessionManager
-	storeClient         store.Store
-	httpTransport       *http.Transport // Reusable HTTP transport for connection pooling
-	jwtManager          *JWTManager     // JWT manager for signing requests to sandboxes
-	mtlsPicodTransport  *http.Transport // mTLS transport for proxying to PicoD (nil when mTLS disabled)
-	picodCertWatcher    *mtls.CertWatcher
+	config             *Config
+	engine             *gin.Engine
+	httpServer         *http.Server
+	sessionManager     SessionManager
+	storeClient        store.Store
+	httpTransport      *http.Transport // Reusable HTTP transport for connection pooling
+	jwtManager         *JWTManager     // JWT manager for signing requests to sandboxes
+	mtlsPicodTransport *http.Transport // mTLS transport for proxying to PicoD (nil when mTLS disabled)
+	picodCertWatcher   *mtls.CertWatcher
 }
 
 // NewServer creates a new Router API server instance

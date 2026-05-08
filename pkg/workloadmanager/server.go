@@ -71,7 +71,7 @@ type Config struct {
 	// When true, --mtls-cert-file, --mtls-key-file, and --mtls-ca-file must be provided.
 	EnableMTLS bool
 
-	// EnableSandboxMTLS enables the automatic injection of SPIRE mTLS sidecars and 
+	// EnableSandboxMTLS enables the automatic injection of SPIRE mTLS sidecars and
 	// volume mounts into newly created sandbox pods.
 	EnableSandboxMTLS bool
 

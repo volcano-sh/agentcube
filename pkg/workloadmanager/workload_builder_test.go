@@ -139,26 +139,19 @@ func TestInjectMTLSVolumes_InjectsSidecarAndVolumes(t *testing.T) {
 	// Sidecar has 3 volume mounts
 	assert.Len(t, podSpec.Containers[0].VolumeMounts, 3)
 
-	// Main container has spire-certs mount
+	// Main container has spire-certs mount (read-only)
 	foundCertMount := false
 	for _, vm := range podSpec.Containers[1].VolumeMounts {
 		if vm.Name == spireCertVolumeName && vm.MountPath == spireCertMountPath {
 			foundCertMount = true
+			assert.True(t, vm.ReadOnly, "cert mount should be read-only")
 		}
 	}
 	assert.True(t, foundCertMount, "expected main container to have spire-certs volume mount")
 
-	// Main container args include mTLS flags
-	args := podSpec.Containers[1].Args
-	expectedFlags := []string{
-		"--enable-mtls",
-		"--mtls-cert-file=" + spireCertMountPath + "/" + svidCertFileName,
-		"--mtls-key-file=" + spireCertMountPath + "/" + svidKeyFileName,
-		"--mtls-ca-file=" + spireCertMountPath + "/" + svidBundleFileName,
-	}
-	for _, flag := range expectedFlags {
-		assert.Contains(t, args, flag)
-	}
+	// Container args must NOT be mutated — PicoD auto-detects certs itself
+	assert.Equal(t, []string{"--port=8080"}, podSpec.Containers[1].Args,
+		"injectMTLSVolumes must not mutate workload container args")
 }
 
 func TestInjectMTLSVolumes_PreservesExistingArgs(t *testing.T) {
@@ -176,14 +169,10 @@ func TestInjectMTLSVolumes_PreservesExistingArgs(t *testing.T) {
 	injectMTLSVolumes(params)
 	podSpec := params.podSpec
 
-	// Original args should still be present at the start (now on container[1])
+	// Original args should be unchanged (now on container[1] after sidecar prepend)
 	args := podSpec.Containers[1].Args
-	if len(args) < 6 { // 2 original + 4 mTLS flags
-		t.Fatalf("expected at least 6 args, got %d: %v", len(args), args)
-	}
-	if args[0] != "--port=8080" || args[1] != "--workspace=/tmp" {
-		t.Errorf("original args should be preserved at the start: %v", args)
-	}
+	assert.Equal(t, []string{"--port=8080", "--workspace=/tmp"}, args,
+		"injectMTLSVolumes must not modify workload container args")
 }
 
 func TestInjectMTLSVolumes_EmptyContainers(t *testing.T) {
@@ -206,4 +195,3 @@ func TestInjectMTLSVolumes_EmptyContainers(t *testing.T) {
 		t.Errorf("expected 1 container (sidecar only), got %d", len(podSpec.Containers))
 	}
 }
-

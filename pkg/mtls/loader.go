@@ -66,7 +66,7 @@ func LoadServerConfig(cfg *Config, expectedClientIDs []string) (*tls.Config, *Ce
 // Trust bundle rotation will require a process restart until a dynamic CAWatcher is implemented.
 //
 // The expectedServerID is required; the server must present a matching SPIFFE ID in its URI SAN.
-// This sets InsecureSkipVerify=true to bypass standard DNS hostname checking 
+// This sets InsecureSkipVerify=true to bypass standard DNS hostname checking
 // and manually verifies the cryptographic chain and the SPIFFE ID instead.
 func LoadClientConfig(cfg *Config, expectedServerID string) (*tls.Config, *CertWatcher, error) {
 	if expectedServerID == "" {
@@ -88,9 +88,9 @@ func LoadClientConfig(cfg *Config, expectedServerID string) (*tls.Config, *CertW
 	}
 
 	tlsCfg := &tls.Config{
-		GetClientCertificate:  watcher.GetClientCertificate,
-		RootCAs:               caPool,
-		MinVersion:            tls.VersionTLS13,
+		GetClientCertificate: watcher.GetClientCertificate,
+		RootCAs:              caPool,
+		MinVersion:           tls.VersionTLS13,
 		//nolint:gosec // G402: we use VerifyPeerCertificate for custom SPIFFE ID verification instead
 		InsecureSkipVerify:    true,
 		VerifyPeerCertificate: verifyPeerChainAndSPIFFEID(caPool, expectedServerID),

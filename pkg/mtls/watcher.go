@@ -167,7 +167,7 @@ func (cw *CertWatcher) watchLoop() {
 // handleRenameEvent manages the retry loop for re-watching files after atomic renames.
 func (cw *CertWatcher) handleRenameEvent(targetFile string) {
 	_ = cw.watcher.Remove(targetFile)
-	
+
 	// Run the retry loop in a background goroutine to prevent blocking the watchLoop
 	// which could cause fsnotify buffers to overflow during long backoffs.
 	go func() {
@@ -184,7 +184,7 @@ func (cw *CertWatcher) handleRenameEvent(targetFile string) {
 				return // Success
 			}
 			klog.V(4).Infof("Failed to re-watch %s (attempt %d/5). Retrying in %v...", targetFile, i+1, delay)
-			
+
 			// Wait for delay, or exit immediately if stopped
 			select {
 			case <-cw.done:
@@ -193,7 +193,7 @@ func (cw *CertWatcher) handleRenameEvent(targetFile string) {
 			}
 			delay *= 2 // Exponential backoff (100, 200, 400, 800, 1600ms)
 		}
-		
+
 		klog.Errorf("CRITICAL: Exhausted retry budget attempting to re-watch %s. Certificate rotation is permanently broken! Process restart required.", targetFile)
 	}()
 }

@@ -53,15 +53,15 @@ func init() {
 
 func main() {
 	var (
-		port             = flag.String("port", "8080", "API server port")
-		runtimeClassName = flag.String("runtime-class-name", "kuasar-vmm", "RuntimeClassName for sandbox pods")
-		enableTLS        = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
-		tlsCert          = flag.String("tls-cert", "", "Path to TLS certificate file")
-		tlsKey           = flag.String("tls-key", "", "Path to TLS key file")
+		port              = flag.String("port", "8080", "API server port")
+		runtimeClassName  = flag.String("runtime-class-name", "kuasar-vmm", "RuntimeClassName for sandbox pods")
+		enableTLS         = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
+		tlsCert           = flag.String("tls-cert", "", "Path to TLS certificate file")
+		tlsKey            = flag.String("tls-key", "", "Path to TLS key file")
 		enableAuth        = flag.Bool("enable-auth", false, "Enable Authentication")
 		enableMTLS        = flag.Bool("enable-mtls", false, "Enable mutual TLS on the WorkloadManager listener")
-		enableSandboxMTLS  = flag.Bool("enable-sandbox-mtls", false, "Enable automatic injection of SPIRE mTLS sidecars into sandbox pods")
-		spiffeHelperImage  = flag.String("spiffe-helper-image", "", "Container image for the spiffe-helper sidecar (default: "+workloadmanager.DefaultSPIFFEHelperImage+")")
+		enableSandboxMTLS = flag.Bool("enable-sandbox-mtls", false, "Enable automatic injection of SPIRE mTLS sidecars into sandbox pods")
+		spiffeHelperImage = flag.String("spiffe-helper-image", "", "Container image for the spiffe-helper sidecar (default: "+workloadmanager.DefaultSPIFFEHelperImage+")")
 
 		// mTLS flags (certificate source abstraction)
 		mtlsCertFile, mtlsKeyFile, mtlsCAFile string
@@ -88,9 +88,9 @@ func main() {
 	}
 
 	if *enableMTLS && !mTLSCfg.Enabled() {
- 		klog.Fatalf("Invalid mTLS configuration: --enable-mtls requires --mtls-cert-file, --mtls-key-file, and --mtls-ca-file")
- 	}
-	
+		klog.Fatalf("Invalid mTLS configuration: --enable-mtls requires --mtls-cert-file, --mtls-key-file, and --mtls-ca-file")
+	}
+
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
@@ -122,18 +122,18 @@ func main() {
 
 	// Create API server configuration
 	config := &workloadmanager.Config{
-		Port:             *port,
-		RuntimeClassName: *runtimeClassName,
-		EnableTLS:        *enableTLS,
-		TLSCert:          *tlsCert,
-		TLSKey:           *tlsKey,
+		Port:              *port,
+		RuntimeClassName:  *runtimeClassName,
+		EnableTLS:         *enableTLS,
+		TLSCert:           *tlsCert,
+		TLSKey:            *tlsKey,
 		EnableAuth:        *enableAuth,
 		EnableMTLS:        *enableMTLS,
 		EnableSandboxMTLS: *enableSandboxMTLS,
 		SPIFFEHelperImage: *spiffeHelperImage,
 		MTLSCertFile:      mtlsCertFile,
-		MTLSKeyFile:      mtlsKeyFile,
-		MTLSCAFile:       mtlsCAFile,
+		MTLSKeyFile:       mtlsKeyFile,
+		MTLSCAFile:        mtlsCAFile,
 	}
 
 	// Create and initialize API server

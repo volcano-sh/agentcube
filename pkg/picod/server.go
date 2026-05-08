@@ -31,6 +31,15 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/mtls"
 )
 
+// Well-known paths where the spiffe-helper sidecar provisions SPIRE SVIDs.
+// PicoD auto-detects mTLS by checking for these files on startup.
+const (
+	defaultSPIRECertDir   = "/run/spire/certs"
+	defaultSVIDCertFile   = "svid.pem"
+	defaultSVIDKeyFile    = "svid_key.pem"
+	defaultSVIDBundleFile = "svid_bundle.pem"
+)
+
 // Config defines server configuration
 type Config struct {
 	Port      int    `json:"port"`
@@ -92,6 +101,12 @@ func NewServer(config Config) *Server {
 	engine.Use(gin.Logger())   // Request logging
 	engine.Use(gin.Recovery()) // Crash recovery
 
+	// Auto-detect mTLS: if the well-known SPIRE cert files exist (provisioned by
+	// the spiffe-helper sidecar), enable mTLS automatically without requiring
+	// explicit --enable-mtls flags. This decouples PicoD from WorkloadManager's
+	// sidecar injection — no container arg mutation needed.
+	s.autoDetectMTLS()
+
 	// When mTLS is enabled, transport-layer auth replaces JWT-based auth.
 	// The TLS handshake itself authenticates the caller (Router) via SPIFFE ID.
 	if config.EnableMTLS {
@@ -123,7 +138,7 @@ func NewServer(config Config) *Server {
 	return s
 }
 
-// Start starts the server and blocks until ctx is cancelled or a fatal error occurs.
+// Start starts the server and blocks until ctx is canceled or a fatal error occurs.
 func (s *Server) Start(ctx context.Context) error {
 	addr := fmt.Sprintf(":%d", s.config.Port)
 	klog.Infof("PicoD server starting on %s", addr)
@@ -209,4 +224,33 @@ func (s *Server) HealthCheckHandler(c *gin.Context) {
 		"version": "0.0.1",
 		"uptime":  time.Since(s.startTime).String(),
 	})
+}
+
+// autoDetectMTLS checks for SPIRE-provisioned SVID files at the well-known
+// mount path. If all three files (cert, key, bundle) are present, mTLS is
+// enabled automatically — PicoD does not need explicit --enable-mtls flags
+// injected by WorkloadManager.
+func (s *Server) autoDetectMTLS() {
+	if s.config.EnableMTLS {
+		// Already explicitly enabled via flags; nothing to auto-detect.
+		return
+	}
+
+	certPath := defaultSPIRECertDir + "/" + defaultSVIDCertFile
+	keyPath := defaultSPIRECertDir + "/" + defaultSVIDKeyFile
+	bundlePath := defaultSPIRECertDir + "/" + defaultSVIDBundleFile
+
+	if fileExists(certPath) && fileExists(keyPath) && fileExists(bundlePath) {
+		klog.Infof("Auto-detected SPIRE certs at %s — enabling mTLS automatically", defaultSPIRECertDir)
+		s.config.EnableMTLS = true
+		s.config.MTLSCertFile = certPath
+		s.config.MTLSKeyFile = keyPath
+		s.config.MTLSCAFile = bundlePath
+	}
+}
+
+// fileExists returns true if path exists and is a regular file.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }

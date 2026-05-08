@@ -130,16 +130,16 @@ func loadPublicKeyFromSecret(clientset kubernetes.Interface) error {
 }
 
 type buildSandboxParams struct {
-	namespace          string
-	workloadName       string
-	sandboxName        string
-	sessionID          string
-	ttl                time.Duration
-	idleTimeout        time.Duration
-	podSpec            corev1.PodSpec
-	podLabels          map[string]string
-	podAnnotations     map[string]string
-	spiffeHelperImage  string
+	namespace         string
+	workloadName      string
+	sandboxName       string
+	sessionID         string
+	ttl               time.Duration
+	idleTimeout       time.Duration
+	podSpec           corev1.PodSpec
+	podLabels         map[string]string
+	podAnnotations    map[string]string
+	spiffeHelperImage string
 }
 
 type buildSandboxClaimParams struct {
@@ -185,7 +185,7 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 			Labels: map[string]string{
 				SessionIdLabelKey:    params.sessionID,
 				WorkloadNameLabelKey: params.workloadName,
-				"managed-by":        "agentcube-workload-manager",
+				"managed-by":         "agentcube-workload-manager",
 			},
 			Annotations: map[string]string{
 				IdleTimeoutAnnotationKey: params.idleTimeout.String(),
@@ -352,7 +352,6 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 	codeInterpreterObj := *codeInterpreterObjPtr
 
-
 	// Check public key available if authMode is picod
 	if codeInterpreterObj.Spec.AuthMode == runtimev1alpha1.AuthModePicoD && !IsPublicKeyCached() {
 		return nil, nil, nil, api.ErrPublicKeyMissing
@@ -492,11 +491,6 @@ const (
 	// --spiffe-helper-image flag (Config.SPIFFEHelperImage).
 	DefaultSPIFFEHelperImage = "ghcr.io/spiffe/spiffe-helper:0.8.0"
 
-	// SVID file names written by spiffe-helper (must match values.yaml).
-	svidCertFileName   = "svid.pem"
-	svidKeyFileName    = "svid_key.pem"
-	svidBundleFileName = "svid_bundle.pem"
-
 	// spiffeHelperConfigContent is the inline configuration for the spiffe-helper sidecar.
 	spiffeHelperConfigContent = `
 agent_address = "/run/spire/sockets/agent.sock"
@@ -534,7 +528,7 @@ func injectMTLSVolumes(params *buildSandboxParams) {
 
 	addMTLSVolumes(params, podSpec)
 	addMTLSSidecar(params, podSpec)
-	injectWorkloadMTLS(podSpec)
+	addCertMountsToWorkloads(podSpec)
 }
 
 func addMTLSVolumes(params *buildSandboxParams, podSpec *corev1.PodSpec) {
@@ -543,11 +537,15 @@ func addMTLSVolumes(params *buildSandboxParams, podSpec *corev1.PodSpec) {
 		existingVolumes[v.Name] = true
 	}
 
-	// Add annotation for DownwardAPI inline config
+	// Add annotation for DownwardAPI inline config when one is not already set.
+	// If the operator has pre-configured this annotation (e.g., custom spiffe-helper
+	// settings), preserve it rather than silently overwriting it.
 	if params.podAnnotations == nil {
 		params.podAnnotations = make(map[string]string)
 	}
-	params.podAnnotations[spiffeHelperConfigAnnotationKey] = spiffeHelperConfigContent
+	if _, exists := params.podAnnotations[spiffeHelperConfigAnnotationKey]; !exists {
+		params.podAnnotations[spiffeHelperConfigAnnotationKey] = spiffeHelperConfigContent
+	}
 
 	if !existingVolumes[spireAgentSocketVolumeName] {
 		podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{
@@ -560,7 +558,7 @@ func addMTLSVolumes(params *buildSandboxParams, podSpec *corev1.PodSpec) {
 			},
 		})
 	}
-	
+
 	if !existingVolumes[spiffeHelperConfigVolumeName] {
 		podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{
 			Name: spiffeHelperConfigVolumeName,
@@ -615,8 +613,11 @@ func addMTLSSidecar(params *buildSandboxParams, podSpec *corev1.PodSpec) {
 	podSpec.Containers = append([]corev1.Container{sidecar}, podSpec.Containers...)
 }
 
-func injectWorkloadMTLS(podSpec *corev1.PodSpec) {
-	injectedMTLSFlags := false
+// addCertMountsToWorkloads mounts the shared cert volume into all non-sidecar
+// workload containers so they can read the SPIRE-provisioned SVIDs.
+// It does NOT mutate container args — PicoD auto-detects certs at the well-known
+// path and enables mTLS itself.
+func addCertMountsToWorkloads(podSpec *corev1.PodSpec) {
 	for i := range podSpec.Containers {
 		if podSpec.Containers[i].Name == "spiffe-helper" {
 			continue
@@ -636,31 +637,6 @@ func injectWorkloadMTLS(podSpec *corev1.PodSpec) {
 				ReadOnly:  true,
 			})
 		}
-
-		if podSpec.Containers[i].Name == "picod" || podSpec.Containers[i].Name == "code-interpreter" {
-			hasMTLSFlag := false
-			for _, arg := range podSpec.Containers[i].Args {
-				if arg == "--enable-mtls" {
-					hasMTLSFlag = true
-					break
-				}
-			}
-			if !hasMTLSFlag {
-				podSpec.Containers[i].Args = append(podSpec.Containers[i].Args,
-					"--enable-mtls",
-					"--mtls-cert-file="+spireCertMountPath+"/"+svidCertFileName,
-					"--mtls-key-file="+spireCertMountPath+"/"+svidKeyFileName,
-					"--mtls-ca-file="+spireCertMountPath+"/"+svidBundleFileName,
-				)
-			}
-			injectedMTLSFlags = true
-		}
-	}
-
-	if !injectedMTLSFlags {
-		klog.Warningf("mTLS sidecar injected but no container named 'picod' or 'code-interpreter' was found. "+
-			"The --enable-mtls flags were NOT injected into any workload container. "+
-			"If your container uses a different name, mTLS will not be active despite the cert volume being mounted.")
 	}
 }
 

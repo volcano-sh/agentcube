@@ -95,6 +95,7 @@ class TestAgentRuntimeDataPlaneClient(unittest.TestCase):
     def test_bootstrap_session_id_extracts_header(self, mock_create_session):
         sess = Mock()
         resp = Mock()
+        resp.status_code = 200
         resp.raise_for_status.return_value = None
         resp.headers = {"x-agentcube-session-id": "abc"}
         sess.get.return_value = resp

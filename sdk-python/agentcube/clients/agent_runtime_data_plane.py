@@ -56,14 +56,19 @@ class AgentRuntimeDataPlaneClient:
             self.base_url,
             timeout=(self.connect_timeout, self.timeout),
         )
-        resp.raise_for_status()
-
         session_id = resp.headers.get(self.SESSION_HEADER)
-        if not session_id:
-            raise ValueError(
-                f"Missing required response header: {self.SESSION_HEADER}"
-            )
-        return session_id
+        if session_id:
+            if resp.status_code >= 400:
+                self.logger.warning(
+                    f"Bootstrap request returned status {resp.status_code}, "
+                    f"but session ID was found: {session_id}"
+                )
+            return session_id
+        resp.raise_for_status()
+        raise ValueError(
+            f"Missing required response header: {self.SESSION_HEADER} "
+            f"(Status: {resp.status_code}, Response: {resp.text[:100]})"
+        )
 
     def invoke(
         self,

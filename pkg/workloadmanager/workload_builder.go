@@ -425,6 +425,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	buildParams := &buildSandboxParams{
 		sandboxName:    sandboxName,
 		namespace:      namespace,
+		workloadName:   codeInterpreterName,
 		sessionID:      sessionID,
 		podSpec:        podSpec,
 		podLabels:      codeInterpreterObj.Spec.Template.Labels,

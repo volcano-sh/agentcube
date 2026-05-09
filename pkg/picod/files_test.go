@@ -275,3 +275,45 @@ func TestSetWorkspace_WithTemporaryDirectory(t *testing.T) {
 
 	assert.Equal(t, tmpDir, server.workspaceDir)
 }
+
+func TestMkdirSafe(t *testing.T) {
+	// Create a temporary workspace directory
+	tmpDir, err := os.MkdirTemp("", "picod-mkdirsafe-*")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	server := &Server{workspaceDir: tmpDir}
+
+	t.Run("normal mkdir within workspace succeeds", func(t *testing.T) {
+		dir := filepath.Join(tmpDir, "subdir", "nested")
+		err := server.mkdirSafe(dir)
+		assert.NoError(t, err)
+
+		info, statErr := os.Stat(dir)
+		assert.NoError(t, statErr)
+		assert.True(t, info.IsDir())
+	})
+
+	t.Run("symlink pointing outside workspace is blocked", func(t *testing.T) {
+		// Create an external directory that the symlink will point to
+		externalDir, err := os.MkdirTemp("", "picod-external-*")
+		assert.NoError(t, err)
+		defer os.RemoveAll(externalDir)
+
+		// Create a symlink inside the workspace pointing to the external directory
+		symlink := filepath.Join(tmpDir, "escape-link")
+		err = os.Symlink(externalDir, symlink)
+		assert.NoError(t, err)
+
+		// Attempt to mkdirSafe through the symlink — this should fail
+		targetDir := filepath.Join(symlink, "should-not-exist")
+		err = server.mkdirSafe(targetDir)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "escapes workspace jail")
+
+		// Verify the directory was NOT created outside the workspace
+		_, statErr := os.Stat(filepath.Join(externalDir, "should-not-exist"))
+		assert.True(t, os.IsNotExist(statErr), "directory should not exist outside workspace")
+	})
+}
+

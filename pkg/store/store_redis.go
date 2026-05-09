@@ -207,8 +207,8 @@ func (rs *redisStore) UpdateSandbox(ctx context.Context, sandboxRedis *types.San
 		return fmt.Errorf("UpdateSandbox: redis SETXX %s: %w", sessionKey, err)
 	}
 
-	if ok == false {
-		return fmt.Errorf("UpdateSandbox: redis SETXX %s, key not exists", sessionKey)
+	if !ok {
+		return fmt.Errorf("UpdateSandbox: redis SETXX %s, key does not exist", sessionKey)
 	}
 	return nil
 }

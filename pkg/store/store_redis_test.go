@@ -122,7 +122,7 @@ func TestRedisStore_UpdateSandbox(t *testing.T) {
 	}
 	err := c.UpdateSandbox(ctx, sandboxStoreStruct)
 	assert.NotNil(t, err)
-	assert.Contains(t, err.Error(), "key not exists")
+	assert.Contains(t, err.Error(), "key does not exist")
 }
 
 func TestGetSandboxBySessionIDNotFound(t *testing.T) {

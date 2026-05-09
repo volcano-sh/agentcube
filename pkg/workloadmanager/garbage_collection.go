@@ -104,7 +104,7 @@ func (gc *garbageCollector) once() {
 		}
 	}
 
-	// List sandboxes reach DDL
+	// List sandboxes that have reached their expiry deadline
 	expiredSandboxes, err := gc.storeClient.ListExpiredSandboxes(ctx, now, gcCandidateLimit)
 	if err != nil {
 		klog.Errorf("garbage collector error listing expired sandboxes: %v", err)

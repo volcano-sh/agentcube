@@ -71,7 +71,7 @@ spire:
     # Configuration for the spiffe-helper sidecar which automatically fetches and rotates mTLS certificates
     image:
       repository: ghcr.io/spiffe/spiffe-helper
-      tag: "0.8.0"
+      tag: "0.10.0"
       pullPolicy: IfNotPresent
     # Directory inside workload pods where the sidecar will deliver the certificates
     certDir: "/run/spire/certs"

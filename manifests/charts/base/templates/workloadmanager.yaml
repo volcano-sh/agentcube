@@ -20,6 +20,10 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.spire.enabled }}
+      securityContext:
+        fsGroup: 1000
+      {{- end }}
       containers:
         {{- if .Values.spire.enabled }}
         - name: spiffe-helper
@@ -66,18 +70,34 @@ spec:
           args:
             - --port={{ .Values.workloadmanager.service.port }}
             - --runtime-class-name=
+            {{- if .Values.spire.enabled }}
+            - --enable-mtls=true
+            - --tls-cert={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.certFileName }}
+            - --tls-key={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.keyFileName }}
+            - --tls-ca={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.bundleFileName }}
+            {{- end }}
           resources:
             {{- toYaml .Values.workloadmanager.resources | nindent 12 }}
           livenessProbe:
+            {{- if .Values.spire.enabled }}
+            tcpSocket:
+              port: {{ .Values.workloadmanager.service.port }}
+            {{- else }}
             httpGet:
               path: /health
               port: {{ .Values.workloadmanager.service.port }}
+            {{- end }}
             initialDelaySeconds: 10
             periodSeconds: 10
           readinessProbe:
+            {{- if .Values.spire.enabled }}
+            tcpSocket:
+              port: {{ .Values.workloadmanager.service.port }}
+            {{- else }}
             httpGet:
               path: /health
               port: {{ .Values.workloadmanager.service.port }}
+            {{- end }}
             initialDelaySeconds: 5
             periodSeconds: 5
       {{- if .Values.spire.enabled }}

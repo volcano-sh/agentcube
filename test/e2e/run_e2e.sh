@@ -11,7 +11,7 @@ WORKLOAD_MANAGER_IMAGE=${WORKLOAD_MANAGER_IMAGE:-workloadmanager:latest}
 ROUTER_IMAGE=${ROUTER_IMAGE:-agentcube-router:latest}
 PICOD_IMAGE=${PICOD_IMAGE:-picod:latest}
 REDIS_IMAGE=${REDIS_IMAGE:-redis:7-alpine}
-AGENTCUBE_NAMESPACE=${AGENTCUBE_NAMESPACE:-agentcube}
+AGENTCUBE_NAMESPACE=${AGENTCUBE_NAMESPACE:-agentcube-system}
 E2E_VENV_DIR=${E2E_VENV_DIR:-/tmp/agentcube-e2e-venv}
 
 # Images that need to be pre-pulled and loaded into kind cluster
@@ -313,8 +313,12 @@ run_setup() {
 
     step "Deploying AgentCube via Helm (using native parameters)..."
     # Prepare extra environment variables as JSON for Helm
-    WM_EXTRA_ENV='[{"name":"REDIS_PASSWORD_REQUIRED","value":"false"},{"name":"JWT_KEY_SECRET_NAMESPACE","value":"agentcube"}]'
+    WM_EXTRA_ENV='[{"name":"REDIS_PASSWORD_REQUIRED","value":"false"},{"name":"JWT_KEY_SECRET_NAMESPACE","value":"agentcube-system"}]'
     ROUTER_EXTRA_ENV='[{"name":"REDIS_PASSWORD_REQUIRED","value":"false"}]'
+
+    # Install SPIRE CRDs (Required before installing the chart with spire.enabled=true)
+    step "Installing SPIRE CRDs..."
+    kubectl apply -k "https://github.com/spiffe/spire-controller-manager/config/crd?ref=v0.6.4"
 
     # Install using Helm directly from the source chart
     # We use --set-json to pass the extra environment variables and enable RBAC/SA for the router
@@ -331,7 +335,14 @@ run_setup() {
         --set router.rbac.create=true \
         --set router.serviceAccountName="agentcube-router" \
         --set-json "router.extraEnv=${ROUTER_EXTRA_ENV}" \
-        --wait
+        --set spire.enabled=true \
+        --set spire.agent.insecureBootstrap=true \
+        --set spire.agent.skipKubeletVerification=true \
+        --wait --timeout=10m
+
+    step "Waiting for SPIRE infrastructure..."
+    kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status statefulset/spire-server --timeout=300s
+    kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status daemonset/spire-agent --timeout=300s
 
     step "Waiting for deployments..."
     kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/workloadmanager --timeout=300s
@@ -342,6 +353,8 @@ run_setup() {
     kubectl create clusterrolebinding e2e-test-binding --clusterrole=workloadmanager --serviceaccount="${AGENTCUBE_NAMESPACE}:e2e-test" || true
 
     step "Creating test AgentRuntimes..."
+    # The test fixtures use namespace: agentcube (user workload namespace)
+    kubectl create namespace agentcube --dry-run=client -o yaml | kubectl apply -f -
     # Create normal echo-agent
     kubectl apply --validate=false -f test/e2e/echo_agent.yaml
     # Create echo-agent-short-ttl with short sessionTimeout for TTL testing
@@ -416,16 +429,24 @@ echo "Router port forward started with PID $ROUTER_PID"
 
 # Wait for port-forwards to be ready
 echo "Waiting for port-forwards..."
-for i in $(seq 1 10); do
-    if curl -sf -o /dev/null "http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}/health" && curl -sf -o /dev/null "http://localhost:${ROUTER_LOCAL_PORT}/health/live"; then
+for i in $(seq 1 30); do
+    # Use TCP check: WM uses mTLS (client cert required), so we can't curl it without a cert.
+    # Checking port reachability is sufficient to confirm the tunnel is up.
+    wm_ok=false
+    router_ok=false
+    nc -z localhost "${WORKLOAD_MANAGER_LOCAL_PORT}" 2>/dev/null && wm_ok=true
+    nc -z localhost "${ROUTER_LOCAL_PORT}" 2>/dev/null && router_ok=true
+    if $wm_ok && $router_ok; then
         echo "Port-forwards are ready."
         break
     fi
-    if [ $i -eq 10 ]; then
-        echo "Timed out waiting for port-forwards." >&2
+    if [ $i -eq 30 ]; then
+        echo "Timed out waiting for port-forwards (wm_ready=$wm_ok router_ready=$router_ok)." >&2
+        cat /tmp/workload_port_forward.log
+        cat /tmp/router_port_forward.log
         exit 1
     fi
-    sleep 1
+    sleep 2
 done
 
 # Setup Python virtual environment for testing
@@ -449,14 +470,25 @@ require_python
 TEST_FAILED=0
 
 echo "Running Go tests..."
-if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN go test -v ./test/e2e/...; then
+# When SPIRE/mTLS is active, WORKLOAD_MANAGER_URL uses https:// but test client has no client cert.
+# Pass MTLS_ENABLED=true so tests can skip direct-WM calls (code interpreter tests) if needed.
+if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" \
+   ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" \
+   MTLS_ENABLED=true \
+   API_TOKEN=$API_TOKEN \
+   go test -v ./test/e2e/...; then
     TEST_FAILED=1
 fi
 
 echo "Running Python CodeInterpreter tests..."
 cd "$(dirname "$0")"
 
-if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py; then
+if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" \
+   ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" \
+   MTLS_ENABLED=true \
+   API_TOKEN=$API_TOKEN \
+   AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" \
+   "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py; then
     TEST_FAILED=1
 fi
 

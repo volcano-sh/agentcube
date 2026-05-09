@@ -173,4 +173,3 @@ func verifyServerCert(watcher *CertWatcher, expectedID string) func([][]byte, []
 		return fmt.Errorf("server certificate SPIFFE ID does not match expected %q", expectedID)
 	}
 }
-

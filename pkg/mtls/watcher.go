@@ -252,4 +252,3 @@ func (cw *CertWatcher) handleRenameEvent(targetFile string) {
 		klog.Errorf("CRITICAL: Exhausted retry budget attempting to re-watch %s. Certificate rotation is permanently broken! Process restart required.", targetFile)
 	}()
 }
-

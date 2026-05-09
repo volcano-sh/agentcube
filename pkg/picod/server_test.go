@@ -393,4 +393,3 @@ func TestNewServer_JWTMode_RequiresAuth(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "JWT mode should require auth")
 	resp.Body.Close()
 }
-

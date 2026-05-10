@@ -102,8 +102,8 @@ func (f *fakeStoreClient) Close() error {
 
 func TestGetSandboxBySession_Success(t *testing.T) {
 	sb := &types.SandboxInfo{
-		SandboxID: "sandbox-1",
-		Name:      "test",
+		SandboxID:        "sandbox-1",
+		Name:             "test",
 		SandboxNamespace: "default",
 		EntryPoints: []types.SandboxEntryPoint{
 			{Endpoint: "10.0.0.1:9000"},

@@ -38,7 +38,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
-	"sigs.k8s.io/agent-sandbox/controllers"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 )
 
@@ -80,7 +79,7 @@ func readySandbox() *sandboxv1alpha1.Sandbox {
 			Name:              "sandbox-1",
 			Namespace:         "ns-1",
 			UID:               "uid-123",
-			Annotations:       map[string]string{controllers.SandboxPodNameAnnotation: "pod-1"},
+			Annotations:       map[string]string{sandboxv1alpha1.SandboxPodNameAnnotation: "pod-1"},
 			CreationTimestamp: metav1.Now(),
 		},
 		Status: sandboxv1alpha1.SandboxStatus{Conditions: []metav1.Condition{{
@@ -107,10 +106,13 @@ func TestServerCreateSandbox(t *testing.T) {
 		storeErr          error
 		createSandboxErr  error
 		createClaimErr    error
+		claimReadyErr     error
 		podIPErr          error
 		readyErr          error
 		updateErr         error
 		sendResult        bool
+		missingPodName    bool
+		resolvedSandbox   string
 		expectErr         bool
 		expectCreateCalls int
 		expectClaimCalls  int
@@ -128,6 +130,13 @@ func TestServerCreateSandbox(t *testing.T) {
 			name:              "creates sandbox claim successfully",
 			sandboxClaim:      true,
 			sendResult:        true,
+			expectClaimCalls:  1,
+			expectUpdateCalls: 1,
+		},
+		{
+			name:              "sandbox claim resolves adopted sandbox name",
+			sandboxClaim:      true,
+			resolvedSandbox:   "warm-pool-sandbox-1",
 			expectClaimCalls:  1,
 			expectUpdateCalls: 1,
 		},
@@ -152,9 +161,25 @@ func TestServerCreateSandbox(t *testing.T) {
 			expectDeleteCalls: 1,
 		},
 		{
+			name:              "sandbox claim ready wait fails",
+			sandboxClaim:      true,
+			claimReadyErr:     errors.New("claim status failed"),
+			expectErr:         true,
+			expectClaimCalls:  1,
+			expectDeleteCalls: 1,
+		},
+		{
 			name:              "pod ip lookup fails triggers rollback",
 			podIPErr:          errors.New("pod ip missing"),
 			sendResult:        true,
+			expectErr:         true,
+			expectCreateCalls: 1,
+			expectDeleteCalls: 1,
+		},
+		{
+			name:              "missing pod name annotation triggers rollback",
+			sendResult:        true,
+			missingPodName:    true,
 			expectErr:         true,
 			expectCreateCalls: 1,
 			expectDeleteCalls: 1,
@@ -185,6 +210,7 @@ func TestServerCreateSandbox(t *testing.T) {
 	// avoids the repeated patch-reset-repatch cycle entirely.
 	var cur *testCase
 	var createCalls, claimCalls, deleteCalls int
+	var podIPLookupSandboxName string
 
 	server := &Server{k8sClient: &K8sClient{}}
 
@@ -202,6 +228,16 @@ func TestServerCreateSandbox(t *testing.T) {
 		claimCalls++
 		return cur.createClaimErr
 	})
+	patches.ApplyFunc(waitForSandboxClaimReady, func(_ context.Context, _ dynamic.Interface, _, _ string, _ *time.Timer) (*sandboxv1alpha1.Sandbox, error) {
+		if cur.claimReadyErr != nil {
+			return nil, cur.claimReadyErr
+		}
+		sb := readySandbox()
+		if cur.resolvedSandbox != "" {
+			sb.Name = cur.resolvedSandbox
+		}
+		return sb, nil
+	})
 	patches.ApplyFunc(deleteSandbox, func(_ context.Context, _ dynamic.Interface, _, _ string) error {
 		deleteCalls++
 		return nil
@@ -210,7 +246,8 @@ func TestServerCreateSandbox(t *testing.T) {
 		deleteCalls++
 		return nil
 	})
-	patches.ApplyMethod(reflect.TypeOf((*K8sClient)(nil)), "GetSandboxPodIP", func(_ *K8sClient, _ context.Context, _, _, _ string) (string, error) {
+	patches.ApplyMethod(reflect.TypeOf((*K8sClient)(nil)), "GetSandboxPodIP", func(_ *K8sClient, _ context.Context, _, sandboxName, _ string) (string, error) {
+		podIPLookupSandboxName = sandboxName
 		if cur.podIPErr != nil {
 			return "", cur.podIPErr
 		}
@@ -227,12 +264,16 @@ func TestServerCreateSandbox(t *testing.T) {
 			createCalls = 0
 			claimCalls = 0
 			deleteCalls = 0
+			podIPLookupSandboxName = ""
 
 			fakeStoreInst := &fakeStore{storeErr: tt.storeErr, updateErr: tt.updateErr}
 			server.storeClient = fakeStoreInst
 
 			resultChan := make(chan SandboxStatusUpdate, 1)
 			sb := readySandbox()
+			if tt.missingPodName {
+				delete(sb.Annotations, sandboxv1alpha1.SandboxPodNameAnnotation)
+			}
 			if tt.sendResult {
 				resultChan <- SandboxStatusUpdate{Sandbox: sb.DeepCopy()}
 			}
@@ -261,6 +302,9 @@ func TestServerCreateSandbox(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, resp)
 			require.Equal(t, "sess-1", resp.SessionID)
+			if tt.resolvedSandbox != "" {
+				require.Equal(t, tt.resolvedSandbox, podIPLookupSandboxName)
+			}
 			require.Equal(t, sb.Name, resp.SandboxName)
 			require.Equal(t, string(sb.UID), resp.SandboxID)
 			require.Len(t, resp.EntryPoints, 1)

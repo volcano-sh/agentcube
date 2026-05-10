@@ -21,14 +21,11 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/klog/v2"
-
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
@@ -38,6 +35,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog/v2"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 )
@@ -246,6 +244,72 @@ func createSandboxClaim(ctx context.Context, client dynamic.Interface, sandboxCl
 	return nil
 }
 
+func waitForSandboxClaimReady(ctx context.Context, client dynamic.Interface, namespace, claimName string, timer *time.Timer) (*sandboxv1alpha1.Sandbox, error) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		sandbox, err := getReadySandboxForClaim(ctx, client, namespace, claimName)
+		if err != nil && !apierrors.IsNotFound(err) {
+			timer.Stop()
+			return nil, err
+		}
+		if sandbox != nil {
+			timer.Stop()
+			return sandbox, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			klog.Warningf("sandbox claim %s/%s wait canceled: %v", namespace, claimName, ctx.Err())
+			return nil, ctx.Err()
+		case <-timer.C:
+			klog.Warningf("sandbox claim %s/%s create timed out", namespace, claimName)
+			return nil, errSandboxCreationTimeout
+		case <-ticker.C:
+		}
+	}
+}
+
+func getReadySandboxForClaim(ctx context.Context, client dynamic.Interface, namespace, claimName string) (*sandboxv1alpha1.Sandbox, error) {
+	claim, err := client.Resource(SandboxClaimGVR).Namespace(namespace).Get(
+		ctx,
+		claimName,
+		metav1.GetOptions{},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	sandboxName, found, err := unstructured.NestedString(claim.Object, "status", "sandbox", "name")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read sandbox claim %s/%s status: %w", namespace, claimName, err)
+	}
+	if !found || sandboxName == "" {
+		return nil, nil
+	}
+
+	sandboxObj, err := client.Resource(SandboxGVR).Namespace(namespace).Get(
+		ctx,
+		sandboxName,
+		metav1.GetOptions{},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	sandbox := &sandboxv1alpha1.Sandbox{}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(sandboxObj.Object, sandbox); err != nil {
+		return nil, fmt.Errorf("failed to convert sandbox %s/%s: %w", namespace, sandboxName, err)
+	}
+	if getSandboxStatus(sandbox) != sandboxStatusReady {
+		return nil, nil
+	}
+
+	return sandbox, nil
+}
+
 // deleteSandbox deletes a Sandbox using the provided dynamic client
 func deleteSandbox(ctx context.Context, client dynamic.Interface, namespace, sandboxName string) error {
 	err := client.Resource(SandboxGVR).Namespace(namespace).Delete(
@@ -296,31 +360,16 @@ func (u *UserK8sClient) DeleteSandboxClaim(ctx context.Context, namespace, sandb
 
 // GetSandboxPodIP gets the IP address of the pod corresponding to the Sandbox
 func (c *K8sClient) GetSandboxPodIP(_ context.Context, namespace, sandboxName, podName string) (string, error) {
-	// If podName is provided, try to get it directly from cache first
-	if podName != "" {
-		pod, err := c.podLister.Pods(namespace).Get(podName)
-		if err == nil && pod != nil {
-			return validateAndGetPodIP(pod)
-		}
-		klog.Infof("failed to get sandbox pod %s/%s: %v, try get pod by sandbox-name label", namespace, podName, err)
-	}
-	// Find pod through label selector (sandbox-name label we set)
-	pods, err := c.podLister.Pods(namespace).List(labels.SelectorFromSet(map[string]string{SandboxNameLabelKey: sandboxName}))
-	if err != nil {
-		return "", fmt.Errorf("failed to list pods from cache: %w", err)
-	}
-	// Find the pod that belongs to this sandbox by checking ownerReferences
-	for _, pod := range pods {
-		for _, ownerRef := range pod.OwnerReferences {
-			if ownerRef.Kind == "Sandbox" && ownerRef.Name == sandboxName {
-				if ownerRef.Controller == nil || *ownerRef.Controller {
-					return validateAndGetPodIP(pod)
-				}
-			}
-		}
+	if podName == "" {
+		return "", fmt.Errorf("sandbox %s has no pod name annotation", sandboxName)
 	}
 
-	return "", fmt.Errorf("no pod found for sandbox %s", sandboxName)
+	pod, err := c.podLister.Pods(namespace).Get(podName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get sandbox pod %s/%s: %w", namespace, podName, err)
+	}
+
+	return validateAndGetPodIP(pod)
 }
 
 // validateAndGetPodIP validates pod status and returns IP

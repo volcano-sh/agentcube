@@ -42,7 +42,7 @@ jobs:
         if: steps.changes.outputs.coverage == 'true'
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.26"
 
       - name: Run tests with coverage
         if: steps.changes.outputs.coverage == 'true'

@@ -195,6 +195,11 @@ func TestHandleInvoke_ErrorPaths(t *testing.T) {
 			expectedCode: http.StatusNotFound,
 		},
 		{
+			name:         "session target mismatch",
+			err:          api.NewSessionTargetMismatchError("session-1", "default", "test-agent", types.AgentRuntimeKind),
+			expectedCode: http.StatusConflict,
+		},
+		{
 			name:         "agent runtime not found",
 			err:          api.NewSandboxTemplateNotFoundError("default", "test-agent", types.AgentRuntimeKind),
 			expectedCode: http.StatusNotFound,

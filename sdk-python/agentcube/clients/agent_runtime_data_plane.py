@@ -59,15 +59,19 @@ class AgentRuntimeDataPlaneClient:
         session_id = resp.headers.get(self.SESSION_HEADER)
         if session_id:
             if resp.status_code >= 400:
-                self.logger.warning(
+                self.logger.debug(
                     f"Bootstrap request returned status {resp.status_code}, "
                     f"but session ID was found: {session_id}"
                 )
             return session_id
         resp.raise_for_status()
+        content_type = resp.headers.get("Content-Type")
+        content_length = resp.headers.get("Content-Length")
         raise ValueError(
             f"Missing required response header: {self.SESSION_HEADER} "
-            f"(Status: {resp.status_code}, Response: {resp.text[:100]})"
+            f"(status: {resp.status_code}, "
+            f"content-type: {content_type}, "
+            f"content-length: {content_length})"
         )
 
     def invoke(

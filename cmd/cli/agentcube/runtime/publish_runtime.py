@@ -150,6 +150,11 @@ class PublishRuntime:
                 "Please ensure 'readiness_probe_path' and 'readiness_probe_port' are set in agent_metadata.yaml."
             )
 
+        # Merge user-defined env from metadata with any env_vars from options
+        env_vars = dict(metadata.env) if metadata.env else {}
+        if options.get('env_vars'):
+            env_vars.update(options['env_vars'])
+
         # Step 3: Deploy AgentRuntime CR
         try:
             k8s_info = self.agentcube_provider.deploy_agent_runtime(
@@ -157,7 +162,7 @@ class PublishRuntime:
                 image_url=image_url,
                 port=metadata.port,
                 entrypoint=metadata.entrypoint,
-                env_vars=options.get('env_vars', None),
+                env_vars=env_vars or None,
                 workload_manager_url=metadata.workload_manager_url,
                 router_url=metadata.router_url,
                 readiness_probe_path=metadata.readiness_probe_path,
@@ -229,6 +234,11 @@ class PublishRuntime:
         if not image_url:
             raise ValueError("Image URL must be provided or configured in metadata.")
 
+        # Merge user-defined env from metadata with any env_vars from options
+        env_vars = dict(metadata.env) if metadata.env else {}
+        if options.get('env_vars'):
+            env_vars.update(options['env_vars'])
+
         # Step 3: Deploy to K8s
         k8s_info = None
         try:
@@ -239,7 +249,7 @@ class PublishRuntime:
                 entrypoint=metadata.entrypoint,
                 replicas=options.get('replicas', 1),
                 node_port=options.get('node_port', None),
-                env_vars=options.get('env_vars', None)
+                env_vars=env_vars or None
             )
 
             # Step 4: Update metadata with K8s deployment information (after creation, before readiness check)

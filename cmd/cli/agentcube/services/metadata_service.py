@@ -69,6 +69,11 @@ class AgentMetadata(BaseModel):
     agent_id: Optional[str] = Field(None, description="Agent ID assigned by AgentCube")
     session_id: Optional[str] = Field(None, description="The session ID for the agent")
 
+    # User-defined environment variables injected into sandbox pods
+    env: Optional[Dict[str, str]] = Field(
+        None, description="Extra env vars to inject into the agent container"
+    )
+
     # Kubernetes deployment fields (filled when using K8s provider)
     k8s_deployment: Optional[Dict[str, Any]] = Field(None, description="Kubernetes deployment information")
 

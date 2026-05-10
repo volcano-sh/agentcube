@@ -109,24 +109,27 @@ func (m *manager) GetSandboxBySession(ctx context.Context, sessionID string, nam
 		return nil, fmt.Errorf("failed to get sandbox from store: %w", err)
 	}
 
-	if !sessionTargetMatches(sandbox, namespace, name, kind) {
+	if !sessionTargetMatches(sandbox, sessionID, namespace, name, kind) {
 		return nil, api.NewSessionTargetMismatchError(sessionID, namespace, name, kind)
 	}
 
 	return sandbox, nil
 }
 
-func sessionTargetMatches(sandbox *types.SandboxInfo, namespace, name, kind string) bool {
+func sessionTargetMatches(sandbox *types.SandboxInfo, sessionID, namespace, name, kind string) bool {
 	if sandbox == nil {
 		return false
 	}
 	if sandbox.Kind != "" && sandbox.Kind != kind {
+		klog.V(2).InfoS("Session target mismatch", "sessionID", sessionID, "requestedNamespace", namespace, "requestedName", name, "requestedKind", kind, "actualNamespace", sandbox.SandboxNamespace, "actualName", sandbox.Name, "actualKind", sandbox.Kind)
 		return false
 	}
 	if sandbox.Name != "" && sandbox.Name != name {
+		klog.V(2).InfoS("Session target mismatch", "sessionID", sessionID, "requestedNamespace", namespace, "requestedName", name, "requestedKind", kind, "actualNamespace", sandbox.SandboxNamespace, "actualName", sandbox.Name, "actualKind", sandbox.Kind)
 		return false
 	}
 	if sandbox.SandboxNamespace != "" && sandbox.SandboxNamespace != namespace {
+		klog.V(2).InfoS("Session target mismatch", "sessionID", sessionID, "requestedNamespace", namespace, "requestedName", name, "requestedKind", kind, "actualNamespace", sandbox.SandboxNamespace, "actualName", sandbox.Name, "actualKind", sandbox.Kind)
 		return false
 	}
 	return true
@@ -203,12 +206,17 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 		return nil, api.NewInternalError(fmt.Errorf("response with empty session id from workload manager"))
 	}
 
-	// Construct Sandbox Info from response
+	// Construct Sandbox Info from response, storing the requested target metadata
+	// to enable proper session reuse validation. The ephemeral sandbox name (res.SandboxName)
+	// is not stored here to avoid the "fail-open" vulnerability where a session could be
+	// incorrectly reused for a different workload.
 	sandbox := &types.SandboxInfo{
-		SandboxID:   res.SandboxID,
-		Name:        res.SandboxName,
-		SessionID:   res.SessionID,
-		EntryPoints: res.EntryPoints,
+		SandboxID:        res.SandboxID,
+		Name:             name,
+		SandboxNamespace: namespace,
+		Kind:             kind,
+		SessionID:        res.SessionID,
+		EntryPoints:      res.EntryPoints,
 	}
 
 	return sandbox, nil

@@ -212,6 +212,179 @@ func TestGetSandboxBySession_TargetMatch_EmptyFields(t *testing.T) {
 	}
 }
 
+// ---- tests: sessionTargetMatches ----
+
+// TestSessionTargetMatches provides comprehensive coverage for the sessionTargetMatches function.
+func TestSessionTargetMatches(t *testing.T) {
+	tests := []struct {
+		name         string
+		sandbox      *types.SandboxInfo
+		sessionID    string
+		namespace    string
+		workloadName string
+		kind         string
+		expects      bool
+	}{
+		// Perfect match cases
+		{
+			name: "perfect match with all fields populated",
+			sandbox: &types.SandboxInfo{
+				Kind:             types.AgentRuntimeKind,
+				Name:             "test-agent",
+				SandboxNamespace: "default",
+			},
+			sessionID:    "sess-1",
+			namespace:    "default",
+			workloadName: "test-agent",
+			kind:         types.AgentRuntimeKind,
+			expects:      true,
+		},
+		{
+			name: "perfect match with CodeInterpreter kind",
+			sandbox: &types.SandboxInfo{
+				Kind:             types.CodeInterpreterKind,
+				Name:             "my-ci",
+				SandboxNamespace: "ai-namespace",
+			},
+			sessionID:    "sess-2",
+			namespace:    "ai-namespace",
+			workloadName: "my-ci",
+			kind:         types.CodeInterpreterKind,
+			expects:      true,
+		},
+		// Mismatch cases - each field mismatches independently
+		{
+			name: "Kind mismatch",
+			sandbox: &types.SandboxInfo{
+				Kind:             types.AgentRuntimeKind,
+				Name:             "test-agent",
+				SandboxNamespace: "default",
+			},
+			sessionID:    "sess-3",
+			namespace:    "default",
+			workloadName: "test-agent",
+			kind:         types.CodeInterpreterKind,
+			expects:      false,
+		},
+		{
+			name: "Name mismatch",
+			sandbox: &types.SandboxInfo{
+				Kind:             types.AgentRuntimeKind,
+				Name:             "test-agent",
+				SandboxNamespace: "default",
+			},
+			sessionID:    "sess-4",
+			namespace:    "default",
+			workloadName: "different-agent",
+			kind:         types.AgentRuntimeKind,
+			expects:      false,
+		},
+		{
+			name: "Namespace mismatch",
+			sandbox: &types.SandboxInfo{
+				Kind:             types.AgentRuntimeKind,
+				Name:             "test-agent",
+				SandboxNamespace: "default",
+			},
+			sessionID:    "sess-5",
+			namespace:    "kube-system",
+			workloadName: "test-agent",
+			kind:         types.AgentRuntimeKind,
+			expects:      false,
+		},
+		// Nil sandbox case
+		{
+			name:         "nil sandbox",
+			sandbox:      nil,
+			sessionID:    "sess-6",
+			namespace:    "default",
+			workloadName: "test-agent",
+			kind:         types.AgentRuntimeKind,
+			expects:      false,
+		},
+		// Empty fields in sandbox (should match as they're treated as wildcards)
+		{
+			name: "all sandbox fields empty - wildcard matching",
+			sandbox: &types.SandboxInfo{
+				Kind:             "",
+				Name:             "",
+				SandboxNamespace: "",
+			},
+			sessionID:    "sess-7",
+			namespace:    "default",
+			workloadName: "test-agent",
+			kind:         types.AgentRuntimeKind,
+			expects:      true,
+		},
+		{
+			name: "only Kind populated in sandbox",
+			sandbox: &types.SandboxInfo{
+				Kind:             types.AgentRuntimeKind,
+				Name:             "",
+				SandboxNamespace: "",
+			},
+			sessionID:    "sess-8",
+			namespace:    "default",
+			workloadName: "test-agent",
+			kind:         types.AgentRuntimeKind,
+			expects:      true,
+		},
+		{
+			name: "Kind empty in sandbox but kind matches request",
+			sandbox: &types.SandboxInfo{
+				Kind:             "",
+				Name:             "test-agent",
+				SandboxNamespace: "default",
+			},
+			sessionID:    "sess-9",
+			namespace:    "default",
+			workloadName: "test-agent",
+			kind:         types.AgentRuntimeKind,
+			expects:      true,
+		},
+		// Edge cases
+		{
+			name: "empty string kind in request",
+			sandbox: &types.SandboxInfo{
+				Kind:             "",
+				Name:             "test-agent",
+				SandboxNamespace: "default",
+			},
+			sessionID:    "sess-10",
+			namespace:    "default",
+			workloadName: "test-agent",
+			kind:         "",
+			expects:      true,
+		},
+		{
+			name: "multiple empty fields in sandbox",
+			sandbox: &types.SandboxInfo{
+				Kind:             types.AgentRuntimeKind,
+				Name:             "",
+				SandboxNamespace: "",
+			},
+			sessionID:    "sess-11",
+			namespace:    "prod",
+			workloadName: "my-workload",
+			kind:         types.AgentRuntimeKind,
+			expects:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := sessionTargetMatches(tt.sandbox, tt.sessionID, tt.namespace, tt.workloadName, tt.kind)
+			if result != tt.expects {
+				t.Errorf("sessionTargetMatches returned %v, expected %v", result, tt.expects)
+				if tt.sandbox != nil {
+					t.Logf("  Sandbox: Kind=%q Name=%q Namespace=%q", tt.sandbox.Kind, tt.sandbox.Name, tt.sandbox.SandboxNamespace)
+				}
+				t.Logf("  Request: Kind=%q Name=%q Namespace=%q SessionID=%q", tt.kind, tt.workloadName, tt.namespace, tt.sessionID)
+			}
+		})
+	}
+}
+
 // ---- tests: GetSandboxBySession with empty sessionID (sandbox creation path) ----
 
 func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
@@ -279,8 +452,14 @@ func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
 	if sandbox.SandboxID != "sandbox-456" {
 		t.Errorf("expected SandboxID sandbox-456, got %s", sandbox.SandboxID)
 	}
-	if sandbox.Name != "sandbox-test" {
-		t.Errorf("expected Name sandbox-test, got %s", sandbox.Name)
+	if sandbox.Name != "test-runtime" {
+		t.Errorf("expected Name test-runtime (the requested workload name), got %s", sandbox.Name)
+	}
+	if sandbox.SandboxNamespace != "default" {
+		t.Errorf("expected SandboxNamespace default, got %s", sandbox.SandboxNamespace)
+	}
+	if sandbox.Kind != types.AgentRuntimeKind {
+		t.Errorf("expected Kind %s, got %s", types.AgentRuntimeKind, sandbox.Kind)
 	}
 	if len(sandbox.EntryPoints) != 1 {
 		t.Fatalf("expected 1 entry point, got %d", len(sandbox.EntryPoints))

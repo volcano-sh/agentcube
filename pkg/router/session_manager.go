@@ -109,7 +109,27 @@ func (m *manager) GetSandboxBySession(ctx context.Context, sessionID string, nam
 		return nil, fmt.Errorf("failed to get sandbox from store: %w", err)
 	}
 
+	if !sessionTargetMatches(sandbox, namespace, name, kind) {
+		return nil, api.NewSessionTargetMismatchError(sessionID, namespace, name, kind)
+	}
+
 	return sandbox, nil
+}
+
+func sessionTargetMatches(sandbox *types.SandboxInfo, namespace, name, kind string) bool {
+	if sandbox == nil {
+		return false
+	}
+	if sandbox.Kind != "" && sandbox.Kind != kind {
+		return false
+	}
+	if sandbox.Name != "" && sandbox.Name != name {
+		return false
+	}
+	if sandbox.SandboxNamespace != "" && sandbox.SandboxNamespace != namespace {
+		return false
+	}
+	return true
 }
 
 // createSandbox creates a new sandbox by calling the external workload manager API.

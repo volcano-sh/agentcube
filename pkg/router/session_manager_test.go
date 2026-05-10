@@ -103,7 +103,8 @@ func (f *fakeStoreClient) Close() error {
 func TestGetSandboxBySession_Success(t *testing.T) {
 	sb := &types.SandboxInfo{
 		SandboxID: "sandbox-1",
-		Name:      "sandbox-1",
+		Name:      "test",
+		SandboxNamespace: "default",
 		EntryPoints: []types.SandboxEntryPoint{
 			{Endpoint: "10.0.0.1:9000"},
 		},
@@ -151,6 +152,63 @@ func TestGetSandboxBySession_NotFound(t *testing.T) {
 	}
 	if !apierrors.IsNotFound(err) {
 		t.Fatalf("expected not found error, got %v", err)
+	}
+}
+
+func TestGetSandboxBySession_TargetMismatch(t *testing.T) {
+	r := &fakeStoreClient{
+		sandbox: &types.SandboxInfo{
+			SessionID:        "sess-1",
+			Kind:             types.AgentRuntimeKind,
+			SandboxNamespace: "default",
+			Name:             "other-runtime",
+		},
+	}
+	m := &manager{
+		storeClient: r,
+	}
+
+	_, err := m.GetSandboxBySession(context.Background(), "sess-1", "default", "test-runtime", types.AgentRuntimeKind)
+	if err == nil {
+		t.Fatalf("expected conflict error for target mismatch")
+	}
+	if !apierrors.IsConflict(err) {
+		t.Fatalf("expected conflict error, got %v", err)
+	}
+}
+
+func TestGetSandboxBySession_TargetMatch(t *testing.T) {
+	r := &fakeStoreClient{
+		sandbox: &types.SandboxInfo{
+			SessionID:        "sess-1",
+			Kind:             types.AgentRuntimeKind,
+			SandboxNamespace: "default",
+			Name:             "test-runtime",
+		},
+	}
+	m := &manager{
+		storeClient: r,
+	}
+
+	_, err := m.GetSandboxBySession(context.Background(), "sess-1", "default", "test-runtime", types.AgentRuntimeKind)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestGetSandboxBySession_TargetMatch_EmptyFields(t *testing.T) {
+	r := &fakeStoreClient{
+		sandbox: &types.SandboxInfo{
+			SessionID: "sess-1",
+		},
+	}
+	m := &manager{
+		storeClient: r,
+	}
+
+	_, err := m.GetSandboxBySession(context.Background(), "sess-1", "default", "test-runtime", types.AgentRuntimeKind)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
 	}
 }
 

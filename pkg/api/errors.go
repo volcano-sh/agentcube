@@ -57,6 +57,11 @@ func NewSessionNotFoundError(sessionID string) error {
 	return apierrors.NewNotFound(sessionResource, sessionID)
 }
 
+func NewSessionTargetMismatchError(sessionID, namespace, name, kind string) error {
+	target := fmt.Sprintf("%s/%s", namespace, name)
+	return apierrors.NewConflict(sessionResource, sessionID, fmt.Errorf("session target mismatch: %s (%s)", target, kind))
+}
+
 func workloadResource(kind string) schema.GroupResource {
 	switch kind {
 	case types.CodeInterpreterKind:

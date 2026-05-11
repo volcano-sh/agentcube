@@ -129,6 +129,9 @@ func loadPublicKeyFromSecret(clientset kubernetes.Interface) error {
 	return nil
 }
 
+// buildSandboxParams holds all parameters needed to construct a Sandbox object.
+// workloadName carries the name of the AgentRuntime or CodeInterpreter template
+// that owns the sandbox, used to populate route-identity validation metadata.
 type buildSandboxParams struct {
 	namespace      string
 	workloadName   string
@@ -292,6 +295,8 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	}
 	buildParams.idleTimeout = idleTimeout
 	sandbox := buildSandboxObject(buildParams)
+	// WorkloadKind and WorkloadName record the route-identity of the owning workload
+	// so the router can validate session reuse against the correct target.
 	entry := &sandboxEntry{
 		Kind:         types.SandboxKind,
 		WorkloadKind: types.AgentRuntimeKind,
@@ -351,6 +356,8 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		idleTimeout = codeInterpreterObj.Spec.SessionTimeout.Duration
 	}
 
+	// WorkloadKind and WorkloadName record the route-identity of the owning workload
+	// so the router can validate session reuse against the correct target.
 	sandboxEntry := &sandboxEntry{
 		Kind:         types.SandboxKind,
 		WorkloadKind: types.CodeInterpreterKind,

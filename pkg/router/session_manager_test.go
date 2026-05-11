@@ -105,6 +105,8 @@ func TestGetSandboxBySession_Success(t *testing.T) {
 		SandboxID:        "sandbox-1",
 		Name:             "test",
 		SandboxNamespace: "default",
+		WorkloadKind:     types.AgentRuntimeKind,
+		WorkloadName:     "test",
 		EntryPoints: []types.SandboxEntryPoint{
 			{Endpoint: "10.0.0.1:9000"},
 		},
@@ -159,9 +161,9 @@ func TestGetSandboxBySession_TargetMismatch(t *testing.T) {
 	r := &fakeStoreClient{
 		sandbox: &types.SandboxInfo{
 			SessionID:        "sess-1",
-			Kind:             types.AgentRuntimeKind,
+			WorkloadKind:     types.AgentRuntimeKind,
 			SandboxNamespace: "default",
-			Name:             "other-runtime",
+			WorkloadName:     "other-runtime",
 		},
 	}
 	m := &manager{
@@ -181,9 +183,9 @@ func TestGetSandboxBySession_TargetMatch(t *testing.T) {
 	r := &fakeStoreClient{
 		sandbox: &types.SandboxInfo{
 			SessionID:        "sess-1",
-			Kind:             types.AgentRuntimeKind,
+			WorkloadKind:     types.AgentRuntimeKind,
 			SandboxNamespace: "default",
-			Name:             "test-runtime",
+			WorkloadName:     "test-runtime",
 		},
 	}
 	m := &manager{
@@ -207,8 +209,11 @@ func TestGetSandboxBySession_TargetMatch_EmptyFields(t *testing.T) {
 	}
 
 	_, err := m.GetSandboxBySession(context.Background(), "sess-1", "default", "test-runtime", types.AgentRuntimeKind)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
+	if err == nil {
+		t.Fatalf("expected conflict error for missing session metadata")
+	}
+	if !apierrors.IsConflict(err) {
+		t.Fatalf("expected conflict error, got %v", err)
 	}
 }
 
@@ -229,8 +234,8 @@ func TestSessionTargetMatches(t *testing.T) {
 		{
 			name: "perfect match with all fields populated",
 			sandbox: &types.SandboxInfo{
-				Kind:             types.AgentRuntimeKind,
-				Name:             "test-agent",
+				WorkloadKind:     types.AgentRuntimeKind,
+				WorkloadName:     "test-agent",
 				SandboxNamespace: "default",
 			},
 			sessionID:    "sess-1",
@@ -242,8 +247,8 @@ func TestSessionTargetMatches(t *testing.T) {
 		{
 			name: "perfect match with CodeInterpreter kind",
 			sandbox: &types.SandboxInfo{
-				Kind:             types.CodeInterpreterKind,
-				Name:             "my-ci",
+				WorkloadKind:     types.CodeInterpreterKind,
+				WorkloadName:     "my-ci",
 				SandboxNamespace: "ai-namespace",
 			},
 			sessionID:    "sess-2",
@@ -256,8 +261,8 @@ func TestSessionTargetMatches(t *testing.T) {
 		{
 			name: "Kind mismatch",
 			sandbox: &types.SandboxInfo{
-				Kind:             types.AgentRuntimeKind,
-				Name:             "test-agent",
+				WorkloadKind:     types.AgentRuntimeKind,
+				WorkloadName:     "test-agent",
 				SandboxNamespace: "default",
 			},
 			sessionID:    "sess-3",
@@ -269,8 +274,8 @@ func TestSessionTargetMatches(t *testing.T) {
 		{
 			name: "Name mismatch",
 			sandbox: &types.SandboxInfo{
-				Kind:             types.AgentRuntimeKind,
-				Name:             "test-agent",
+				WorkloadKind:     types.AgentRuntimeKind,
+				WorkloadName:     "test-agent",
 				SandboxNamespace: "default",
 			},
 			sessionID:    "sess-4",
@@ -282,8 +287,8 @@ func TestSessionTargetMatches(t *testing.T) {
 		{
 			name: "Namespace mismatch",
 			sandbox: &types.SandboxInfo{
-				Kind:             types.AgentRuntimeKind,
-				Name:             "test-agent",
+				WorkloadKind:     types.AgentRuntimeKind,
+				WorkloadName:     "test-agent",
 				SandboxNamespace: "default",
 			},
 			sessionID:    "sess-5",
@@ -302,72 +307,72 @@ func TestSessionTargetMatches(t *testing.T) {
 			kind:         types.AgentRuntimeKind,
 			expects:      false,
 		},
-		// Empty fields in sandbox (should match as they're treated as wildcards)
+		// Empty fields in sandbox (should fail closed)
 		{
-			name: "all sandbox fields empty - wildcard matching",
+			name: "all sandbox fields empty",
 			sandbox: &types.SandboxInfo{
-				Kind:             "",
-				Name:             "",
+				WorkloadKind:     "",
+				WorkloadName:     "",
 				SandboxNamespace: "",
 			},
 			sessionID:    "sess-7",
 			namespace:    "default",
 			workloadName: "test-agent",
 			kind:         types.AgentRuntimeKind,
-			expects:      true,
+			expects:      false,
 		},
 		{
-			name: "only Kind populated in sandbox",
+			name: "only workload kind populated in sandbox",
 			sandbox: &types.SandboxInfo{
-				Kind:             types.AgentRuntimeKind,
-				Name:             "",
+				WorkloadKind:     types.AgentRuntimeKind,
+				WorkloadName:     "",
 				SandboxNamespace: "",
 			},
 			sessionID:    "sess-8",
 			namespace:    "default",
 			workloadName: "test-agent",
 			kind:         types.AgentRuntimeKind,
-			expects:      true,
+			expects:      false,
 		},
 		{
-			name: "Kind empty in sandbox but kind matches request",
+			name: "workload kind empty in sandbox",
 			sandbox: &types.SandboxInfo{
-				Kind:             "",
-				Name:             "test-agent",
+				WorkloadKind:     "",
+				WorkloadName:     "test-agent",
 				SandboxNamespace: "default",
 			},
 			sessionID:    "sess-9",
 			namespace:    "default",
 			workloadName: "test-agent",
 			kind:         types.AgentRuntimeKind,
-			expects:      true,
+			expects:      false,
 		},
 		// Edge cases
 		{
 			name: "empty string kind in request",
 			sandbox: &types.SandboxInfo{
-				Kind:             "",
-				Name:             "test-agent",
+				WorkloadKind:     "",
+				WorkloadName:     "test-agent",
 				SandboxNamespace: "default",
 			},
 			sessionID:    "sess-10",
 			namespace:    "default",
 			workloadName: "test-agent",
 			kind:         "",
-			expects:      true,
+			expects:      false,
 		},
 		{
 			name: "multiple empty fields in sandbox",
 			sandbox: &types.SandboxInfo{
-				Kind:             types.AgentRuntimeKind,
-				Name:             "",
+				WorkloadKind:     types.AgentRuntimeKind,
+				WorkloadName:     "",
 				SandboxNamespace: "",
 			},
 			sessionID:    "sess-11",
 			namespace:    "prod",
 			workloadName: "my-workload",
 			kind:         types.AgentRuntimeKind,
-			expects:      true,
+			expects:      false,
 		},
 	}
 
@@ -377,7 +382,7 @@ func TestSessionTargetMatches(t *testing.T) {
 			if result != tt.expects {
 				t.Errorf("sessionTargetMatches returned %v, expected %v", result, tt.expects)
 				if tt.sandbox != nil {
-					t.Logf("  Sandbox: Kind=%q Name=%q Namespace=%q", tt.sandbox.Kind, tt.sandbox.Name, tt.sandbox.SandboxNamespace)
+					t.Logf("  Sandbox: WorkloadKind=%q WorkloadName=%q Namespace=%q", tt.sandbox.WorkloadKind, tt.sandbox.WorkloadName, tt.sandbox.SandboxNamespace)
 				}
 				t.Logf("  Request: Kind=%q Name=%q Namespace=%q SessionID=%q", tt.kind, tt.workloadName, tt.namespace, tt.sessionID)
 			}
@@ -387,18 +392,18 @@ func TestSessionTargetMatches(t *testing.T) {
 
 // ---- tests: GetSandboxBySession with empty sessionID (sandbox creation path) ----
 
-func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
-	// Mock workload manager server
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify request method and path
+// agentRuntimeCreateHandler is a reusable mock HTTP handler for the
+// /v1/agent-runtime endpoint, extracted to reduce cyclomatic complexity of its
+// parent test.
+func agentRuntimeCreateHandler(t *testing.T) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST request, got %s", r.Method)
 		}
 		if r.URL.Path != "/v1/agent-runtime" {
 			t.Errorf("expected path /v1/agent-runtime, got %s", r.URL.Path)
 		}
-
-		// Verify request body
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Fatalf("failed to read request body: %v", err)
@@ -416,8 +421,6 @@ func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
 		if req.Namespace != "default" {
 			t.Errorf("expected namespace default, got %s", req.Namespace)
 		}
-
-		// Send successful response
 		resp := types.CreateSandboxResponse{
 			SessionID:   "new-session-123",
 			SandboxID:   "sandbox-456",
@@ -429,7 +432,11 @@ func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(resp)
-	}))
+	}
+}
+
+func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
+	mockServer := httptest.NewServer(agentRuntimeCreateHandler(t))
 	defer mockServer.Close()
 
 	r := &fakeStoreClient{}

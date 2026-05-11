@@ -50,14 +50,18 @@ func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 				}
 			},
 			entry: &sandboxEntry{
-				Kind:      types.SandboxKind,
-				SessionID: "session-123",
+				Kind:         types.SandboxKind,
+				WorkloadKind: types.AgentRuntimeKind,
+				WorkloadName: "test-runtime",
+				SessionID:    "session-123",
 			},
 			validate: func(t *testing.T, result *types.SandboxInfo) {
 				expected := now.Add(DefaultSandboxTTL)
 				assert.WithinDuration(t, expected, result.ExpiresAt, 2*time.Second)
 				assert.Equal(t, "creating", result.Status)
 				assert.Equal(t, "session-123", result.SessionID)
+				assert.Equal(t, types.AgentRuntimeKind, result.WorkloadKind)
+				assert.Equal(t, "test-runtime", result.WorkloadName)
 			},
 		},
 		{
@@ -77,8 +81,10 @@ func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 				}
 			},
 			entry: &sandboxEntry{
-				Kind:      types.SandboxKind,
-				SessionID: "session-456",
+				Kind:         types.SandboxKind,
+				WorkloadKind: types.AgentRuntimeKind,
+				WorkloadName: "test-runtime",
+				SessionID:    "session-456",
 			},
 			validate: func(t *testing.T, result *types.SandboxInfo) {
 				expected := now.Add(24 * time.Hour)
@@ -102,8 +108,10 @@ func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 				}
 			},
 			entry: &sandboxEntry{
-				Kind:      types.SandboxClaimsKind,
-				SessionID: "session-789",
+				Kind:         types.SandboxClaimsKind,
+				WorkloadKind: types.AgentRuntimeKind,
+				WorkloadName: "test-runtime",
+				SessionID:    "session-789",
 			},
 			validate: func(t *testing.T, result *types.SandboxInfo) {
 				expected := now.Add(30 * time.Minute)
@@ -135,8 +143,10 @@ func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 				}
 			},
 			entry: &sandboxEntry{
-				Kind:      types.SandboxClaimsKind,
-				SessionID: "session-wp-001",
+				Kind:         types.SandboxClaimsKind,
+				WorkloadKind: types.CodeInterpreterKind,
+				WorkloadName: "ci-template",
+				SessionID:    "session-wp-001",
 			},
 			validate: func(t *testing.T, result *types.SandboxInfo) {
 				expected := now.Add(24 * time.Hour)
@@ -144,6 +154,8 @@ func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 					"warm-pool placeholder ExpiresAt must reflect MaxSessionDuration, not the 8h default")
 				assert.Equal(t, "creating", result.Status)
 				assert.Equal(t, types.SandboxClaimsKind, result.Kind)
+				assert.Equal(t, types.CodeInterpreterKind, result.WorkloadKind)
+				assert.Equal(t, "ci-template", result.WorkloadName)
 			},
 		},
 	}
@@ -189,8 +201,10 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 			},
 			podIP: sandboxHelperTestPodIP,
 			entry: &sandboxEntry{
-				Kind:      types.AgentRuntimeKind,
-				SessionID: "test-session-123",
+				Kind:         types.AgentRuntimeKind,
+				WorkloadKind: types.AgentRuntimeKind,
+				WorkloadName: "test-runtime",
+				SessionID:    "test-session-123",
 				Ports: []runtimev1alpha1.TargetPort{
 					{
 						Port:       8080,
@@ -211,6 +225,8 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 				assert.Equal(t, sandboxHelperTestPodIP+":8080", result.EntryPoints[0].Endpoint)
 				assert.Equal(t, "/metrics", result.EntryPoints[1].Path)
 				assert.Equal(t, sandboxHelperTestPodIP+":9090", result.EntryPoints[1].Endpoint)
+				assert.Equal(t, types.AgentRuntimeKind, result.WorkloadKind)
+				assert.Equal(t, "test-runtime", result.WorkloadName)
 			},
 		},
 		{
@@ -346,7 +362,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected:    "ready",
+			expected: "ready",
 		},
 		{
 			name: "ready condition false without reason",
@@ -360,7 +376,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected:    "not-ready",
+			expected: "not-ready",
 		},
 		{
 			name: "ready condition false with reason is not-ready",
@@ -376,7 +392,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected:    "not-ready",
+			expected: "not-ready",
 		},
 		{
 			name: "ready condition unknown",
@@ -390,7 +406,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected:    "not-ready",
+			expected: "not-ready",
 		},
 		{
 			name: "no conditions",
@@ -399,7 +415,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					Conditions: []metav1.Condition{},
 				},
 			},
-			expected:    "not-ready",
+			expected: "not-ready",
 		},
 		{
 			name: "nil conditions",
@@ -408,7 +424,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					Conditions: nil,
 				},
 			},
-			expected:    "not-ready",
+			expected: "not-ready",
 		},
 		{
 			name: "other condition type",
@@ -422,7 +438,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected:    "not-ready",
+			expected: "not-ready",
 		},
 		{
 			name: "multiple conditions with ready true",
@@ -440,7 +456,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected:    "ready",
+			expected: "ready",
 		},
 	}
 

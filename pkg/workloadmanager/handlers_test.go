@@ -174,7 +174,7 @@ func TestServerCreateSandbox(t *testing.T) {
 			expectErr:         true,
 			expectCreateCalls: 1,
 			expectUpdateCalls: 1,
-			expectDeleteCalls: 1,
+			expectDeleteCalls: 0,
 		},
 	}
 

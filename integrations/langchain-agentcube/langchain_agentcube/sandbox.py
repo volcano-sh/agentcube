@@ -28,7 +28,7 @@ def _normalize_remote_path(path: str) -> str:
 
 
 class AgentcubeSandbox(BaseSandbox):
-    """Wraps an existing :class:`~agentcube.CodeInterpreterClient` session for ``create_deep_agent(..., backend=...)``."""
+    """Wraps :class:`~agentcube.CodeInterpreterClient` for ``create_deep_agent(..., backend=...)``."""
 
     def __init__(
         self,

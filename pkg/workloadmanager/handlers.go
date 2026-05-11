@@ -219,23 +219,9 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		return nil, err
 	}
 
-	// Use NewTimer so we can stop it explicitly when another branch wins,
-	// preventing the runtime from retaining the timer until it fires.
-	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
-
-	var createdSandbox *sandboxv1alpha1.Sandbox
-	select {
-	case result := <-resultChan:
-		timer.Stop()
-		createdSandbox = result.Sandbox
-		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
-	case <-ctx.Done():
-		timer.Stop()
-		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
-		return nil, ctx.Err()
-	case <-timer.C:
-		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
-		return nil, errSandboxCreationTimeout
+	createdSandbox, err := waitForSandboxReady(ctx, resultChan, sandbox.Namespace, sandbox.Name)
+	if err != nil {
+		return nil, err
 	}
 
 	// agent-sandbox create pod with same name as sandbox if no warmpool is used
@@ -272,12 +258,14 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 
 	needRollbackSandbox = false
 	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {
-
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if delErr := s.storeClient.DeleteSandboxBySessionID(cleanupCtx, sandboxEntry.SessionID); delErr != nil {
-			klog.Errorf("sandbox %s/%s failed to clean up store placeholder for session %s: %v", sandbox.Namespace, sandbox.Name, sandboxEntry.SessionID, delErr)
-		}
+		client := s.storeClient
+		go func(sessionID, ns, name string) {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if delErr := client.DeleteSandboxBySessionID(cleanupCtx, sessionID); delErr != nil {
+				klog.Errorf("sandbox %s/%s failed to clean up store placeholder for session %s: %v", ns, name, sessionID, delErr)
+			}
+		}(sandboxEntry.SessionID, sandbox.Namespace, sandbox.Name)
 
 		if isContextError(err) {
 			return nil, err
@@ -288,6 +276,26 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	klog.V(2).Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
 		createdSandbox.Name, createdSandbox.Kind, sandboxEntry.SessionID)
 	return response, nil
+}
+
+// waitForSandboxReady waits for the sandbox to become ready or for the context/timer to expire.
+func waitForSandboxReady(ctx context.Context, resultChan <-chan SandboxStatusUpdate, namespace, name string) (*sandboxv1alpha1.Sandbox, error) {
+	// Use NewTimer so we can stop it explicitly when another branch wins,
+	// preventing the runtime from retaining the timer until it fires.
+	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
+	defer timer.Stop()
+
+	select {
+	case result := <-resultChan:
+		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", namespace, name)
+		return result.Sandbox, nil
+	case <-ctx.Done():
+		klog.Warningf("sandbox %s/%s wait canceled: %v", namespace, name, ctx.Err())
+		return nil, ctx.Err()
+	case <-timer.C:
+		klog.Warningf("sandbox %s/%s create timed out", namespace, name)
+		return nil, errSandboxCreationTimeout
+	}
 }
 
 // rollbackSandboxCreation deletes the sandbox (or sandbox claim) and its store

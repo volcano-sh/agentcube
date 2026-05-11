@@ -355,9 +355,15 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 		}
 	}
 
+	// Use a detached context for the store delete so a client disconnect
+	// after K8s deletion doesn't orphan the store entry.
+	deleteCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	// Delete sandbox from store
-	err = s.storeClient.DeleteSandboxBySessionID(c.Request.Context(), sessionID)
+	err = s.storeClient.DeleteSandboxBySessionID(deleteCtx, sessionID)
 	if err != nil {
+		klog.Errorf("delete sandbox from store by sessionID %s failed: %v", sessionID, err)
 		respondError(c, http.StatusInternalServerError, "internal server error")
 		return
 	}

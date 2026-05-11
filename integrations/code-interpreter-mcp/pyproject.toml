@@ -1,0 +1,29 @@
+# Copyright The Volcano Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentcube-code-interpreter-mcp"
+version = "0.1.0"
+description = "MCP server exposing AgentCube Code Interpreter (Router + Workload Manager)"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.8.0",
+    "pydantic>=2.0.0",
+    "requests>=2.28.0",
+    "uvicorn>=0.30.0",
+]
+
+[project.scripts]
+agentcube-code-interpreter-mcp = "agentcube_code_interpreter_mcp.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentcube_code_interpreter_mcp*"]

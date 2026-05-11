@@ -13,6 +13,10 @@ PICOD_IMAGE=${PICOD_IMAGE:-picod:latest}
 REDIS_IMAGE=${REDIS_IMAGE:-redis:7-alpine}
 AGENTCUBE_NAMESPACE=${AGENTCUBE_NAMESPACE:-agentcube}
 E2E_VENV_DIR=${E2E_VENV_DIR:-/tmp/agentcube-e2e-venv}
+MCP_K8S_LOCAL_PORT=${MCP_K8S_LOCAL_PORT:-19446}
+
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+REPO_ROOT="$(cd "$_SCRIPT_DIR/../.." && pwd)"
 
 # Images that need to be pre-pulled and loaded into kind cluster
 # Based on agent-sandbox manifest analysis, only these images are needed:
@@ -42,6 +46,13 @@ cleanup() {
         echo "Stopping router port forward (PID: $ROUTER_PID)..."
         kill "$ROUTER_PID" 2>/dev/null || true
     fi
+    if [ -n "${MCP_K8S_PF_PID:-}" ]; then
+        echo "Stopping MCP in-cluster port forward (PID: $MCP_K8S_PF_PID)..."
+        kill "$MCP_K8S_PF_PID" 2>/dev/null || true
+    fi
+
+    # Best-effort: remove MCP Deployment so the next run starts clean
+    kubectl delete deployment agentcube-code-interpreter-mcp -n "${AGENTCUBE_NAMESPACE:-agentcube}" --ignore-not-found=true 2>/dev/null || true
 
     # Kill any remaining kubectl port-forward processes
     echo "Killing any remaining kubectl port-forward processes..."
@@ -51,8 +62,8 @@ cleanup() {
     sleep 2
 
     # Force kill any remaining processes on our ports
-    echo "Force killing any processes using ports 8080-8081..."
-    for port in 8080 8081; do
+    echo "Force killing any processes using ports 8080-8081 and MCP_K8S_LOCAL_PORT..."
+    for port in 8080 8081 "${MCP_K8S_LOCAL_PORT:-19446}"; do
         # Try lsof first (most Linux systems)
         if command -v lsof >/dev/null 2>&1 && lsof -i :$port >/dev/null 2>&1; then
             echo "Port $port is still in use, force killing with lsof..."
@@ -134,6 +145,9 @@ collect_component_logs() {
     
     # 2. Collect router logs
     collect_pod_logs "app=agentcube-router" "router" "${artifacts_dir}"
+
+    # 2b. MCP server (in-cluster E2E)
+    collect_pod_logs "app=agentcube-code-interpreter-mcp" "code-interpreter-mcp" "${artifacts_dir}"
     
     # 3. Collect Sandbox Pods logs (per-container: agentd, picod, etc.)
     echo "Collecting sandbox pods logs (agentd/picod per container)..."
@@ -375,7 +389,7 @@ step "Pre-cleanup"
 # Clean up any leftover processes before starting
 echo "Performing pre-run cleanup..."
 pkill -f "kubectl port-forward" 2>/dev/null || true
-for port in 8080 8081; do
+for port in 8080 8081 "${MCP_K8S_LOCAL_PORT:-19446}" 19245; do
     if command -v lsof > /dev/null 2>&1 && lsof -i :$port > /dev/null 2>&1; then
         lsof -ti :$port | xargs kill -9 2>/dev/null || true
     elif command -v netstat > /dev/null 2>&1 && netstat -tulpn 2>/dev/null | grep ":$port " > /dev/null; then
@@ -441,6 +455,7 @@ pip install --upgrade pip
 # Install agentcube SDK in development mode
 # We are currently in project root, sdk-python is at ./sdk-python
 pip install -e ./sdk-python
+pip install -e ./integrations/code-interpreter-mcp
 
 # Check if agentcube package is available after installation
 require_python
@@ -458,6 +473,46 @@ cd "$(dirname "$0")"
 
 if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py; then
     TEST_FAILED=1
+fi
+
+echo "Running Python Code Interpreter MCP tests (streamable-http, local subprocess)..."
+if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_mcp_code_interpreter.py; then
+    TEST_FAILED=1
+fi
+
+echo "Running Python Code Interpreter MCP stdio tests..."
+if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_mcp_code_interpreter_stdio.py; then
+    TEST_FAILED=1
+fi
+
+if [ "${E2E_SKIP_SETUP}" = "true" ]; then
+    echo "Skipping MCP in-cluster Deployment E2E (E2E_SKIP_SETUP=true — image may not be loaded in Kind)."
+else
+    step "Building and deploying MCP server into Kind for in-cluster E2E..."
+    cd "$REPO_ROOT"
+    docker build -f integrations/code-interpreter-mcp/Dockerfile -t agentcube-code-interpreter-mcp:latest .
+    kind load docker-image agentcube-code-interpreter-mcp:latest --name "${E2E_CLUSTER_NAME}"
+    kubectl apply -f integrations/code-interpreter-mcp/deployment.yaml
+    kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/agentcube-code-interpreter-mcp --timeout=300s
+    kubectl -n "${AGENTCUBE_NAMESPACE}" set env deployment/agentcube-code-interpreter-mcp "API_TOKEN=${API_TOKEN}"
+    kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/agentcube-code-interpreter-mcp --timeout=300s
+
+    echo "Starting MCP in-cluster port-forward (localhost:${MCP_K8S_LOCAL_PORT} -> svc/agentcube-code-interpreter-mcp)..."
+    kubectl port-forward -n "${AGENTCUBE_NAMESPACE}" "svc/agentcube-code-interpreter-mcp" "${MCP_K8S_LOCAL_PORT}:8000" >/tmp/mcp_k8s_port_forward.log 2>&1 &
+    MCP_K8S_PF_PID=$!
+    sleep 2
+    if ! kill -0 "$MCP_K8S_PF_PID" 2>/dev/null; then
+        echo "Failed to start MCP port-forward. Check /tmp/mcp_k8s_port_forward.log" >&2
+        cat /tmp/mcp_k8s_port_forward.log >&2 || true
+        TEST_FAILED=1
+    else
+        echo "Running Python Code Interpreter MCP in-cluster (K8s Pod) tests..."
+        cd "$_SCRIPT_DIR"
+        export MCP_K8S_MCP_URL="http://127.0.0.1:${MCP_K8S_LOCAL_PORT}/mcp"
+        if ! "$E2E_VENV_DIR/bin/python" test_mcp_code_interpreter_k8s.py; then
+            TEST_FAILED=1
+        fi
+    fi
 fi
 
 # Collect logs if tests failed

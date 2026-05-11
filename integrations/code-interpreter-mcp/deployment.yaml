@@ -1,0 +1,73 @@
+# Copyright The Volcano Authors.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Example: deploy MCP server in-cluster. Adjust URLs and secrets for your environment.
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentcube-code-interpreter-mcp
+  namespace: agentcube
+  labels:
+    app: agentcube-code-interpreter-mcp
+spec:
+  selector:
+    app: agentcube-code-interpreter-mcp
+  ports:
+    - name: mcp
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentcube-code-interpreter-mcp
+  namespace: agentcube
+  labels:
+    app: agentcube-code-interpreter-mcp
+spec:
+  # Session reuse caches CodeInterpreterClient in this process memory (_SESSIONS).
+  # Do not scale above 1 replica unless the gateway pins all MCP traffic to one Pod.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agentcube-code-interpreter-mcp
+  template:
+    metadata:
+      labels:
+        app: agentcube-code-interpreter-mcp
+    spec:
+      containers:
+        - name: mcp
+          image: agentcube-code-interpreter-mcp:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: mcp
+          env:
+            # Data plane — Router Service in the same namespace
+            - name: ROUTER_URL
+              value: "http://agentcube-router.agentcube.svc.cluster.local:8080"
+            # Control plane — Workload Manager Service
+            - name: WORKLOAD_MANAGER_URL
+              value: "http://workloadmanager.agentcube.svc.cluster.local:8080"
+            - name: AGENTCUBE_NAMESPACE
+              value: "agentcube"
+            - name: CODE_INTERPRETER_NAME
+              value: "e2e-code-interpreter"
+            # Optional: mount projected token or use CSI; placeholder for in-cluster auth
+            # - name: API_TOKEN
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: agentcube-mcp-token
+            #       key: token
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 20

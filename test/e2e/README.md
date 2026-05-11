@@ -36,7 +36,7 @@ The `run_e2e.sh` script performs the following steps:
 4. Loads images into Kind cluster
 5. Deploys Redis, WorkloadManager, and Router
 6. Creates test resources (AgentRuntime, CodeInterpreter)
-7. Runs Go tests and Python SDK tests
+7. Runs Go tests, Python SDK tests, MCP tests (local HTTP, stdio, and in-cluster Deployment when setup is not skipped)
 8. Cleans up resources
 
 ## Prerequisites
@@ -78,6 +78,25 @@ E2E_SKIP_SETUP=true ./test/e2e/run_e2e.sh
 | `test_case2_code_execution_in_session` | Stateless execution verification (variables not preserved) |
 | `test_case3_file_based_workflow_fibonacci_json` | File upload, execution, and download workflow |
 
+### Code Interpreter MCP (`test_mcp_code_interpreter.py`)
+
+| Test | Description |
+|------|-------------|
+| `test_mcp_protocol_initialize_ping_list_tools` | MCP `initialize`, notification path, `ping`, `tools/list`; asserts tools `run_code`, `execute_command`, `write_file`, `list_files`, `stop_session` |
+| `test_mcp_execute_command` | `execute_command`: `echo` output |
+| `test_mcp_stateless_execution_nameerror` | Two `run_code` on same session (SDK case2); second expects `isError` + NameError-like text |
+| `test_mcp_write_list_run_code_file_workflow` | `write_file` → `list_files` → `run_code` read file; `session_reuse` + `stop_session` (light SDK case3 + reuse) |
+
+Minimal **`run_code`** smoke (SDK case1 style) lives in **`test_mcp_code_interpreter_stdio.py`** and **`test_mcp_code_interpreter_k8s.py`** to avoid duplicating the same check three times.
+
+**`test_mcp_code_interpreter_stdio.py`** — MCP **stdio**: `stdio_client` spawns `python -m agentcube_code_interpreter_mcp --transport stdio`, then `initialize` / `list_tools` / `run_code` against live Router/WM (same env as other Python E2E).
+
+**`test_mcp_code_interpreter_k8s.py`** — MCP **in-cluster**: `run_e2e.sh` builds the MCP image, loads it into Kind, applies `integrations/code-interpreter-mcp/deployment.yaml`, injects `API_TOKEN`, port-forwards `svc/agentcube-code-interpreter-mcp`, sets **`MCP_K8S_MCP_URL`**, then runs streamable-http client tests against the Pod.
+
+When **`E2E_SKIP_SETUP=true`**, the in-cluster MCP build/load/deploy step is **skipped** (image may not exist in Kind).
+
+Local subprocess MCP tests use **Streamable HTTP** at `/mcp` on `127.0.0.1:19245` by default (`MCP_E2E_HOST` / `MCP_E2E_PORT`).
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -89,6 +108,8 @@ E2E_SKIP_SETUP=true ./test/e2e/run_e2e.sh
 | `E2E_VENV_DIR` | `/tmp/agentcube-e2e-venv` | Python virtual environment path |
 | `WORKLOAD_MANAGER_LOCAL_PORT` | `8080` | Local port for WorkloadManager |
 | `ROUTER_LOCAL_PORT` | `8081` | Local port for Router |
+| `MCP_K8S_LOCAL_PORT` | `19446` | Local port for port-forward to in-cluster MCP Service |
+| `MCP_K8S_MCP_URL` | *(set by script)* | e.g. `http://127.0.0.1:19446/mcp` — only required for `test_mcp_code_interpreter_k8s.py` when run alone |
 
 ## Test Resources
 

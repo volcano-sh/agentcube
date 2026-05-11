@@ -39,6 +39,9 @@ import (
 // errSandboxCreationTimeout is returned when the internal sandbox-ready wait exceeds the 2-minute deadline.
 var errSandboxCreationTimeout = errors.New("sandbox creation timed out")
 
+// storeCleanupTimeout is the maximum duration allowed to clean up a store placeholder.
+const storeCleanupTimeout = 30 * time.Second
+
 // isContextError reports whether err is a context cancellation or deadline error.
 func isContextError(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
@@ -284,7 +287,7 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 // placeholder when creation fails. It runs in a fresh context so that a
 // canceled request context does not prevent cleanup.
 func (s *Server) rollbackSandboxCreation(dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sessionID string) {
-	ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), storeCleanupTimeout)
 	defer cancel()
 	if sandboxClaim != nil {
 		if err := deleteSandboxClaim(ctxTimeout, dynamicClient, sandboxClaim.Namespace, sandboxClaim.Name); err != nil {
@@ -357,13 +360,13 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 
 	// Use a detached context for the store delete so a client disconnect
 	// after K8s deletion doesn't orphan the store entry.
-	deleteCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	deleteCtx, cancel := context.WithTimeout(context.Background(), storeCleanupTimeout)
 	defer cancel()
 
 	// Delete sandbox from store
 	err = s.storeClient.DeleteSandboxBySessionID(deleteCtx, sessionID)
 	if err != nil {
-		klog.Errorf("delete sandbox from store by sessionID %s failed: %v", sessionID, err)
+		klog.Errorf("delete %s %s/%s from store by sessionID %s failed: %v", sandbox.Kind, sandbox.SandboxNamespace, sandbox.Name, sessionID, err)
 		respondError(c, http.StatusInternalServerError, "internal server error")
 		return
 	}

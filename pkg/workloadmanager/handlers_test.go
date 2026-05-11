@@ -475,3 +475,59 @@ func TestHandleSandboxCreate(t *testing.T) {
 		})
 	}
 }
+
+/*
+This test verifies that the deleteSandbox handler correctly handles scenarios where the client disconnects (Context Cancellation) before the deletion operation completes.
+
+Key Points:
+
+The handler creates a new context for the K8s deletion operation using context.WithTimeout(ctx, deletionTimeout).
+This derived context remains valid even if the parent context (c.Request.Context()) is canceled.
+The test simulates a client disconnect by canceling the request context immediately after calling the deleteSandbox function.
+It verifies that the store deletion (the final cleanup step) still occurs by checking that the store's DeleteSandboxBySessionID method was called with a valid, non-canceled context.
+*/
+func TestHandleDeleteSandbox_DetachedContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	fakeServer := newFakeServer()
+
+	fakeStoreInst := &fakeStore{}
+	fakeServer.storeClient = fakeStoreInst
+
+	patches := gomonkey.NewPatches()
+	defer patches.Reset()
+
+	patches.ApplyMethod(reflect.TypeOf((*fakeStore)(nil)), "GetSandboxBySessionID", func(_ *fakeStore, _ context.Context, _ string) (*types.SandboxInfo, error) {
+		return &types.SandboxInfo{
+			Kind:             types.AgentRuntimeKind,
+			SandboxNamespace: "ns-1",
+			Name:             "sandbox-1",
+			SessionID:        "sess-1",
+		}, nil
+	})
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodDelete, "/sandboxes/sess-1", nil)
+
+	reqCtx, cancelReq := context.WithCancel(context.Background())
+	req = req.WithContext(reqCtx)
+	c.Request = req
+	c.Params = gin.Params{{Key: "sessionId", Value: "sess-1"}}
+
+	patches.ApplyFunc(deleteSandbox, func(_ context.Context, _ dynamic.Interface, _, _ string) error {
+		cancelReq()
+		return nil
+	})
+
+	storeDeleteCalled := false
+	patches.ApplyMethod(reflect.TypeOf((*fakeStore)(nil)), "DeleteSandboxBySessionID", func(_ *fakeStore, ctx context.Context, _ string) error {
+		require.NoError(t, ctx.Err(), "Store deletion context MUST NOT be canceled despite client disconnect")
+		storeDeleteCalled = true
+		return nil
+	})
+
+	fakeServer.handleDeleteSandbox(c)
+
+	require.True(t, storeDeleteCalled, "DeleteSandboxBySessionID should be called even if the request context is canceled")
+	require.Equal(t, http.StatusOK, w.Code)
+}

@@ -456,6 +456,7 @@ pip install --upgrade pip
 # We are currently in project root, sdk-python is at ./sdk-python
 pip install -e ./sdk-python
 pip install -e ./integrations/code-interpreter-mcp
+pip install -e ./integrations/langchain-agentcube
 
 # Check if agentcube package is available after installation
 require_python
@@ -472,6 +473,11 @@ echo "Running Python CodeInterpreter tests..."
 cd "$(dirname "$0")"
 
 if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py; then
+    TEST_FAILED=1
+fi
+
+echo "Running LangChain AgentcubeSandbox E2E..."
+if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_langchain_agentcube_sandbox.py; then
     TEST_FAILED=1
 fi
 

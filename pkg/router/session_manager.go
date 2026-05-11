@@ -131,11 +131,11 @@ func sessionTargetMatches(sandbox *types.SandboxInfo, sessionID, namespace, name
 		missingFields = append(missingFields, "sandboxNamespace")
 	}
 	if len(missingFields) > 0 {
-		klog.V(2).InfoS("Session target metadata missing", "sessionID", sessionID, "requestedNamespace", namespace, "requestedName", name, "requestedKind", kind, "missingFields", strings.Join(missingFields, ","))
+		klog.Warningf("Session target metadata missing for sessionID=%s: missing fields [%s] (requested namespace=%s name=%s kind=%s)", sessionID, strings.Join(missingFields, ","), namespace, name, kind)
 		return false
 	}
 	if sandbox.WorkloadKind != kind || sandbox.WorkloadName != name || sandbox.SandboxNamespace != namespace {
-		klog.V(2).InfoS("Session target mismatch", "sessionID", sessionID, "requestedNamespace", namespace, "requestedName", name, "requestedKind", kind, "actualNamespace", sandbox.SandboxNamespace, "actualWorkloadName", sandbox.WorkloadName, "actualWorkloadKind", sandbox.WorkloadKind)
+		klog.Warningf("Session target mismatch for sessionID=%s: requested namespace=%s name=%s kind=%s but session belongs to namespace=%s name=%s kind=%s", sessionID, namespace, name, kind, sandbox.SandboxNamespace, sandbox.WorkloadName, sandbox.WorkloadKind)
 		return false
 	}
 	return true

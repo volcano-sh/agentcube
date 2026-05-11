@@ -184,7 +184,7 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 			Labels: map[string]string{
 				SessionIdLabelKey:    params.sessionID,
 				WorkloadNameLabelKey: params.workloadName,
-				"managed-by":        "agentcube-workload-manager",
+				"managed-by":         "agentcube-workload-manager",
 			},
 			Annotations: map[string]string{
 				IdleTimeoutAnnotationKey: params.idleTimeout.String(),
@@ -293,10 +293,12 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 	buildParams.idleTimeout = idleTimeout
 	sandbox := buildSandboxObject(buildParams)
 	entry := &sandboxEntry{
-		Kind:        types.SandboxKind,
-		Ports:       agentRuntimeObj.Spec.Ports,
-		SessionID:   sessionID,
-		IdleTimeout: idleTimeout,
+		Kind:         types.SandboxKind,
+		WorkloadKind: types.AgentRuntimeKind,
+		WorkloadName: name,
+		Ports:        agentRuntimeObj.Spec.Ports,
+		SessionID:    sessionID,
+		IdleTimeout:  idleTimeout,
 	}
 	return sandbox, entry, nil
 }
@@ -350,10 +352,12 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 
 	sandboxEntry := &sandboxEntry{
-		Kind:        types.SandboxKind,
-		Ports:       codeInterpreterObj.Spec.Ports,
-		SessionID:   sessionID,
-		IdleTimeout: idleTimeout,
+		Kind:         types.SandboxKind,
+		WorkloadKind: types.CodeInterpreterKind,
+		WorkloadName: codeInterpreterName,
+		Ports:        codeInterpreterObj.Spec.Ports,
+		SessionID:    sessionID,
+		IdleTimeout:  idleTimeout,
 	}
 
 	// Set default port for code interpreter if not configured
@@ -426,6 +430,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		sandboxName:    sandboxName,
 		namespace:      namespace,
 		sessionID:      sessionID,
+		workloadName:   codeInterpreterName,
 		podSpec:        podSpec,
 		podLabels:      codeInterpreterObj.Spec.Template.Labels,
 		podAnnotations: codeInterpreterObj.Spec.Template.Annotations,

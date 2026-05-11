@@ -120,16 +120,22 @@ func sessionTargetMatches(sandbox *types.SandboxInfo, sessionID, namespace, name
 	if sandbox == nil {
 		return false
 	}
-	if sandbox.Kind != "" && sandbox.Kind != kind {
-		klog.V(2).InfoS("Session target mismatch", "sessionID", sessionID, "requestedNamespace", namespace, "requestedName", name, "requestedKind", kind, "actualNamespace", sandbox.SandboxNamespace, "actualName", sandbox.Name, "actualKind", sandbox.Kind)
+	missingFields := make([]string, 0, 3)
+	if sandbox.WorkloadKind == "" {
+		missingFields = append(missingFields, "workloadKind")
+	}
+	if sandbox.WorkloadName == "" {
+		missingFields = append(missingFields, "workloadName")
+	}
+	if sandbox.SandboxNamespace == "" {
+		missingFields = append(missingFields, "sandboxNamespace")
+	}
+	if len(missingFields) > 0 {
+		klog.V(2).InfoS("Session target metadata missing", "sessionID", sessionID, "requestedNamespace", namespace, "requestedName", name, "requestedKind", kind, "missingFields", strings.Join(missingFields, ","))
 		return false
 	}
-	if sandbox.Name != "" && sandbox.Name != name {
-		klog.V(2).InfoS("Session target mismatch", "sessionID", sessionID, "requestedNamespace", namespace, "requestedName", name, "requestedKind", kind, "actualNamespace", sandbox.SandboxNamespace, "actualName", sandbox.Name, "actualKind", sandbox.Kind)
-		return false
-	}
-	if sandbox.SandboxNamespace != "" && sandbox.SandboxNamespace != namespace {
-		klog.V(2).InfoS("Session target mismatch", "sessionID", sessionID, "requestedNamespace", namespace, "requestedName", name, "requestedKind", kind, "actualNamespace", sandbox.SandboxNamespace, "actualName", sandbox.Name, "actualKind", sandbox.Kind)
+	if sandbox.WorkloadKind != kind || sandbox.WorkloadName != name || sandbox.SandboxNamespace != namespace {
+		klog.V(2).InfoS("Session target mismatch", "sessionID", sessionID, "requestedNamespace", namespace, "requestedName", name, "requestedKind", kind, "actualNamespace", sandbox.SandboxNamespace, "actualWorkloadName", sandbox.WorkloadName, "actualWorkloadKind", sandbox.WorkloadKind)
 		return false
 	}
 	return true
@@ -215,6 +221,8 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 		Name:             name,
 		SandboxNamespace: namespace,
 		Kind:             kind,
+		WorkloadKind:     kind,
+		WorkloadName:     name,
 		SessionID:        res.SessionID,
 		EntryPoints:      res.EntryPoints,
 	}

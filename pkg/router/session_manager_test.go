@@ -557,7 +557,7 @@ func TestNewSessionManager_MTLSEnabled_ValidCerts(t *testing.T) {
 	t.Setenv("WORKLOAD_MANAGER_URL", "https://localhost:8080")
 
 	cfg := &mtls.Config{CertFile: certFile, KeyFile: keyFile, CAFile: caFile}
-	sm, err := NewSessionManager(&fakeStoreClient{}, true, cfg)
+	sm, err := NewSessionManager(&fakeStoreClient{}, cfg)
 	if err != nil {
 		t.Fatalf("NewSessionManager with mTLS failed: %v", err)
 	}
@@ -576,36 +576,32 @@ func TestNewSessionManager_MTLSEnabled_ValidCerts(t *testing.T) {
 	m.certWatcher.Stop()
 }
 
-func TestNewSessionManager_MTLSEnabled_MissingCerts(t *testing.T) {
-	t.Setenv("WORKLOAD_MANAGER_URL", "https://localhost:8080")
-
-	// enableMTLS=true but nil config
-	_, err := NewSessionManager(&fakeStoreClient{}, true, nil)
-	if err == nil {
-		t.Fatal("expected error when mTLS enabled with nil config")
-	}
-
-	// enableMTLS=true but empty config
-	_, err = NewSessionManager(&fakeStoreClient{}, true, &mtls.Config{})
-	if err == nil {
-		t.Fatal("expected error when mTLS enabled with empty config")
-	}
-}
-
 func TestNewSessionManager_MTLSDisabled(t *testing.T) {
 	t.Setenv("WORKLOAD_MANAGER_URL", "http://localhost:8080")
 
-	sm, err := NewSessionManager(&fakeStoreClient{}, false, nil)
-	if err != nil {
-		t.Fatalf("NewSessionManager without mTLS failed: %v", err)
+	tests := []struct {
+		name string
+		cfg  *mtls.Config
+	}{
+		{name: "nil config", cfg: nil},
+		{name: "empty config", cfg: &mtls.Config{}},
 	}
 
-	m, ok := sm.(*manager)
-	if !ok {
-		t.Fatal("expected *manager type")
-	}
-	if m.certWatcher != nil {
-		t.Error("expected certWatcher to be nil when mTLS is disabled")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sm, err := NewSessionManager(&fakeStoreClient{}, tt.cfg)
+			if err != nil {
+				t.Fatalf("NewSessionManager without mTLS failed: %v", err)
+			}
+
+			m, ok := sm.(*manager)
+			if !ok {
+				t.Fatal("expected *manager type")
+			}
+			if m.certWatcher != nil {
+				t.Error("expected certWatcher to be nil when mTLS is disabled")
+			}
+		})
 	}
 }
 

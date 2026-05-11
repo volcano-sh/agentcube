@@ -30,16 +30,4 @@ spec:
   namespaceSelector:
     matchLabels:
       kubernetes.io/metadata.name: {{ .Release.Namespace }}
-
----
-# PicoD (Sandbox) registration - namespace-agnostic
-apiVersion: spire.spiffe.io/v1alpha1
-kind: ClusterSPIFFEID
-metadata:
-  name: {{ .Release.Name }}-agentcube-sandbox
-spec:
-  spiffeIDTemplate: "spiffe://{{ .Values.spire.trustDomain }}/sa/{{ "{{ .PodSpec.ServiceAccountName }}" }}"
-  podSelector:
-    matchLabels:
-      app: picod
 {{- end }}

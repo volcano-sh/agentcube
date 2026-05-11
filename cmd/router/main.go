@@ -37,7 +37,6 @@ func main() {
 		tlsKey                = flag.String("tls-key", "", "Path to TLS key file for the Router listener")
 		debug                 = flag.Bool("debug", false, "Enable debug mode")
 		maxConcurrentRequests = flag.Int("max-concurrent-requests", 1000, "Maximum number of concurrent requests that a router server can handle (0 = unlimited)")
-		enableMTLS            = flag.Bool("enable-mtls", false, "Enable mutual TLS on the Router listener and for Router-to-WorkloadManager connections")
 
 		// mTLS client certificates used by the Router to authenticate with upstream WorkloadManager.
 		// These are distinct from --tls-cert/--tls-key which serve the Router's own HTTPS listener.
@@ -62,10 +61,6 @@ func main() {
 		klog.Fatalf("Invalid mTLS configuration: %v", err)
 	}
 
-	if *enableMTLS && !tlsConfig.Enabled() {
-		klog.Fatalf("Invalid mTLS configuration: --enable-mtls requires --mtls-cert, --mtls-key, and --mtls-ca")
-	}
-
 	// Create Router API server configuration
 	config := &router.Config{
 		Port:                  *port,
@@ -74,7 +69,6 @@ func main() {
 		TLSCert:               *tlsCert,
 		TLSKey:                *tlsKey,
 		MaxConcurrentRequests: *maxConcurrentRequests,
-		EnableMTLS:            *enableMTLS,
 		MTLSConfig:            tlsConfig,
 	}
 

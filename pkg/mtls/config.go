@@ -33,38 +33,23 @@ type Config struct {
 	CAFile string
 }
 
-// Enabled returns true if all mTLS certificate paths are configured.
-func (c *Config) Enabled() bool {
-	return c.CertFile != "" && c.KeyFile != "" && c.CAFile != ""
-}
-
 // Validate checks that the configuration is internally consistent and that
 // all referenced files exist on disk. If any path is provided, all three
 // must be specified together.
 func (c *Config) Validate() error {
+	if c.CertFile == "" && c.KeyFile == "" && c.CAFile == "" {
+		return nil
+	}
+	if c.CertFile == "" || c.KeyFile == "" || c.CAFile == "" {
+		return fmt.Errorf("cert, key, and ca must all be specified together")
+	}
+
 	paths := map[string]string{
 		"cert": c.CertFile,
 		"key":  c.KeyFile,
 		"ca":   c.CAFile,
 	}
 
-	// Check all-or-nothing: if any path is set, all must be set.
-	set := 0
-	for _, p := range paths {
-		if p != "" {
-			set++
-		}
-	}
-	if set > 0 && set < 3 {
-		return fmt.Errorf("cert, key, and ca must all be specified together")
-	}
-
-	// If none are set, nothing to validate.
-	if set == 0 {
-		return nil
-	}
-
-	// Verify that each referenced file exists.
 	for name, p := range paths {
 		if _, err := os.Stat(p); err != nil {
 			return fmt.Errorf("mTLS %s file %q not found: %w", name, p, err)

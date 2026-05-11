@@ -67,16 +67,12 @@ type Config struct {
 	// SandboxReadyProbeInterval is the retry interval for sandbox entrypoint probes.
 	SandboxReadyProbeInterval time.Duration
 
-	// EnableMTLS enables mutual TLS on the WorkloadManager listener.
-	// When true, --mtls-cert-file, --mtls-key-file, and --mtls-ca-file must be provided.
-	EnableMTLS bool
-
 	// EnableSandboxMTLS enables the automatic injection of SPIRE mTLS sidecars and
 	// volume mounts into newly created sandbox pods.
 	EnableSandboxMTLS bool
 
 	// MTLSConfig holds the mutual TLS certificate paths (cert, key, CA bundle).
-	// When EnableMTLS is true, this configuration must be valid.
+	// When all paths are present, mutual TLS is used on the WorkloadManager listener.
 	MTLSConfig mtls.Config
 
 	// SPIFFEHelperImage is the container image for the spiffe-helper sidecar injected into
@@ -179,7 +175,8 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	// Start mTLS, TLS, or plain HTTP server
-	if s.config.EnableMTLS {
+	mtlsConfigured := s.config.MTLSConfig.CertFile != "" && s.config.MTLSConfig.KeyFile != "" && s.config.MTLSConfig.CAFile != ""
+	if mtlsConfigured {
 		return s.startMTLSServer(addr)
 	}
 
@@ -199,8 +196,8 @@ func (s *Server) Start(ctx context.Context) error {
 // startMTLSServer configures and starts the server with mutual TLS.
 // It requires client certificates and verifies the caller presents the Router's SPIFFE ID.
 func (s *Server) startMTLSServer(addr string) error {
-	if !s.config.MTLSConfig.Enabled() {
-		return fmt.Errorf("--enable-mtls requires --tls-cert, --tls-key, and --tls-ca to be set")
+	if s.config.MTLSConfig.CertFile == "" || s.config.MTLSConfig.KeyFile == "" || s.config.MTLSConfig.CAFile == "" {
+		return fmt.Errorf("mTLS requires --tls-cert, --tls-key, and --tls-ca to be set")
 	}
 
 	// Only the Router is allowed to call WorkloadManager

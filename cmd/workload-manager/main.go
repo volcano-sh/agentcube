@@ -60,7 +60,6 @@ func main() {
 		tlsKey            = flag.String("tls-key", "", "Path to TLS key file")
 		tlsCA             = flag.String("tls-ca", "", "Path to TLS CA certificate file")
 		enableAuth        = flag.Bool("enable-auth", false, "Enable authorization")
-		enableMTLS        = flag.Bool("enable-mtls", false, "Whether to enable mutual TLS on the WorkloadManager api server, default to false and start a plain text http server.")
 		enableSandboxMTLS = flag.Bool("enable-sandbox-mtls", false, "Enable automatic injection of SPIRE mTLS sidecars into sandbox pods")
 		spiffeHelperImage = flag.String("spiffe-helper-image", "", "Container image for the spiffe-helper sidecar (default: "+workloadmanager.DefaultSPIFFEHelperImage+")")
 	)
@@ -79,10 +78,6 @@ func main() {
 	}
 	if err := tlsConfig.Validate(); err != nil {
 		klog.Fatalf("Invalid mTLS configuration: %v", err)
-	}
-
-	if *enableMTLS && !tlsConfig.Enabled() {
-		klog.Fatalf("Invalid mTLS configuration: --enable-mtls requires --tls-cert, --tls-key, and --tls-ca")
 	}
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
@@ -122,7 +117,6 @@ func main() {
 		TLSCert:           *tlsCert,
 		TLSKey:            *tlsKey,
 		EnableAuth:        *enableAuth,
-		EnableMTLS:        *enableMTLS,
 		EnableSandboxMTLS: *enableSandboxMTLS,
 		SPIFFEHelperImage: *spiffeHelperImage,
 		MTLSConfig:        tlsConfig,

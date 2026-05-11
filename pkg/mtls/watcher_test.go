@@ -162,6 +162,73 @@ CertUpdated:
 	}
 }
 
+func TestNewCertWatcher_KubernetesSymlinkUpdate(t *testing.T) {
+	dir := t.TempDir()
+
+	version1 := filepath.Join(dir, "..2026_01_01_00_00_00.000000001")
+	if err := os.Mkdir(version1, 0700); err != nil {
+		t.Fatalf("create first version dir: %v", err)
+	}
+	generateWatcherTestCerts(t, version1)
+
+	if err := os.Symlink(filepath.Base(version1), filepath.Join(dir, "..data")); err != nil {
+		t.Fatalf("create ..data symlink: %v", err)
+	}
+	certFile := filepath.Join(dir, "cert.pem")
+	keyFile := filepath.Join(dir, "key.pem")
+	if err := os.Symlink(filepath.Join("..data", "cert.pem"), certFile); err != nil {
+		t.Fatalf("create cert symlink: %v", err)
+	}
+	if err := os.Symlink(filepath.Join("..data", "key.pem"), keyFile); err != nil {
+		t.Fatalf("create key symlink: %v", err)
+	}
+
+	cw, err := NewCertWatcher(certFile, keyFile, "")
+	if err != nil {
+		t.Fatalf("NewCertWatcher() error: %v", err)
+	}
+	defer cw.Stop()
+
+	initialCert, err := cw.GetCertificate(nil)
+	if err != nil {
+		t.Fatalf("GetCertificate() error: %v", err)
+	}
+
+	version2 := filepath.Join(dir, "..2026_01_01_00_00_00.000000002")
+	if err := os.Mkdir(version2, 0700); err != nil {
+		t.Fatalf("create second version dir: %v", err)
+	}
+	generateWatcherTestCerts(t, version2)
+
+	nextDataLink := filepath.Join(dir, "..data_tmp")
+	if err := os.Symlink(filepath.Base(version2), nextDataLink); err != nil {
+		t.Fatalf("create replacement ..data symlink: %v", err)
+	}
+	if err := os.Rename(nextDataLink, filepath.Join(dir, "..data")); err != nil {
+		t.Fatalf("swap ..data symlink: %v", err)
+	}
+
+	var updatedCert *tls.Certificate
+	timeout := time.After(2 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout:
+			t.Fatal("timeout waiting for watcher to reload certificate after symlink swap")
+		case <-ticker.C:
+			updatedCert, err = cw.GetCertificate(nil)
+			if err != nil {
+				t.Fatalf("GetCertificate() after symlink update error: %v", err)
+			}
+			if initialCert != updatedCert {
+				return
+			}
+		}
+	}
+}
+
 func TestCertWatcher_StopIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	certFile, keyFile := generateWatcherTestCerts(t, dir)

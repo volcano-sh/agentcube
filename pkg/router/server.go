@@ -59,7 +59,7 @@ func NewServer(config *Config) (*Server, error) {
 	}
 
 	// Create session manager with store client and mTLS config
-	sessionManager, err := NewSessionManager(store.Storage(), config.EnableMTLS, &config.MTLSConfig)
+	sessionManager, err := NewSessionManager(store.Storage(), &config.MTLSConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session manager: %w", err)
 	}

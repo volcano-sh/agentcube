@@ -103,24 +103,3 @@ func TestConfig_Validate(t *testing.T) {
 		})
 	}
 }
-
-func TestConfig_Enabled(t *testing.T) {
-	tests := []struct {
-		name   string
-		config Config
-		want   bool
-	}{
-		{"empty config is disabled", Config{}, false},
-		{"partial config (cert only) is disabled", Config{CertFile: "/path/cert.pem"}, false},
-		{"partial config (missing cert) is disabled", Config{KeyFile: "/path/key.pem", CAFile: "/path/ca.pem"}, false},
-		{"full config is enabled", Config{CertFile: "/path/cert.pem", KeyFile: "/path/key.pem", CAFile: "/path/ca.pem"}, true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.config.Enabled(); got != tt.want {
-				t.Errorf("Enabled() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}

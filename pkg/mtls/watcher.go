@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -28,7 +29,7 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// CertWatcher watches certificate and CA files and reloads them on change.
+// CertWatcher watches certificate and CA directories and reloads the configured files on change.
 // It provides GetCertificate and GetCAPool callbacks for use with tls.Config,
 // enabling zero-downtime rotation for both identity certificates and trust bundles.
 type CertWatcher struct {
@@ -45,7 +46,7 @@ type CertWatcher struct {
 	done    chan struct{}
 }
 
-// NewCertWatcher creates a CertWatcher that monitors the given cert/key files
+// NewCertWatcher creates a CertWatcher that monitors the parent directories for the given cert/key files
 // and optionally a CA bundle file. It loads the initial certificate (and CA pool
 // if caFile is non-empty) and starts watching for changes.
 func NewCertWatcher(certFile, keyFile, caFile string) (*CertWatcher, error) {
@@ -75,19 +76,18 @@ func NewCertWatcher(certFile, keyFile, caFile string) (*CertWatcher, error) {
 	}
 	cw.watcher = watcher
 
-	// Watch the cert file (key file is typically updated atomically with cert)
-	if err := watcher.Add(certFile); err != nil {
-		watcher.Close()
-		return nil, fmt.Errorf("watch cert file %s: %w", certFile, err)
-	}
-	if err := watcher.Add(keyFile); err != nil {
-		watcher.Close()
-		return nil, fmt.Errorf("watch key file %s: %w", keyFile, err)
+	watchDirs := map[string]struct{}{
+		filepath.Dir(certFile): {},
+		filepath.Dir(keyFile):  {},
 	}
 	if caFile != "" {
-		if err := watcher.Add(caFile); err != nil {
+		watchDirs[filepath.Dir(caFile)] = struct{}{}
+	}
+
+	for dir := range watchDirs {
+		if err := watcher.Add(dir); err != nil {
 			watcher.Close()
-			return nil, fmt.Errorf("watch CA file %s: %w", caFile, err)
+			return nil, fmt.Errorf("watch certificate directory %s: %w", dir, err)
 		}
 	}
 
@@ -199,13 +199,9 @@ func (cw *CertWatcher) watchLoop() {
 			if !ok {
 				return
 			}
-			// Reload on write or create
-			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
-				scheduleReload()
-			}
-			// Re-watch after atomic rename (spiffe-helper does atomic renames for both cert and key)
-			if event.Has(fsnotify.Rename) || event.Has(fsnotify.Remove) {
-				cw.handleRenameEvent(event.Name)
+			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) ||
+				event.Has(fsnotify.Rename) || event.Has(fsnotify.Remove) ||
+				event.Has(fsnotify.Chmod) {
 				scheduleReload()
 			}
 		case err, ok := <-cw.watcher.Errors:
@@ -217,38 +213,4 @@ func (cw *CertWatcher) watchLoop() {
 			return
 		}
 	}
-}
-
-// handleRenameEvent manages the retry loop for re-watching files after atomic renames.
-func (cw *CertWatcher) handleRenameEvent(targetFile string) {
-	_ = cw.watcher.Remove(targetFile)
-
-	// Run the retry loop in a background goroutine to prevent blocking the watchLoop
-	// which could cause fsnotify buffers to overflow during long backoffs.
-	go func() {
-		delay := 100 * time.Millisecond
-		for i := 0; i < 5; i++ {
-			// Exit early if the watcher is intentionally stopped
-			select {
-			case <-cw.done:
-				return
-			default:
-			}
-
-			if err := cw.watcher.Add(targetFile); err == nil {
-				return // Success
-			}
-			klog.V(4).Infof("Failed to re-watch %s (attempt %d/5). Retrying in %v...", targetFile, i+1, delay)
-
-			// Wait for delay, or exit immediately if stopped
-			select {
-			case <-cw.done:
-				return
-			case <-time.After(delay):
-			}
-			delay *= 2 // Exponential backoff (100, 200, 400, 800, 1600ms)
-		}
-
-		klog.Errorf("CRITICAL: Exhausted retry budget attempting to re-watch %s. Certificate rotation is permanently broken! Process restart required.", targetFile)
-	}()
 }

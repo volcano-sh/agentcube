@@ -52,10 +52,8 @@ type Config struct {
 	// InitialConnectRetryInterval is the delay between preflight retries.
 	InitialConnectRetryInterval time.Duration
 
-	// EnableMTLS enables mutual TLS on the Router listener and for
-	// Router-to-WorkloadManager connections.
-	EnableMTLS bool
-
 	// MTLSConfig holds the mTLS certificate paths (cert, key, CA bundle).
+	// When all paths are present, mutual TLS is used for
+	// Router-to-WorkloadManager connections.
 	MTLSConfig mtls.Config
 }

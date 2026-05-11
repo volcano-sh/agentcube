@@ -75,7 +75,6 @@ spec:
             - --port={{ .Values.router.service.targetPort }}
             - --debug
             {{- if .Values.spire.enabled }}
-            - --enable-mtls=true
             - --mtls-cert={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.certFileName }}
             - --mtls-key={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.keyFileName }}
             - --mtls-ca={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.bundleFileName }}

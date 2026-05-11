@@ -45,7 +45,7 @@ type SessionManager interface {
 	// When sessionID is empty, it creates a new sandbox by calling the external API.
 	// When sessionID is not empty, it queries store for the sandbox.
 	GetSandboxBySession(ctx context.Context, sessionID string, namespace string, name string, kind string) (*types.SandboxInfo, error)
-	
+
 	// Close cleans up any background resources (like mTLS certificate watchers)
 	Close() error
 }
@@ -61,8 +61,8 @@ type manager struct {
 // NewSessionManager returns a SessionManager implementation.
 // storeClient is used to query sandbox information from store
 // workloadMgrAddr is read from the environment variable WORKLOAD_MANAGER_URL.
-// When enableMTLS is true and mtlsCfg is valid, the HTTP client uses mTLS to connect to WorkloadManager.
-func NewSessionManager(storeClient store.Store, enableMTLS bool, mtlsCfg *mtls.Config) (SessionManager, error) {
+// When mtlsCfg includes cert, key, and CA paths, the HTTP client uses mTLS to connect to WorkloadManager.
+func NewSessionManager(storeClient store.Store, mtlsCfg *mtls.Config) (SessionManager, error) {
 	workloadMgrAddr := os.Getenv("WORKLOAD_MANAGER_URL")
 	if workloadMgrAddr == "" {
 		return nil, fmt.Errorf("WORKLOAD_MANAGER_URL environment variable is not set")
@@ -76,19 +76,14 @@ func NewSessionManager(storeClient store.Store, enableMTLS bool, mtlsCfg *mtls.C
 
 	var certWatcher *mtls.CertWatcher
 
-	if enableMTLS {
+	mtlsConfigured := mtlsCfg != nil && mtlsCfg.CertFile != "" && mtlsCfg.KeyFile != "" && mtlsCfg.CAFile != ""
+	if mtlsConfigured {
 		// Ensure the URL uses https:// to prevent plaintext bypass of mTLS
-		if strings.HasPrefix(workloadMgrAddr, "http://") {
-			workloadMgrAddr = strings.Replace(workloadMgrAddr, "http://", "https://", 1)
-			klog.Infof("Rewriting WORKLOAD_MANAGER_URL to use https:// due to mTLS being enabled")
-		} else if !strings.HasPrefix(workloadMgrAddr, "https://") {
-			workloadMgrAddr = "https://" + workloadMgrAddr
-			klog.Infof("Prepending https:// to WORKLOAD_MANAGER_URL due to mTLS being enabled")
+		if !strings.HasPrefix(workloadMgrAddr, "https://") {
+			workloadMgrAddr = "https://" + strings.TrimPrefix(workloadMgrAddr, "http://")
+			klog.Infof("Using https:// for WORKLOAD_MANAGER_URL because mTLS is configured")
 		}
 
-		if mtlsCfg == nil || !mtlsCfg.Enabled() {
-			return nil, fmt.Errorf("--enable-mtls requires --mtls-cert-file, --mtls-key-file, and --mtls-ca-file to be set")
-		}
 		clientTLS, watcher, err := mtls.LoadClientConfig(mtlsCfg, mtls.WorkloadManagerSPIFFEID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load mTLS client config for WorkloadManager: %w", err)

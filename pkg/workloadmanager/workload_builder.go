@@ -242,7 +242,7 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 	return sandboxClaim
 }
 
-func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers, enableMTLS bool, spiffeHelperImageOverride string) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
+func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers, enableSandboxMTLS bool, spiffeHelperImageOverride string) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
 	agentRuntimeKey := namespace + "/" + name
 	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
 	runtimeObj, exists, _ := ifm.AgentRuntimeInformer.GetStore().GetByKey(agentRuntimeKey)
@@ -293,7 +293,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers, e
 	}
 	buildParams.idleTimeout = idleTimeout
 
-	if enableMTLS {
+	if enableSandboxMTLS {
 		buildParams.spiffeHelperImage = spiffeHelperImageOrDefault(spiffeHelperImageOverride)
 		injectMTLSVolumes(buildParams)
 	}
@@ -345,7 +345,7 @@ func getCodeInterpreterFromInformer(namespace, name string, informer *Informers)
 	return &codeInterpreterObj, nil
 }
 
-func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers, enableMTLS bool, spiffeHelperImageOverride string) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers, enableSandboxMTLS bool, spiffeHelperImageOverride string) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
 	codeInterpreterObjPtr, err := getCodeInterpreterFromInformer(namespace, codeInterpreterName, informer)
 	if err != nil {
 		return nil, nil, nil, err
@@ -388,12 +388,11 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		// agent-sandbox controller using the SandboxTemplate embedded in the CodeInterpreter CRD.
 		// WorkloadManager only creates a placeholder Sandbox (empty PodSpec) here — the real
 		// pod spec is never passed through injectMTLSVolumes. If mTLS is required for warm-pool
-		// sandboxes, the spiffe-helper sidecar, cert volumes, and --enable-mtls flags must be
 		// embedded directly in the CodeInterpreter spec.template by the operator.
-		if enableMTLS {
+		if enableSandboxMTLS {
 			klog.Warningf("CodeInterpreter %s/%s uses a warm pool (WarmPoolSize=%d) with mTLS enabled. "+
 				"The spiffe-helper sidecar will NOT be auto-injected into warm-pool sandboxes. "+
-				"Ensure the spiffe-helper sidecar and --enable-mtls flags are configured in the "+
+				"Ensure the spiffe-helper sidecar is configured in the "+
 				"CodeInterpreter spec.template directly.",
 				namespace, codeInterpreterName, *codeInterpreterObj.Spec.WarmPoolSize)
 		}
@@ -461,7 +460,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		idleTimeout:    idleTimeout,
 	}
 
-	if enableMTLS {
+	if enableSandboxMTLS {
 		buildParams.spiffeHelperImage = spiffeHelperImageOrDefault(spiffeHelperImageOverride)
 		injectMTLSVolumes(buildParams)
 	}
@@ -553,7 +552,7 @@ func addMTLSVolumes(params *buildSandboxParams, podSpec *corev1.PodSpec) {
 			VolumeSource: corev1.VolumeSource{
 				HostPath: &corev1.HostPathVolumeSource{
 					Path: spireAgentSocketPath,
-					Type: hostPathType(corev1.HostPathDirectoryOrCreate),
+					Type: hostPathType(corev1.HostPathDirectory),
 				},
 			},
 		})

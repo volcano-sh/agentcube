@@ -28,15 +28,4 @@ const (
 
 	// WorkloadManagerSPIFFEID is the SPIFFE identity for the WorkloadManager component.
 	WorkloadManagerSPIFFEID = "spiffe://cluster.local/ns/agentcube-system/sa/workloadmanager"
-
-	// SandboxSPIFFEID is the SPIFFE identity for PicoD sandbox pods.
-	//
-	// This intentionally omits the /ns/<namespace> segment because sandboxes can be created
-	// in any user-requested namespace, not just the AgentCube system namespace. The
-	// corresponding ClusterSPIFFEID registration in manifests/charts/base/templates/spire/
-	// cluster-spiffe-ids.yaml uses the same namespace-agnostic template:
-	//   spiffeIDTemplate: "spiffe://<trust-domain>/sa/{{ .PodSpec.ServiceAccountName }}"
-	// If the ServiceAccount name changes, both this constant and the SPIRE registration
-	// must be updated together.
-	SandboxSPIFFEID = "spiffe://cluster.local/sa/agentcube-sandbox"
 )

@@ -17,7 +17,7 @@ from agentcube import AgentRuntimeClient
 # first time: it will create a new pod
 agent_client_v1 = AgentRuntimeClient(
     agent_name="my-agent",
-    router_url="http://localhost:18081",
+    router_url="http://localhost:8081",
     namespace="default",
     verbose=True,
 )
@@ -31,7 +31,7 @@ print(result_v1)
 # second time: it will try to reuse the pod created before
 agent_client_v2 = AgentRuntimeClient(
     agent_name="my-agent",
-    router_url="http://localhost:18081",
+    router_url="http://localhost:8081",
     namespace="default",
     session_id=agent_client_v1.session_id,
     verbose=True,

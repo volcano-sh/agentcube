@@ -95,6 +95,7 @@ class TestAgentRuntimeDataPlaneClient(unittest.TestCase):
     def test_bootstrap_session_id_extracts_header(self, mock_create_session):
         sess = Mock()
         resp = Mock()
+        resp.status_code = 200
         resp.raise_for_status.return_value = None
         resp.headers = {"x-agentcube-session-id": "abc"}
         sess.get.return_value = resp
@@ -108,6 +109,26 @@ class TestAgentRuntimeDataPlaneClient(unittest.TestCase):
             agent_name="agent-a",
         )
         self.assertEqual(client.bootstrap_session_id(), "abc")
+
+    @patch("agentcube.clients.agent_runtime_data_plane.create_session")
+    def test_bootstrap_session_id_returns_header_on_non_2xx(self, mock_create_session):
+        sess = Mock()
+        resp = Mock()
+        resp.status_code = 404
+        resp.raise_for_status.side_effect = requests.exceptions.HTTPError(response=resp)
+        resp.headers = {"x-agentcube-session-id": "session-from-404"}
+        sess.get.return_value = resp
+        mock_create_session.return_value = sess
+
+        from agentcube.clients.agent_runtime_data_plane import AgentRuntimeDataPlaneClient
+
+        client = AgentRuntimeDataPlaneClient(
+            router_url="http://router",
+            namespace="default",
+            agent_name="agent-a",
+        )
+        self.assertEqual(client.bootstrap_session_id(), "session-from-404")
+        resp.raise_for_status.assert_not_called()
 
     @patch("agentcube.clients.agent_runtime_data_plane.create_session")
     def test_invoke_sends_session_header(self, mock_create_session):

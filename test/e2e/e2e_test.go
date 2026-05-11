@@ -723,12 +723,12 @@ func TestAgentRuntimeSessionTTL(t *testing.T) {
 		},
 	}
 
-	_, sessionID, err := env.invokeAgentRuntime(namespace, runtimeName, "", req)
+	resp, sessionID, err := env.invokeAgentRuntime(namespace, runtimeName, "", req)
 	if err != nil {
 		t.Fatalf("Failed to create session: %v", err)
 	}
 	if sessionID == "" {
-		t.Skip("Session ID not returned, skipping TTL test")
+		t.Fatalf("Session ID not returned in invocation response; cannot exercise TTL behavior. Response: %+v", resp)
 	}
 
 	t.Logf("Created session %s for TTL test", sessionID)

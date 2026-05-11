@@ -70,7 +70,7 @@ func (am *AuthManager) LoadPublicKeyFromEnv() error {
 
 	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		return fmt.Errorf("failed to parse public key: %v", err)
+		return fmt.Errorf("failed to parse public key: %w", err)
 	}
 
 	rsaPub, ok := pub.(*rsa.PublicKey)

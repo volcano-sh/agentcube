@@ -270,14 +270,21 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		EntryPoints: storeCacheInfo.EntryPoints,
 	}
 
+	needRollbackSandbox = false
 	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {
+
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if delErr := s.storeClient.DeleteSandboxBySessionID(cleanupCtx, sandboxEntry.SessionID); delErr != nil {
+			klog.Errorf("sandbox %s/%s failed to clean up store placeholder for session %s: %v", sandbox.Namespace, sandbox.Name, sandboxEntry.SessionID, delErr)
+		}
+
 		if isContextError(err) {
 			return nil, err
 		}
 		return nil, api.NewInternalError(fmt.Errorf("update store cache failed: %w", err))
 	}
 
-	needRollbackSandbox = false
 	klog.V(2).Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
 		createdSandbox.Name, createdSandbox.Kind, sandboxEntry.SessionID)
 	return response, nil

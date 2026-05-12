@@ -31,6 +31,13 @@ jobs:
       - name: Build package
         run: make build-python-cli
 
+      - name: Verify wheel install
+        run: |
+          python -m venv /tmp/agentcube-cli-smoke
+          /tmp/agentcube-cli-smoke/bin/python -m pip install --upgrade pip
+          /tmp/agentcube-cli-smoke/bin/python -m pip install cmd/cli/dist/*.whl
+          /tmp/agentcube-cli-smoke/bin/kubectl-agentcube --help
+
       - name: Read package version
         id: package
         working-directory: cmd/cli

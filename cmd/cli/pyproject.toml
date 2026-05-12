@@ -61,5 +61,7 @@ Issues = "https://github.com/volcano-sh/agentcube/issues"
 [project.scripts]
 kubectl-agentcube = "agentcube.cli.main:app"
 
-[tool.setuptools]
-packages = ["agentcube", "agentcube.cli", "agentcube.runtime", "agentcube.operations", "agentcube.services"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentcube*"]
+namespaces = false

@@ -23,10 +23,12 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -367,4 +369,36 @@ func TestNewServer_DifferentPorts(t *testing.T) {
 			assert.Equal(t, port, server.config.Port)
 		})
 	}
+}
+
+func TestServer_MaxBodySizeMiddleware(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	pubKeyPEM := generateTestPublicKeyPEM(t)
+	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	server := NewServer(Config{
+		Port:      8080,
+		Workspace: tmpDir,
+	})
+
+	ts := httptest.NewServer(server.engine)
+	defer ts.Close()
+
+	// When Content-Length exceeds MaxBodySize, the global body-size limiter
+	// middleware should reject the request with 413 before any other
+	// middleware (auth, handler) gets a chance to run.
+	oversizedBody := strings.NewReader(strings.Repeat("x", int(MaxBodySize)+1))
+	resp, err := http.Post(ts.URL+"/api/execute", "application/json", oversizedBody)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "request body too large")
 }

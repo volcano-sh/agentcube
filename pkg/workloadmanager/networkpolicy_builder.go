@@ -17,12 +17,13 @@ limitations under the License.
 package workloadmanager
 
 import (
+	"fmt"
+
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/klog/v2"
 )
 
 // k8sNamespaceLabelKey is the label automatically applied to every Namespace by
@@ -32,10 +33,10 @@ const k8sNamespaceLabelKey = "kubernetes.io/metadata.name"
 
 // buildNetworkPolicy returns a deny-all NetworkPolicy for the given sandbox with
 // explicit allow rules for router ingress and DNS egress, plus any additional rules
-// from spec. Returns nil when spec is nil (no enforcement).
-func buildNetworkPolicy(sandboxName, namespace string, spec *runtimev1alpha1.SandboxNetworkPolicy, routerSelector map[string]string, routerNamespace string) *networkingv1.NetworkPolicy {
+// from spec. Returns nil, nil when spec is nil (no enforcement).
+func buildNetworkPolicy(sandboxName, namespace string, spec *runtimev1alpha1.SandboxNetworkPolicy, routerSelector map[string]string, routerNamespace string) (*networkingv1.NetworkPolicy, error) {
 	if spec == nil {
-		return nil
+		return nil, nil
 	}
 
 	np := &networkingv1.NetworkPolicy{
@@ -60,19 +61,23 @@ func buildNetworkPolicy(sandboxName, namespace string, spec *runtimev1alpha1.San
 		},
 	}
 
-	np.Spec.Ingress = buildIngressRules(spec, routerSelector, routerNamespace)
+	ingressRules, err := buildIngressRules(spec, routerSelector, routerNamespace)
+	if err != nil {
+		return nil, err
+	}
+	np.Spec.Ingress = ingressRules
 	np.Spec.Egress = buildEgressRules(spec)
 
-	return np
+	return np, nil
 }
 
-func buildIngressRules(spec *runtimev1alpha1.SandboxNetworkPolicy, routerSelector map[string]string, routerNamespace string) []networkingv1.NetworkPolicyIngressRule {
+func buildIngressRules(spec *runtimev1alpha1.SandboxNetworkPolicy, routerSelector map[string]string, routerNamespace string) ([]networkingv1.NetworkPolicyIngressRule, error) {
 	if routerNamespace == "" {
 		// Without a NamespaceSelector the peer only matches pods in the same namespace
 		// as the NetworkPolicy, defeating cross-namespace router ingress. This is a
 		// configuration error that must be caught loudly — silent wrong semantics here
 		// would make the sandbox unreachable in any multi-namespace layout.
-		klog.Fatalf("routerNamespace must not be empty: a missing NamespaceSelector restricts router ingress to the sandbox namespace only")
+		return nil, fmt.Errorf("routerNamespace must not be empty: a missing NamespaceSelector restricts router ingress to the sandbox namespace only")
 	}
 	// Router ingress is always allowed. NamespaceSelector is set so the rule works
 	// when the router runs in a namespace distinct from the sandbox (the common
@@ -96,7 +101,7 @@ func buildIngressRules(spec *runtimev1alpha1.SandboxNetworkPolicy, routerSelecto
 		rule.Ports = toNetworkPolicyPorts(r.Ports)
 		rules = append(rules, rule)
 	}
-	return rules
+	return rules, nil
 }
 
 func buildEgressRules(spec *runtimev1alpha1.SandboxNetworkPolicy) []networkingv1.NetworkPolicyEgressRule {

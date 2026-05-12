@@ -309,7 +309,10 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers, r
 		SessionID:   sessionID,
 		IdleTimeout: idleTimeout,
 	}
-	np := buildNetworkPolicy(sandboxName, namespace, effectiveNetworkPolicy(sessionNetworkPolicy, agentRuntimeObj.Spec.Template.NetworkPolicy), routerSelector, routerNamespace)
+	np, err := buildNetworkPolicy(sandboxName, namespace, effectiveNetworkPolicy(sessionNetworkPolicy, agentRuntimeObj.Spec.Template.NetworkPolicy), routerSelector, routerNamespace)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to build network policy: %w", err)
+	}
 	return sandbox, entry, np, nil
 }
 
@@ -462,6 +465,9 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		buildParams.ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration
 	}
 	sandbox := buildSandboxObject(buildParams)
-	np := buildNetworkPolicy(sandboxName, namespace, effectiveNetworkPolicy(sessionNetworkPolicy, codeInterpreterObj.Spec.Template.NetworkPolicy), routerSelector, routerNamespace)
+	np, err := buildNetworkPolicy(sandboxName, namespace, effectiveNetworkPolicy(sessionNetworkPolicy, codeInterpreterObj.Spec.Template.NetworkPolicy), routerSelector, routerNamespace)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to build network policy: %w", err)
+	}
 	return sandbox, nil, np, sandboxEntry, nil
 }

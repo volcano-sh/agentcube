@@ -100,6 +100,11 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 		return
 	}
 
+	if s.config.EnableAuth && sandboxReq.NetworkPolicy != nil {
+		respondError(c, http.StatusForbidden, "per-session networkPolicy override is not permitted when authentication is enabled")
+		return
+	}
+
 	var sandbox *sandboxv1alpha1.Sandbox
 	var sandboxClaim *extensionsv1alpha1.SandboxClaim
 	var networkPolicy *networkingv1.NetworkPolicy
@@ -145,36 +150,41 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 
 	response, err := s.createSandbox(c.Request.Context(), dynamicClient, sandbox, sandboxClaim, networkPolicy, sandboxEntry, resultChan)
 	if err != nil {
-		// Client disconnected — abort with 499 so logs/metrics reflect the cancellation.
-		if errors.Is(err, context.Canceled) {
-			klog.Warningf("create sandbox aborted %s/%s: client disconnected", sandbox.Namespace, sandbox.Name)
-			c.AbortWithStatus(499)
-			return
-		}
-		// Deadline exceeded — client may still be connected; return 504 so they get a meaningful response.
-		if errors.Is(err, context.DeadlineExceeded) {
-			klog.Warningf("create sandbox timed out %s/%s: request deadline exceeded", sandbox.Namespace, sandbox.Name)
-			respondError(c, http.StatusGatewayTimeout, "request timed out")
-			return
-		}
-		// Internal sandbox-ready wait timed out; surface as 504 rather than a generic 500.
-		if errors.Is(err, errSandboxCreationTimeout) {
-			klog.Warningf("create sandbox timed out %s/%s: sandbox did not become ready within deadline", sandbox.Namespace, sandbox.Name)
-			respondError(c, http.StatusGatewayTimeout, err.Error())
-			return
-		}
-		klog.Errorf("create sandbox failed %s/%s: %v", sandbox.Namespace, sandbox.Name, err)
-		// Internal errors (store, K8s API) must not leak system details to callers;
-		// sandbox-level failures (terminal pod state, timeout) are safe to surface.
-		msg := err.Error()
-		if apierrors.IsInternalError(err) {
-			msg = "internal server error"
-		}
-		respondError(c, http.StatusInternalServerError, msg)
+		s.respondCreateSandboxError(c, sandbox, err)
 		return
 	}
 
 	respondJSON(c, http.StatusOK, response)
+}
+
+// respondCreateSandboxError maps a createSandbox error to an appropriate HTTP response.
+func (s *Server) respondCreateSandboxError(c *gin.Context, sandbox *sandboxv1alpha1.Sandbox, err error) {
+	// Client disconnected — abort with 499 so logs/metrics reflect the cancellation.
+	if errors.Is(err, context.Canceled) {
+		klog.Warningf("create sandbox aborted %s/%s: client disconnected", sandbox.Namespace, sandbox.Name)
+		c.AbortWithStatus(499)
+		return
+	}
+	// Deadline exceeded — client may still be connected; return 504 so they get a meaningful response.
+	if errors.Is(err, context.DeadlineExceeded) {
+		klog.Warningf("create sandbox timed out %s/%s: request deadline exceeded", sandbox.Namespace, sandbox.Name)
+		respondError(c, http.StatusGatewayTimeout, "request timed out")
+		return
+	}
+	// Internal sandbox-ready wait timed out; surface as 504 rather than a generic 500.
+	if errors.Is(err, errSandboxCreationTimeout) {
+		klog.Warningf("create sandbox timed out %s/%s: sandbox did not become ready within deadline", sandbox.Namespace, sandbox.Name)
+		respondError(c, http.StatusGatewayTimeout, err.Error())
+		return
+	}
+	klog.Errorf("create sandbox failed %s/%s: %v", sandbox.Namespace, sandbox.Name, err)
+	// Internal errors (store, K8s API) must not leak system details to callers;
+	// sandbox-level failures (terminal pod state, timeout) are safe to surface.
+	msg := err.Error()
+	if apierrors.IsInternalError(err) {
+		msg = "internal server error"
+	}
+	respondError(c, http.StatusInternalServerError, msg)
 }
 
 // createWorkload creates the Sandbox or SandboxClaim and, when a NetworkPolicy is provided,

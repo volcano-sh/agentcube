@@ -62,8 +62,6 @@ If several keys are set, the example script prefers **DeepSeek, then Claude, the
 
 ## 4. Run the example
 
-`agentcube-cli` and the SDK both use the top-level package name `agentcube`. If you installed the CLI in editable mode, `import agentcube` from the repo root may resolve to the CLI. The example inserts this repo's `sdk-python` first on `sys.path` before importing the SDK. **Do not substitute the CLI package for the SDK**: the CLI does not expose `CodeInterpreterClient`.
-
 ```bash
 python integrations/langchain-agentcube/example/deep_agent_sandbox.py
 ```

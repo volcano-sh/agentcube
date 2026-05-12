@@ -24,9 +24,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	"sigs.k8s.io/agent-sandbox/controllers"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
@@ -96,15 +100,21 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 		return
 	}
 
+	if s.config.EnableAuth && sandboxReq.NetworkPolicy != nil {
+		respondError(c, http.StatusForbidden, "per-session networkPolicy override is not permitted when authentication is enabled")
+		return
+	}
+
 	var sandbox *sandboxv1alpha1.Sandbox
 	var sandboxClaim *extensionsv1alpha1.SandboxClaim
+	var networkPolicy *networkingv1.NetworkPolicy
 	var sandboxEntry *sandboxEntry
 	var err error
 	switch sandboxReq.Kind {
 	case types.AgentRuntimeKind:
-		sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers)
+		sandbox, sandboxEntry, networkPolicy, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers, s.config.RouterSelector, s.config.RouterNamespace, sandboxReq.NetworkPolicy)
 	case types.CodeInterpreterKind:
-		sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers)
+		sandbox, sandboxClaim, networkPolicy, sandboxEntry, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers, s.config.RouterSelector, s.config.RouterNamespace, sandboxReq.NetworkPolicy)
 	}
 
 	if err != nil {
@@ -138,62 +148,133 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	// Ensure cleanup is called when function returns to prevent memory leak
 	defer s.sandboxController.UnWatchSandbox(namespace, sandboxName)
 
-	response, err := s.createSandbox(c.Request.Context(), dynamicClient, sandbox, sandboxClaim, sandboxEntry, resultChan)
+	response, err := s.createSandbox(c.Request.Context(), dynamicClient, sandbox, sandboxClaim, networkPolicy, sandboxEntry, resultChan)
 	if err != nil {
-		// Client disconnected — abort with 499 so logs/metrics reflect the cancellation.
-		if errors.Is(err, context.Canceled) {
-			klog.Warningf("create sandbox aborted %s/%s: client disconnected", sandbox.Namespace, sandbox.Name)
-			c.AbortWithStatus(499)
-			return
-		}
-		// Deadline exceeded — client may still be connected; return 504 so they get a meaningful response.
-		if errors.Is(err, context.DeadlineExceeded) {
-			klog.Warningf("create sandbox timed out %s/%s: request deadline exceeded", sandbox.Namespace, sandbox.Name)
-			respondError(c, http.StatusGatewayTimeout, "request timed out")
-			return
-		}
-		// Internal sandbox-ready wait timed out; surface as 504 rather than a generic 500.
-		if errors.Is(err, errSandboxCreationTimeout) {
-			klog.Warningf("create sandbox timed out %s/%s: sandbox did not become ready within deadline", sandbox.Namespace, sandbox.Name)
-			respondError(c, http.StatusGatewayTimeout, err.Error())
-			return
-		}
-		klog.Errorf("create sandbox failed %s/%s: %v", sandbox.Namespace, sandbox.Name, err)
-		// Internal errors (store, K8s API) must not leak system details to callers;
-		// sandbox-level failures (terminal pod state, timeout) are safe to surface.
-		msg := err.Error()
-		if apierrors.IsInternalError(err) {
-			msg = "internal server error"
-		}
-		respondError(c, http.StatusInternalServerError, msg)
+		s.respondCreateSandboxError(c, sandbox, err)
 		return
 	}
 
 	respondJSON(c, http.StatusOK, response)
 }
 
-// createK8sResources creates the K8s sandbox or sandbox claim resource.
-func (s *Server) createK8sResources(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
+// respondCreateSandboxError maps a createSandbox error to an appropriate HTTP response.
+func (s *Server) respondCreateSandboxError(c *gin.Context, sandbox *sandboxv1alpha1.Sandbox, err error) {
+	// Client disconnected — abort with 499 so logs/metrics reflect the cancellation.
+	if errors.Is(err, context.Canceled) {
+		klog.Warningf("create sandbox aborted %s/%s: client disconnected", sandbox.Namespace, sandbox.Name)
+		c.AbortWithStatus(499)
+		return
+	}
+	// Deadline exceeded — client may still be connected; return 504 so they get a meaningful response.
+	if errors.Is(err, context.DeadlineExceeded) {
+		klog.Warningf("create sandbox timed out %s/%s: request deadline exceeded", sandbox.Namespace, sandbox.Name)
+		respondError(c, http.StatusGatewayTimeout, "request timed out")
+		return
+	}
+	// Internal sandbox-ready wait timed out; surface as 504 rather than a generic 500.
+	if errors.Is(err, errSandboxCreationTimeout) {
+		klog.Warningf("create sandbox timed out %s/%s: sandbox did not become ready within deadline", sandbox.Namespace, sandbox.Name)
+		respondError(c, http.StatusGatewayTimeout, err.Error())
+		return
+	}
+	klog.Errorf("create sandbox failed %s/%s: %v", sandbox.Namespace, sandbox.Name, err)
+	// Internal errors (store, K8s API) must not leak system details to callers;
+	// sandbox-level failures (terminal pod state, timeout) are safe to surface.
+	msg := err.Error()
+	if apierrors.IsInternalError(err) {
+		msg = "internal server error"
+	}
+	respondError(c, http.StatusInternalServerError, msg)
+}
+
+// createWorkload creates the Sandbox or SandboxClaim and, when a NetworkPolicy is provided,
+// wires the created object's UID into the NP's OwnerReferences so k8s GC can
+// cascade-delete the NP if the owner is removed out-of-band.
+func createWorkload(ctx context.Context, client dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, networkPolicy *networkingv1.NetworkPolicy) error {
 	if sandboxClaim != nil {
-		if err := createSandboxClaim(ctx, dynamicClient, sandboxClaim); err != nil {
+		uid, err := createSandboxClaim(ctx, client, sandboxClaim)
+		if err != nil {
 			if isContextError(err) {
 				return err
 			}
 			return api.NewInternalError(fmt.Errorf("create sandbox claim %s/%s failed: %w", sandboxClaim.Namespace, sandboxClaim.Name, err))
 		}
-	} else {
-		if _, err := createSandbox(ctx, dynamicClient, sandbox); err != nil {
-			if isContextError(err) {
-				return err
-			}
-			return api.NewInternalError(fmt.Errorf("failed to create sandbox: %w", err))
+		setNetworkPolicyOwner(networkPolicy, "extensions.agents.x-k8s.io/v1alpha1", "SandboxClaim", sandboxClaim.Name, uid)
+		return nil
+	}
+	info, err := createSandbox(ctx, client, sandbox)
+	if err != nil {
+		if isContextError(err) {
+			return err
 		}
+		return api.NewInternalError(fmt.Errorf("failed to create sandbox: %w", err))
+	}
+	setNetworkPolicyOwner(networkPolicy, "agents.x-k8s.io/v1alpha1", "Sandbox", info.Name, info.UID)
+	return nil
+}
+
+// setNetworkPolicyOwner attaches an OwnerReference to np pointing at the given owner.
+// No-op when np is nil or uid is empty.
+func setNetworkPolicyOwner(np *networkingv1.NetworkPolicy, apiVersion, kind, name string, uid k8stypes.UID) {
+	if np == nil || uid == "" {
+		return
+	}
+	np.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion:         apiVersion,
+		Kind:               kind,
+		Name:               name,
+		UID:                uid,
+		BlockOwnerDeletion: ptr.To(true),
+	}}
+}
+
+// createNetworkPolicyAndWorkload creates the NetworkPolicy (if non-nil) before the
+// workload so the deny-all is in place before the CNI wires up the pod's network
+// interface. If workload creation fails, the NP is cleaned up inline as defense-in-depth;
+// the rollback defer in createSandbox also covers this path.
+// On success, setNetworkPolicyOwner has populated networkPolicy.OwnerReferences.
+func (s *Server) createNetworkPolicyAndWorkload(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, networkPolicy *networkingv1.NetworkPolicy) error {
+	if networkPolicy != nil {
+		if err := createNetworkPolicy(ctx, s.k8sClient.clientset, networkPolicy); err != nil {
+			return api.NewInternalError(err)
+		}
+	}
+	if err := createWorkload(ctx, dynamicClient, sandbox, sandboxClaim, networkPolicy); err != nil {
+		if networkPolicy != nil {
+			ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if delErr := deleteNetworkPolicy(ctxTimeout, s.k8sClient.clientset, networkPolicy.Namespace, networkPolicy.Name); delErr != nil {
+				klog.Warningf("NetworkPolicy %s/%s cleanup after workload create failure: %v",
+					networkPolicy.Namespace, networkPolicy.Name, delErr)
+			}
+		}
+		return err
 	}
 	return nil
 }
 
+// waitForSandboxResult blocks until the sandbox reports ready, the context is cancelled, or the 2-minute deadline fires.
+func (s *Server) waitForSandboxResult(ctx context.Context, sandbox *sandboxv1alpha1.Sandbox, resultChan <-chan SandboxStatusUpdate) (*sandboxv1alpha1.Sandbox, error) {
+	// Use NewTimer so we can stop it explicitly when another branch wins,
+	// preventing the runtime from retaining the timer until it fires.
+	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
+	select {
+	case result := <-resultChan:
+		timer.Stop()
+		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", result.Sandbox.Namespace, result.Sandbox.Name)
+		return result.Sandbox, nil
+	case <-ctx.Done():
+		timer.Stop()
+		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
+		return nil, ctx.Err()
+	case <-timer.C:
+		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
+		return nil, errSandboxCreationTimeout
+	}
+}
+
 // createSandbox performs sandbox creation and returns the response payload or an error with an HTTP status code.
-func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
+func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, networkPolicy *networkingv1.NetworkPolicy, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
 	placeholder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
 	if err := s.storeClient.StoreSandbox(ctx, placeholder); err != nil {
 		if isContextError(err) {
@@ -202,37 +283,34 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		return nil, api.NewInternalError(fmt.Errorf("store sandbox placeholder failed: %w", err))
 	}
 
-	// Register rollback right after the placeholder is stored so that a K8s
-	// creation failure does not leave an orphaned store entry.
+	// Register rollback right after the placeholder is stored so any subsequent
+	// failure (NP create, workload create, ready wait) cleans up the store entry.
 	needRollbackSandbox := true
 	defer func() {
 		if !needRollbackSandbox {
 			return
 		}
-		s.rollbackSandboxCreation(dynamicClient, sandbox, sandboxClaim, sandboxEntry.SessionID)
+		s.rollbackSandboxCreation(dynamicClient, sandbox, sandboxClaim, networkPolicy, sandboxEntry.SessionID)
 	}()
 
-	if err := s.createK8sResources(ctx, dynamicClient, sandbox, sandboxClaim); err != nil {
+	if err := s.createNetworkPolicyAndWorkload(ctx, dynamicClient, sandbox, sandboxClaim, networkPolicy); err != nil {
 		return nil, err
 	}
 
-	// Use NewTimer so we can stop it explicitly when another branch wins,
-	// preventing the runtime from retaining the timer until it fires.
-	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
+	// Patch the already-created NP to add the OwnerReference now that we have the UID.
+	// Best-effort GC safety net: if the sandbox is deleted out-of-band, GC cascade-deletes
+	// the NP. Explicit deletion in handleDeleteSandbox covers the normal path, so a
+	// patch failure is logged but not fatal.
+	if networkPolicy != nil {
+		if err := patchNetworkPolicyOwner(ctx, s.k8sClient.clientset, networkPolicy); err != nil {
+			klog.Warningf("NetworkPolicy %s/%s owner patch failed, GC cascade will not apply: %v",
+				networkPolicy.Namespace, networkPolicy.Name, err)
+		}
+	}
 
-	var createdSandbox *sandboxv1alpha1.Sandbox
-	select {
-	case result := <-resultChan:
-		timer.Stop()
-		createdSandbox = result.Sandbox
-		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
-	case <-ctx.Done():
-		timer.Stop()
-		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
-		return nil, ctx.Err()
-	case <-timer.C:
-		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
-		return nil, errSandboxCreationTimeout
+	createdSandbox, err := s.waitForSandboxResult(ctx, sandbox, resultChan)
+	if err != nil {
+		return nil, err
 	}
 
 	// agent-sandbox create pod with same name as sandbox if no warmpool is used
@@ -280,10 +358,10 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	return response, nil
 }
 
-// rollbackSandboxCreation deletes the sandbox (or sandbox claim) and its store
-// placeholder when creation fails. It runs in a fresh context so that a
+// rollbackSandboxCreation deletes the sandbox (or sandbox claim), the NetworkPolicy,
+// and the store placeholder when creation fails. Runs in a fresh context so a
 // canceled request context does not prevent cleanup.
-func (s *Server) rollbackSandboxCreation(dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sessionID string) {
+func (s *Server) rollbackSandboxCreation(dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, networkPolicy *networkingv1.NetworkPolicy, sessionID string) {
 	ctxTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if sandboxClaim != nil {
@@ -297,6 +375,14 @@ func (s *Server) rollbackSandboxCreation(dynamicClient dynamic.Interface, sandbo
 			klog.Infof("sandbox %s/%s rollback failed: %v", sandbox.Namespace, sandbox.Name, err)
 		} else {
 			klog.Infof("sandbox %s/%s rollback succeeded", sandbox.Namespace, sandbox.Name)
+		}
+	}
+	// Always attempt to delete the NetworkPolicy when one was built. deleteNetworkPolicy
+	// swallows NotFound, so this handles both "create succeeded" and "create returned
+	// an error despite server-side success" uniformly.
+	if networkPolicy != nil {
+		if err := deleteNetworkPolicy(ctxTimeout, s.k8sClient.clientset, networkPolicy.Namespace, networkPolicy.Name); err != nil {
+			klog.Infof("network policy %s/%s rollback failed: %v", networkPolicy.Namespace, networkPolicy.Name, err)
 		}
 	}
 	if delErr := s.storeClient.DeleteSandboxBySessionID(ctxTimeout, sessionID); delErr != nil {
@@ -330,29 +416,23 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 	}
 
 	if sandbox.Kind == types.SandboxClaimsKind {
-		err = deleteSandboxClaim(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				// Already deleted, consider as success
-				klog.Infof("sandbox claim %s/%s already deleted", sandbox.SandboxNamespace, sandbox.Name)
-			} else {
-				klog.Errorf("failed to delete sandbox claim %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
-				respondError(c, http.StatusInternalServerError, "internal server error")
-				return
-			}
+		if err = deleteSandboxClaim(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.Name); err != nil {
+			klog.Errorf("failed to delete sandbox claim %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
+			respondError(c, http.StatusInternalServerError, "internal server error")
+			return
 		}
 	} else {
-		err = deleteSandbox(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				// Already deleted, consider as success
-				klog.Infof("sandbox %s/%s already deleted", sandbox.SandboxNamespace, sandbox.Name)
-			} else {
-				klog.Errorf("failed to delete sandbox %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
-				respondError(c, http.StatusInternalServerError, "internal server error")
-				return
-			}
+		if err = deleteSandbox(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.Name); err != nil {
+			klog.Errorf("failed to delete sandbox %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
+			respondError(c, http.StatusInternalServerError, "internal server error")
+			return
 		}
+	}
+
+	// Best-effort deletion of the NetworkPolicy that was created alongside this sandbox.
+	// The NP shares the sandbox name, so not-found is expected when Mode=None.
+	if err := deleteNetworkPolicy(c.Request.Context(), s.k8sClient.clientset, sandbox.SandboxNamespace, sandbox.Name); err != nil {
+		klog.Infof("network policy %s/%s deletion failed (non-fatal): %v", sandbox.SandboxNamespace, sandbox.Name, err)
 	}
 
 	// Delete sandbox from store

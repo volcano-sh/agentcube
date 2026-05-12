@@ -143,22 +143,27 @@ func (gc *garbageCollector) once() {
 
 func (gc *garbageCollector) deleteSandbox(ctx context.Context, namespace, name string) error {
 	err := gc.k8sClient.dynamicClient.Resource(SandboxGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return nil
-		}
+	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("error deleting sandbox %s/%s: %w", namespace, name, err)
+	}
+	// Best-effort NP cleanup. MUST run even when the Sandbox is already NotFound,
+	// otherwise an NP orphaned by an out-of-band sandbox delete (e.g. kubectl)
+	// would leak forever — the store row gets purged right after this call and
+	// no future GC cycle would see the sandbox again.
+	if err := deleteNetworkPolicy(ctx, gc.k8sClient.clientset, namespace, name); err != nil {
+		klog.Infof("garbage collector: network policy %s/%s deletion failed (non-fatal): %v", namespace, name, err)
 	}
 	return nil
 }
 
 func (gc *garbageCollector) deleteSandboxClaim(ctx context.Context, namespace, name string) error {
 	err := gc.k8sClient.dynamicClient.Resource(SandboxClaimGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return nil
-		}
+	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("error deleting sandboxClaim %s/%s: %w", namespace, name, err)
+	}
+	// See deleteSandbox above for why this runs even after a NotFound.
+	if err := deleteNetworkPolicy(ctx, gc.k8sClient.clientset, namespace, name); err != nil {
+		klog.Infof("garbage collector: network policy %s/%s deletion failed (non-fatal): %v", namespace, name, err)
 	}
 	return nil
 }

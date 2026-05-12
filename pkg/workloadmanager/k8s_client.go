@@ -18,6 +18,7 @@ package workloadmanager
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -25,11 +26,13 @@ import (
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
@@ -62,7 +65,7 @@ var (
 
 // K8sClient encapsulates the Kubernetes client
 type K8sClient struct {
-	clientset       *kubernetes.Clientset
+	clientset       kubernetes.Interface
 	dynamicClient   dynamic.Interface
 	scheme          *runtime.Scheme
 	baseConfig      *rest.Config // Store base config for creating user clients
@@ -145,6 +148,7 @@ func NewK8sClient() (*K8sClient, error) {
 type SandboxInfo struct {
 	Name      string
 	Namespace string
+	UID       k8stypes.UID
 }
 
 // UserK8sClient creates a temporary Kubernetes client using user's token
@@ -220,30 +224,32 @@ func createSandbox(ctx context.Context, client dynamic.Interface, sandbox *sandb
 	return &SandboxInfo{
 		Name:      created.GetName(),
 		Namespace: created.GetNamespace(),
+		UID:       created.GetUID(),
 	}, nil
 }
 
-// createSandboxClaim creates a SandboxClaim using the provided dynamic client
-func createSandboxClaim(ctx context.Context, client dynamic.Interface, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
+// createSandboxClaim creates a SandboxClaim using the provided dynamic client.
+// Returns the UID of the created SandboxClaim so callers can set OwnerReferences.
+func createSandboxClaim(ctx context.Context, client dynamic.Interface, sandboxClaim *extensionsv1alpha1.SandboxClaim) (k8stypes.UID, error) {
 	// Convert to unstructured for dynamic client
 	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(sandboxClaim)
 	if err != nil {
-		return fmt.Errorf("failed to convert sandbox claim to unstructured: %w", err)
+		return "", fmt.Errorf("failed to convert sandbox claim to unstructured: %w", err)
 	}
 
 	unstructuredSandbox := &unstructured.Unstructured{Object: unstructuredObj}
 
 	// Create SandboxClaim
-	_, err = client.Resource(SandboxClaimGVR).Namespace(sandboxClaim.Namespace).Create(
+	created, err := client.Resource(SandboxClaimGVR).Namespace(sandboxClaim.Namespace).Create(
 		ctx,
 		unstructuredSandbox,
 		metav1.CreateOptions{},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create sandbox claim: %w", err)
+		return "", fmt.Errorf("failed to create sandbox claim: %w", err)
 	}
 
-	return nil
+	return created.GetUID(), nil
 }
 
 // deleteSandbox deletes a Sandbox using the provided dynamic client
@@ -276,7 +282,8 @@ func deleteSandboxClaim(ctx context.Context, client dynamic.Interface, namespace
 
 // CreateSandboxClaim creates a new SandboxClaim using user's permissions
 func (u *UserK8sClient) CreateSandboxClaim(ctx context.Context, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
-	return createSandboxClaim(ctx, u.dynamicClient, sandboxClaim)
+	_, err := createSandboxClaim(ctx, u.dynamicClient, sandboxClaim)
+	return err
 }
 
 // CreateSandbox creates a new Sandbox using user's permissions
@@ -382,4 +389,49 @@ func (c *K8sClient) WaitForSandboxReady(ctx context.Context, namespace, sandboxN
 // GetSandboxInformer returns a shared informer for Sandbox CRD
 func (c *K8sClient) GetSandboxInformer() cache.SharedInformer {
 	return c.dynamicInformer.ForResource(SandboxGVR).Informer()
+}
+
+// createNetworkPolicy creates a NetworkPolicy using the workloadmanager's own client.
+// AlreadyExists is treated as an error: sandbox names embed random suffixes so a
+// collision means something unexpected is already occupying the name, and silently
+// reusing it could leave the sandbox under a stale or incorrect policy.
+func createNetworkPolicy(ctx context.Context, clientset kubernetes.Interface, np *networkingv1.NetworkPolicy) error {
+	_, err := clientset.NetworkingV1().NetworkPolicies(np.Namespace).Create(ctx, np, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create network policy %s/%s: %w", np.Namespace, np.Name, err)
+	}
+	return nil
+}
+
+// deleteNetworkPolicy deletes the NetworkPolicy with the given name, ignoring not-found.
+func deleteNetworkPolicy(ctx context.Context, clientset kubernetes.Interface, namespace, name string) error {
+	err := clientset.NetworkingV1().NetworkPolicies(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete network policy %s/%s: %w", namespace, name, err)
+	}
+	return nil
+}
+
+// patchNetworkPolicyOwner patches np's ownerReferences onto the already-created
+// NetworkPolicy object in the cluster. Called after the sandbox UID is known so
+// that Kubernetes GC can cascade-delete the NP if the owner is removed out-of-band.
+func patchNetworkPolicyOwner(ctx context.Context, clientset kubernetes.Interface, np *networkingv1.NetworkPolicy) error {
+	if np == nil || len(np.OwnerReferences) == 0 {
+		return nil
+	}
+	patch := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"ownerReferences": np.OwnerReferences,
+		},
+	}
+	data, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("marshal owner patch for network policy %s/%s: %w", np.Namespace, np.Name, err)
+	}
+	_, err = clientset.NetworkingV1().NetworkPolicies(np.Namespace).Patch(
+		ctx, np.Name, k8stypes.MergePatchType, data, metav1.PatchOptions{})
+	if err != nil {
+		return fmt.Errorf("patch network policy %s/%s owner: %w", np.Namespace, np.Name, err)
+	}
+	return nil
 }

@@ -18,9 +18,12 @@ package types
 
 import (
 	"fmt"
+	"net"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 )
 
 type SandboxInfo struct {
@@ -54,6 +57,10 @@ type CreateSandboxRequest struct {
 	Kind      string `json:"kind"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
+	// NetworkPolicy overrides the NetworkPolicy spec from the template for this session only.
+	// When set, it replaces (not merges) the template-level NetworkPolicy entirely.
+	// +optional
+	NetworkPolicy *runtimev1alpha1.SandboxNetworkPolicy `json:"networkPolicy,omitempty"`
 }
 
 type CreateSandboxResponse struct {
@@ -75,6 +82,33 @@ func (car *CreateSandboxRequest) Validate() error {
 	}
 	if car.Name == "" {
 		return fmt.Errorf("name is required")
+	}
+	if err := validateNetworkPolicyOverride(car.NetworkPolicy); err != nil {
+		return fmt.Errorf("invalid networkPolicy: %w", err)
+	}
+	return nil
+}
+
+// validateNetworkPolicyOverride validates a per-session NetworkPolicy override from
+// CreateSandboxRequest. Unlike the CRD field (which has kubebuilder markers), this
+// comes in as raw JSON and bypasses API-server admission, so we validate it here.
+func validateNetworkPolicyOverride(np *runtimev1alpha1.SandboxNetworkPolicy) error {
+	if np == nil {
+		return nil
+	}
+	for _, rule := range np.Egress {
+		for _, cidr := range rule.CIDRs {
+			if _, _, err := net.ParseCIDR(cidr); err != nil {
+				return fmt.Errorf("invalid egress CIDR %q: %w", cidr, err)
+			}
+		}
+	}
+	for _, rule := range np.Ingress {
+		for _, cidr := range rule.CIDRs {
+			if _, _, err := net.ParseCIDR(cidr); err != nil {
+				return fmt.Errorf("invalid ingress CIDR %q: %w", cidr, err)
+			}
+		}
 	}
 	return nil
 }

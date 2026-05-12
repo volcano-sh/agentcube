@@ -151,6 +151,11 @@ type CodeInterpreterSandboxTemplate struct {
 	// More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// NetworkPolicy defines the network isolation policy for sandbox pods created from
+	// this template. Defaults to Mode=None (no policy created).
+	// +optional
+	NetworkPolicy *SandboxNetworkPolicy `json:"networkPolicy,omitempty"`
 }
 
 // TargetPort defines a port that the runtime will expose.

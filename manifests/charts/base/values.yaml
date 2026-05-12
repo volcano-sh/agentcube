@@ -51,6 +51,15 @@ workloadmanager:
       cpu: 100m
       memory: 128Mi
   extraEnv: []
+  networkPolicy:
+    # routerSelector is the pod label selector used to identify the router pod.
+    # Applied as the mandatory ingress allow rule when SandboxNetworkPolicy.Mode=Restricted.
+    # Format: comma-separated key=value pairs, e.g. "app=agentcube-router,tier=proxy"
+    routerSelector: "app=agentcube-router"
+    # routerNamespace is the namespace the router runs in.
+    # Used to build the cross-namespace NamespaceSelector for the router→sandbox ingress rule.
+    # Defaults to the workloadmanager's own namespace when left empty.
+    routerNamespace: ""
 
 # Volcano Agent Scheduler
 volcano:

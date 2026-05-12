@@ -67,18 +67,9 @@ type Config struct {
 	// SandboxReadyProbeInterval is the retry interval for sandbox entrypoint probes.
 	SandboxReadyProbeInterval time.Duration
 
-	// EnableSandboxMTLS enables the automatic injection of SPIRE mTLS sidecars and
-	// volume mounts into newly created sandbox pods.
-	EnableSandboxMTLS bool
-
 	// MTLSConfig holds the mutual TLS certificate paths (cert, key, CA bundle).
 	// When all paths are present, mutual TLS is used on the WorkloadManager listener.
 	MTLSConfig mtls.Config
-
-	// SPIFFEHelperImage is the container image for the spiffe-helper sidecar injected into
-	// sandbox pods. Defaults to DefaultSPIFFEHelperImage if empty.
-	// Useful for air-gapped environments or version upgrades without recompiling.
-	SPIFFEHelperImage string
 }
 
 // NewServer creates a new API server instance

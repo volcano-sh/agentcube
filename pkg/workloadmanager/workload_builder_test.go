@@ -19,10 +19,6 @@ package workloadmanager
 import (
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	corev1 "k8s.io/api/core/v1"
 )
 
 // TestBuildSandboxObject_DoesNotMutateCallerLabels verifies that buildSandboxObject
@@ -104,94 +100,5 @@ func TestBuildSandboxObject_NilLabels(t *testing.T) {
 	}
 	if podLabels[SandboxNameLabelKey] != "sandbox-xyz" {
 		t.Errorf("expected %s=sandbox-xyz, got %q", SandboxNameLabelKey, podLabels[SandboxNameLabelKey])
-	}
-}
-
-// ---- tests: injectMTLSVolumes (spiffe-helper sidecar injection) ----
-
-func TestInjectMTLSVolumes_InjectsSidecarAndVolumes(t *testing.T) {
-	params := &buildSandboxParams{
-		podSpec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:  "code-interpreter",
-					Image: "picod:latest",
-					Args:  []string{"--port=8080"},
-				},
-			},
-		},
-	}
-
-	injectMTLSVolumes(params)
-	podSpec := params.podSpec
-
-	// 3 volumes: spire-agent-socket, spiffe-helper-config, spire-certs
-	require.Len(t, podSpec.Volumes, 3)
-	assert.Equal(t, spireAgentSocketVolumeName, podSpec.Volumes[0].Name)
-	assert.Equal(t, spiffeHelperConfigVolumeName, podSpec.Volumes[1].Name)
-	assert.Equal(t, spireCertVolumeName, podSpec.Volumes[2].Name)
-
-	// 2 containers: spiffe-helper sidecar (index 0) + original (index 1)
-	require.Len(t, podSpec.Containers, 2)
-	assert.Equal(t, "spiffe-helper", podSpec.Containers[0].Name)
-	assert.Equal(t, "code-interpreter", podSpec.Containers[1].Name)
-
-	// Sidecar has 3 volume mounts
-	assert.Len(t, podSpec.Containers[0].VolumeMounts, 3)
-
-	// Main container has spire-certs mount (read-only)
-	foundCertMount := false
-	for _, vm := range podSpec.Containers[1].VolumeMounts {
-		if vm.Name == spireCertVolumeName && vm.MountPath == spireCertMountPath {
-			foundCertMount = true
-			assert.True(t, vm.ReadOnly, "cert mount should be read-only")
-		}
-	}
-	assert.True(t, foundCertMount, "expected main container to have spire-certs volume mount")
-
-	// Container args must NOT be mutated — PicoD auto-detects certs itself
-	assert.Equal(t, []string{"--port=8080"}, podSpec.Containers[1].Args,
-		"injectMTLSVolumes must not mutate workload container args")
-}
-
-func TestInjectMTLSVolumes_PreservesExistingArgs(t *testing.T) {
-	params := &buildSandboxParams{
-		podSpec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name: "picod",
-					Args: []string{"--port=8080", "--workspace=/tmp"},
-				},
-			},
-		},
-	}
-
-	injectMTLSVolumes(params)
-	podSpec := params.podSpec
-
-	// Original args should be unchanged (now on container[1] after sidecar prepend)
-	args := podSpec.Containers[1].Args
-	assert.Equal(t, []string{"--port=8080", "--workspace=/tmp"}, args,
-		"injectMTLSVolumes must not modify workload container args")
-}
-
-func TestInjectMTLSVolumes_EmptyContainers(t *testing.T) {
-	params := &buildSandboxParams{
-		podSpec: corev1.PodSpec{
-			Containers: []corev1.Container{},
-		},
-	}
-
-	// Should not panic with empty containers
-	injectMTLSVolumes(params)
-	podSpec := params.podSpec
-
-	// Volumes are still added
-	if len(podSpec.Volumes) != 3 {
-		t.Errorf("expected 3 volumes even with empty containers, got %d", len(podSpec.Volumes))
-	}
-	// Only the sidecar container exists
-	if len(podSpec.Containers) != 1 {
-		t.Errorf("expected 1 container (sidecar only), got %d", len(podSpec.Containers))
 	}
 }

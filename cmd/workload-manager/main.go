@@ -53,15 +53,13 @@ func init() {
 
 func main() {
 	var (
-		port              = flag.String("port", "8080", "API server port")
-		runtimeClassName  = flag.String("runtime-class-name", "kuasar-vmm", "RuntimeClassName for sandbox pods")
-		enableTLS         = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
-		tlsCert           = flag.String("tls-cert", "", "Path to TLS certificate file")
-		tlsKey            = flag.String("tls-key", "", "Path to TLS key file")
-		tlsCA             = flag.String("tls-ca", "", "Path to TLS CA certificate file")
-		enableAuth        = flag.Bool("enable-auth", false, "Enable authorization")
-		enableSandboxMTLS = flag.Bool("enable-sandbox-mtls", false, "Enable automatic injection of SPIRE mTLS sidecars into sandbox pods")
-		spiffeHelperImage = flag.String("spiffe-helper-image", "", "Container image for the spiffe-helper sidecar (default: "+workloadmanager.DefaultSPIFFEHelperImage+")")
+		port             = flag.String("port", "8080", "API server port")
+		runtimeClassName = flag.String("runtime-class-name", "kuasar-vmm", "RuntimeClassName for sandbox pods")
+		enableTLS        = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
+		tlsCert          = flag.String("tls-cert", "", "Path to TLS certificate file")
+		tlsKey           = flag.String("tls-key", "", "Path to TLS key file")
+		tlsCA            = flag.String("tls-ca", "", "Path to TLS CA certificate file")
+		enableAuth       = flag.Bool("enable-auth", false, "Enable authorization")
 	)
 
 	// Initialize klog flags
@@ -111,15 +109,13 @@ func main() {
 
 	// Create API server configuration
 	config := &workloadmanager.Config{
-		Port:              *port,
-		RuntimeClassName:  *runtimeClassName,
-		EnableTLS:         *enableTLS,
-		TLSCert:           *tlsCert,
-		TLSKey:            *tlsKey,
-		EnableAuth:        *enableAuth,
-		EnableSandboxMTLS: *enableSandboxMTLS,
-		SPIFFEHelperImage: *spiffeHelperImage,
-		MTLSConfig:        tlsConfig,
+		Port:             *port,
+		RuntimeClassName: *runtimeClassName,
+		EnableTLS:        *enableTLS,
+		TLSCert:          *tlsCert,
+		TLSKey:           *tlsKey,
+		EnableAuth:       *enableAuth,
+		MTLSConfig:       tlsConfig,
 	}
 
 	// Create and initialize API server

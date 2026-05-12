@@ -73,7 +73,7 @@ spire:
       repository: ghcr.io/spiffe/spiffe-helper
       tag: "0.10.0"
       pullPolicy: IfNotPresent
-    # Directory inside workload pods where the sidecar will deliver the certificates
+    # Directory inside Router and WorkloadManager pods where the sidecar will deliver the certificates
     certDir: "/run/spire/certs"
     # Desired file names for the SVID certificate, private key, and root trust bundle
     certFileName: "svid.pem"
@@ -127,4 +127,3 @@ spire:
       requests:
         cpu: 50m
         memory: 64Mi
-

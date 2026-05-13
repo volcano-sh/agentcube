@@ -432,6 +432,10 @@ func TestTokenCache_Get_Expired(t *testing.T) {
 	found, authenticated, _ = cache.Get(token)
 	assert.False(t, found)
 	assert.False(t, authenticated)
+
+	// The expired entry must also be dropped from the cache (and its LRU
+	// element released) so it doesn't hold a slot until natural eviction.
+	assert.Equal(t, 0, cache.Size(), "expired entry should be removed on Get")
 }
 
 func TestTokenCache_UpdateExisting(t *testing.T) {
@@ -480,28 +484,27 @@ func TestTokenCache_Eviction(t *testing.T) {
 func TestTokenCache_LRUBehavior(t *testing.T) {
 	cache := NewTokenCache(3, 5*time.Minute)
 
-	// Add three entries
+	// Add three entries in insertion order: token0, token1, token2 (token0 is oldest).
 	for i := 0; i < 3; i++ {
 		token := "token" + string(rune('0'+i))
 		cache.Set(token, true, "user"+string(rune('0'+i)))
 	}
 
-	// Access first entry (Get doesn't update LRU, only Set does)
+	// Get on token0 bumps it to the front of the LRU list, so the oldest is now token1.
 	cache.Get("token0")
 
-	// Add new entry - should evict oldest (token0, since Get doesn't update LRU)
+	// Inserting a fourth entry should evict token1 (now the least-recently used).
 	cache.Set("token3", true, "user3")
 
-	// token0 should be evicted (oldest in LRU list)
+	// token0 survives because the Get kept it warm.
 	found, _, _ := cache.Get("token0")
-	assert.False(t, found)
-	// token1 should be present
+	assert.True(t, found, "token0 should remain after being touched by Get")
+	// token1 is evicted as the least-recently used.
 	found, _, _ = cache.Get("token1")
-	assert.True(t, found)
-	// token2 should be present
+	assert.False(t, found, "token1 should be evicted as the oldest entry")
+	// token2 and token3 are still present.
 	found, _, _ = cache.Get("token2")
 	assert.True(t, found)
-	// token3 should be present
 	found, _, _ = cache.Get("token3")
 	assert.True(t, found)
 }

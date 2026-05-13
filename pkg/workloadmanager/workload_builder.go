@@ -184,7 +184,7 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 			Labels: map[string]string{
 				SessionIdLabelKey:    params.sessionID,
 				WorkloadNameLabelKey: params.workloadName,
-				"managed-by":        "agentcube-workload-manager",
+				"managed-by":         "agentcube-workload-manager",
 			},
 			Annotations: map[string]string{
 				IdleTimeoutAnnotationKey: params.idleTimeout.String(),

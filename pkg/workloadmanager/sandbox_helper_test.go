@@ -346,7 +346,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected:    "ready",
+			expected: "ready",
 		},
 		{
 			name: "ready condition false without reason",
@@ -360,7 +360,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected:    "not-ready",
+			expected: "not-ready",
 		},
 		{
 			name: "ready condition false with reason is not-ready",
@@ -376,7 +376,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected:    "not-ready",
+			expected: "not-ready",
 		},
 		{
 			name: "ready condition unknown",
@@ -390,7 +390,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected:    "not-ready",
+			expected: "not-ready",
 		},
 		{
 			name: "no conditions",
@@ -399,7 +399,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					Conditions: []metav1.Condition{},
 				},
 			},
-			expected:    "not-ready",
+			expected: "not-ready",
 		},
 		{
 			name: "nil conditions",
@@ -408,7 +408,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					Conditions: nil,
 				},
 			},
-			expected:    "not-ready",
+			expected: "not-ready",
 		},
 		{
 			name: "other condition type",
@@ -422,7 +422,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected:    "not-ready",
+			expected: "not-ready",
 		},
 		{
 			name: "multiple conditions with ready true",
@@ -440,7 +440,7 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 					},
 				},
 			},
-			expected:    "ready",
+			expected: "ready",
 		},
 	}
 

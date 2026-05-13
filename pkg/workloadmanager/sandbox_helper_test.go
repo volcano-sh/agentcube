@@ -40,7 +40,7 @@ func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 		validate     func(t *testing.T, result *types.SandboxInfo)
 	}{
 		{
-			name: "no ShutdownTime falls back to DefaultSandboxTTL",
+			name: "no ShutdownTime means no expiry (sandbox runs indefinitely)",
 			setupSandbox: func() *sandboxv1alpha1.Sandbox {
 				return &sandboxv1alpha1.Sandbox{
 					ObjectMeta: metav1.ObjectMeta{
@@ -54,8 +54,8 @@ func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 				SessionID: "session-123",
 			},
 			validate: func(t *testing.T, result *types.SandboxInfo) {
-				expected := now.Add(DefaultSandboxTTL)
-				assert.WithinDuration(t, expected, result.ExpiresAt, 2*time.Second)
+				assert.True(t, result.ExpiresAt.IsZero(),
+					"ExpiresAt should be zero when no MaxSessionDuration is set")
 				assert.Equal(t, "creating", result.Status)
 				assert.Equal(t, "session-123", result.SessionID)
 			},

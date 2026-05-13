@@ -174,14 +174,26 @@ func (vs *valkeyStore) StoreSandbox(ctx context.Context, sandboxStore *types.San
 		return errors.New("StoreSandbox: sandbox is nil")
 	}
 
-	if sandboxStore.ExpiresAt.IsZero() {
-		return fmt.Errorf("StoreSandbox: sandbox expires time is zero")
-	}
-
 	sessionKey := vs.sessionKey(sandboxStore.SessionID)
 	b, err := json.Marshal(sandboxStore)
 	if err != nil {
 		return fmt.Errorf("StoreSandbox: marshal sandbox: %w", err)
+	}
+
+	if sandboxStore.ExpiresAt.IsZero() {
+		// Zero ExpiresAt means no maximum lifetime — skip expiry index.
+		// The sandbox will still be tracked in the activity index for idle timeout.
+		commands := make(valkey.Commands, 0, 3)
+		commands = append(commands, vs.cli.B().Setnx().Key(sessionKey).Value(string(b)).Build())
+		commands = append(commands, vs.cli.B().Zadd().Key(vs.lastActivityIndexKey).ScoreMember().
+			ScoreMember(float64(time.Now().Unix()), sandboxStore.SessionID).Build())
+
+		for i, resp := range vs.cli.DoMulti(ctx, commands...) {
+			if err = resp.Error(); err != nil {
+				return fmt.Errorf("StoreSandbox: DoMulti failed: %w, command index: %v", err, i)
+			}
+		}
+		return nil
 	}
 
 	commands := make(valkey.Commands, 0, 5)

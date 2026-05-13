@@ -153,14 +153,9 @@ type buildSandboxClaimParams struct {
 
 // buildSandboxObject builds a Sandbox object from parameters
 func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
-	if params.ttl == 0 {
-		params.ttl = DefaultSandboxTTL
-	}
 	if params.idleTimeout == 0 {
 		params.idleTimeout = DefaultSandboxIdleTimeout
 	}
-
-	shutdownTime := metav1.NewTime(time.Now().Add(params.ttl))
 
 	// Allocate fresh maps for copied metadata so we never mutate informer-cached input.
 	// Annotations are only copied when params.podAnnotations is non-nil.
@@ -198,12 +193,18 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 					Annotations: podAnnotations,
 				},
 			},
-			Lifecycle: sandboxv1alpha1.Lifecycle{
-				ShutdownTime: &shutdownTime,
-			},
 			Replicas: ptr.To[int32](1),
 		},
 	}
+
+	// Only set ShutdownTime when MaxSessionDuration is explicitly configured.
+	// When omitted (ttl == 0), the sandbox runs indefinitely and is only
+	// cleaned up by idle timeout (SessionTimeout).
+	if params.ttl > 0 {
+		shutdownTime := metav1.NewTime(time.Now().Add(params.ttl))
+		sandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
+	}
+
 	return sandbox
 }
 

@@ -110,7 +110,6 @@ run-router:
 clean:
 	@echo "Cleaning..."
 	rm -rf bin/
-	rm -f workloadmanager agentd agentcube-router
 
 # Install dependencies
 deps:

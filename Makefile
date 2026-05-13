@@ -107,10 +107,9 @@ run-router:
 		--debug
 
 # Clean build artifacts
-clean:
+clean: ## Clean build artifacts
 	@echo "Cleaning..."
-	rm -rf bin/
-	rm -f workloadmanager agentd agentcube-router
+	rm -rf bin/ sdk-python/dist/ cmd/cli/dist/
 
 # Install dependencies
 deps:

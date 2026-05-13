@@ -14,9 +14,11 @@
 
 from agentcube import AgentRuntimeClient
 
+AGENT_NAME = "simple-agentruntime"
+
 # first time: it will create a new pod
 agent_client_v1 = AgentRuntimeClient(
-    agent_name="my-agent",
+    agent_name=AGENT_NAME,
     router_url="http://localhost:8081",
     namespace="default",
     verbose=True,
@@ -30,7 +32,7 @@ print(result_v1)
 
 # second time: it will try to reuse the pod created before
 agent_client_v2 = AgentRuntimeClient(
-    agent_name="my-agent",
+    agent_name=AGENT_NAME,
     router_url="http://localhost:8081",
     namespace="default",
     session_id=agent_client_v1.session_id,
@@ -43,5 +45,4 @@ result_v2 = agent_client_v2.invoke(
     payload={"prompt": "Hello World!"},
 )
 print(result_v2)
-
 

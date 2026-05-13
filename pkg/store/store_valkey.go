@@ -111,19 +111,26 @@ func (vs *valkeyStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs
 		sessionIDKeys = append(sessionIDKeys, vs.sessionKey(sessionID))
 	}
 	// MGet should in same slot
-	stingSliceResults, err := vs.cli.Do(ctx, vs.cli.B().Mget().Key(sessionIDKeys...).Build()).AsStrSlice()
+	valkeyResults, err := vs.cli.Do(ctx, vs.cli.B().Mget().Key(sessionIDKeys...).Build()).ToArray()
 	if err != nil {
 		return nil, fmt.Errorf("loadSandboxesBySessionIDs: Valkey MGet sandboxes failed: %w", err)
 	}
 
-	if len(stingSliceResults) > len(sessionIDKeys) {
-		return nil, fmt.Errorf("unexpected MGet result size: %d, param size: %d", len(stingSliceResults), len(sessionIDKeys))
+	if len(valkeyResults) != len(sessionIDKeys) {
+		return nil, fmt.Errorf("unexpected MGet result size: %d, expected: %d", len(valkeyResults), len(sessionIDKeys))
 	}
 
-	sandboxResults := make([]*types.SandboxInfo, 0, len(stingSliceResults))
-	for i, sandboxObjString := range stingSliceResults {
+	sandboxResults := make([]*types.SandboxInfo, 0, len(valkeyResults))
+	for i, msg := range valkeyResults {
+		if msg.IsNil() {
+			// key does not exist, ignore
+			continue
+		}
+		sandboxObjString, err := msg.ToString()
+		if err != nil {
+			return nil, fmt.Errorf("parse sandbox string failed: %w, index: %v, sessionID: %v", err, i, sessionIDs[i])
+		}
 		if len(sandboxObjString) == 0 {
-			// sandboxObjString is empty while sessionKey not exist, ignore
 			continue
 		}
 		var sandboxRedis types.SandboxInfo
@@ -166,6 +173,57 @@ func (vs *valkeyStore) GetSandboxBySessionID(ctx context.Context, sessionID stri
 		return nil, fmt.Errorf("GetSandboxBySessionID: unmarshal sandbox failed: %w", err)
 	}
 	return &sandboxRedis, nil
+}
+
+// ListSandboxesByKind returns all active sandboxes matching the given kind.
+// Uses SCAN to prevent blocking the Valkey instance on large datasets.
+func (vs *valkeyStore) ListSandboxesByKind(ctx context.Context, kind string) ([]*types.SandboxInfo, error) {
+	allSandboxes := make([]*types.SandboxInfo, 0) // Initialize as empty array, not nil
+	cursor := uint64(0)
+	matchPattern := vs.sessionPrefix + "*"
+	seenKeys := make(map[string]bool)
+
+	for {
+		scanRes, err := vs.cli.Do(ctx, vs.cli.B().Scan().Cursor(cursor).Match(matchPattern).Count(100).Build()).AsScanEntry()
+		if err != nil {
+			return nil, fmt.Errorf("ListSandboxesByKind scan failed: %w", err)
+		}
+
+		if len(scanRes.Elements) > 0 {
+			sessionIDs := make([]string, 0, len(scanRes.Elements))
+			for _, key := range scanRes.Elements {
+				if key == vs.expiryIndexKey || key == vs.lastActivityIndexKey {
+					continue
+				}
+				if seenKeys[key] {
+					continue
+				}
+				seenKeys[key] = true
+				sessionIDs = append(sessionIDs, strings.TrimPrefix(key, vs.sessionPrefix))
+			}
+
+			if len(sessionIDs) > 0 {
+				// Batch load the fetched keys
+				sandboxes, err := vs.loadSandboxesBySessionIDs(ctx, sessionIDs)
+				if err != nil {
+					return nil, err
+				}
+
+				// Filter by requested kind
+				for _, sb := range sandboxes {
+					if sb.Kind == kind {
+						allSandboxes = append(allSandboxes, sb)
+					}
+				}
+			}
+		}
+
+		cursor = scanRes.Cursor
+		if cursor == 0 {
+			break // Scan complete
+		}
+	}
+	return allSandboxes, nil
 }
 
 // StoreSandbox store sandbox into storage

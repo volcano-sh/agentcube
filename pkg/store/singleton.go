@@ -58,7 +58,7 @@ func Storage() Store {
 func initStore() error {
 	// Setting storage provider type by env STORE_TYPE
 	providerType, exists := os.LookupEnv("STORE_TYPE")
-	if exists == false {
+	if !exists {
 		// redis as default
 		providerType = redisStoreType
 	}

@@ -432,6 +432,8 @@ func TestTokenCache_Get_Expired(t *testing.T) {
 	found, authenticated, _ = cache.Get(token)
 	assert.False(t, found)
 	assert.False(t, authenticated)
+	// Expired entry should be evicted from cache, not just hidden
+	assert.Equal(t, 0, cache.Size(), "Expired entry should be evicted from cache")
 }
 
 func TestTokenCache_UpdateExisting(t *testing.T) {
@@ -486,18 +488,19 @@ func TestTokenCache_LRUBehavior(t *testing.T) {
 		cache.Set(token, true, "user"+string(rune('0'+i)))
 	}
 
-	// Access first entry (Get doesn't update LRU, only Set does)
+	// Access first entry (Get promotes to front of LRU list)
 	cache.Get("token0")
 
-	// Add new entry - should evict oldest (token0, since Get doesn't update LRU)
+	// Add new entry - should evict token1 (now the least recently used
+	// because token0 was promoted by Get)
 	cache.Set("token3", true, "user3")
 
-	// token0 should be evicted (oldest in LRU list)
+	// token0 should still be present (was promoted by Get)
 	found, _, _ := cache.Get("token0")
-	assert.False(t, found)
-	// token1 should be present
-	found, _, _ = cache.Get("token1")
 	assert.True(t, found)
+	// token1 should be evicted (least recently used)
+	found, _, _ = cache.Get("token1")
+	assert.False(t, found)
 	// token2 should be present
 	found, _, _ = cache.Get("token2")
 	assert.True(t, found)

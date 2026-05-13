@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	jwtHeader = `{"alg":"HS256","typ":"JWT"}`
+	jwtHeader    = `{"alg":"HS256","typ":"JWT"}`
 	testCacheKey = "default:test-sa"
 )
 

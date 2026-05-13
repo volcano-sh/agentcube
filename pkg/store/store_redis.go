@@ -143,6 +143,57 @@ func (rs *redisStore) GetSandboxBySessionID(ctx context.Context, sessionID strin
 	return &sandboxRedis, nil
 }
 
+// ListSandboxesByKind returns all active sandboxes matching the given kind.
+// Uses SCAN to prevent blocking the Redis instance on large datasets.
+func (rs *redisStore) ListSandboxesByKind(ctx context.Context, kind string) ([]*types.SandboxInfo, error) {
+	allSandboxes := make([]*types.SandboxInfo, 0) // Initialize as empty array, not nil
+	var cursor uint64
+	matchPattern := rs.sessionPrefix + "*"
+	seenKeys := make(map[string]bool)
+
+	for {
+		keys, nextCursor, err := rs.cli.Scan(ctx, cursor, matchPattern, 100).Result()
+		if err != nil {
+			return nil, fmt.Errorf("ListSandboxesByKind scan failed: %w", err)
+		}
+
+		if len(keys) > 0 {
+			sessionIDs := make([]string, 0, len(keys))
+			for _, key := range keys {
+				if key == rs.expiryIndexKey || key == rs.lastActivityIndexKey {
+					continue
+				}
+				if seenKeys[key] {
+					continue
+				}
+				seenKeys[key] = true
+				sessionIDs = append(sessionIDs, strings.TrimPrefix(key, rs.sessionPrefix))
+			}
+
+			if len(sessionIDs) > 0 {
+				// Batch load the fetched keys
+				sandboxes, err := rs.loadSandboxesBySessionIDs(ctx, sessionIDs)
+				if err != nil {
+					return nil, err
+				}
+
+				// Filter by requested kind
+				for _, sb := range sandboxes {
+					if sb.Kind == kind {
+						allSandboxes = append(allSandboxes, sb)
+					}
+				}
+			}
+		}
+
+		cursor = nextCursor
+		if cursor == 0 {
+			break // Scan complete
+		}
+	}
+	return allSandboxes, nil
+}
+
 func (rs *redisStore) StoreSandbox(ctx context.Context, sandboxRedis *types.SandboxInfo) error {
 	if sandboxRedis == nil {
 		return errors.New("StoreSandbox: sandbox is nil")

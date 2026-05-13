@@ -63,6 +63,9 @@ func (f *fakeStore) UpdateSandbox(_ context.Context, _ *types.SandboxInfo) error
 	return f.updateErr
 }
 func (f *fakeStore) DeleteSandboxBySessionID(_ context.Context, _ string) error { return nil }
+func (f *fakeStore) ListSandboxesByKind(_ context.Context, _ string) ([]*types.SandboxInfo, error) {
+	return nil, nil
+}
 func (f *fakeStore) ListExpiredSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxInfo, error) {
 	return nil, nil
 }
@@ -471,6 +474,233 @@ func TestHandleSandboxCreate(t *testing.T) {
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 			if tc.createResp != nil {
 				require.Equal(t, *tc.createResp, resp)
+			}
+		})
+	}
+}
+
+func TestHandleGetSandbox(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name          string
+		sessionID     string
+		storeErr      error
+		storeResult   *types.SandboxInfo
+		enableAuth    bool
+		userNamespace string
+		expectStatus  int
+		expectMessage string
+	}{
+		{
+			name:      "success without auth",
+			sessionID: "sess-123",
+			storeResult: &types.SandboxInfo{
+				SessionID:        "sess-123",
+				SandboxNamespace: "default",
+				Name:             "sandbox-1",
+				Kind:             types.AgentRuntimeKind,
+			},
+			expectStatus: http.StatusOK,
+		},
+		{
+			name:          "not found",
+			sessionID:     "sess-unknown",
+			storeErr:      store.ErrNotFound,
+			expectStatus:  http.StatusNotFound,
+			expectMessage: "Session ID sess-unknown not found",
+		},
+		{
+			name:          "internal store error",
+			sessionID:     "sess-error",
+			storeErr:      errors.New("db down"),
+			expectStatus:  http.StatusInternalServerError,
+			expectMessage: "internal server error",
+		},
+		{
+			name:          "success with auth and matching namespace",
+			sessionID:     "sess-auth-ok",
+			enableAuth:    true,
+			userNamespace: "user-ns",
+			storeResult: &types.SandboxInfo{
+				SessionID:        "sess-auth-ok",
+				SandboxNamespace: "user-ns",
+				Kind:             types.AgentRuntimeKind,
+			},
+			expectStatus: http.StatusOK,
+		},
+		{
+			name:          "forbidden with auth and mismatched namespace",
+			sessionID:     "sess-auth-fail",
+			enableAuth:    true,
+			userNamespace: "hacker-ns",
+			storeResult: &types.SandboxInfo{
+				SessionID:        "sess-auth-fail",
+				SandboxNamespace: "victim-ns",
+				Kind:             types.AgentRuntimeKind,
+			},
+			expectStatus:  http.StatusForbidden,
+			expectMessage: "access denied to this session",
+		},
+		{
+			name:      "wrong kind",
+			sessionID: "sess-wrong-kind",
+			storeResult: &types.SandboxInfo{
+				SessionID:        "sess-wrong-kind",
+				SandboxNamespace: "default",
+				Kind:             types.CodeInterpreterKind,
+			},
+			expectStatus:  http.StatusNotFound,
+			expectMessage: "Session ID sess-wrong-kind not found for kind AgentRuntime",
+		},
+	}
+
+	for _, tt := range tests {
+		tc := tt
+		t.Run(tc.name, func(t *testing.T) {
+			fakeServer := newFakeServer()
+			fakeServer.config.EnableAuth = tc.enableAuth
+
+			fakeStoreInst := &fakeStore{}
+			fakeServer.storeClient = fakeStoreInst
+
+			patches := gomonkey.NewPatches()
+			defer patches.Reset()
+
+			patches.ApplyMethod(reflect.TypeOf((*fakeStore)(nil)), "GetSandboxBySessionID", func(_ *fakeStore, _ context.Context, _ string) (*types.SandboxInfo, error) {
+				if tc.storeErr != nil {
+					return nil, tc.storeErr
+				}
+				return tc.storeResult, nil
+			})
+
+			if tc.enableAuth {
+				// Mock extractUserInfo to simulate the authenticated user's namespace
+				patches.ApplyFunc(extractUserInfo, func(_ *gin.Context) (string, string, string, string) {
+					return "mock-token", tc.userNamespace, "mock-project", "mock-sa"
+				})
+			}
+
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			req := httptest.NewRequest(http.MethodGet, "/sessions/"+tc.sessionID, nil)
+			c.Request = req
+			c.Params = gin.Params{{Key: "sessionId", Value: tc.sessionID}}
+
+			fakeServer.handleGetSandbox(c, types.AgentRuntimeKind)
+
+			require.Equal(t, tc.expectStatus, w.Code)
+
+			if tc.expectStatus != http.StatusOK {
+				if tc.expectMessage != "" {
+					var errResp ErrorResponse
+					require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+					require.Equal(t, tc.expectMessage, errResp.Message)
+				}
+				return
+			}
+
+			var resp types.SandboxInfo
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			require.Equal(t, tc.storeResult.SessionID, resp.SessionID)
+			require.Equal(t, tc.storeResult.SandboxNamespace, resp.SandboxNamespace)
+		})
+	}
+}
+
+func TestHandleListSandboxes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name          string
+		kind          string
+		storeErr      error
+		storeResult   []*types.SandboxInfo
+		enableAuth    bool
+		userNamespace string
+		expectStatus  int
+		expectMessage string
+		expectCount   int
+	}{
+		{
+			name: "success without auth",
+			kind: types.AgentRuntimeKind,
+			storeResult: []*types.SandboxInfo{
+				{SessionID: "1", SandboxNamespace: "default", Kind: types.AgentRuntimeKind},
+				{SessionID: "2", SandboxNamespace: "test-ns", Kind: types.AgentRuntimeKind},
+			},
+			expectStatus: http.StatusOK,
+			expectCount:  2,
+		},
+		{
+			name:          "internal store error",
+			kind:          types.AgentRuntimeKind,
+			storeErr:      errors.New("db down"),
+			expectStatus:  http.StatusInternalServerError,
+			expectMessage: "internal server error",
+		},
+		{
+			name:          "success with auth filters by namespace",
+			kind:          types.AgentRuntimeKind,
+			enableAuth:    true,
+			userNamespace: "user-ns",
+			storeResult: []*types.SandboxInfo{
+				{SessionID: "1", SandboxNamespace: "user-ns", Kind: types.AgentRuntimeKind},
+				{SessionID: "2", SandboxNamespace: "other-ns", Kind: types.AgentRuntimeKind},
+			},
+			expectStatus: http.StatusOK,
+			expectCount:  1,
+		},
+	}
+
+	for _, tt := range tests {
+		tc := tt
+		t.Run(tc.name, func(t *testing.T) {
+			fakeServer := newFakeServer()
+			fakeServer.config.EnableAuth = tc.enableAuth
+
+			fakeStoreInst := &fakeStore{}
+			fakeServer.storeClient = fakeStoreInst
+
+			patches := gomonkey.NewPatches()
+			defer patches.Reset()
+
+			patches.ApplyMethod(reflect.TypeOf((*fakeStore)(nil)), "ListSandboxesByKind", func(_ *fakeStore, _ context.Context, _ string) ([]*types.SandboxInfo, error) {
+				if tc.storeErr != nil {
+					return nil, tc.storeErr
+				}
+				return tc.storeResult, nil
+			})
+
+			if tc.enableAuth {
+				patches.ApplyFunc(extractUserInfo, func(_ *gin.Context) (string, string, string, string) {
+					return "mock-token", tc.userNamespace, "mock-project", "mock-sa"
+				})
+			}
+
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+			c.Request = req
+
+			fakeServer.handleListSandboxes(c, tc.kind)
+
+			require.Equal(t, tc.expectStatus, w.Code)
+
+			if tc.expectStatus != http.StatusOK {
+				var errResp ErrorResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+				require.Equal(t, tc.expectMessage, errResp.Message)
+				return
+			}
+
+			var resp []*types.SandboxInfo
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			require.Len(t, resp, tc.expectCount)
+			if tc.enableAuth && tc.expectCount > 0 {
+				require.Equal(t, tc.userNamespace, resp[0].SandboxNamespace)
 			}
 		})
 	}

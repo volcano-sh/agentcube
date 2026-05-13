@@ -26,6 +26,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
 
+	"github.com/volcano-sh/agentcube/pkg/common/types"
 	"github.com/volcano-sh/agentcube/pkg/store"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -119,9 +120,13 @@ func (s *Server) setupRoutes() {
 
 	// agent runtime management endpoints
 	v1Group.POST("/agent-runtime", s.handleAgentRuntimeCreate)
+	v1Group.GET("/agent-runtime/sessions", func(c *gin.Context) { s.handleListSandboxes(c, types.AgentRuntimeKind) })
+	v1Group.GET("/agent-runtime/sessions/:sessionId", func(c *gin.Context) { s.handleGetSandbox(c, types.AgentRuntimeKind) })
 	v1Group.DELETE("/agent-runtime/sessions/:sessionId", s.handleDeleteSandbox)
 	// code interpreter management endpoints
 	v1Group.POST("/code-interpreter", s.handleCodeInterpreterCreate)
+	v1Group.GET("/code-interpreter/sessions", func(c *gin.Context) { s.handleListSandboxes(c, types.CodeInterpreterKind) })
+	v1Group.GET("/code-interpreter/sessions/:sessionId", func(c *gin.Context) { s.handleGetSandbox(c, types.CodeInterpreterKind) })
 	v1Group.DELETE("/code-interpreter/sessions/:sessionId", s.handleDeleteSandbox)
 }
 

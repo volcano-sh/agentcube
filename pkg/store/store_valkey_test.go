@@ -135,8 +135,8 @@ func newValkeyTestClient(t *testing.T) (*valkeyStore, *miniredis.Miniredis) {
 	rs := &valkeyStore{
 		cli:                  client,
 		sessionPrefix:        "session:",
-		expiryIndexKey:       "sandbox:expiry",
-		lastActivityIndexKey: "sandbox:last_activity",
+		expiryIndexKey:       "session:expiry",
+		lastActivityIndexKey: "session:last_activity",
 	}
 	return rs, mr
 }
@@ -359,4 +359,80 @@ func TestValkeyStore_UpdateSandboxLastActivity(t *testing.T) {
 	err = c.UpdateSessionLastActivity(ctx, "sess-1-not-exist", newLastActivity)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotFound))
+}
+
+func TestValkeyStore_ListSandboxesByKind(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newValkeyTestClient(t)
+
+	now := time.Now().UTC()
+	sb1 := newTestSandbox("sb-1", "sess-1", now.Add(1*time.Hour))
+	sb1.Kind = types.AgentRuntimeKind
+
+	sb2 := newTestSandbox("sb-2", "sess-2", now.Add(1*time.Hour))
+	sb2.Kind = types.CodeInterpreterKind
+
+	sb3 := newTestSandbox("sb-3", "sess-3", now.Add(1*time.Hour))
+	sb3.Kind = types.AgentRuntimeKind
+
+	assert.NoError(t, c.StoreSandbox(ctx, sb1))
+	assert.NoError(t, c.StoreSandbox(ctx, sb2))
+	assert.NoError(t, c.StoreSandbox(ctx, sb3))
+
+	// List AgentRuntimeKind
+	list, err := c.ListSandboxesByKind(ctx, types.AgentRuntimeKind)
+	assert.NoError(t, err)
+	assert.Len(t, list, 2)
+
+	ids := map[string]bool{}
+	for _, sb := range list {
+		ids[sb.SessionID] = true
+	}
+	assert.True(t, ids["sess-1"])
+	assert.True(t, ids["sess-3"])
+
+	// List CodeInterpreterKind
+	list2, err := c.ListSandboxesByKind(ctx, types.CodeInterpreterKind)
+	assert.NoError(t, err)
+	assert.Len(t, list2, 1)
+	assert.Equal(t, "sess-2", list2[0].SessionID)
+
+	// List unknown kind
+	list3, err := c.ListSandboxesByKind(ctx, "unknown-kind")
+	assert.NoError(t, err)
+	assert.Len(t, list3, 0)
+}
+
+// TestValkeyStore_LoadSandboxesBySessionIDs_OrphanedZSetEntry verifies that
+// loadSandboxesBySessionIDs skips session IDs whose hash key has been evicted
+// from Valkey (orphaned sorted-set entry) instead of aborting the entire batch.
+func TestValkeyStore_LoadSandboxesBySessionIDs_OrphanedZSetEntry(t *testing.T) {
+	ctx := context.Background()
+	c, mr := newValkeyTestClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+
+	sb1 := newTestSandbox("sb-orphan", "sess-orphan", now.Add(-1*time.Hour))
+	sb2 := newTestSandbox("sb-alive", "sess-alive", now.Add(-2*time.Hour))
+
+	if err := c.StoreSandbox(ctx, sb1); err != nil {
+		t.Fatalf("StoreSandbox sb1 error: %v", err)
+	}
+	if err := c.StoreSandbox(ctx, sb2); err != nil {
+		t.Fatalf("StoreSandbox sb2 error: %v", err)
+	}
+
+	// Simulate Valkey evicting the hash key for sb1 while leaving its zset entry.
+	mr.Del(c.sessionKey("sess-orphan"))
+
+	result, err := c.loadSandboxesBySessionIDs(ctx, []string{"sess-orphan", "sess-alive"})
+	if err != nil {
+		t.Fatalf("expected no error with orphaned zset entry, got: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 sandbox (the non-evicted one), got %d", len(result))
+	}
+	if result[0].SandboxID != "sb-alive" {
+		t.Fatalf("expected sb-alive, got %s", result[0].SandboxID)
+	}
 }

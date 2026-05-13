@@ -34,6 +34,8 @@ type Store interface {
 	UpdateSandbox(ctx context.Context, sandboxStore *types.SandboxInfo) error
 	// DeleteSandboxBySessionID delete sandbox by session ID
 	DeleteSandboxBySessionID(ctx context.Context, sessionID string) error
+	// ListSandboxesByKind returns all active sandboxes matching the given kind.
+	ListSandboxesByKind(ctx context.Context, kind string) ([]*types.SandboxInfo, error)
 	// ListExpiredSandboxes returns up to limit sandboxes with ExpiresAt before the given time
 	ListExpiredSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error)
 	// ListInactiveSandboxes returns up to limit sandboxes with last-activity time before the given time

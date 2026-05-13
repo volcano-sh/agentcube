@@ -86,6 +86,10 @@ func (f *fakeStoreClient) ListExpiredSandboxes(_ context.Context, _ time.Time, _
 	return nil, nil
 }
 
+func (f *fakeStoreClient) ListSandboxesByKind(_ context.Context, _ string) ([]*types.SandboxInfo, error) {
+	return nil, nil
+}
+
 func (f *fakeStoreClient) ListInactiveSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxInfo, error) {
 	return nil, nil
 }

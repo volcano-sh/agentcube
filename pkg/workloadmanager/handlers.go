@@ -307,6 +307,63 @@ func (s *Server) rollbackSandboxCreation(dynamicClient dynamic.Interface, sandbo
 	}
 }
 
+// handleGetSandbox handles requests to retrieve sandbox details by session ID
+func (s *Server) handleGetSandbox(c *gin.Context, kind string) {
+	sessionID := c.Param("sessionId")
+	// Query sandbox from store
+	sandboxInfo, err := s.storeClient.GetSandboxBySessionID(c.Request.Context(), sessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			respondError(c, http.StatusNotFound, fmt.Sprintf("Session ID %s not found", sessionID))
+			return
+		}
+		klog.Errorf("get sandbox from store by sessionID %s failed: %v", sessionID, err)
+		respondError(c, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	if sandboxInfo.Kind != kind {
+		respondError(c, http.StatusNotFound, fmt.Sprintf("Session ID %s not found for kind %s", sessionID, kind))
+		return
+	}
+
+	if s.config.EnableAuth {
+		_, userNamespace, _, _ := extractUserInfo(c)
+		if sandboxInfo.SandboxNamespace != userNamespace {
+			klog.Warningf("unauthorized GET attempt to session %s by user in namespace %s", sessionID, userNamespace)
+			respondError(c, http.StatusForbidden, "access denied to this session")
+			return
+		}
+	}
+
+	respondJSON(c, http.StatusOK, sandboxInfo)
+}
+
+// handleListSandboxes handles requests to list all active sandboxes by kind
+func (s *Server) handleListSandboxes(c *gin.Context, kind string) {
+	sandboxes, err := s.storeClient.ListSandboxesByKind(c.Request.Context(), kind)
+	if err != nil {
+		klog.Errorf("list sandboxes of kind %s failed: %v", kind, err)
+		respondError(c, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	if !s.config.EnableAuth {
+		respondJSON(c, http.StatusOK, sandboxes)
+		return
+	}
+
+	_, userNamespace, _, _ := extractUserInfo(c)
+	// Filter in-place to avoid a new allocation.
+	filtered := sandboxes[:0]
+	for _, sb := range sandboxes {
+		if sb.SandboxNamespace == userNamespace {
+			filtered = append(filtered, sb)
+		}
+	}
+	respondJSON(c, http.StatusOK, filtered)
+}
+
 // handleDeleteSandbox handles sandbox deletion requests
 func (s *Server) handleDeleteSandbox(c *gin.Context) {
 	sessionID := c.Param("sessionId")

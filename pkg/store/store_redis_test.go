@@ -67,8 +67,8 @@ func newTestRedisClient(t *testing.T) (*redisStore, *miniredis.Miniredis) {
 	rs := &redisStore{
 		cli:                  redisv9.NewClient(&redisv9.Options{Addr: mr.Addr()}),
 		sessionPrefix:        "session:",
-		expiryIndexKey:       "sandbox:expiry",
-		lastActivityIndexKey: "sandbox:last_activity",
+		expiryIndexKey:       "session:expiry",
+		lastActivityIndexKey: "session:last_activity",
 	}
 	return rs, mr
 }
@@ -343,4 +343,46 @@ func TestUpdateSandboxLastActivity(t *testing.T) {
 	if int64(score) != newLastActivity.Unix() {
 		t.Fatalf("unexpected lastActivity score after update: got %v, want %v", score, newLastActivity.Unix())
 	}
+}
+
+func TestRedisStore_ListSandboxesByKind(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newTestRedisClient(t)
+
+	now := time.Now().UTC()
+	sb1 := newTestSandbox("sb-1", "sess-1", now.Add(1*time.Hour))
+	sb1.Kind = types.AgentRuntimeKind
+
+	sb2 := newTestSandbox("sb-2", "sess-2", now.Add(1*time.Hour))
+	sb2.Kind = types.CodeInterpreterKind
+
+	sb3 := newTestSandbox("sb-3", "sess-3", now.Add(1*time.Hour))
+	sb3.Kind = types.AgentRuntimeKind
+
+	assert.NoError(t, c.StoreSandbox(ctx, sb1))
+	assert.NoError(t, c.StoreSandbox(ctx, sb2))
+	assert.NoError(t, c.StoreSandbox(ctx, sb3))
+
+	// List AgentRuntimeKind
+	list, err := c.ListSandboxesByKind(ctx, types.AgentRuntimeKind)
+	assert.NoError(t, err)
+	assert.Len(t, list, 2)
+
+	ids := map[string]bool{}
+	for _, sb := range list {
+		ids[sb.SessionID] = true
+	}
+	assert.True(t, ids["sess-1"])
+	assert.True(t, ids["sess-3"])
+
+	// List CodeInterpreterKind
+	list2, err := c.ListSandboxesByKind(ctx, types.CodeInterpreterKind)
+	assert.NoError(t, err)
+	assert.Len(t, list2, 1)
+	assert.Equal(t, "sess-2", list2[0].SessionID)
+
+	// List unknown kind
+	list3, err := c.ListSandboxesByKind(ctx, "unknown-kind")
+	assert.NoError(t, err)
+	assert.Len(t, list3, 0)
 }

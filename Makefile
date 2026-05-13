@@ -107,9 +107,9 @@ run-router:
 		--debug
 
 # Clean build artifacts
-clean:
+clean: ## Clean build artifacts
 	@echo "Cleaning..."
-	rm -rf bin/
+	rm -rf bin/ sdk-python/dist/ cmd/cli/dist/
 
 # Install dependencies
 deps:

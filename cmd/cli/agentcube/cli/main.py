@@ -303,6 +303,11 @@ def publish(
         "--replicas",
         help="Number of replicas for K8s deployment (default: 1)",
     ),
+    endpoint: Optional[str] = typer.Option(
+        None,
+        "--endpoint",
+        help="Custom API endpoint for AgentCube or Kubernetes cluster",
+    ),
     namespace: Optional[str] = typer.Option(
         None,
         "--namespace",
@@ -339,9 +344,10 @@ def publish(
                 "description": description,
                 "region": region,
                 "cloud_provider": cloud_provider,
-                "provider": provider, # Pass provider down
+                "provider": provider,
                 "node_port": node_port,
                 "replicas": replicas,
+                "agent_endpoint": endpoint,
                 "namespace": namespace,
             }
 

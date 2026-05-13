@@ -123,10 +123,10 @@ class TestMetadataServiceEnvRoundTrip:
 # PublishRuntime env forwarding tests
 # ---------------------------------------------------------------------------
 
-class TestPublishRuntimeEnvForwarding:
-    """Test that env from metadata is forwarded to providers."""
+class TestPublishRuntimePublishOptions:
+    """Test publish options passed to providers and metadata."""
 
-    def _make_metadata(self, env=None):
+    def _make_metadata(self, env=None, agent_endpoint="http://localhost:8080"):
         return AgentMetadata(
             agent_name="test-agent",
             entrypoint="python main.py",
@@ -138,7 +138,7 @@ class TestPublishRuntimeEnvForwarding:
             router_url="http://router:8080",
             readiness_probe_path="/health",
             readiness_probe_port=8080,
-            agent_endpoint="http://localhost:8080",
+            agent_endpoint=agent_endpoint,
             image={"repository_url": "registry.example.com/test:latest"},
             env=env,
         )
@@ -259,3 +259,44 @@ class TestPublishRuntimeEnvForwarding:
         call_kwargs = mock_provider.deploy_agent_runtime.call_args
         passed_env = call_kwargs.kwargs.get("env_vars") or call_kwargs[1].get("env_vars")
         assert passed_env is None
+
+    @patch("agentcube.runtime.publish_runtime.AgentCubeProvider")
+    @patch("agentcube.runtime.publish_runtime.DockerService")
+    @patch("agentcube.runtime.publish_runtime.MetadataService")
+    def test_agentcube_publish_saves_endpoint(
+        self, MockMetaSvc, MockDockerSvc, MockACProvider
+    ):
+        from agentcube.runtime.publish_runtime import PublishRuntime
+
+        endpoint = "http://router.example.com"
+        meta = self._make_metadata(agent_endpoint=None)
+
+        mock_meta_svc = MockMetaSvc.return_value
+        mock_meta_svc.load_metadata.return_value = meta
+
+        mock_docker = MockDockerSvc.return_value
+        mock_docker.push_image.return_value = {"pushed_image": "registry.example.com/test:latest"}
+
+        mock_provider = MagicMock()
+        mock_provider.deploy_agent_runtime.return_value = {
+            "deployment_name": "test-agent",
+            "namespace": "default",
+            "status": "deployed",
+            "type": "AgentRuntime",
+        }
+        MockACProvider.return_value = mock_provider
+
+        runtime = PublishRuntime(verbose=False, provider="agentcube")
+        runtime.metadata_service = mock_meta_svc
+        runtime.docker_service = mock_docker
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = runtime.publish(
+                Path(tmpdir),
+                provider="agentcube",
+                agent_endpoint=endpoint,
+            )
+
+        updates = mock_meta_svc.update_metadata.call_args.args[1]
+        assert updates["agent_endpoint"] == endpoint
+        assert result["agent_endpoint"] == endpoint

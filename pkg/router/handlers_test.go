@@ -47,6 +47,10 @@ func (m *mockSessionManager) GetSandboxBySession(_ context.Context, _ string, _ 
 	return m.sandbox, m.err
 }
 
+func (m *mockSessionManager) Close() error {
+	return nil
+}
+
 func setupEnv() {
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_PASSWORD", "test-password")

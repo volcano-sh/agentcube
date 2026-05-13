@@ -17,6 +17,7 @@ limitations under the License.
 package picod
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -73,12 +74,12 @@ func NewServer(config Config) *Server {
 	engine.Use(gin.Logger())   // Request logging
 	engine.Use(gin.Recovery()) // Crash recovery
 
-	// Load public key from environment variable (required)
+	// Load public key from environment variable (required for JWT auth)
 	if err := s.authManager.LoadPublicKeyFromEnv(); err != nil {
 		klog.Fatalf("Failed to load public key from environment: %v", err)
 	}
 
-	// API route group (Authenticated)
+	// API route group with JWT authentication
 	api := engine.Group("/api")
 	api.Use(s.authManager.AuthMiddleware())
 	{
@@ -95,18 +96,29 @@ func NewServer(config Config) *Server {
 	return s
 }
 
-// Run starts the server
-func (s *Server) Run() error {
+// Start starts the server and blocks until ctx is canceled or a fatal error occurs.
+func (s *Server) Start(ctx context.Context) error {
 	addr := fmt.Sprintf(":%d", s.config.Port)
 	klog.Infof("PicoD server starting on %s", addr)
 
-	server := &http.Server{
+	httpServer := &http.Server{
 		Addr:              addr,
 		Handler:           s.engine,
 		ReadHeaderTimeout: 10 * time.Second, // Prevent Slowloris attacks
 	}
 
-	return server.ListenAndServe()
+	// Listen for shutdown signal and gracefully stop the HTTP server.
+	go func() {
+		<-ctx.Done()
+		klog.Info("Shutting down PicoD server...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			klog.Errorf("PicoD server shutdown error: %v", err)
+		}
+	}()
+
+	return httpServer.ListenAndServe()
 }
 
 // HealthCheckHandler handles health check requests

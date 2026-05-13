@@ -58,8 +58,8 @@ func NewServer(config *Config) (*Server, error) {
 		config.InitialConnectRetryInterval = 200 * time.Millisecond
 	}
 
-	// Create session manager with store client
-	sessionManager, err := NewSessionManager(store.Storage())
+	// Create session manager with store client and mTLS config
+	sessionManager, err := NewSessionManager(store.Storage(), &config.MTLSConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session manager: %w", err)
 	}
@@ -178,6 +178,9 @@ func (s *Server) Start(ctx context.Context) error {
 		defer cancel()
 		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
 			klog.Errorf("Server shutdown error: %v", err)
+		}
+		if s.sessionManager != nil {
+			_ = s.sessionManager.Close()
 		}
 	}()
 

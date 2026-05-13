@@ -30,6 +30,7 @@ import (
 
 	"github.com/volcano-sh/agentcube/pkg/api"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
+	"github.com/volcano-sh/agentcube/pkg/mtls"
 	"github.com/volcano-sh/agentcube/pkg/store"
 	"golang.org/x/net/http2"
 	"k8s.io/klog/v2"
@@ -44,6 +45,9 @@ type SessionManager interface {
 	// When sessionID is empty, it creates a new sandbox by calling the external API.
 	// When sessionID is not empty, it queries store for the sandbox.
 	GetSandboxBySession(ctx context.Context, sessionID string, namespace string, name string, kind string) (*types.SandboxInfo, error)
+
+	// Close cleans up any background resources (like mTLS certificate watchers)
+	Close() error
 }
 
 // manager is the default implementation of the SessionManager interface.
@@ -51,12 +55,14 @@ type manager struct {
 	storeClient     store.Store
 	workloadMgrAddr string
 	httpClient      *http.Client
+	certWatcher     *mtls.CertWatcher // non-nil when mTLS is enabled
 }
 
 // NewSessionManager returns a SessionManager implementation.
 // storeClient is used to query sandbox information from store
 // workloadMgrAddr is read from the environment variable WORKLOAD_MANAGER_URL.
-func NewSessionManager(storeClient store.Store) (SessionManager, error) {
+// When mtlsCfg includes cert, key, and CA paths, the HTTP client uses mTLS to connect to WorkloadManager.
+func NewSessionManager(storeClient store.Store, mtlsCfg *mtls.Config) (SessionManager, error) {
 	workloadMgrAddr := os.Getenv("WORKLOAD_MANAGER_URL")
 	if workloadMgrAddr == "" {
 		return nil, fmt.Errorf("WORKLOAD_MANAGER_URL environment variable is not set")
@@ -68,10 +74,32 @@ func NewSessionManager(storeClient store.Store) (SessionManager, error) {
 		DisableCompression:  false,
 	}
 
+	var certWatcher *mtls.CertWatcher
+
+	mtlsConfigured := mtlsCfg != nil && mtlsCfg.CertFile != "" && mtlsCfg.KeyFile != "" && mtlsCfg.CAFile != ""
+	if mtlsConfigured {
+		// Ensure the URL uses https:// to prevent plaintext bypass of mTLS
+		if !strings.HasPrefix(workloadMgrAddr, "https://") {
+			workloadMgrAddr = "https://" + strings.TrimPrefix(workloadMgrAddr, "http://")
+			klog.Infof("Using https:// for WORKLOAD_MANAGER_URL because mTLS is configured")
+		}
+
+		clientTLS, watcher, err := mtls.LoadClientConfig(mtlsCfg, mtls.WorkloadManagerSPIFFEID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load mTLS client config for WorkloadManager: %w", err)
+		}
+		transport.TLSClientConfig = clientTLS
+		certWatcher = watcher
+		klog.Infof("Router→WorkloadManager mTLS enabled: expecting server SPIFFE ID %s", mtls.WorkloadManagerSPIFFEID)
+	}
+
 	// Configure transport for HTTP/2 support (including h2c for cleartext)
 	// ConfigureTransports returns the HTTP/2 transport for further configuration
 	t2, err := http2.ConfigureTransports(transport)
 	if err != nil {
+		if certWatcher != nil {
+			certWatcher.Stop()
+		}
 		return nil, fmt.Errorf("failed to configure HTTP/2 transport: %w", err)
 	}
 
@@ -84,11 +112,20 @@ func NewSessionManager(storeClient store.Store) (SessionManager, error) {
 	return &manager{
 		storeClient:     storeClient,
 		workloadMgrAddr: workloadMgrAddr,
+		certWatcher:     certWatcher,
 		httpClient: &http.Client{
 			Timeout:   2 * time.Minute, // consistent with manager setting
 			Transport: transport,
 		},
 	}, nil
+}
+
+// Close cleans up any background resources like the mTLS certWatcher.
+func (m *manager) Close() error {
+	if m.certWatcher != nil {
+		m.certWatcher.Stop()
+	}
+	return nil
 }
 
 // GetSandboxBySession returns the sandbox associated with the given sessionID.

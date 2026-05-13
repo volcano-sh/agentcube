@@ -36,12 +36,15 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
+	"github.com/volcano-sh/agentcube/pkg/mtls"
 	"github.com/volcano-sh/agentcube/pkg/workloadmanager"
 )
 
 var (
 	schemeBuilder = runtime.NewScheme()
 )
+
+const mtlsFileWaitTimeout = 30 * time.Second
 
 func init() {
 	utilruntime.Must(scheme.AddToScheme(schemeBuilder))
@@ -57,7 +60,8 @@ func main() {
 		enableTLS        = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
 		tlsCert          = flag.String("tls-cert", "", "Path to TLS certificate file")
 		tlsKey           = flag.String("tls-key", "", "Path to TLS key file")
-		enableAuth       = flag.Bool("enable-auth", false, "Enable Authentication")
+		tlsCA            = flag.String("tls-ca", "", "Path to TLS CA certificate file")
+		enableAuth       = flag.Bool("enable-auth", false, "Enable authorization")
 	)
 
 	// Initialize klog flags
@@ -65,6 +69,21 @@ func main() {
 
 	// Parse command line flags
 	flag.Parse()
+
+	tlsConfig := mtls.Config{
+		CertFile: *tlsCert,
+		KeyFile:  *tlsKey,
+		CAFile:   *tlsCA,
+	}
+	if err := validateTLSFlags(*enableTLS, tlsConfig); err != nil {
+		klog.Fatalf("Invalid TLS configuration: %v", err)
+	}
+	if tlsConfig.CertFile != "" && tlsConfig.KeyFile != "" && tlsConfig.CAFile != "" {
+		klog.Infof("Waiting for WorkloadManager mTLS cert/key/CA files")
+		if err := waitForMTLSFiles(tlsConfig, mtlsFileWaitTimeout); err != nil {
+			klog.Fatalf("Invalid mTLS configuration: %v", err)
+		}
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 
@@ -103,6 +122,7 @@ func main() {
 		TLSCert:          *tlsCert,
 		TLSKey:           *tlsKey,
 		EnableAuth:       *enableAuth,
+		MTLSConfig:       tlsConfig,
 	}
 
 	// Create and initialize API server
@@ -180,4 +200,39 @@ func setupControllers(mgr ctrl.Manager, sandboxReconciler *workloadmanager.Sandb
 	}
 
 	return nil
+}
+
+func validateTLSFlags(enableTLS bool, cfg mtls.Config) error {
+	if cfg.CAFile != "" {
+		if cfg.CertFile == "" || cfg.KeyFile == "" {
+			return fmt.Errorf("tls-cert, tls-key, and tls-ca must all be specified together for mTLS")
+		}
+		return nil
+	}
+	if enableTLS && (cfg.CertFile == "" || cfg.KeyFile == "") {
+		return fmt.Errorf("both --tls-cert and --tls-key must be provided when --enable-tls is set")
+	}
+	return nil
+}
+
+func waitForMTLSFiles(cfg mtls.Config, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if mtlsFilesExist(cfg) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for mTLS cert/key/CA files")
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+func mtlsFilesExist(cfg mtls.Config) bool {
+	for _, path := range []string{cfg.CertFile, cfg.KeyFile, cfg.CAFile} {
+		if _, err := os.Stat(path); err != nil {
+			return false
+		}
+	}
+	return true
 }

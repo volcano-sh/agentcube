@@ -32,7 +32,7 @@ The `run_e2e.sh` script performs the following steps:
 
 1. Creates a Kind cluster
 2. Installs CRDs and agent-sandbox
-3. **Builds Docker images** (`make docker-build`, `make docker-build-router`, `make docker-build-picod`)
+3. **Builds Docker images** (`make docker-build-workloadmanager`, `make docker-build-router`, `make docker-build-picod`)
 4. Loads images into Kind cluster
 5. Deploys Redis, WorkloadManager, and Router
 6. Creates test resources (AgentRuntime, CodeInterpreter)

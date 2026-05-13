@@ -35,37 +35,18 @@ Binaries will be placed in the `bin/` directory.
 
 ### Build Specific Components
 
-- **Workload Manager**: `make build`
+- **Workload Manager**: `make build-workloadmanager`
 - **AgentD**: `make build-agentd`
 - **Router**: `make build-router`
-
-## 3. Running Locally
-
-### Run Workload Manager
-
-You can run the Workload Manager locally using your existing Kubeconfig:
-
-```bash
-
-make run-local
-```
-
-This will start the server on port 8080 by default.
-
-### Run Router
-
-```bash
-make run-router
-```
 
 ## 4. Docker Images
 
 ### Build All Images
 
 ```bash
-make docker-build        # Workload Manager
-make docker-build-router # Router
-make docker-build-picod  # Picod (Agent Daemon)
+make docker-build-workloadmanager
+make docker-build-router
+make docker-build-picod
 ```
 
 ### Loading to Kind
@@ -73,7 +54,6 @@ If you are using Kind for local development, you can load images directly:
 
 ```bash
 make kind-load
-make kind-load-router
 ```
 
 ## 5. Coding Standards

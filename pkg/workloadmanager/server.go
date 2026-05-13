@@ -197,6 +197,10 @@ func (s *Server) startMTLSServer(addr string) error {
 		return fmt.Errorf("failed to load mTLS server config: %w", err)
 	}
 	s.certWatcher = watcher
+	if err := configureHTTP2TLSServer(s.httpServer, serverTLS); err != nil {
+		watcher.Stop()
+		return fmt.Errorf("failed to configure HTTP/2 for mTLS server: %w", err)
+	}
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -207,6 +211,11 @@ func (s *Server) startMTLSServer(addr string) error {
 
 	klog.Infof("WorkloadManager mTLS enabled: accepting only clients with SPIFFE ID %s", mtls.RouterSPIFFEID)
 	return s.httpServer.Serve(tlsListener)
+}
+
+func configureHTTP2TLSServer(server *http.Server, tlsConfig *tls.Config) error {
+	server.TLSConfig = tlsConfig
+	return http2.ConfigureServer(server, &http2.Server{})
 }
 
 // Shutdown performs graceful shutdown of the HTTP server.

@@ -26,12 +26,11 @@ from agentcube.exceptions import CommandExecutionError
 def _skip_if_mtls(test_method):
     """Decorator: skip direct-WorkloadManager tests when MTLS_ENABLED=true.
 
-    When mTLS is active the WorkloadManager listens on HTTPS and requires a
-    client certificate from the Router.  The test client (which port-forwards
-    plain TCP) has no client cert, so every direct call fails with
-    'client sent an HTTP request to an HTTPS server'.
-    The mTLS code path is validated indirectly via the Router→WM flow in the
-    Go e2e AgentRuntime/CodeInterpreter tests.
+    mTLS is only enabled between Router and WorkloadManager. The test client
+    connects directly through a port-forward and has no Router client
+    certificate, so direct WorkloadManager calls cannot authenticate in this
+    mode. The Router-to-WorkloadManager mTLS path is covered by the Go
+    AgentRuntime e2e tests; sandbox traffic is not part of this mTLS boundary.
     """
     def wrapper(self, *args, **kwargs):
         if os.getenv("MTLS_ENABLED") == "true":

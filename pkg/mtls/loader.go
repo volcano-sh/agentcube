@@ -30,6 +30,9 @@ func LoadServerConfig(cfg *Config, expectedClientIDs []string) (*tls.Config, *Ce
 	if cfg == nil {
 		return nil, nil, fmt.Errorf("server TLS config: mtls.Config is nil")
 	}
+	if cfg.CAFile == "" {
+		return nil, nil, fmt.Errorf("server TLS config: CAFile is required for mTLS verification")
+	}
 
 	watcher, err := NewCertWatcher(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
 	if err != nil {
@@ -64,6 +67,9 @@ func LoadClientConfig(cfg *Config, expectedServerID string) (*tls.Config, *CertW
 
 	if cfg == nil {
 		return nil, nil, fmt.Errorf("client TLS config: mtls.Config is nil")
+	}
+	if cfg.CAFile == "" {
+		return nil, nil, fmt.Errorf("client TLS config: CAFile is required for mTLS verification")
 	}
 
 	watcher, err := NewCertWatcher(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
@@ -107,7 +113,10 @@ func verifyClientCert(watcher *CertWatcher, expectedIDs []string) func([][]byte,
 			intermediates.AddCert(ic)
 		}
 
-		caPool := watcher.GetCAPool()
+		caPool, err := requireCAPool(watcher)
+		if err != nil {
+			return fmt.Errorf("verify client certificate chain: %w", err)
+		}
 		opts := x509.VerifyOptions{
 			Roots:         caPool,
 			Intermediates: intermediates,
@@ -155,7 +164,10 @@ func verifyServerCert(watcher *CertWatcher, expectedID string) func([][]byte, []
 			intermediates.AddCert(intermediateCert)
 		}
 
-		caPool := watcher.GetCAPool()
+		caPool, err := requireCAPool(watcher)
+		if err != nil {
+			return fmt.Errorf("verify server certificate chain: %w", err)
+		}
 		opts := x509.VerifyOptions{
 			Roots:         caPool,
 			Intermediates: intermediates,
@@ -172,4 +184,12 @@ func verifyServerCert(watcher *CertWatcher, expectedID string) func([][]byte, []
 		}
 		return fmt.Errorf("server certificate SPIFFE ID does not match expected %q", expectedID)
 	}
+}
+
+func requireCAPool(watcher *CertWatcher) (*x509.CertPool, error) {
+	caPool := watcher.GetCAPool()
+	if caPool == nil {
+		return nil, fmt.Errorf("CA pool is required for mTLS verification")
+	}
+	return caPool, nil
 }

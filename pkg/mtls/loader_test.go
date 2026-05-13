@@ -233,6 +233,32 @@ func TestLoadClientConfig_NilConfig(t *testing.T) {
 	}
 }
 
+func TestLoadServerConfig_EmptyCAFile(t *testing.T) {
+	certFile, keyFile, _ := generateTestCerts(t)
+	cfg := &Config{CertFile: certFile, KeyFile: keyFile}
+
+	_, _, err := LoadServerConfig(cfg, nil)
+	if err == nil {
+		t.Fatal("expected error for empty CA file")
+	}
+	if !strings.Contains(err.Error(), "CAFile is required") {
+		t.Errorf("error = %q, want mention of required CAFile", err.Error())
+	}
+}
+
+func TestLoadClientConfig_EmptyCAFile(t *testing.T) {
+	certFile, keyFile, _ := generateTestCerts(t)
+	cfg := &Config{CertFile: certFile, KeyFile: keyFile}
+
+	_, _, err := LoadClientConfig(cfg, "spiffe://cluster.local/ns/default/sa/test")
+	if err == nil {
+		t.Fatal("expected error for empty CA file")
+	}
+	if !strings.Contains(err.Error(), "CAFile is required") {
+		t.Errorf("error = %q, want mention of required CAFile", err.Error())
+	}
+}
+
 func TestLoadServerConfig_MissingCAFile(t *testing.T) {
 	certFile, keyFile, _ := generateTestCerts(t)
 	cfg := &Config{CertFile: certFile, KeyFile: keyFile, CAFile: "/nonexistent/ca.pem"}

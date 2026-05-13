@@ -19,15 +19,19 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/mtls"
 	"github.com/volcano-sh/agentcube/pkg/router"
 )
+
+const mtlsFileWaitTimeout = 30 * time.Second
 
 func main() {
 	var (
@@ -51,14 +55,19 @@ func main() {
 	// Parse command line flags
 	flag.Parse()
 
-	// Validate mTLS configuration early (fail fast on bad flags)
 	tlsConfig := mtls.Config{
 		CertFile: *mtlsCert,
 		KeyFile:  *mtlsKey,
 		CAFile:   *mtlsCA,
 	}
-	if err := tlsConfig.Validate(); err != nil {
+	if err := validateMTLSFlags(tlsConfig); err != nil {
 		klog.Fatalf("Invalid mTLS configuration: %v", err)
+	}
+	if tlsConfig.CertFile != "" && tlsConfig.KeyFile != "" && tlsConfig.CAFile != "" {
+		klog.Infof("Waiting for Router mTLS cert/key/CA files")
+		if err := waitForMTLSFiles(tlsConfig, mtlsFileWaitTimeout); err != nil {
+			klog.Fatalf("Invalid mTLS configuration: %v", err)
+		}
 	}
 
 	// Create Router API server configuration
@@ -105,4 +114,36 @@ func main() {
 	}
 
 	klog.Info("Router server stopped")
+}
+
+func validateMTLSFlags(cfg mtls.Config) error {
+	if cfg.CertFile == "" && cfg.KeyFile == "" && cfg.CAFile == "" {
+		return nil
+	}
+	if cfg.CertFile == "" || cfg.KeyFile == "" || cfg.CAFile == "" {
+		return fmt.Errorf("mtls-cert, mtls-key, and mtls-ca must all be specified together")
+	}
+	return nil
+}
+
+func waitForMTLSFiles(cfg mtls.Config, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if mtlsFilesExist(cfg) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for mTLS cert/key/CA files")
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+func mtlsFilesExist(cfg mtls.Config) bool {
+	for _, path := range []string{cfg.CertFile, cfg.KeyFile, cfg.CAFile} {
+		if _, err := os.Stat(path); err != nil {
+			return false
+		}
+	}
+	return true
 }

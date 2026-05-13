@@ -16,16 +16,38 @@ limitations under the License.
 
 package mtls
 
-// SPIFFE ID constants for AgentCube components.
-// These follow the Istio-convention format: spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>
-//
-// NOTE(reviewer): These are currently hardcoded to match the identity assignments in
-// docs/design/auth-proposal.md Section 1.3. If multi-cluster or configurable trust
-// domains are needed in the future, consider exposing these via CLI flags.
+import (
+	"fmt"
+	"os"
+	"strings"
+)
+
 const (
+	defaultTrustDomain = "cluster.local"
+	trustDomainEnvVar  = "AGENTCUBE_SPIFFE_TRUST_DOMAIN"
+	agentcubeNamespace = "agentcube-system"
+)
+
+// SPIFFE IDs for AgentCube components.
+// These follow the Istio-convention format: spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>.
+// The trust domain defaults to cluster.local and can be overridden with AGENTCUBE_SPIFFE_TRUST_DOMAIN
+// to match the SPIRE trust domain configured by deployment tooling.
+var (
 	// RouterSPIFFEID is the SPIFFE identity for the Router component.
-	RouterSPIFFEID = "spiffe://cluster.local/ns/agentcube-system/sa/agentcube-router"
+	RouterSPIFFEID = componentSPIFFEID(configuredTrustDomain(), "agentcube-router")
 
 	// WorkloadManagerSPIFFEID is the SPIFFE identity for the WorkloadManager component.
-	WorkloadManagerSPIFFEID = "spiffe://cluster.local/ns/agentcube-system/sa/workloadmanager"
+	WorkloadManagerSPIFFEID = componentSPIFFEID(configuredTrustDomain(), "workloadmanager")
 )
+
+func configuredTrustDomain() string {
+	trustDomain := strings.TrimSpace(os.Getenv(trustDomainEnvVar))
+	if trustDomain == "" {
+		return defaultTrustDomain
+	}
+	return trustDomain
+}
+
+func componentSPIFFEID(trustDomain, serviceAccount string) string {
+	return fmt.Sprintf("spiffe://%s/ns/%s/sa/%s", trustDomain, agentcubeNamespace, serviceAccount)
+}

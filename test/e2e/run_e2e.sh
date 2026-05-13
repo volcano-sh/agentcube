@@ -12,6 +12,7 @@ ROUTER_IMAGE=${ROUTER_IMAGE:-agentcube-router:latest}
 PICOD_IMAGE=${PICOD_IMAGE:-picod:latest}
 REDIS_IMAGE=${REDIS_IMAGE:-redis:7-alpine}
 AGENTCUBE_NAMESPACE=${AGENTCUBE_NAMESPACE:-agentcube-system}
+WORKLOAD_NAMESPACE=${WORKLOAD_NAMESPACE:-agentcube}
 E2E_VENV_DIR=${E2E_VENV_DIR:-/tmp/agentcube-e2e-venv}
 
 # Images that need to be pre-pulled and loaded into kind cluster
@@ -90,6 +91,11 @@ require_python() {
         echo "Python package 'agentcube' not found in virtual environment. Please ensure sdk-python is properly installed." >&2
         exit 1
     }
+}
+
+tcp_port_open() {
+    local port=$1
+    : 2>/dev/null </dev/tcp/127.0.0.1/"${port}"
 }
 
 step() {
@@ -354,7 +360,7 @@ run_setup() {
 
     step "Creating test AgentRuntimes..."
     # The test fixtures use namespace: agentcube (user workload namespace)
-    kubectl create namespace agentcube --dry-run=client -o yaml | kubectl apply -f -
+    kubectl create namespace "${WORKLOAD_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
     # Create normal echo-agent
     kubectl apply --validate=false -f test/e2e/echo_agent.yaml
     # Create echo-agent-short-ttl with short sessionTimeout for TTL testing
@@ -430,12 +436,12 @@ echo "Router port forward started with PID $ROUTER_PID"
 # Wait for port-forwards to be ready
 echo "Waiting for port-forwards..."
 for i in $(seq 1 30); do
-    # Use TCP check: WM uses mTLS (client cert required), so we can't curl it without a cert.
-    # Checking port reachability is sufficient to confirm the tunnel is up.
+    # WorkloadManager uses mTLS, so an unauthenticated HTTP health check cannot complete.
+    # Router exposes a non-mTLS health endpoint and should be verified at HTTP level.
     wm_ok=false
     router_ok=false
-    nc -z localhost "${WORKLOAD_MANAGER_LOCAL_PORT}" 2>/dev/null && wm_ok=true
-    nc -z localhost "${ROUTER_LOCAL_PORT}" 2>/dev/null && router_ok=true
+    tcp_port_open "${WORKLOAD_MANAGER_LOCAL_PORT}" && wm_ok=true
+    curl -fsS "http://localhost:${ROUTER_LOCAL_PORT}/health/live" >/dev/null 2>&1 && router_ok=true
     if $wm_ok && $router_ok; then
         echo "Port-forwards are ready."
         break
@@ -487,7 +493,7 @@ if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" \
    ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" \
    MTLS_ENABLED=true \
    API_TOKEN=$API_TOKEN \
-   AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" \
+   AGENTCUBE_NAMESPACE="${WORKLOAD_NAMESPACE}" \
    "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py; then
     TEST_FAILED=1
 fi

@@ -1,5 +1,5 @@
 # Multi-stage build for agentcube-router
-FROM golang:1.24.9-alpine AS builder
+FROM golang:1.26.1-alpine AS builder
 
 # Build arguments for multi-architecture support
 ARG TARGETOS=linux

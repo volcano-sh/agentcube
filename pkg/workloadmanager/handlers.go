@@ -264,6 +264,7 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	storeCacheInfo := buildSandboxInfo(createdSandbox, podIP, sandboxEntry)
 
 	response := &types.CreateSandboxResponse{
+		Kind:        storeCacheInfo.Kind,
 		SessionID:   sandboxEntry.SessionID,
 		SandboxID:   storeCacheInfo.SandboxID,
 		SandboxName: sandbox.Name,

@@ -109,21 +109,9 @@ func (gc *garbageCollector) once() {
 	if err != nil {
 		klog.Errorf("garbage collector error listing expired sandboxes: %v", err)
 	}
-	// Remove duplicates based on SessionID
-	seen := make(map[string]struct{}, len(inactiveSandboxes)+len(expiredSandboxes))
-	gcSandboxes := make([]*types.SandboxInfo, 0, len(inactiveSandboxes)+len(expiredSandboxes))
-	for _, s := range inactiveSandboxes {
-		if _, ok := seen[s.SessionID]; !ok {
-			seen[s.SessionID] = struct{}{}
-			gcSandboxes = append(gcSandboxes, s)
-		}
-	}
-	for _, s := range expiredSandboxes {
-		if _, ok := seen[s.SessionID]; !ok {
-			seen[s.SessionID] = struct{}{}
-			gcSandboxes = append(gcSandboxes, s)
-		}
-	}
+	// Merge and deduplicate: a sandbox may appear in both lists when it is
+	// simultaneously idle-timed-out and past its TTL.
+	gcSandboxes := deduplicateSandboxes(inactiveSandboxes, expiredSandboxes)
 
 	if len(gcSandboxes) > 0 {
 		klog.Infof("garbage collector found %d sandboxes to be deleted", len(gcSandboxes))
@@ -173,4 +161,24 @@ func (gc *garbageCollector) deleteSandboxClaim(ctx context.Context, namespace, n
 		return fmt.Errorf("error deleting sandboxClaim %s/%s: %w", namespace, name, err)
 	}
 	return nil
+}
+
+// deduplicateSandboxes merges multiple sandbox lists and removes duplicates
+// by SessionID, preserving the order of first occurrence.
+func deduplicateSandboxes(lists ...[]*types.SandboxInfo) []*types.SandboxInfo {
+	total := 0
+	for _, l := range lists {
+		total += len(l)
+	}
+	seen := make(map[string]struct{}, total)
+	result := make([]*types.SandboxInfo, 0, total)
+	for _, list := range lists {
+		for _, s := range list {
+			if _, ok := seen[s.SessionID]; !ok {
+				seen[s.SessionID] = struct{}{}
+				result = append(result, s)
+			}
+		}
+	}
+	return result
 }

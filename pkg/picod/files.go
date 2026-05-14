@@ -94,7 +94,7 @@ func (s *Server) handleMultipartUpload(c *gin.Context) {
 
 	// Create directory
 	dir := filepath.Dir(safePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := s.mkdirSafe(dir); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to create directory: %v", err),
 			"code":  http.StatusInternalServerError,
@@ -186,7 +186,7 @@ func (s *Server) handleJSONBase64Upload(c *gin.Context) {
 
 	// Create directory
 	dir := filepath.Dir(safePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := s.mkdirSafe(dir); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to create directory: %v", err),
 			"code":  http.StatusInternalServerError,

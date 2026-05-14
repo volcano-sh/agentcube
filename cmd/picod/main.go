@@ -17,7 +17,10 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"flag"
+	"os/signal"
+	"syscall"
 
 	"k8s.io/klog/v2"
 
@@ -37,10 +40,14 @@ func main() {
 		Workspace: *workspace,
 	}
 
+	// Create a context that is canceled on SIGINT or SIGTERM.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	// Create and start server
 	server := picod.NewServer(config)
 
-	if err := server.Run(); err != nil {
+	if err := server.Run(ctx); err != nil {
 		klog.Fatalf("Failed to start server: %v", err)
 	}
 }

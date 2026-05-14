@@ -17,6 +17,7 @@ limitations under the License.
 package picod
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -96,7 +97,7 @@ func NewServer(config Config) *Server {
 }
 
 // Run starts the server
-func (s *Server) Run() error {
+func (s *Server) Run(ctx context.Context) error {
 	addr := fmt.Sprintf(":%d", s.config.Port)
 	klog.Infof("PicoD server starting on %s", addr)
 
@@ -106,7 +107,24 @@ func (s *Server) Run() error {
 		ReadHeaderTimeout: 10 * time.Second, // Prevent Slowloris attacks
 	}
 
-	return server.ListenAndServe()
+	idleConnsClosed := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		// Allow enough time for in-flight commands to finish (default timeout is 60s).
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			klog.Errorf("HTTP server shutdown error: %v", err)
+		}
+		close(idleConnsClosed)
+	}()
+
+	if err := server.ListenAndServe(); err != http.ErrServerClosed {
+		return err
+	}
+
+	<-idleConnsClosed
+	return nil
 }
 
 // HealthCheckHandler handles health check requests

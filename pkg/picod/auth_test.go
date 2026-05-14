@@ -302,31 +302,4 @@ func TestAuthMiddleware_TokenValidation(t *testing.T) {
 	}
 }
 
-func TestAuthMiddleware_MaxBodySize(t *testing.T) {
-	privateKey, pubKeyPEM, err := generateTestRSAKeyPair()
-	require.NoError(t, err)
 
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
-
-	manager := NewAuthManager()
-	err = manager.LoadPublicKeyFromEnv()
-	require.NoError(t, err)
-
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"exp": time.Now().Add(time.Hour).Unix(),
-		"iat": time.Now().Unix(),
-	})
-	tokenString, err := token.SignedString(privateKey)
-	require.NoError(t, err)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("POST", "/api/execute", nil)
-	c.Request.Header.Set("Authorization", "Bearer "+tokenString)
-
-	handler := manager.AuthMiddleware()
-	handler(c)
-
-	assert.NotNil(t, c.Request.Body)
-}

@@ -26,6 +26,11 @@ import (
 	"k8s.io/klog/v2"
 )
 
+const (
+	// MaxBodySize limits request body size to prevent memory exhaustion
+	MaxBodySize = 32 << 20 // 32 MB
+)
+
 // Config defines server configuration
 type Config struct {
 	Port      int    `json:"port"`
@@ -72,6 +77,23 @@ func NewServer(config Config) *Server {
 	// Global middleware
 	engine.Use(gin.Logger())   // Request logging
 	engine.Use(gin.Recovery()) // Crash recovery
+	// Limit request body size to prevent DoS attacks.
+	// First reject requests whose Content-Length already exceeds the limit,
+	// then wrap the body with MaxBytesReader as a safety net for chunked
+	// transfers or requests without Content-Length.
+	engine.Use(func(c *gin.Context) {
+		if c.Request.ContentLength > MaxBodySize {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+				"error":  "request body too large",
+				"detail": fmt.Sprintf("maximum allowed size is %d bytes", MaxBodySize),
+			})
+			c.Abort()
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxBodySize)
+		c.Next()
+	})
+	engine.MaxMultipartMemory = MaxBodySize
 
 	// Load public key from environment variable (required)
 	if err := s.authManager.LoadPublicKeyFromEnv(); err != nil {

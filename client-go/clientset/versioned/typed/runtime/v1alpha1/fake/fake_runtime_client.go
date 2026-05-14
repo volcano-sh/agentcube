@@ -32,6 +32,10 @@ func (c *FakeRuntimeV1alpha1) AgentRuntimes(namespace string) v1alpha1.AgentRunt
 	return newFakeAgentRuntimes(c, namespace)
 }
 
+func (c *FakeRuntimeV1alpha1) BrowserUses(namespace string) v1alpha1.BrowserUseInterface {
+	return newFakeBrowserUses(c, namespace)
+}
+
 func (c *FakeRuntimeV1alpha1) CodeInterpreters(namespace string) v1alpha1.CodeInterpreterInterface {
 	return newFakeCodeInterpreters(c, namespace)
 }

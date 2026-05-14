@@ -67,6 +67,7 @@ func (car *CreateSandboxRequest) Validate() error {
 	switch car.Kind {
 	case AgentRuntimeKind:
 	case CodeInterpreterKind:
+	case BrowserUseKind:
 	default:
 		return fmt.Errorf("invalid kind %s", car.Kind)
 	}

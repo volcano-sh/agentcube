@@ -151,6 +151,10 @@ func (s *Server) setupRoutes() {
 	// Code interpreter invoke requests (support GET/POST, since downstream uses GET for file download)
 	v1.GET("/namespaces/:namespace/code-interpreters/:name/invocations/*path", s.handleCodeInterpreterInvoke)
 	v1.POST("/namespaces/:namespace/code-interpreters/:name/invocations/*path", s.handleCodeInterpreterInvoke)
+
+	// Browser use invoke requests (support GET/POST)
+	v1.GET("/namespaces/:namespace/browser-uses/:name/invocations/*path", s.handleBrowserUseInvoke)
+	v1.POST("/namespaces/:namespace/browser-uses/:name/invocations/*path", s.handleBrowserUseInvoke)
 }
 
 // Start starts the Router API server

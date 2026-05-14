@@ -46,8 +46,10 @@ spec:
               value: "deepseek-chat"
             - name: ROUTER_URL
               value: "http://agentcube-router.agentcube.svc.cluster.local:8080"
+            - name: PLAYWRIGHT_MCP_KIND
+              value: "BrowserUse" # Set AgentRuntime when using browser-use-tool.yaml
             - name: PLAYWRIGHT_MCP_NAME
-              value: "browser-use-tool" # Must match AgentRuntime CRD name
+              value: "browser-use-tool" # Must match BrowserUse CRD name
             - name: PLAYWRIGHT_MCP_NAMESPACE
               value: "default"
             - name: BROWSER_TASK_TIMEOUT

@@ -26,6 +26,8 @@ import (
 type Interface interface {
 	// AgentRuntimes returns a AgentRuntimeInformer.
 	AgentRuntimes() AgentRuntimeInformer
+	// BrowserUses returns a BrowserUseInformer.
+	BrowserUses() BrowserUseInformer
 	// CodeInterpreters returns a CodeInterpreterInformer.
 	CodeInterpreters() CodeInterpreterInformer
 }
@@ -44,6 +46,11 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 // AgentRuntimes returns a AgentRuntimeInformer.
 func (v *version) AgentRuntimes() AgentRuntimeInformer {
 	return &agentRuntimeInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// BrowserUses returns a BrowserUseInformer.
+func (v *version) BrowserUses() BrowserUseInformer {
+	return &browserUseInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
 // CodeInterpreters returns a CodeInterpreterInformer.

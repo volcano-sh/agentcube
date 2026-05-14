@@ -20,4 +20,6 @@ package v1alpha1
 
 type AgentRuntimeExpansion interface{}
 
+type BrowserUseExpansion interface{}
+
 type CodeInterpreterExpansion interface{}

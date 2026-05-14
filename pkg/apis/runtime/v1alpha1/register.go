@@ -35,6 +35,13 @@ var (
 	AgentRuntimeGroupVersionKind = GroupVersion.WithKind("AgentRuntime")
 )
 
+// BrowserUse type metadata.
+var (
+	BrowserUseKind             = "BrowserUse"
+	BrowserUseListKind         = "BrowserUseList"
+	BrowserUseGroupVersionKind = GroupVersion.WithKind("BrowserUse")
+)
+
 // SchemeGroupVersion is group version used to register these objects
 var SchemeGroupVersion = GroupVersion
 

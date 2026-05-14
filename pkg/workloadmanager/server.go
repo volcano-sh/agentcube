@@ -123,6 +123,9 @@ func (s *Server) setupRoutes() {
 	// code interpreter management endpoints
 	v1Group.POST("/code-interpreter", s.handleCodeInterpreterCreate)
 	v1Group.DELETE("/code-interpreter/sessions/:sessionId", s.handleDeleteSandbox)
+	// browser use management endpoints
+	v1Group.POST("/browser-use", s.handleBrowserUseCreate)
+	v1Group.DELETE("/browser-use/sessions/:sessionId", s.handleDeleteSandbox)
 }
 
 // Start starts the API server

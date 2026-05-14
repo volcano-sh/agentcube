@@ -121,6 +121,8 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 		endpoint = m.workloadMgrAddr + "/v1/agent-runtime"
 	case types.CodeInterpreterKind:
 		endpoint = m.workloadMgrAddr + "/v1/code-interpreter"
+	case types.BrowserUseKind:
+		endpoint = m.workloadMgrAddr + "/v1/browser-use"
 	default:
 		return nil, fmt.Errorf("unsupported kind: %s", kind)
 	}

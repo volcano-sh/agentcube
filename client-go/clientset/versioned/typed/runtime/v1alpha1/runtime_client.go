@@ -29,6 +29,7 @@ import (
 type RuntimeV1alpha1Interface interface {
 	RESTClient() rest.Interface
 	AgentRuntimesGetter
+	BrowserUsesGetter
 	CodeInterpretersGetter
 }
 
@@ -39,6 +40,10 @@ type RuntimeV1alpha1Client struct {
 
 func (c *RuntimeV1alpha1Client) AgentRuntimes(namespace string) AgentRuntimeInterface {
 	return newAgentRuntimes(c, namespace)
+}
+
+func (c *RuntimeV1alpha1Client) BrowserUses(namespace string) BrowserUseInterface {
+	return newBrowserUses(c, namespace)
 }
 
 func (c *RuntimeV1alpha1Client) CodeInterpreters(namespace string) CodeInterpreterInterface {

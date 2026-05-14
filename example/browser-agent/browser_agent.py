@@ -15,11 +15,11 @@
 """
 Browser Agent — an AI agent that handles web search and analysis tasks
 by delegating browser automation to a Playwright MCP tool running in an
-AgentCube sandbox (AgentRuntime).
+AgentCube sandbox.
 
 Architecture:
     Client ──HTTP──▶ Browser Agent ──Router──▶ Playwright MCP Tool (sandbox)
-                     (this service)             (AgentRuntime pod)
+                     (this service)             (BrowserUse/AgentRuntime pod)
 
 The agent receives natural-language requests, connects to the Playwright MCP
 server through the AgentCube Router, lets the LLM choose browser tools, and
@@ -56,6 +56,7 @@ OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
 ROUTER_URL = os.environ.get("ROUTER_URL", "http://agentcube-router.agentcube.svc.cluster.local:8080")
 PLAYWRIGHT_MCP_NAME = os.environ.get("PLAYWRIGHT_MCP_NAME", "browser-use-tool")
 PLAYWRIGHT_MCP_NAMESPACE = os.environ.get("PLAYWRIGHT_MCP_NAMESPACE", "default")
+PLAYWRIGHT_MCP_KIND = os.environ.get("PLAYWRIGHT_MCP_KIND", "BrowserUse")
 AGENTCUBE_SESSION_HEADER = "x-agentcube-session-id"
 
 # Timeout for browser tasks
@@ -64,6 +65,24 @@ MAX_TOOL_ROUNDS = int(os.environ.get("MAX_TOOL_ROUNDS", "10"))
 
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = int(os.environ.get("PORT", "8000"))
+
+RESOURCE_PATH_BY_KIND = {
+    "agentruntime": "agent-runtimes",
+    "browseruse": "browser-uses",
+}
+
+
+def _resource_path_for_kind(kind: str) -> str:
+    normalized_kind = kind.strip().lower()
+    resource_path = RESOURCE_PATH_BY_KIND.get(normalized_kind)
+    if resource_path:
+        return resource_path
+
+    supported = ", ".join(sorted(["AgentRuntime", "BrowserUse"]))
+    raise ValueError(
+        f"Unsupported PLAYWRIGHT_MCP_KIND '{kind}'. Supported values: {supported}"
+    )
+
 
 # ========================= LLM Setup =========================
 PLANNER_SYSTEM_PROMPT = """\
@@ -173,9 +192,10 @@ class PlaywrightMCPClient:
     """Client for calling the Playwright MCP tool via AgentCube Router."""
 
     def __init__(self):
+        resource_path = _resource_path_for_kind(PLAYWRIGHT_MCP_KIND)
         self.base_url = (
             f"{ROUTER_URL}/v1/namespaces/{PLAYWRIGHT_MCP_NAMESPACE}"
-            f"/agent-runtimes/{PLAYWRIGHT_MCP_NAME}/invocations/mcp"
+            f"/{resource_path}/{PLAYWRIGHT_MCP_NAME}/invocations/mcp"
         )
         self.session_id: Optional[str] = None
 

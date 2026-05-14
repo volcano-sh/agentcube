@@ -22,6 +22,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
 )
@@ -94,6 +95,7 @@ func NewServer(config Config) *Server {
 		c.Next()
 	})
 	engine.MaxMultipartMemory = MaxBodySize
+	engine.Use(gzip.Gzip(gzip.BestSpeed, gzip.WithExcludedPaths([]string{"/health"}))) // Response compression
 
 	// Load public key from environment variable (required)
 	if err := s.authManager.LoadPublicKeyFromEnv(); err != nil {

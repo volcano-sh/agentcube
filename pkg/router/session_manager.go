@@ -185,10 +185,12 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 
 	// Construct Sandbox Info from response
 	sandbox := &types.SandboxInfo{
-		SandboxID:   res.SandboxID,
-		Name:        res.SandboxName,
-		SessionID:   res.SessionID,
-		EntryPoints: res.EntryPoints,
+		Kind:             res.Kind,
+		SandboxNamespace: namespace,
+		SandboxID:        res.SandboxID,
+		Name:             res.SandboxName,
+		SessionID:        res.SessionID,
+		EntryPoints:      res.EntryPoints,
 	}
 
 	return sandbox, nil

@@ -17,6 +17,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # Copy source code
 COPY cmd/ cmd/
 COPY pkg/ pkg/
+COPY client-go/ client-go/
 
 # Build with dynamic architecture support and caching
 # Supports amd64, arm64, arm/v7, etc.

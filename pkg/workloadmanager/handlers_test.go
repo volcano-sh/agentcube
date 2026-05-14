@@ -335,6 +335,14 @@ func TestHandleSandboxCreate(t *testing.T) {
 			expectMessage: api.ErrAgentRuntimeNotFound.Error(),
 		},
 		{
+			name:          "public key missing returns service unavailable",
+			kind:          types.CodeInterpreterKind,
+			body:          `{"name":"workload","namespace":"ns"}`,
+			buildErr:      api.ErrPublicKeyMissing,
+			expectStatus:  http.StatusServiceUnavailable,
+			expectMessage: api.ErrPublicKeyMissing.Error(),
+		},
+		{
 			name:          "build sandbox internal error",
 			kind:          types.AgentRuntimeKind,
 			body:          `{"name":"workload","namespace":"ns"}`,

@@ -82,6 +82,17 @@ func (s *Server) extractUserK8sClient(c *gin.Context) (dynamic.Interface, error)
 	return userClient.dynamicClient, nil
 }
 
+func respondSandboxBuildError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, api.ErrAgentRuntimeNotFound), errors.Is(err, api.ErrCodeInterpreterNotFound):
+		respondError(c, http.StatusNotFound, err.Error())
+	case errors.Is(err, api.ErrPublicKeyMissing):
+		respondError(c, http.StatusServiceUnavailable, err.Error())
+	default:
+		respondError(c, http.StatusInternalServerError, "internal server error")
+	}
+}
+
 // handleSandboxCreate handles sandbox creation given a specific kind.
 func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	sandboxReq := &types.CreateSandboxRequest{}
@@ -112,11 +123,7 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 
 	if err != nil {
 		klog.Errorf("build sandbox failed %s/%s: %v", sandboxReq.Namespace, sandboxReq.Name, err)
-		if errors.Is(err, api.ErrAgentRuntimeNotFound) || errors.Is(err, api.ErrCodeInterpreterNotFound) {
-			respondError(c, http.StatusNotFound, err.Error())
-		} else {
-			respondError(c, http.StatusInternalServerError, "internal server error")
-		}
+		respondSandboxBuildError(c, err)
 		return
 	}
 

@@ -46,6 +46,17 @@ func TestNewSessionNotFoundError(t *testing.T) {
 	assert.Equal(t, sessionID, status.Details.Name)
 }
 
+func TestIsSessionTargetMismatch(t *testing.T) {
+	mismatchErr := NewSessionTargetMismatchError("session-1", "default", "agent", types.AgentRuntimeKind)
+	assert.True(t, IsSessionTargetMismatch(mismatchErr))
+
+	notFoundErr := NewSessionNotFoundError("session-2")
+	assert.False(t, IsSessionTargetMismatch(notFoundErr))
+
+	wrappedErr := NewInternalError(errors.New("boom"))
+	assert.False(t, IsSessionTargetMismatch(wrappedErr))
+}
+
 func TestWorkloadResource(t *testing.T) {
 	tests := []struct {
 		name     string

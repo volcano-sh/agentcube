@@ -28,6 +28,8 @@ type SandboxInfo struct {
 	SandboxID        string              `json:"sandboxId"`
 	SandboxNamespace string              `json:"sandboxNamespace"`
 	Name             string              `json:"name"`
+	WorkloadKind     string              `json:"workloadKind,omitempty"`
+	WorkloadName     string              `json:"workloadName,omitempty"`
 	EntryPoints      []SandboxEntryPoint `json:"entryPoints"`
 	SessionID        string              `json:"sessionId"`
 	CreatedAt        time.Time           `json:"createdAt"`

@@ -109,7 +109,36 @@ func (m *manager) GetSandboxBySession(ctx context.Context, sessionID string, nam
 		return nil, fmt.Errorf("failed to get sandbox from store: %w", err)
 	}
 
+	if !sessionTargetMatches(sandbox, sessionID, namespace, name, kind) {
+		return nil, api.NewSessionTargetMismatchError(sessionID, namespace, name, kind)
+	}
+
 	return sandbox, nil
+}
+
+func sessionTargetMatches(sandbox *types.SandboxInfo, sessionID, namespace, name, kind string) bool {
+	if sandbox == nil {
+		return false
+	}
+	missingFields := make([]string, 0, 3)
+	if sandbox.WorkloadKind == "" {
+		missingFields = append(missingFields, "workloadKind")
+	}
+	if sandbox.WorkloadName == "" {
+		missingFields = append(missingFields, "workloadName")
+	}
+	if sandbox.SandboxNamespace == "" {
+		missingFields = append(missingFields, "sandboxNamespace")
+	}
+	if len(missingFields) > 0 {
+		klog.Warningf("Session target metadata missing for sessionID=%s: missing fields [%s] (requested namespace=%s name=%s kind=%s)", sessionID, strings.Join(missingFields, ","), namespace, name, kind)
+		return false
+	}
+	if sandbox.WorkloadKind != kind || sandbox.WorkloadName != name || sandbox.SandboxNamespace != namespace {
+		klog.Warningf("Session target mismatch for sessionID=%s: requested namespace=%s name=%s kind=%s but session belongs to namespace=%s name=%s kind=%s", sessionID, namespace, name, kind, sandbox.SandboxNamespace, sandbox.WorkloadName, sandbox.WorkloadKind)
+		return false
+	}
+	return true
 }
 
 // createSandbox creates a new sandbox by calling the external workload manager API.
@@ -183,12 +212,19 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 		return nil, api.NewInternalError(fmt.Errorf("response with empty session id from workload manager"))
 	}
 
-	// Construct Sandbox Info from response
+	// Construct Sandbox Info from response, storing the requested target metadata
+	// to enable proper session reuse validation. The ephemeral sandbox name (res.SandboxName)
+	// is not stored here to avoid the "fail-open" vulnerability where a session could be
+	// incorrectly reused for a different workload.
 	sandbox := &types.SandboxInfo{
-		SandboxID:   res.SandboxID,
-		Name:        res.SandboxName,
-		SessionID:   res.SessionID,
-		EntryPoints: res.EntryPoints,
+		SandboxID:        res.SandboxID,
+		Name:             name,
+		SandboxNamespace: namespace,
+		Kind:             kind,
+		WorkloadKind:     kind,
+		WorkloadName:     name,
+		SessionID:        res.SessionID,
+		EntryPoints:      res.EntryPoints,
 	}
 
 	return sandbox, nil

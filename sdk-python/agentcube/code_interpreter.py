@@ -14,7 +14,7 @@
 
 import os
 import logging
-from typing import Optional
+from typing import Optional, Union
 
 from agentcube.clients.control_plane import ControlPlaneClient
 from agentcube.clients.code_interpreter_data_plane import CodeInterpreterDataPlaneClient
@@ -194,12 +194,12 @@ class CodeInterpreterClient:
         """
         return self.dp_client.run_code(language, code, timeout)
 
-    def write_file(self, content: str, remote_path: str):
+    def write_file(self, content: Union[str, bytes], remote_path: str):
         """
         Write content to a file in the remote environment.
 
         Args:
-            content: The string content to write to the file.
+            content: The string or binary content to write to the file.
             remote_path: The destination path of the file in the remote environment.
                          This path is relative to the session's working directory.
         """

@@ -150,14 +150,22 @@ class CodeInterpreterDataPlaneClient:
         resp.raise_for_status()
 
         result = resp.json()
+        stdout = result.get("stdout", "")
+        stderr = result.get("stderr", "")
+
         if result["exit_code"] != 0:
              raise CommandExecutionError(
                  exit_code=result["exit_code"],
-                 stderr=result["stderr"],
+                 stdout=stdout,
+                 stderr=stderr,
                  command=command
              )
 
-        return result["stdout"]
+        # Combine stdout and stderr for the caller if stderr is present
+        output = stdout
+        if stderr:
+            output = f"{stdout}\n{stderr}".strip() if stdout else stderr
+        return output
 
     def run_code(self, language: str, code: str, timeout: Optional[float] = None) -> str:
         """Run a code snippet (python or bash)."""

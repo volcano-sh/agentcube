@@ -86,18 +86,13 @@ build-all: build build-agentd build-router ## Build all binaries
 run:
 	@echo "Running workloadmanager..."
 	go run ./cmd/workload-manager/main.go \
-		--port=8080 \
-		--ssh-username=sandbox \
-		--ssh-port=22
+		--port=8080
 
 # Run server (with kubeconfig)
 run-local:
 	@echo "Running workloadmanager with local kubeconfig..."
 	go run ./cmd/workload-manager/main.go \
-		--port=8080 \
-		--kubeconfig=${HOME}/.kube/config \
-		--ssh-username=sandbox \
-		--ssh-port=22
+		--port=8080
 
 # Run router (development mode)
 run-router:

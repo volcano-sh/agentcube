@@ -109,9 +109,21 @@ func (gc *garbageCollector) once() {
 	if err != nil {
 		klog.Errorf("garbage collector error listing expired sandboxes: %v", err)
 	}
+	// Remove duplicates based on SessionID
+	seen := make(map[string]struct{}, len(inactiveSandboxes)+len(expiredSandboxes))
 	gcSandboxes := make([]*types.SandboxInfo, 0, len(inactiveSandboxes)+len(expiredSandboxes))
-	gcSandboxes = append(gcSandboxes, inactiveSandboxes...)
-	gcSandboxes = append(gcSandboxes, expiredSandboxes...)
+	for _, s := range inactiveSandboxes {
+		if _, ok := seen[s.SessionID]; !ok {
+			seen[s.SessionID] = struct{}{}
+			gcSandboxes = append(gcSandboxes, s)
+		}
+	}
+	for _, s := range expiredSandboxes {
+		if _, ok := seen[s.SessionID]; !ok {
+			seen[s.SessionID] = struct{}{}
+			gcSandboxes = append(gcSandboxes, s)
+		}
+	}
 
 	if len(gcSandboxes) > 0 {
 		klog.Infof("garbage collector found %d sandboxes to be deleted", len(gcSandboxes))

@@ -19,7 +19,6 @@ package main
 import (
 	"context"
 	"flag"
-	"os"
 	"os/signal"
 	"syscall"
 
@@ -41,31 +40,15 @@ func main() {
 		Workspace: *workspace,
 	}
 
-	// Create server
+	// Create a context that is canceled on SIGINT or SIGTERM.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Create and start server
 	server := picod.NewServer(config)
 
-	// Setup signal handling with context cancellation
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	// Start PicoD server in goroutine
-	errCh := make(chan error, 1)
-	go func() {
-		klog.Infof("Starting PicoD server on port %d", *port)
-		if err := server.Start(ctx); err != nil {
-			errCh <- err
-		}
-		close(errCh)
-	}()
-
-	// Wait for signal or fatal error
-	select {
-	case <-ctx.Done():
-		klog.Info("Received shutdown signal, shutting down gracefully...")
-		cancel()
-		<-errCh
-	case err := <-errCh:
-		klog.Fatalf("Server error: %v", err)
+	if err := server.Run(ctx); err != nil {
+		klog.Fatalf("Failed to start server: %v", err)
 	}
 
 	klog.Info("PicoD server stopped")

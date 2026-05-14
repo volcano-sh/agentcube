@@ -120,8 +120,8 @@ func maxBodySizeMiddleware() gin.HandlerFunc {
 	}
 }
 
-// Start starts the server and blocks until ctx is canceled or a fatal error occurs.
-func (s *Server) Start(ctx context.Context) error {
+// Run starts the server and blocks until ctx is canceled or a fatal error occurs.
+func (s *Server) Run(ctx context.Context) error {
 	addr := fmt.Sprintf(":%d", s.config.Port)
 	klog.Infof("PicoD server starting on %s", addr)
 
@@ -131,20 +131,23 @@ func (s *Server) Start(ctx context.Context) error {
 		ReadHeaderTimeout: 10 * time.Second, // Prevent Slowloris attacks
 	}
 
-	// Listen for shutdown signal and gracefully stop the HTTP server.
+	idleConnsClosed := make(chan struct{})
 	go func() {
 		<-ctx.Done()
-		klog.Info("Shutting down PicoD server...")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// Allow enough time for in-flight commands to finish (default timeout is 60s).
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			klog.Errorf("PicoD server shutdown error: %v", err)
+			klog.Errorf("HTTP server shutdown error: %v", err)
 		}
+		close(idleConnsClosed)
 	}()
 
-	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
 		return err
 	}
+
+	<-idleConnsClosed
 	return nil
 }
 

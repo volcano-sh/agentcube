@@ -7,7 +7,7 @@ Thank you for your interest in improving AgentCube! This guide outlines how to g
 * Join the conversation on GitHub:
   * [Issues](https://github.com/volcano-sh/agentcube/issues) for bug reports and feature requests
   * [Discussions](https://github.com/volcano-sh/agentcube/discussions) for design questions and ideas
-* Review the [code of conduct](https://github.com/volcano-sh/community/blob/main/code_of_conduct.md) before participating
+* Review the [code of conduct](https://github.com/volcano-sh/community/blob/master/CODE_OF_CONDUCT.md) before participating
 
 ##  Contribution Workflow
 

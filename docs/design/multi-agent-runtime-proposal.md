@@ -207,29 +207,37 @@ In both policies, coordinator failure always causes full rollback and an error r
 
 #### Dependency endpoint injection
 
-Before a dependent role's sandbox is created, the verified pod IPs of its dependencies are injected as environment variables into the pod template. To ensure compatibility with standard shell naming conventions, any hyphens or non-alphanumeric characters in the role name are replaced by underscores. 
+Before a dependent role's sandbox is created, the verified pod IPs and ports of its dependencies are injected as environment variables into the pod template. To ensure compatibility with standard shell naming conventions, any hyphens or non-alphanumeric characters in the role name and port names are replaced by underscores. 
 
-The naming convention is:
+The naming conventions are:
 
-```
-AGENTCUBE_DEP_{ROLE_NAME_SANITISED_UPPER}_ENDPOINT = {podIP}:{port}
-```
+1. **Default Endpoint (Primary service port):**
+   ```
+   AGENTCUBE_DEP_{ROLE_NAME_SANITISED_UPPER}_ENDPOINT = {podIP}:{port}
+   ```
+   * **Port Resolution Rule:**
+     * If `targetPort` is explicitly defined in the dependency's `RoleSpec` (either as a port name or number), that port is used as the default.
+     * If `targetPort` is not specified, and the dependency's `AgentRuntime` CRD defines a single port, that port is used.
+     * If `targetPort` is not specified, and it defines multiple ports, the system first looks for a port named `http` or `default`. If no such port is found, it falls back to the first port in the ports list.
 
-**Port Resolution Rule:**
-* If `targetPort` is explicitly defined in the dependency's `RoleSpec` (either as a port name or number), that port is used.
-* If `targetPort` is not specified, and the dependency's `AgentRuntime` CRD defines a single port, that port is used.
-* If `targetPort` is not specified, and it defines multiple ports, the system first looks for a port named `http` or `default`. If no such port is found, it falls back to the first port in the ports list.
+2. **Named Port Endpoints (For multi-service agents exposing multiple ports):**
+   If the dependency's `AgentRuntime` CRD defines named ports, an endpoint environment variable is additionally injected for each named port:
+   ```
+   AGENTCUBE_DEP_{ROLE_NAME_SANITISED_UPPER}_PORT_{PORT_NAME_SANITISED_UPPER}_ENDPOINT = {podIP}:{portNumber}
+   ```
 
 **Validation against Naming Collisions:**
-* Because multiple role names could map to the same sanitized environment variable (e.g., `my-agent` and `my.agent` both sanitize to `AGENTCUBE_DEP_MY_AGENT_ENDPOINT`), the API server validates the group configuration at request admission time. If any two roles within the group result in the same sanitized environment variable key, the request is rejected with a `400 Bad Request` validation error.
+* Because multiple role names or port names could map to the same sanitized environment variable (e.g., `my-agent` and `my.agent` both sanitize to `AGENTCUBE_DEP_MY_AGENT_ENDPOINT`), the API server validates the group configuration at request admission time. If any two roles or named ports within the group result in the same sanitized environment variable key, the request is rejected with a `400 Bad Request` validation error.
 
 **Injection Scope:**
 * The dependency endpoints are injected into the `Env` list of **all containers** (including primary, sidecar, and init-containers) defined in the pod spec. This ensures that any multi-container runtime configuration can reliably resolve the endpoints.
 
-For a role with `dependencies: [my-planner]` (where the planner exposes `8080` as the first port), the dependent pod's containers receive:
+For a role with `dependencies: [my-planner]` (where the planner exposes a port named `api` at `8080` and `metrics` at `9090`), the dependent pod's containers receive:
 
 ```
 AGENTCUBE_DEP_MY_PLANNER_ENDPOINT = 10.0.0.4:8080
+AGENTCUBE_DEP_MY_PLANNER_PORT_API_ENDPOINT = 10.0.0.4:8080
+AGENTCUBE_DEP_MY_PLANNER_PORT_METRICS_ENDPOINT = 10.0.0.4:9090
 ```
 
 Injection happens in-memory inside `createSandboxGroup()` by mutating the pod template before it is passed to `buildSandboxByAgentRuntime()`. The referenced `AgentRuntime` CRD object in the informer cache is never written.
@@ -283,54 +291,72 @@ func (s *Server) createSandboxGroup(
         }
     }()
 
-    orderedRoles, err := topoSort(mar.Spec.Roles)
+    waves, err := topoSort(mar.Spec.Roles)
     if err != nil {
-        return nil, err // descriptive cycle error
+        return nil, err // descriptive cycle or missing dependency error
     }
 
-    for _, role := range orderedRoles {
-        // buildSandboxByAgentRuntime is called as-is (no changes to the function).
-        sandbox, sandboxEntry, err := buildSandboxByAgentRuntime(
-            mar.Namespace, role.RuntimeRef, s.informers,
-        )
-        if err != nil {
-            return nil, fmt.Errorf("role %s: build sandbox: %w", role.Name, err)
-        }
-        sandboxEntry.GroupSessionID = groupSessionID
-        sandboxEntry.Role = role.Name
+    var createdMutex sync.Mutex
 
-        // Apply group-level SessionTimeout and MaxSessionDuration overrides
-        if mar.Spec.SessionTimeout != nil {
-            sandboxEntry.SessionTimeout = mar.Spec.SessionTimeout
-        }
-        if mar.Spec.MaxSessionDuration != nil {
-            sandbox.Spec.MaxSessionDuration = mar.Spec.MaxSessionDuration
+    for _, wave := range waves {
+        g, waveCtx := errgroup.WithContext(ctx)
+
+        for _, r := range wave {
+            role := r // capture loop variable
+            g.Go(func() error {
+                // buildSandboxByAgentRuntime is called as-is (no changes to the function).
+                sandbox, sandboxEntry, err := buildSandboxByAgentRuntime(
+                    mar.Namespace, role.RuntimeRef, s.informers,
+                )
+                if err != nil {
+                    return fmt.Errorf("role %s: build sandbox: %w", role.Name, err)
+                }
+                sandboxEntry.GroupSessionID = groupSessionID
+                sandboxEntry.Role = role.Name
+
+                // Apply group-level SessionTimeout and MaxSessionDuration overrides
+                if mar.Spec.SessionTimeout != nil {
+                    sandboxEntry.SessionTimeout = mar.Spec.SessionTimeout
+                }
+                if mar.Spec.MaxSessionDuration != nil {
+                    sandbox.Spec.MaxSessionDuration = mar.Spec.MaxSessionDuration
+                }
+
+                if len(role.Dependencies) > 0 {
+                    createdMutex.Lock()
+                    injectDependencyEndpoints(&sandbox.Spec.PodTemplate, role.Dependencies, created)
+                    createdMutex.Unlock()
+                }
+
+                // Watch and create sandbox in a closure to prevent watcher resource accumulation from defer in a loop
+                resp, err := func() (*types.CreateSandboxResponse, error) {
+                    resultChan := s.sandboxController.WatchSandboxOnce(waveCtx, sandbox.Namespace, sandbox.Name)
+                    defer s.sandboxController.UnWatchSandbox(sandbox.Namespace, sandbox.Name)
+                    return s.createSandbox(waveCtx, dynamicClient, sandbox, nil, sandboxEntry, resultChan)
+                }()
+                if err != nil {
+                    if mar.Spec.StartupPolicy == StartupPolicyBestEffort && !role.IsCoordinator {
+                        klog.Warningf("group %s: role %s failed (BestEffort policy): %v", groupSessionID, role.Name, err)
+                        return nil // skip worker failure under BestEffort
+                    }
+                    return fmt.Errorf("role %s: %w", role.Name, err)
+                }
+
+                createdMutex.Lock()
+                created = append(created, createdRole{
+                    name:      role.Name,
+                    resp:      resp,
+                    sandbox:   sandbox,
+                    sessionID: sandboxEntry.SessionID,
+                })
+                createdMutex.Unlock()
+                return nil
+            })
         }
 
-        if len(role.Dependencies) > 0 {
-            injectDependencyEndpoints(&sandbox.Spec.PodTemplate, role.Dependencies, created)
+        if err := g.Wait(); err != nil {
+            return nil, err
         }
-
-        // Watch and create sandbox in a closure to prevent watcher resource accumulation from defer in a loop
-        resp, err := func() (*types.CreateSandboxResponse, error) {
-            resultChan := s.sandboxController.WatchSandboxOnce(ctx, sandbox.Namespace, sandbox.Name)
-            defer s.sandboxController.UnWatchSandbox(sandbox.Namespace, sandbox.Name)
-            return s.createSandbox(ctx, dynamicClient, sandbox, nil, sandboxEntry, resultChan)
-        }()
-        if err != nil {
-            if mar.Spec.StartupPolicy == StartupPolicyBestEffort && !role.IsCoordinator {
-                klog.Warningf("group %s: role %s failed (BestEffort policy): %v", groupSessionID, role.Name, err)
-                continue
-            }
-            return nil, fmt.Errorf("role %s: %w", role.Name, err)
-        }
-
-        created = append(created, createdRole{
-            name:      role.Name,
-            resp:      resp,
-            sandbox:   sandbox,
-            sessionID: sandboxEntry.SessionID,
-        })
     }
 
     manifest := buildGroupManifest(groupSessionID, mar.Spec.Roles, created)
@@ -393,7 +419,7 @@ sequenceDiagram
 ### Topological Sort and Cycle Detection
 
 ```go
-func topoSort(roles []RoleSpec) ([]RoleSpec, error) {
+func topoSort(roles []RoleSpec) ([][]RoleSpec, error) {
     inDegree := make(map[string]int)
     adj      := make(map[string][]string)
     roleMap  := make(map[string]RoleSpec)
@@ -409,27 +435,35 @@ func topoSort(roles []RoleSpec) ([]RoleSpec, error) {
         }
     }
 
-    var queue []string
+    var currentQueue []string
     for name, deg := range inDegree {
         if deg == 0 {
-            queue = append(queue, name)
+            currentQueue = append(currentQueue, name)
         }
     }
 
-    var sorted []RoleSpec
-    for len(queue) > 0 {
-        name := queue[0]
-        queue = queue[1:]
-        sorted = append(sorted, roleMap[name])
-        for _, neighbor := range adj[name] {
-            inDegree[neighbor]--
-            if inDegree[neighbor] == 0 {
-                queue = append(queue, neighbor)
+    var waves [][]RoleSpec
+    var totalSorted int
+
+    for len(currentQueue) > 0 {
+        var nextQueue []string
+        var wave []RoleSpec
+
+        for _, name := range currentQueue {
+            wave = append(wave, roleMap[name])
+            totalSorted++
+            for _, neighbor := range adj[name] {
+                inDegree[neighbor]--
+                if inDegree[neighbor] == 0 {
+                    nextQueue = append(nextQueue, neighbor)
+                }
             }
         }
+        waves = append(waves, wave)
+        currentQueue = nextQueue
     }
 
-    if len(sorted) != len(roles) {
+    if totalSorted != len(roles) {
         // Check for missing dependencies first to provide a better error message.
         for _, r := range roles {
             for _, dep := range r.Dependencies {
@@ -448,11 +482,11 @@ func topoSort(roles []RoleSpec) ([]RoleSpec, error) {
         sort.Strings(cycled)
         return nil, fmt.Errorf("dependency cycle detected among roles: %v", cycled)
     }
-    return sorted, nil
+    return waves, nil
 }
 ```
 
-The algorithm is Kahn's BFS-based topological sort, O(V+E). Cycle detection is derived from the invariant that Kahn's algorithm only produces a complete ordering when no cycle exists. If `len(sorted) < len(roles)`, the roles with remaining in-degree are in a cycle. Their names are included in the error message to aid debugging.
+The algorithm is Kahn's BFS-based topological sort grouped into level-order waves, O(V+E). Cycle detection is derived from the invariant that Kahn's algorithm only produces a complete ordering when no cycle exists. If `totalSorted < len(roles)`, the roles with remaining in-degree are in a cycle or have missing dependencies. Their names are included in the error message to aid debugging.
 
 ---
 

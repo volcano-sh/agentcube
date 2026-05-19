@@ -2,7 +2,7 @@
 title: Multi-Agent Runtime Design Proposal
 authors:
   - "@Abhinav-kodes"
-creation-date: 2025-05-12
+creation-date: 2026-05-19
 ---
 
 # Multi-Agent Runtime: Design Proposal
@@ -34,7 +34,7 @@ Author: Abhinav Singh
    - [Store Interface Additions](#store-interface-additions)
    - [CRD Types](#crd-types)
    - [SandboxInfo Extensions](#sandboxinfo-extensions)
-7. [Controller: MultiAgentRuntimeReconciler](#controller-multiagentrimereconciler)
+7. [Controller: MultiAgentRuntimeReconciler](#controller-multiagentruntimereconciler)
 8. [Garbage Collection](#garbage-collection)
 9. [Router Integration](#router-integration)
 10. [SDK Integration](#sdk-integration)
@@ -217,7 +217,7 @@ The environment variables injected into the dependent pod's containers point to 
 
 1. **Default Endpoint (Primary service port):**
    ```
-   AGENTCUBE_DEP_{ROLE_NAME_SANITISED_UPPER}_ENDPOINT = {serviceName}.{namespace}.svc.cluster.local:{port}
+   AGENTCUBE_DEP_{ROLE_NAME_SANITIZED_UPPER}_ENDPOINT = {serviceName}.{namespace}.svc.cluster.local:{port}
    ```
    * **Port Resolution Rule:**
      * If `targetPort` is explicitly defined in the dependency's `RoleSpec` (either as a port name or number), that port is used as the default.
@@ -227,7 +227,7 @@ The environment variables injected into the dependent pod's containers point to 
 2. **Named Port Endpoints (For multi-service agents exposing multiple ports):**
    If the dependency's `AgentRuntime` CRD defines named ports, an endpoint environment variable is additionally injected for each named port:
    ```
-   AGENTCUBE_DEP_{ROLE_NAME_SANITISED_UPPER}_PORT_{PORT_NAME_SANITISED_UPPER}_ENDPOINT = {serviceName}.{namespace}.svc.cluster.local:{portNumber}
+   AGENTCUBE_DEP_{ROLE_NAME_SANITIZED_UPPER}_PORT_{PORT_NAME_SANITIZED_UPPER}_ENDPOINT = {serviceName}.{namespace}.svc.cluster.local:{portNumber}
    ```
 
 **Validation against Naming Collisions:**
@@ -533,7 +533,7 @@ The algorithm is Kahn's BFS-based topological sort grouped into level-order wave
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/v1/multi-agent-runtime` | Create a new agent group. Returns group session ID and coordinator entrypoints. |
-| `DELETE` | `/v1/multi-agent-runtime/sessions/:groupSessionId` | Delete all sandboxes in the group and remove the group manifest from the store. |
+| `DELETE` | `/v1/multi-agent-runtime/groups/:groupSessionId` | Delete all sandboxes in the group and remove the group manifest from the store. |
 | `GET` | `/v1/multi-agent-runtime/groups/:groupSessionId/topology` | Return the group manifest including all role endpoints and statuses. Intended for use by the coordinator at startup to discover worker endpoints. |
 
 ### Request and Response Types

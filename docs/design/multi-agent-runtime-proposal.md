@@ -219,7 +219,13 @@ AGENTCUBE_DEP_{ROLE_NAME_SANITISED_UPPER}_ENDPOINT = {podIP}:{port}
 * If the dependency's `AgentRuntime` CRD defines a single port, that port is used.
 * If it defines multiple ports, the system first looks for a port named `http` or `default`. If no such port is found, it falls back to the first port in the ports list.
 
-For a role with `dependencies: [my-planner]` (where the planner exposes `8080` as the first port), the dependent pod receives:
+**Validation against Naming Collisions:**
+* Because multiple role names could map to the same sanitized environment variable (e.g., `my-agent` and `my.agent` both sanitize to `AGENTCUBE_DEP_MY_AGENT_ENDPOINT`), the API server validates the group configuration at request admission time. If any two roles within the group result in the same sanitized environment variable key, the request is rejected with a `400 Bad Request` validation error.
+
+**Injection Scope:**
+* The dependency endpoints are injected into the `Env` list of **all containers** (including primary, sidecar, and init-containers) defined in the pod spec. This ensures that any multi-container runtime configuration can reliably resolve the endpoints.
+
+For a role with `dependencies: [my-planner]` (where the planner exposes `8080` as the first port), the dependent pod's containers receive:
 
 ```
 AGENTCUBE_DEP_MY_PLANNER_ENDPOINT = 10.0.0.4:8080
@@ -305,7 +311,6 @@ func (s *Server) createSandboxGroup(
         if err != nil {
             if mar.Spec.StartupPolicy == StartupPolicyBestEffort && !role.IsCoordinator {
                 klog.Warningf("group %s: role %s failed (BestEffort policy): %v", groupSessionID, role.Name, err)
-                recordRoleFailure(groupSessionID, role.Name)
                 continue
             }
             return nil, fmt.Errorf("role %s: %w", role.Name, err)
@@ -647,6 +652,12 @@ The reconciler watches for `Sandbox` objects whose `GroupSessionID` matches a kn
 
 - **`Atomic` policy**: the reconciler calls `handleDeleteAgentGroup()` to tear down all remaining sandboxes and delete the group manifest. It sets a `Failed` condition on the `MultiAgentRuntimeStatus`.
 - **`BestEffort` policy**: the reconciler attempts to create a replacement sandbox for the failed role. On success, it calls `UpdateAgentGroupRoleStatus()` with the new endpoint. On repeated failure, it sets a `Degraded` condition.
+
+> [!WARNING]
+> **Stale Environment Variables in BestEffort Groups:** 
+> When a failed worker pod is replaced under the `BestEffort` policy, the new pod receives a new IP address. Because environment variables are immutable once a pod is running, already active dependent pods (such as the coordinator) will retain the stale endpoint in their environment variables.
+> 
+> To prevent communication failures, agents deployed in `BestEffort` groups must not rely solely on injected environment variables. Instead, they should utilize the `/topology` endpoint (`GET /v1/multi-agent-runtime/groups/:groupSessionId/topology`) for dynamic service discovery to retrieve current worker endpoints.
 
 ### Status Conditions
 

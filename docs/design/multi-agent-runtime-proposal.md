@@ -207,16 +207,22 @@ In both policies, coordinator failure always causes full rollback and an error r
 
 #### Dependency endpoint injection
 
-Before a dependent role's sandbox is created, the verified pod IPs of its dependencies are injected as environment variables into the pod template. The naming convention is:
+Before a dependent role's sandbox is created, the verified pod IPs of its dependencies are injected as environment variables into the pod template. To ensure compatibility with standard shell naming conventions, any hyphens or non-alphanumeric characters in the role name are replaced by underscores. 
+
+The naming convention is:
 
 ```
-AGENTCUBE_DEP_{ROLE_NAME_UPPER}_ENDPOINT = {podIP}:{port}
+AGENTCUBE_DEP_{ROLE_NAME_SANITISED_UPPER}_ENDPOINT = {podIP}:{port}
 ```
 
-For a role with `dependencies: [planner]`, the pod receives:
+**Port Resolution Rule:**
+* If the dependency's `AgentRuntime` CRD defines a single port, that port is used.
+* If it defines multiple ports, the system first looks for a port named `http` or `default`. If no such port is found, it falls back to the first port in the ports list.
+
+For a role with `dependencies: [my-planner]` (where the planner exposes `8080` as the first port), the dependent pod receives:
 
 ```
-AGENTCUBE_DEP_PLANNER_ENDPOINT = 10.0.0.4:8080
+AGENTCUBE_DEP_MY_PLANNER_ENDPOINT = 10.0.0.4:8080
 ```
 
 Injection happens in-memory inside `createSandboxGroup()` by mutating the pod template before it is passed to `buildSandboxByAgentRuntime()`. The referenced `AgentRuntime` CRD object in the informer cache is never written.
@@ -290,11 +296,12 @@ func (s *Server) createSandboxGroup(
             injectDependencyEndpoints(&sandbox.Spec.PodTemplate, role.Dependencies, created)
         }
 
-        resultChan := s.sandboxController.WatchSandboxOnce(ctx, sandbox.Namespace, sandbox.Name)
-        defer s.sandboxController.UnWatchSandbox(sandbox.Namespace, sandbox.Name)
-
-        // createSandbox is called as-is (no changes to the function).
-        resp, err := s.createSandbox(ctx, dynamicClient, sandbox, nil, sandboxEntry, resultChan)
+        // Watch and create sandbox in a closure to prevent watcher resource accumulation from defer in a loop
+        resp, err := func() (*types.CreateAgentResponse, error) {
+            resultChan := s.sandboxController.WatchSandboxOnce(ctx, sandbox.Namespace, sandbox.Name)
+            defer s.sandboxController.UnWatchSandbox(sandbox.Namespace, sandbox.Name)
+            return s.createSandbox(ctx, dynamicClient, sandbox, nil, sandboxEntry, resultChan)
+        }()
         if err != nil {
             if mar.Spec.StartupPolicy == StartupPolicyBestEffort && !role.IsCoordinator {
                 klog.Warningf("group %s: role %s failed (BestEffort policy): %v", groupSessionID, role.Name, err)
@@ -312,7 +319,7 @@ func (s *Server) createSandboxGroup(
         })
     }
 
-    manifest := buildGroupManifest(groupSessionID, created)
+    manifest := buildGroupManifest(groupSessionID, mar.Spec.Roles, created)
     if err := s.storeClient.SaveAgentGroup(ctx, groupSessionID, manifest); err != nil {
         return nil, fmt.Errorf("save group manifest: %w", err)
     }
@@ -408,6 +415,14 @@ func topoSort(roles []RoleSpec) ([]RoleSpec, error) {
     }
 
     if len(sorted) != len(roles) {
+        // Check for missing dependencies first to provide a better error message.
+        for _, r := range roles {
+            for _, dep := range r.Dependencies {
+                if _, exists := roleMap[dep]; !exists {
+                    return nil, fmt.Errorf("role %s depends on non-existent role %s", r.Name, dep)
+                }
+            }
+        }
         // Identify and name the roles involved in the cycle for the error message.
         var cycled []string
         for name, deg := range inDegree {
@@ -497,14 +512,16 @@ GetAgentGroup(ctx context.Context, groupSessionID string) (*types.AgentGroupMani
 // DeleteAgentGroup removes a group manifest by groupSessionID.
 DeleteAgentGroup(ctx context.Context, groupSessionID string) error
 
-// UpdateAgentGroupRoleStatus atomically updates the status of a specific role
+// UpdateAgentGroupRoleStatus atomically updates the status and endpoint of a specific role
 // within a group manifest. Used by the reconciler during self-healing.
-UpdateAgentGroupRoleStatus(ctx context.Context, groupSessionID, roleName, status string) error
+UpdateAgentGroupRoleStatus(ctx context.Context, groupSessionID, roleName, status, endpoint string) error
 ```
 
-Both `store_redis.go` and `store_valkey.go` implement these methods using the key prefix `agentgroup:`. The serialization format is JSON, consistent with existing `sandbox:` entries.
+Both `store_redis.go` and `store_valkey.go` implement these methods using the key prefix `agentgroup:`. 
 
-> **Note:** `UpdateAgentGroupRoleStatus` performs a read-modify-write on the manifest JSON. Under high concurrency this could race, but group manifests are updated infrequently (only during self-healing) and only by the reconciler, so optimistic concurrency control is not required in the initial implementation.
+> **Store Implementation Note:** To prevent race conditions in a distributed environment during concurrent updates, the store backends (Redis/Valkey) implement group manifests using a **Redis Hash** (`HSET agentgroup:{groupSessionID}`) instead of a raw JSON string.
+> 
+> The hash fields map directly to roles and their metadata (e.g., `HSET agentgroup:{groupSessionID} role:{roleName} <json>`), allowing atomic field-level updates without rewriting the full manifest JSON, avoiding read-modify-write races.
 
 ### CRD Types
 

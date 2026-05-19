@@ -57,6 +57,7 @@ type CreateSandboxRequest struct {
 }
 
 type CreateSandboxResponse struct {
+	Kind        string              `json:"kind"`
 	SessionID   string              `json:"sessionId"`
 	SandboxID   string              `json:"sandboxId"`
 	SandboxName string              `json:"sandboxName"`

@@ -256,34 +256,42 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		EntryPoints: storeCacheInfo.EntryPoints,
 	}
 
-	// Update store cache with retries (max 3 attempts, 500ms backoff) to handle transient store connection drops
-	var updateErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(500 * time.Millisecond)
-		}
-		updateErr = s.storeClient.UpdateSandbox(ctx, storeCacheInfo)
-		if updateErr == nil {
-			break
-		}
-		if isContextError(updateErr) {
-			break // Don't retry if the context itself is canceled/timed out
-		}
-	}
-
-	if updateErr != nil {
+	if updateErr := s.updateSandboxWithRetry(ctx, storeCacheInfo); updateErr != nil {
 		if isContextError(updateErr) {
 			return nil, updateErr
 		}
 		return nil, api.NewInternalError(fmt.Errorf("update store cache failed after retries: %w", updateErr))
 	}
 
-	// SUCCESS! Turn off the rollback defer so the healthy sandbox is kept.
 	needRollbackSandbox = false
 
 	klog.V(2).Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
 		createdSandbox.Name, createdSandbox.Kind, sandboxEntry.SessionID)
 	return response, nil
+}
+
+// updateSandboxWithRetry updates the sandbox store cache with retries for transient failures.
+func (s *Server) updateSandboxWithRetry(ctx context.Context, storeCacheInfo *types.SandboxInfo) error {
+	var updateErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			timer := time.NewTimer(500 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+		updateErr = s.storeClient.UpdateSandbox(ctx, storeCacheInfo)
+		if updateErr == nil {
+			return nil
+		}
+		if isContextError(updateErr) {
+			return updateErr
+		}
+	}
+	return updateErr
 }
 
 // waitForSandboxReady waits for the sandbox to become ready or for the context/timer to expire.

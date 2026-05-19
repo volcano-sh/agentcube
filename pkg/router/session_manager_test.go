@@ -188,6 +188,7 @@ func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
 
 		// Send successful response
 		resp := types.CreateSandboxResponse{
+			Kind:        types.AgentRuntimeKind,
 			SessionID:   "new-session-123",
 			SandboxID:   "sandbox-456",
 			SandboxName: "sandbox-test",
@@ -223,6 +224,12 @@ func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
 	}
 	if sandbox.Name != "sandbox-test" {
 		t.Errorf("expected Name sandbox-test, got %s", sandbox.Name)
+	}
+	if sandbox.Kind != types.AgentRuntimeKind {
+		t.Errorf("expected Kind %s, got %s", types.AgentRuntimeKind, sandbox.Kind)
+	}
+	if sandbox.SandboxNamespace != "default" {
+		t.Errorf("expected SandboxNamespace default, got %s", sandbox.SandboxNamespace)
 	}
 	if len(sandbox.EntryPoints) != 1 {
 		t.Fatalf("expected 1 entry point, got %d", len(sandbox.EntryPoints))
@@ -374,6 +381,7 @@ func TestGetSandboxBySession_CreateSandbox_CodeInterpreter_Success(t *testing.T)
 
 		// Send successful response
 		resp := types.CreateSandboxResponse{
+			Kind:        types.CodeInterpreterKind,
 			SessionID:   "ci-session-789",
 			SandboxID:   "ci-sandbox-101",
 			SandboxName: "ci-sandbox-test",
@@ -403,6 +411,12 @@ func TestGetSandboxBySession_CreateSandbox_CodeInterpreter_Success(t *testing.T)
 	}
 	if sandbox.SessionID != "ci-session-789" {
 		t.Errorf("expected SessionID ci-session-789, got %s", sandbox.SessionID)
+	}
+	if sandbox.Kind != types.CodeInterpreterKind {
+		t.Errorf("expected Kind %s, got %s", types.CodeInterpreterKind, sandbox.Kind)
+	}
+	if sandbox.SandboxNamespace != "default" {
+		t.Errorf("expected SandboxNamespace default, got %s", sandbox.SandboxNamespace)
 	}
 }
 

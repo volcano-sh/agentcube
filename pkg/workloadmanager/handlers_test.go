@@ -263,6 +263,7 @@ func TestServerCreateSandbox(t *testing.T) {
 			require.Equal(t, "sess-1", resp.SessionID)
 			require.Equal(t, sb.Name, resp.SandboxName)
 			require.Equal(t, string(sb.UID), resp.SandboxID)
+			require.Equal(t, types.AgentRuntimeKind, resp.Kind)
 			require.Len(t, resp.EntryPoints, 1)
 			require.Equal(t, "/api", resp.EntryPoints[0].Path)
 			require.Equal(t, "10.0.0.9:8080", resp.EntryPoints[0].Endpoint)

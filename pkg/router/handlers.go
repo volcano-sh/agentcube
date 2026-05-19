@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/volcano-sh/agentcube/pkg/api"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 
@@ -96,6 +97,10 @@ func (s *Server) handleGetSandboxError(c *gin.Context, err error) {
 		}
 		if code == http.StatusInternalServerError {
 			message = "internal server error"
+		}
+		if api.IsSessionTargetMismatch(err) {
+			c.JSON(code, gin.H{"error": message, "code": "SESSION_TARGET_MISMATCH"})
+			return
 		}
 		c.JSON(code, gin.H{"error": message})
 		return

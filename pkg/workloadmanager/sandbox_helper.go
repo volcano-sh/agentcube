@@ -60,6 +60,8 @@ func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxE
 	}
 	return &types.SandboxInfo{
 		Kind:             entry.Kind,
+		WorkloadKind:     entry.WorkloadKind,
+		WorkloadName:     entry.WorkloadName,
 		SessionID:        entry.SessionID,
 		SandboxNamespace: sandboxCR.GetNamespace(),
 		Name:             sandboxCR.GetName(),
@@ -89,6 +91,8 @@ func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *san
 	}
 	return &types.SandboxInfo{
 		Kind:             entry.Kind,
+		WorkloadKind:     entry.WorkloadKind,
+		WorkloadName:     entry.WorkloadName,
 		SandboxID:        string(sandbox.GetUID()),
 		Name:             sandbox.GetName(),
 		SandboxNamespace: sandbox.GetNamespace(),

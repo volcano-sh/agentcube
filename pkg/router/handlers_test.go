@@ -18,6 +18,7 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -180,9 +181,10 @@ func TestHandleInvoke_ErrorPaths(t *testing.T) {
 	defer teardownEnv()
 
 	tests := []struct {
-		name         string
-		err          error
-		expectedCode int
+		name             string
+		err              error
+		expectedCode     int
+		expectedBodyCode string
 	}{
 		{
 			name:         "session manager generic error",
@@ -193,6 +195,12 @@ func TestHandleInvoke_ErrorPaths(t *testing.T) {
 			name:         "session not found",
 			err:          api.NewSessionNotFoundError("missing-session"),
 			expectedCode: http.StatusNotFound,
+		},
+		{
+			name:             "session target mismatch",
+			err:              api.NewSessionTargetMismatchError("session-1", "default", "test-agent", types.AgentRuntimeKind),
+			expectedCode:     http.StatusConflict,
+			expectedBodyCode: "SESSION_TARGET_MISMATCH",
 		},
 		{
 			name:         "agent runtime not found",
@@ -227,6 +235,15 @@ func TestHandleInvoke_ErrorPaths(t *testing.T) {
 
 			if w.Code != tt.expectedCode {
 				t.Fatalf("expected status %d, got %d", tt.expectedCode, w.Code)
+			}
+			if tt.expectedBodyCode != "" {
+				var resp map[string]interface{}
+				if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+					t.Fatalf("failed to decode response: %v", err)
+				}
+				if resp["code"] != tt.expectedBodyCode {
+					t.Fatalf("expected code %q, got %v", tt.expectedBodyCode, resp["code"])
+				}
 			}
 			t.Logf("Response body: %s", w.Body.String())
 		})

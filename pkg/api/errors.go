@@ -19,6 +19,7 @@ package api
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -55,6 +56,29 @@ var (
 
 func NewSessionNotFoundError(sessionID string) error {
 	return apierrors.NewNotFound(sessionResource, sessionID)
+}
+
+func NewSessionTargetMismatchError(sessionID, namespace, name, kind string) error {
+	target := fmt.Sprintf("%s/%s", namespace, name)
+	return apierrors.NewConflict(sessionResource, sessionID, fmt.Errorf("session target mismatch: %s (%s)", target, kind))
+}
+
+func IsSessionTargetMismatch(err error) bool {
+	if !apierrors.IsConflict(err) {
+		return false
+	}
+	statusErr, ok := err.(apierrors.APIStatus)
+	if !ok {
+		return false
+	}
+	status := statusErr.Status()
+	if status.Details == nil {
+		return false
+	}
+	if status.Details.Group != sessionResource.Group || status.Details.Kind != sessionResource.Resource {
+		return false
+	}
+	return strings.Contains(status.Message, "session target mismatch")
 }
 
 func workloadResource(kind string) schema.GroupResource {

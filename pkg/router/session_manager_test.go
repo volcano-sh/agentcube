@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -157,6 +158,7 @@ func TestGetSandboxBySession_NotFound(t *testing.T) {
 // ---- tests: GetSandboxBySession with empty sessionID (sandbox creation path) ----
 
 func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
+	const defaultNS = "default"
 	// Mock workload manager server
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify request method and path
@@ -182,13 +184,13 @@ func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
 		if req.Name != "test-runtime" {
 			t.Errorf("expected name test-runtime, got %s", req.Name)
 		}
-		if req.Namespace != "default" {
-			t.Errorf("expected namespace default, got %s", req.Namespace)
+		if req.Namespace != defaultNS {
+			t.Errorf("expected namespace %s, got %s", defaultNS, req.Namespace)
 		}
 
 		// Send successful response
 		resp := types.CreateSandboxResponse{
-			Kind:        types.AgentRuntimeKind,
+			Kind:        types.SandboxKind,
 			SessionID:   "new-session-123",
 			SandboxID:   "sandbox-456",
 			SandboxName: "sandbox-test",
@@ -209,33 +211,25 @@ func TestGetSandboxBySession_CreateSandbox_AgentRuntime_Success(t *testing.T) {
 		httpClient:      &http.Client{},
 	}
 
-	sandbox, err := m.GetSandboxBySession(context.Background(), "", "default", "test-runtime", types.AgentRuntimeKind)
+	sandbox, err := m.GetSandboxBySession(context.Background(), "", defaultNS, "test-runtime", types.AgentRuntimeKind)
 	if err != nil {
 		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
 	}
 	if sandbox == nil {
 		t.Fatalf("expected non-nil sandbox")
 	}
-	if sandbox.SessionID != "new-session-123" {
-		t.Errorf("expected SessionID new-session-123, got %s", sandbox.SessionID)
+	expectedSandbox := &types.SandboxInfo{
+		Kind:             types.SandboxKind,
+		SandboxNamespace: defaultNS,
+		SandboxID:        "sandbox-456",
+		Name:             "sandbox-test",
+		SessionID:        "new-session-123",
+		EntryPoints: []types.SandboxEntryPoint{
+			{Endpoint: "10.0.0.1:9000", Protocol: "http", Path: "/"},
+		},
 	}
-	if sandbox.SandboxID != "sandbox-456" {
-		t.Errorf("expected SandboxID sandbox-456, got %s", sandbox.SandboxID)
-	}
-	if sandbox.Name != "sandbox-test" {
-		t.Errorf("expected Name sandbox-test, got %s", sandbox.Name)
-	}
-	if sandbox.Kind != types.AgentRuntimeKind {
-		t.Errorf("expected Kind %s, got %s", types.AgentRuntimeKind, sandbox.Kind)
-	}
-	if sandbox.SandboxNamespace != "default" {
-		t.Errorf("expected SandboxNamespace default, got %s", sandbox.SandboxNamespace)
-	}
-	if len(sandbox.EntryPoints) != 1 {
-		t.Fatalf("expected 1 entry point, got %d", len(sandbox.EntryPoints))
-	}
-	if sandbox.EntryPoints[0].Endpoint != "10.0.0.1:9000" {
-		t.Errorf("expected endpoint 10.0.0.1:9000, got %s", sandbox.EntryPoints[0].Endpoint)
+	if !reflect.DeepEqual(sandbox, expectedSandbox) {
+		t.Errorf("expected sandbox %+v, got %+v", expectedSandbox, sandbox)
 	}
 }
 
@@ -356,6 +350,7 @@ func TestGetSandboxBySession_CreateSandbox_TokenFileReadError(t *testing.T) {
 }
 
 func TestGetSandboxBySession_CreateSandbox_CodeInterpreter_Success(t *testing.T) {
+	const defaultNS = "default"
 	// Mock workload manager server
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify request method and path
@@ -381,7 +376,7 @@ func TestGetSandboxBySession_CreateSandbox_CodeInterpreter_Success(t *testing.T)
 
 		// Send successful response
 		resp := types.CreateSandboxResponse{
-			Kind:        types.CodeInterpreterKind,
+			Kind:        types.SandboxClaimsKind,
 			SessionID:   "ci-session-789",
 			SandboxID:   "ci-sandbox-101",
 			SandboxName: "ci-sandbox-test",
@@ -402,21 +397,25 @@ func TestGetSandboxBySession_CreateSandbox_CodeInterpreter_Success(t *testing.T)
 		httpClient:      &http.Client{},
 	}
 
-	sandbox, err := m.GetSandboxBySession(context.Background(), "", "default", "test-ci", types.CodeInterpreterKind)
+	sandbox, err := m.GetSandboxBySession(context.Background(), "", defaultNS, "test-ci", types.CodeInterpreterKind)
 	if err != nil {
 		t.Fatalf("GetSandboxBySession unexpected error: %v", err)
 	}
 	if sandbox == nil {
 		t.Fatalf("expected non-nil sandbox")
 	}
-	if sandbox.SessionID != "ci-session-789" {
-		t.Errorf("expected SessionID ci-session-789, got %s", sandbox.SessionID)
+	expectedSandbox := &types.SandboxInfo{
+		Kind:             types.SandboxClaimsKind,
+		SandboxNamespace: defaultNS,
+		SandboxID:        "ci-sandbox-101",
+		Name:             "ci-sandbox-test",
+		SessionID:        "ci-session-789",
+		EntryPoints: []types.SandboxEntryPoint{
+			{Endpoint: "10.0.0.2:8080", Protocol: "http", Path: "/"},
+		},
 	}
-	if sandbox.Kind != types.CodeInterpreterKind {
-		t.Errorf("expected Kind %s, got %s", types.CodeInterpreterKind, sandbox.Kind)
-	}
-	if sandbox.SandboxNamespace != "default" {
-		t.Errorf("expected SandboxNamespace default, got %s", sandbox.SandboxNamespace)
+	if !reflect.DeepEqual(sandbox, expectedSandbox) {
+		t.Errorf("expected sandbox %+v, got %+v", expectedSandbox, sandbox)
 	}
 }
 

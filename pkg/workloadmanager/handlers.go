@@ -260,7 +260,7 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {
 		client := s.storeClient
 		go func(sessionID, ns, name string) {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), storeCleanupTimeout)
 			defer cancel()
 			if delErr := client.DeleteSandboxBySessionID(cleanupCtx, sessionID); delErr != nil {
 				klog.Errorf("sandbox %s/%s failed to clean up store placeholder for session %s: %v", ns, name, sessionID, delErr)

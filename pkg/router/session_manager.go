@@ -185,6 +185,10 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 
 	// Construct Sandbox Info from response
 	sandbox := &types.SandboxInfo{
+		// Auto-created sessions come directly from WorkloadManager response, which
+		// currently does not include kind. Default to Sandbox so Router signs JWT
+		// when forwarding to sandbox runtimes (e.g. PicoD).
+		Kind:        types.SandboxKind,
 		SandboxID:   res.SandboxID,
 		Name:        res.SandboxName,
 		SessionID:   res.SessionID,

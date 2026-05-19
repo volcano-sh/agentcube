@@ -118,7 +118,7 @@ func (s *Server) concurrencyLimitMiddleware() gin.HandlerFunc {
 			}()
 			c.Next()
 		default:
-			// No slots available, return 503 Service Unavailable
+			// No slots available, return 429 Too Many Requests
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error": "server overloaded, please try again later",
 				"code":  "SERVER_OVERLOADED",

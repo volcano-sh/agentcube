@@ -178,13 +178,13 @@ func TestServerCreateSandbox(t *testing.T) {
 			expectDeleteStoreCalls: 1,
 		},
 		{
-			name:                   "update store fails cleans up placeholder without K8s rollback",
+			name:                   "update store fails triggers retries and full rollback",
 			updateErr:              errors.New("update failed"),
 			sendResult:             true,
 			expectErr:              true,
 			expectCreateCalls:      1,
-			expectUpdateCalls:      1,
-			expectDeleteCalls:      0,
+			expectUpdateCalls:      3, // 3 retries
+			expectDeleteCalls:      1, // K8s rollback restored
 			expectDeleteStoreCalls: 1,
 		},
 	}

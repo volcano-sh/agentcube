@@ -256,22 +256,30 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		EntryPoints: storeCacheInfo.EntryPoints,
 	}
 
-	needRollbackSandbox = false
-	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {
-		client := s.storeClient
-		go func(sessionID, ns, name string) {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), storeCleanupTimeout)
-			defer cancel()
-			if delErr := client.DeleteSandboxBySessionID(cleanupCtx, sessionID); delErr != nil {
-				klog.Errorf("sandbox %s/%s failed to clean up store placeholder for session %s: %v", ns, name, sessionID, delErr)
-			}
-		}(sandboxEntry.SessionID, sandbox.Namespace, sandbox.Name)
-
-		if isContextError(err) {
-			return nil, err
+	// Update store cache with retries (max 3 attempts, 500ms backoff) to handle transient store connection drops
+	var updateErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(500 * time.Millisecond)
 		}
-		return nil, api.NewInternalError(fmt.Errorf("update store cache failed: %w", err))
+		updateErr = s.storeClient.UpdateSandbox(ctx, storeCacheInfo)
+		if updateErr == nil {
+			break
+		}
+		if isContextError(updateErr) {
+			break // Don't retry if the context itself is canceled/timed out
+		}
 	}
+
+	if updateErr != nil {
+		if isContextError(updateErr) {
+			return nil, updateErr
+		}
+		return nil, api.NewInternalError(fmt.Errorf("update store cache failed after retries: %w", updateErr))
+	}
+
+	// SUCCESS! Turn off the rollback defer so the healthy sandbox is kept.
+	needRollbackSandbox = false
 
 	klog.V(2).Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
 		createdSandbox.Name, createdSandbox.Kind, sandboxEntry.SessionID)

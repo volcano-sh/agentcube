@@ -149,6 +149,10 @@ func (rs *redisStore) ListSandboxesByKind(ctx context.Context, kind string) ([]*
 	allSandboxes := make([]*types.SandboxInfo, 0) // Initialize as empty array, not nil
 	var cursor uint64
 	matchPattern := rs.sessionPrefix + "*"
+	// Note: seenKeys holds all scanned keys in memory to deduplicate results across all SCAN pages,
+	// as SCAN can return the same key multiple times. For extremely large datasets, this could
+	// have a memory impact, and a dedicated secondary index (e.g. Redis SET per kind) is recommended
+	// as a follow-up optimization.
 	seenKeys := make(map[string]bool)
 
 	for {

@@ -332,7 +332,7 @@ func (s *Server) handleGetSandbox(c *gin.Context, kind string) {
 		_, userNamespace, _, _ := extractUserInfo(c)
 		if sandboxInfo.SandboxNamespace != userNamespace {
 			klog.Warningf("unauthorized GET attempt to session %s by user in namespace %s", sessionID, userNamespace)
-			respondError(c, http.StatusForbidden, "access denied to this session")
+			respondError(c, http.StatusNotFound, fmt.Sprintf("Session ID %s not found", sessionID))
 			return
 		}
 	}

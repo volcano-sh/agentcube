@@ -539,8 +539,8 @@ func TestHandleGetSandbox(t *testing.T) {
 				SandboxNamespace: "victim-ns",
 				Kind:             types.AgentRuntimeKind,
 			},
-			expectStatus:  http.StatusForbidden,
-			expectMessage: "access denied to this session",
+			expectStatus:  http.StatusNotFound,
+			expectMessage: "Session ID sess-auth-fail not found",
 		},
 		{
 			name:      "wrong kind",

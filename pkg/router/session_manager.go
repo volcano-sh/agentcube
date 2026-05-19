@@ -183,6 +183,8 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 		return nil, api.NewInternalError(fmt.Errorf("response with empty session id from workload manager"))
 	}
 
+	routerSessionCreateTotal.Inc()
+
 	// Construct Sandbox Info from response
 	sandbox := &types.SandboxInfo{
 		Kind:             res.Kind,

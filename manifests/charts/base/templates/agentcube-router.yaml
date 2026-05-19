@@ -101,6 +101,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  annotations:
+    prometheus.io/path: /metrics
+    prometheus.io/port: {{ .Values.router.service.port | quote }}
+    prometheus.io/scrape: "true"
   name: agentcube-router
   namespace: {{ .Release.Namespace }}
   labels:

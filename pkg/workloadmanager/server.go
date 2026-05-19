@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/store"
@@ -110,6 +111,7 @@ func (s *Server) setupRoutes() {
 
 	// Health check (no authentication required)
 	s.router.GET("/health", s.handleHealth)
+	s.router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// API v1 routes
 	v1Group := s.router.Group("/v1")

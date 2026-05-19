@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/store"
@@ -111,10 +112,12 @@ func (s *Server) concurrencyLimitMiddleware() gin.HandlerFunc {
 		// Try to acquire a slot in the semaphore
 		select {
 		case concurrency <- struct{}{}:
+			routerConcurrentRequests.Inc()
 			// Successfully acquired a slot, continue processing
 			defer func() {
 				// Release the slot when done
 				<-concurrency
+				routerConcurrentRequests.Dec()
 			}()
 			c.Next()
 		default:
@@ -135,6 +138,7 @@ func (s *Server) setupRoutes() {
 	// Health check endpoints (no authentication required, no concurrency limit)
 	s.engine.GET("/health/live", s.handleHealthLive)
 	s.engine.GET("/health/ready", s.handleHealthReady)
+	s.engine.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// API v1 routes with concurrency limiting
 	v1 := s.engine.Group("/v1")

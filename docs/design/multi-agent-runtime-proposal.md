@@ -216,8 +216,9 @@ AGENTCUBE_DEP_{ROLE_NAME_SANITISED_UPPER}_ENDPOINT = {podIP}:{port}
 ```
 
 **Port Resolution Rule:**
-* If the dependency's `AgentRuntime` CRD defines a single port, that port is used.
-* If it defines multiple ports, the system first looks for a port named `http` or `default`. If no such port is found, it falls back to the first port in the ports list.
+* If `targetPort` is explicitly defined in the dependency's `RoleSpec` (either as a port name or number), that port is used.
+* If `targetPort` is not specified, and the dependency's `AgentRuntime` CRD defines a single port, that port is used.
+* If `targetPort` is not specified, and it defines multiple ports, the system first looks for a port named `http` or `default`. If no such port is found, it falls back to the first port in the ports list.
 
 **Validation against Naming Collisions:**
 * Because multiple role names could map to the same sanitized environment variable (e.g., `my-agent` and `my.agent` both sanitize to `AGENTCUBE_DEP_MY_AGENT_ENDPOINT`), the API server validates the group configuration at request admission time. If any two roles within the group result in the same sanitized environment variable key, the request is rejected with a `400 Bad Request` validation error.
@@ -298,12 +299,20 @@ func (s *Server) createSandboxGroup(
         sandboxEntry.GroupSessionID = groupSessionID
         sandboxEntry.Role = role.Name
 
+        // Apply group-level SessionTimeout and MaxSessionDuration overrides
+        if mar.Spec.SessionTimeout != nil {
+            sandboxEntry.SessionTimeout = mar.Spec.SessionTimeout
+        }
+        if mar.Spec.MaxSessionDuration != nil {
+            sandbox.Spec.MaxSessionDuration = mar.Spec.MaxSessionDuration
+        }
+
         if len(role.Dependencies) > 0 {
             injectDependencyEndpoints(&sandbox.Spec.PodTemplate, role.Dependencies, created)
         }
 
         // Watch and create sandbox in a closure to prevent watcher resource accumulation from defer in a loop
-        resp, err := func() (*types.CreateAgentResponse, error) {
+        resp, err := func() (*types.CreateSandboxResponse, error) {
             resultChan := s.sandboxController.WatchSandboxOnce(ctx, sandbox.Namespace, sandbox.Name)
             defer s.sandboxController.UnWatchSandbox(sandbox.Namespace, sandbox.Name)
             return s.createSandbox(ctx, dynamicClient, sandbox, nil, sandboxEntry, resultChan)
@@ -336,6 +345,7 @@ func (s *Server) createSandboxGroup(
 
 **Key properties:**
 
+- **Parallel Sandbox Creation:** To prevent HTTP gateway or client timeouts when launching large groups, roles that do not share mutual dependencies (i.e., reside at the same level of the dependency DAG) are created in parallel. Sandbox creation proceeds in "dependency waves": all sandboxes within a wave are launched concurrently, and the server waits for all to be ready before proceeding to the next dependent wave.
 - The deferred rollback calls the existing `rollbackSandboxCreation()` function, without modification, for every sandbox in `created`.
 - Roles are created in topological order. A dependency's endpoint is guaranteed to be in `created` before the dependent role's sandbox is built.
 - `buildSandboxByAgentRuntime()`, `createSandbox()`, `WatchSandboxOnce()`, and `rollbackSandboxCreation()` are all called as-is.
@@ -595,6 +605,11 @@ type RoleSpec struct {
     // Circular dependencies are rejected at request time.
     // +optional
     Dependencies []string `json:"dependencies,omitempty"`
+
+    // TargetPort specifies the name or number of the port in the referenced AgentRuntime 
+    // to be used by dependent roles. If empty, the default Port Resolution Rule applies.
+    // +optional
+    TargetPort string `json:"targetPort,omitempty"`
 }
 
 type StartupPolicyType string
@@ -672,14 +687,27 @@ The reconciler watches for `Sandbox` objects whose `GroupSessionID` matches a kn
 
 ## Garbage Collection
 
-The existing GC in `pkg/workloadmanager/garbage_collection.go` is extended with group awareness. When the GC deletes a sandbox that has a non-empty `GroupSessionID`:
+The existing GC in `pkg/workloadmanager/garbage_collection.go` is extended with group awareness.
+
+### Group-Aware Idle Timeout
+
+Because the Router only proxies external traffic directly to the coordinator, only the coordinator's `LastActivityAt` timestamp in the store is updated during active sessions. Internal worker sandboxes that receive no direct external traffic would otherwise retain static `LastActivityAt` values, causing the GC to prematurely delete them while the coordinator is still active.
+
+To prevent this, the GC evaluates idle timeouts group-wide:
+1. When checking if a sandbox is idle, if its `GroupSessionID` is non-empty, the GC retrieves the group's coordinator sandbox from the store.
+2. The idle duration for **all members of the group** is calculated based on the coordinator's `LastActivityAt` timestamp (or the maximum `LastActivityAt` among all group member sandboxes if the coordinator's timestamp is unavailable).
+3. Individual sandboxes in a group are only deleted for inactivity if the group as a whole is determined to be idle.
+
+### Group Metadata Cleanup
+
+When the GC deletes a sandbox that has a non-empty `GroupSessionID`:
 
 1. It calls `GetAgentGroup()` to retrieve the group manifest.
 2. It removes the deleted role from the manifest.
 3. If no roles remain in the manifest, it calls `DeleteAgentGroup()` to remove the `agentgroup:` key from the store.
 4. If other roles remain, it calls `SaveAgentGroup()` with the updated manifest.
 
-This ensures that group manifests do not accumulate indefinitely in the store after their member sandboxes expire. The existing idle-timeout and TTL logic for individual sandboxes is not modified. Group membership is an additional cleanup concern layered on top of existing GC, not a replacement.
+This ensures that group manifests do not accumulate indefinitely in the store after their member sandboxes expire. Group membership is an additional cleanup concern layered on top of existing GC, not a replacement.
 
 ---
 

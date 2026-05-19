@@ -209,7 +209,7 @@ In both policies, coordinator failure always causes full rollback and an error r
 
 Before a dependent role's sandbox is created, stable DNS-based endpoints of its dependencies are injected as environment variables into the pod template. To ensure stable communication under the `BestEffort` policy where failed worker pods are replaced and get new IP addresses, the Workload Manager automatically creates a Headless Kubernetes Service for each role in the group. 
 
-* **Service Name:** `{groupSessionID}-{roleNameSanitized}` (where `{roleNameSanitized}` replaces non-DNS-compliant characters with hyphens).
+* **Service Name:** `mar-{shortHash}-{roleNameSanitized}` (where `{shortHash}` is the first 8 characters of the SHA-256 hash of the `groupSessionID`, and `{roleNameSanitized}` replaces non-DNS-compliant characters with hyphens). This ensures the service name stays well under the Kubernetes 63-character DNS label limit even with long role names.
 * **Service Selector:** Matches `SessionIdLabelKey` and `Role` metadata on the sandbox.
 * **Service Lifecycle:** Created during `createSandboxGroup()` and cleaned up automatically via OwnerReferences when the MultiAgentRuntime is deleted.
 
@@ -292,6 +292,9 @@ func (s *Server) createSandboxGroup(
     groupSessionID := "grp-" + uuid.New().String()
     var created []createdRole
 
+    // Compute a single baseTime for consistent TTL calculation across all group members
+    baseTime := time.Now()
+
     needGroupRollback := true
     defer func() {
         if !needGroupRollback {
@@ -338,9 +341,9 @@ func (s *Server) createSandboxGroup(
                     sandbox.Annotations[IdleTimeoutAnnotationKey] = mar.Spec.SessionTimeout.Duration.String()
                 }
 
-                // Apply group-level MaxSessionDuration override
+                // Apply group-level MaxSessionDuration override using the shared baseTime
                 if mar.Spec.MaxSessionDuration != nil {
-                    shutdownTime := metav1.NewTime(time.Now().Add(mar.Spec.MaxSessionDuration.Duration))
+                    shutdownTime := metav1.NewTime(baseTime.Add(mar.Spec.MaxSessionDuration.Duration))
                     sandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
                 }
 
@@ -401,10 +404,14 @@ func (s *Server) createSandboxGroup(
 **Key properties:**
 
 - **Parallel Sandbox Creation:** To prevent HTTP gateway or client timeouts when launching large groups, roles that do not share mutual dependencies (i.e., reside at the same level of the dependency DAG) are created in parallel. Sandbox creation proceeds in "dependency waves": all sandboxes within a wave are launched concurrently, and the server waits for all to be ready before proceeding to the next dependent wave.
+- **Consistent TTL:** A single `baseTime` is captured before the creation loop begins and used for all `ShutdownTime` calculations. This ensures every sandbox in the group shares a synchronized absolute TTL, regardless of how long it takes to create each wave.
 - The deferred rollback calls the existing `rollbackSandboxCreation()` function, without modification, for every sandbox in `created`.
 - Roles are created in topological order. A dependency's endpoint is guaranteed to be in `created` before the dependent role's sandbox is built.
 - `buildSandboxByAgentRuntime()`, `createSandbox()`, `WatchSandboxOnce()`, and `rollbackSandboxCreation()` are all called as-is.
 - The `needGroupRollback` flag is only cleared after `SaveAgentGroup` succeeds. A store failure after all sandboxes are created will roll back the Kubernetes resources, maintaining consistency between the cluster state and the store.
+
+> [!NOTE]
+> **Future Improvement: Reconciler-Based Orchestration.** The current design executes `createSandboxGroup()` synchronously within the API handler. For very large groups where the cumulative creation time may approach HTTP proxy timeouts, a more resilient approach would be to have the API handler persist the `MultiAgentRuntime` CRD with a `Creating` status and delegate the actual sandbox orchestration to the `MultiAgentRuntimeReconciler`. This ensures the system can recover and resume group creation even if the Workload Manager restarts mid-process. This is left as a future optimization since the wave-based parallelism already significantly reduces total startup latency for practical group sizes.
 
 The following sequence diagram illustrates the creation flow for a 3-role group under `Atomic` policy:
 
@@ -599,7 +606,15 @@ Both `store_redis.go` and `store_valkey.go` implement these methods using the ke
 
 > **Store Implementation Note:** To prevent race conditions in a distributed environment during concurrent updates, the store backends (Redis/Valkey) implement group manifests using a **Redis Hash** (`HSET agentgroup:{groupSessionID}`) instead of a raw JSON string.
 > 
-> The hash fields map directly to roles and their metadata (e.g., `HSET agentgroup:{groupSessionID} role:{roleName} <json>`), allowing atomic field-level updates without rewriting the full manifest JSON, avoiding read-modify-write races.
+> The hash layout uses a reserved `_metadata` field for top-level group attributes (`GroupSessionID`, `CreatedAt`, `StartupPolicy`, `Namespace`) and individual `role:{roleName}` fields for per-role state:
+> ```
+> HSET agentgroup:{grp-xxx}
+>   _metadata        '{"groupSessionID":"grp-xxx","createdAt":"...","startupPolicy":"Atomic","namespace":"default"}'
+>   role:planner     '{"sessionID":"...","endpoint":"...","status":"ready"}'
+>   role:researcher  '{"sessionID":"...","endpoint":"...","status":"ready"}'
+>   role:coder       '{"sessionID":"...","endpoint":"...","status":"failed"}'
+> ```
+> This allows atomic field-level updates via `HSET` without rewriting the full manifest JSON, avoiding read-modify-write races. `GetAgentGroup()` reads all fields with `HGETALL` and reconstructs the full `AgentGroupManifest` by combining the `_metadata` and `role:*` entries.
 
 ### CRD Types
 
@@ -888,12 +903,17 @@ This feature is fully backward compatible. No existing behavior changes unless t
 Deliverables that satisfy the mentorship expected outcomes on their own.
 
 - Define `MultiAgentRuntime` CRD types with kubebuilder markers; run `make generate` + `make gen-crd`.
+- Implement a **ValidatingAdmissionWebhook** for `MultiAgentRuntime` to enforce configuration invariants at admission time:
+  - Exactly one role must be marked as `isCoordinator`.
+  - No two roles may produce the same sanitized environment variable key (naming collision detection).
+  - `dependencies[]` references must point to roles defined within the same spec.
+  - Role names must be valid DNS label fragments (lowercase alphanumeric and hyphens, max 63 characters).
 - Implement `createSandboxGroup()` with `Atomic` rollback (no `BestEffort` yet).
 - Add `GroupSessionID` + `Role` to `SandboxInfo`; propagate through `buildSandboxPlaceHolder()` + `buildSandboxInfo()`.
 - Implement all 4 store methods in `store_redis.go` + `store_valkey.go` with full unit test coverage.
 - Add `MultiAgentRuntimeKind` to Router endpoint switch.
 - Extend GC to clean up `agentgroup:` manifest keys when last member sandbox is deleted.
-- Unit tests: `createSandboxGroup()` with atomic rollback on partial failure, store CRUD, coordinator validation, cycle detection.
+- Unit tests: `createSandboxGroup()` with atomic rollback on partial failure, store CRUD, coordinator validation, cycle detection, admission webhook validation.
 - E2E test: kind cluster (same setup as existing E2E), create a 3-role group, verify all sandboxes running, delete group, verify cleanup.
 - User guide: YAML example + `kubectl` workflow.
 

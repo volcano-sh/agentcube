@@ -207,13 +207,17 @@ In both policies, coordinator failure always causes full rollback and an error r
 
 #### Dependency endpoint injection
 
-Before a dependent role's sandbox is created, the verified pod IPs and ports of its dependencies are injected as environment variables into the pod template. To ensure compatibility with standard shell naming conventions, any hyphens or non-alphanumeric characters in the role name and port names are replaced by underscores. 
+Before a dependent role's sandbox is created, stable DNS-based endpoints of its dependencies are injected as environment variables into the pod template. To ensure stable communication under the `BestEffort` policy where failed worker pods are replaced and get new IP addresses, the Workload Manager automatically creates a Headless Kubernetes Service for each role in the group. 
 
-The naming conventions are:
+* **Service Name:** `{groupSessionID}-{roleNameSanitized}` (where `{roleNameSanitized}` replaces non-DNS-compliant characters with hyphens).
+* **Service Selector:** Matches `SessionIdLabelKey` and `Role` metadata on the sandbox.
+* **Service Lifecycle:** Created during `createSandboxGroup()` and cleaned up automatically via OwnerReferences when the MultiAgentRuntime is deleted.
+
+The environment variables injected into the dependent pod's containers point to the stable Service DNS name:
 
 1. **Default Endpoint (Primary service port):**
    ```
-   AGENTCUBE_DEP_{ROLE_NAME_SANITISED_UPPER}_ENDPOINT = {podIP}:{port}
+   AGENTCUBE_DEP_{ROLE_NAME_SANITISED_UPPER}_ENDPOINT = {serviceName}.{namespace}.svc.cluster.local:{port}
    ```
    * **Port Resolution Rule:**
      * If `targetPort` is explicitly defined in the dependency's `RoleSpec` (either as a port name or number), that port is used as the default.
@@ -223,7 +227,7 @@ The naming conventions are:
 2. **Named Port Endpoints (For multi-service agents exposing multiple ports):**
    If the dependency's `AgentRuntime` CRD defines named ports, an endpoint environment variable is additionally injected for each named port:
    ```
-   AGENTCUBE_DEP_{ROLE_NAME_SANITISED_UPPER}_PORT_{PORT_NAME_SANITISED_UPPER}_ENDPOINT = {podIP}:{portNumber}
+   AGENTCUBE_DEP_{ROLE_NAME_SANITISED_UPPER}_PORT_{PORT_NAME_SANITISED_UPPER}_ENDPOINT = {serviceName}.{namespace}.svc.cluster.local:{portNumber}
    ```
 
 **Validation against Naming Collisions:**
@@ -232,12 +236,12 @@ The naming conventions are:
 **Injection Scope:**
 * The dependency endpoints are injected into the `Env` list of **all containers** (including primary, sidecar, and init-containers) defined in the pod spec. This ensures that any multi-container runtime configuration can reliably resolve the endpoints.
 
-For a role with `dependencies: [my-planner]` (where the planner exposes a port named `api` at `8080` and `metrics` at `9090`), the dependent pod's containers receive:
+For a role with `dependencies: [my-planner]` in namespace `default` (where `my-planner` maps to service name `grp-xyz-my-planner` and exposes a port named `api` at `8080` and `metrics` at `9090`), the dependent pod's containers receive:
 
 ```
-AGENTCUBE_DEP_MY_PLANNER_ENDPOINT = 10.0.0.4:8080
-AGENTCUBE_DEP_MY_PLANNER_PORT_API_ENDPOINT = 10.0.0.4:8080
-AGENTCUBE_DEP_MY_PLANNER_PORT_METRICS_ENDPOINT = 10.0.0.4:9090
+AGENTCUBE_DEP_MY_PLANNER_ENDPOINT = grp-xyz-my-planner.default.svc.cluster.local:8080
+AGENTCUBE_DEP_MY_PLANNER_PORT_API_ENDPOINT = grp-xyz-my-planner.default.svc.cluster.local:8080
+AGENTCUBE_DEP_MY_PLANNER_PORT_METRICS_ENDPOINT = grp-xyz-my-planner.default.svc.cluster.local:9090
 ```
 
 Injection happens in-memory inside `createSandboxGroup()` by mutating the pod template before it is passed to `buildSandboxByAgentRuntime()`. The referenced `AgentRuntime` CRD object in the informer cache is never written.
@@ -271,6 +275,14 @@ agentgroup:{grp-xxx} -> AgentGroupManifest{
 ### Core Implementation: `createSandboxGroup()`
 
 ```go
+type createdRole struct {
+    name      string
+    resp      *types.CreateSandboxResponse
+    sandbox   *sandboxv1alpha1.Sandbox
+    sessionID string
+    failed    bool
+}
+
 func (s *Server) createSandboxGroup(
     ctx context.Context,
     mar *runtimev1alpha1.MultiAgentRuntime,
@@ -286,6 +298,9 @@ func (s *Server) createSandboxGroup(
             return
         }
         for _, c := range created {
+            if c.failed {
+                continue
+            }
             // rollbackSandboxCreation is called as-is (no changes to the function).
             s.rollbackSandboxCreation(dynamicClient, c.sandbox, nil, c.sessionID)
         }
@@ -314,12 +329,19 @@ func (s *Server) createSandboxGroup(
                 sandboxEntry.GroupSessionID = groupSessionID
                 sandboxEntry.Role = role.Name
 
-                // Apply group-level SessionTimeout and MaxSessionDuration overrides
+                // Apply group-level SessionTimeout override
                 if mar.Spec.SessionTimeout != nil {
-                    sandboxEntry.SessionTimeout = mar.Spec.SessionTimeout
+                    sandboxEntry.IdleTimeout = mar.Spec.SessionTimeout.Duration
+                    if sandbox.Annotations == nil {
+                        sandbox.Annotations = make(map[string]string)
+                    }
+                    sandbox.Annotations[IdleTimeoutAnnotationKey] = mar.Spec.SessionTimeout.Duration.String()
                 }
+
+                // Apply group-level MaxSessionDuration override
                 if mar.Spec.MaxSessionDuration != nil {
-                    sandbox.Spec.MaxSessionDuration = mar.Spec.MaxSessionDuration
+                    shutdownTime := metav1.NewTime(time.Now().Add(mar.Spec.MaxSessionDuration.Duration))
+                    sandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
                 }
 
                 if len(role.Dependencies) > 0 {
@@ -337,6 +359,12 @@ func (s *Server) createSandboxGroup(
                 if err != nil {
                     if mar.Spec.StartupPolicy == StartupPolicyBestEffort && !role.IsCoordinator {
                         klog.Warningf("group %s: role %s failed (BestEffort policy): %v", groupSessionID, role.Name, err)
+                        createdMutex.Lock()
+                        created = append(created, createdRole{
+                            name:   role.Name,
+                            failed: true,
+                        })
+                        createdMutex.Unlock()
                         return nil // skip worker failure under BestEffort
                     }
                     return fmt.Errorf("role %s: %w", role.Name, err)
@@ -348,6 +376,7 @@ func (s *Server) createSandboxGroup(
                     resp:      resp,
                     sandbox:   sandbox,
                     sessionID: sandboxEntry.SessionID,
+                    failed:    false,
                 })
                 createdMutex.Unlock()
                 return nil
@@ -702,11 +731,11 @@ The reconciler watches for `Sandbox` objects whose `GroupSessionID` matches a kn
 - **`Atomic` policy**: the reconciler calls `handleDeleteAgentGroup()` to tear down all remaining sandboxes and delete the group manifest. It sets a `Failed` condition on the `MultiAgentRuntimeStatus`.
 - **`BestEffort` policy**: the reconciler attempts to create a replacement sandbox for the failed role. On success, it calls `UpdateAgentGroupRoleStatus()` with the new endpoint. On repeated failure, it sets a `Degraded` condition.
 
-> [!WARNING]
-> **Stale Environment Variables in BestEffort Groups:** 
-> When a failed worker pod is replaced under the `BestEffort` policy, the new pod receives a new IP address. Because environment variables are immutable once a pod is running, already active dependent pods (such as the coordinator) will retain the stale endpoint in their environment variables.
+> [!NOTE]
+> **DNS-Based Self-Healing in BestEffort Groups:** 
+> Because environment variables are immutable once a pod is running, replacing a failed worker pod with a new pod under the `BestEffort` policy would render direct Pod IP environment variables stale. 
 > 
-> To prevent communication failures, agents deployed in `BestEffort` groups must not rely solely on injected environment variables. Instead, they should utilize the `/topology` endpoint (`GET /v1/multi-agent-runtime/groups/:groupSessionId/topology`) for dynamic service discovery to retrieve current worker endpoints.
+> By utilizing Headless Kubernetes Services, the injected environment variable points to a stable DNS endpoint (e.g., `grp-abc-my-planner.default.svc.cluster.local`). When a worker pod is replaced, the service's selector automatically targets the new pod's IP. Active dependent pods (like the coordinator) resolve the same DNS name to the new worker IP without needing environment variable updates or dynamic service discovery polling.
 
 ### Status Conditions
 

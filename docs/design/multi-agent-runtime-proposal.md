@@ -236,12 +236,12 @@ The environment variables injected into the dependent pod's containers point to 
 **Injection Scope:**
 * The dependency endpoints are injected into the `Env` list of **all containers** (including primary, sidecar, and init-containers) defined in the pod spec. This ensures that any multi-container runtime configuration can reliably resolve the endpoints.
 
-For a role with `dependencies: [my-planner]` in namespace `default` (where `my-planner` maps to service name `grp-xyz-my-planner` and exposes a port named `api` at `8080` and `metrics` at `9090`), the dependent pod's containers receive:
+For a role with `dependencies: [my-planner]` in namespace `default` (where `my-planner` maps to service name `mar-abcdef12-my-planner` and exposes a port named `api` at `8080` and `metrics` at `9090`), the dependent pod's containers receive:
 
 ```
-AGENTCUBE_DEP_MY_PLANNER_ENDPOINT = grp-xyz-my-planner.default.svc.cluster.local:8080
-AGENTCUBE_DEP_MY_PLANNER_PORT_API_ENDPOINT = grp-xyz-my-planner.default.svc.cluster.local:8080
-AGENTCUBE_DEP_MY_PLANNER_PORT_METRICS_ENDPOINT = grp-xyz-my-planner.default.svc.cluster.local:9090
+AGENTCUBE_DEP_MY_PLANNER_ENDPOINT = mar-abcdef12-my-planner.default.svc.cluster.local:8080
+AGENTCUBE_DEP_MY_PLANNER_PORT_API_ENDPOINT = mar-abcdef12-my-planner.default.svc.cluster.local:8080
+AGENTCUBE_DEP_MY_PLANNER_PORT_METRICS_ENDPOINT = mar-abcdef12-my-planner.default.svc.cluster.local:9090
 ```
 
 Injection happens in-memory inside `createSandboxGroup()` by mutating the pod template before it is passed to `buildSandboxByAgentRuntime()`. The referenced `AgentRuntime` CRD object in the informer cache is never written.
@@ -460,7 +460,7 @@ sequenceDiagram
 
     WM->>Store: SaveAgentGroup(manifest)
     WM-->>Router: CreateAgentGroupResponse
-    Router-->>Client: 200 OK + groupSessionId
+    Router-->>Client: 200 OK + CreateAgentGroupResponse
 ```
 
 ### Topological Sort and Cycle Detection
@@ -594,7 +594,7 @@ type AgentGroupRole struct {
 
 ### Store Interface Additions
 
-Four new methods are added to the `Store` interface in `pkg/store/interface.go`. All existing methods are unchanged.
+Five new methods are added to the `Store` interface in `pkg/store/interface.go`. All existing methods are unchanged.
 
 ```go
 // SaveAgentGroup persists a group manifest keyed by groupSessionID.
@@ -795,11 +795,12 @@ The existing GC in `pkg/workloadmanager/garbage_collection.go` is extended with 
 Because the Router only proxies external traffic directly to the coordinator, only the coordinator's `LastActivityAt` timestamp in the store is updated during active sessions. Internal worker sandboxes that receive no direct external traffic would otherwise retain static `LastActivityAt` values, causing the GC to prematurely delete them while the coordinator is still active.
 
 To prevent this, the GC evaluates idle timeouts group-wide:
-1. When checking if a sandbox is idle, if its `GroupSessionID` is non-empty, the GC retrieves the group manifest once per GC cycle (cached in a `map[string]*AgentGroupManifest` local to the cycle) and looks up the coordinator sandbox from the manifest.
-2. The idle duration for **all members of the group** is calculated based on the coordinator's `LastActivityAt` timestamp (or the maximum `LastActivityAt` among all group member sandboxes if the coordinator's timestamp is unavailable).
-3. Individual sandboxes in a group are only deleted for inactivity if the group as a whole is determined to be idle.
+1. When checking if a sandbox is idle, if its `GroupSessionID` is non-empty, the GC retrieves the group manifest once per GC cycle via `GetAgentGroup()` (result cached in a `map[string]*AgentGroupManifest` local to that cycle). The manifest's `role:*` fields contain the `SessionID` of each member, including the coordinator.
+2. The coordinator's `SandboxInfo` (including `LastActivityAt`) is fetched with a single `GetSandbox(coordinatorSessionID)` call. This result is also cached per group per cycle, so it is only fetched once regardless of how many worker sandboxes belong to that group. If the coordinator's `SandboxInfo` is unavailable (e.g., already evicted), the GC falls back to the maximum `LastActivityAt` among all group member sandboxes whose `SandboxInfo` can be retrieved.
+3. The idle duration for **all members of the group** is calculated based on the resolved coordinator (or fallback) `LastActivityAt` timestamp.
+4. Individual sandboxes in a group are only deleted for inactivity if the group as a whole is determined to be idle.
 
-Caching the manifest per group per GC cycle avoids O(N) redundant store lookups where N is the number of worker sandboxes in the group.
+Caching both the group manifest and the coordinator `SandboxInfo` per group per GC cycle reduces the total number of store roundtrips to O(1) per group rather than O(N) per group member.
 
 ### Group Metadata Cleanup
 
@@ -908,9 +909,9 @@ This feature is fully backward compatible. No existing behavior changes unless t
 | `pkg/workloadmanager/server.go` | Add 3 new routes under `/v1/multi-agent-runtime` |
 | `pkg/workloadmanager/garbage_collection.go` | Group manifest cleanup when last member sandbox is GC'd |
 | `pkg/store/interface.go` | Add `SaveAgentGroup`, `GetAgentGroup`, `DeleteAgentGroup`, `DeleteAgentGroupRole`, `UpdateAgentGroupRoleStatus` |
-| `pkg/store/store_redis.go` | Implement all 4 group methods |
+| `pkg/store/store_redis.go` | Implement all 5 group methods |
 | `pkg/store/store_redis_test.go` | Group CRUD tests |
-| `pkg/store/store_valkey.go` | Implement all 4 group methods |
+| `pkg/store/store_valkey.go` | Implement all 5 group methods |
 | `pkg/store/store_valkey_test.go` | Group CRUD tests |
 | `pkg/router/session_manager.go` | Add `MultiAgentRuntimeKind` case in endpoint switch |
 | `cmd/workload-manager/main.go` | Phase 1: HTTP routes; Phase 4: reconciler wiring |
@@ -933,7 +934,7 @@ Deliverables that satisfy the mentorship expected outcomes on their own.
   - Role names must be valid DNS label fragments (lowercase alphanumeric and hyphens, max 63 characters).
 - Implement `createSandboxGroup()` with `Atomic` rollback (no `BestEffort` yet).
 - Add `GroupSessionID` + `Role` to `SandboxInfo`; propagate through `buildSandboxPlaceHolder()` + `buildSandboxInfo()`.
-- Implement all 4 store methods in `store_redis.go` + `store_valkey.go` with full unit test coverage.
+- Implement all 5 store methods in `store_redis.go` + `store_valkey.go` with full unit test coverage.
 - Add `MultiAgentRuntimeKind` to Router endpoint switch.
 - Extend GC to clean up `agentgroup:` manifest keys when last member sandbox is deleted.
 - Unit tests: `createSandboxGroup()` with atomic rollback on partial failure, store CRUD, coordinator validation, cycle detection, admission webhook validation.

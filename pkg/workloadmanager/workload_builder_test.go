@@ -225,6 +225,13 @@ type fakeInformer struct {
 	store cache.Store
 }
 
+const (
+	testNamespace               = "default"
+	testAgentRuntimeName        = "test-runtime"
+	testCodeInterpreterWarmPool = "ci-with-wp"
+	testCodeInterpreterUID      = "ci-uid-123"
+)
+
 func (f *fakeInformer) GetStore() cache.Store {
 	return f.store
 }
@@ -253,6 +260,59 @@ func setCachedPublicKeyForTest(t *testing.T, value string) {
 		cachedPublicKey = previous
 		publicKeyCacheMutex.Unlock()
 	})
+}
+
+func addRuntimeObjectToStore(t *testing.T, store cache.Store, obj interface{}, kind string) {
+	t.Helper()
+	u := toUnstructured(t, obj, kind)
+	if err := store.Add(u); err != nil {
+		t.Fatalf("failed to add to store: %v", err)
+	}
+}
+
+func assertSandboxMetadata(t *testing.T, sandboxLabels map[string]string, sandboxName, namespace, namePrefix, workloadName, sessionID string) {
+	t.Helper()
+	if !strings.HasPrefix(sandboxName, namePrefix) {
+		t.Errorf("expected sandbox name to start with %q, got %q", namePrefix, sandboxName)
+	}
+	if namespace != testNamespace {
+		t.Errorf("expected namespace %q, got %q", testNamespace, namespace)
+	}
+	if sandboxLabels[WorkloadNameLabelKey] != workloadName {
+		t.Errorf("expected workload name label %q, got %q", workloadName, sandboxLabels[WorkloadNameLabelKey])
+	}
+	if sandboxLabels[SessionIdLabelKey] != sessionID {
+		t.Errorf("expected sandbox label %s=%q, got %q", SessionIdLabelKey, sessionID, sandboxLabels[SessionIdLabelKey])
+	}
+}
+
+func assertAgentRuntimePodLabels(t *testing.T, podLabels map[string]string, sandboxName, sessionID string) {
+	t.Helper()
+	if podLabels["app"] != "my-agent" {
+		t.Errorf("expected pod label app=my-agent, got %q", podLabels["app"])
+	}
+	if podLabels[SessionIdLabelKey] != sessionID {
+		t.Errorf("expected session id label %q, got %q", sessionID, podLabels[SessionIdLabelKey])
+	}
+	if podLabels[SandboxNameLabelKey] != sandboxName {
+		t.Errorf("expected sandbox name label %q, got %q", sandboxName, podLabels[SandboxNameLabelKey])
+	}
+}
+
+func assertOwnerReference(t *testing.T, owner metav1.OwnerReference) {
+	t.Helper()
+	if owner.Name != testCodeInterpreterWarmPool {
+		t.Errorf("expected owner name %q, got %q", testCodeInterpreterWarmPool, owner.Name)
+	}
+	if owner.UID != testCodeInterpreterUID {
+		t.Errorf("expected owner UID %q, got %q", testCodeInterpreterUID, owner.UID)
+	}
+	if owner.APIVersion != "runtime.agentcube.volcano.sh/v1alpha1" {
+		t.Errorf("expected owner APIVersion runtime.agentcube.volcano.sh/v1alpha1, got %q", owner.APIVersion)
+	}
+	if owner.Kind != "CodeInterpreter" {
+		t.Errorf("expected owner kind CodeInterpreter, got %q", owner.Kind)
+	}
 }
 
 func TestBuildCodeInterpreterEnvVars(t *testing.T) {
@@ -317,7 +377,7 @@ func TestBuildSandboxByAgentRuntime_NotFound(t *testing.T) {
 		AgentRuntimeInformer: informer,
 	}
 
-	_, _, err := buildSandboxByAgentRuntime("default", "missing", ifm)
+	_, _, err := buildSandboxByAgentRuntime(testNamespace, "missing", ifm)
 	if !errors.Is(err, api.ErrAgentRuntimeNotFound) {
 		t.Fatalf("expected error %v, got %v", api.ErrAgentRuntimeNotFound, err)
 	}
@@ -330,8 +390,8 @@ func TestBuildSandboxByAgentRuntime_Success(t *testing.T) {
 			Kind:       "AgentRuntime",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-runtime",
-			Namespace: "default",
+			Name:      testAgentRuntimeName,
+			Namespace: testNamespace,
 		},
 		Spec: runtimev1alpha1.AgentRuntimeSpec{
 			Ports: []runtimev1alpha1.TargetPort{
@@ -351,18 +411,14 @@ func TestBuildSandboxByAgentRuntime_Success(t *testing.T) {
 	}
 
 	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
-	u := toUnstructured(t, agentRuntime, "AgentRuntime")
-	err := store.Add(u)
-	if err != nil {
-		t.Fatalf("failed to add to store: %v", err)
-	}
+	addRuntimeObjectToStore(t, store, agentRuntime, "AgentRuntime")
 
 	informer := &fakeInformer{store: store}
 	ifm := &Informers{
 		AgentRuntimeInformer: informer,
 	}
 
-	sandbox, entry, err := buildSandboxByAgentRuntime("default", "test-runtime", ifm)
+	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, ifm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -374,25 +430,8 @@ func TestBuildSandboxByAgentRuntime_Success(t *testing.T) {
 		t.Fatal("expected entry not to be nil")
 	}
 
-	// Validate Sandbox
-	if !strings.HasPrefix(sandbox.Name, "test-runtime-") {
-		t.Errorf("expected sandbox name to start with 'test-runtime-', got %q", sandbox.Name)
-	}
-	if sandbox.Namespace != "default" {
-		t.Errorf("expected namespace 'default', got %q", sandbox.Namespace)
-	}
-	if sandbox.Labels[WorkloadNameLabelKey] != "test-runtime" {
-		t.Errorf("expected workload name label 'test-runtime', got %q", sandbox.Labels[WorkloadNameLabelKey])
-	}
-
-	// Validate pod template labels
-	podLabels := sandbox.Spec.PodTemplate.ObjectMeta.Labels
-	if podLabels["app"] != "my-agent" {
-		t.Errorf("expected pod label app=my-agent, got %q", podLabels["app"])
-	}
-	if podLabels[SessionIdLabelKey] != entry.SessionID {
-		t.Errorf("expected session id label %q, got %q", entry.SessionID, podLabels[SessionIdLabelKey])
-	}
+	assertSandboxMetadata(t, sandbox.Labels, sandbox.Name, sandbox.Namespace, testAgentRuntimeName+"-", testAgentRuntimeName, entry.SessionID)
+	assertAgentRuntimePodLabels(t, sandbox.Spec.PodTemplate.ObjectMeta.Labels, sandbox.Name, entry.SessionID)
 
 	// Validate TTL (MaxSessionDuration)
 	if sandbox.Spec.Lifecycle.ShutdownTime == nil {
@@ -418,7 +457,7 @@ func TestBuildSandboxByCodeInterpreter_NotFound(t *testing.T) {
 		CodeInterpreterInformer: informer,
 	}
 
-	_, _, _, err := buildSandboxByCodeInterpreter("default", "missing", ifm)
+	_, _, _, err := buildSandboxByCodeInterpreter(testNamespace, "missing", ifm)
 	if !errors.Is(err, api.ErrCodeInterpreterNotFound) {
 		t.Fatalf("expected error %v, got %v", api.ErrCodeInterpreterNotFound, err)
 	}
@@ -432,7 +471,7 @@ func TestBuildSandboxByCodeInterpreter_PicodAuthFailsWithoutKey(t *testing.T) {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "ci-picod-no-key",
-			Namespace: "default",
+			Namespace: testNamespace,
 		},
 		Spec: runtimev1alpha1.CodeInterpreterSpec{
 			AuthMode: runtimev1alpha1.AuthModePicoD,
@@ -445,18 +484,14 @@ func TestBuildSandboxByCodeInterpreter_PicodAuthFailsWithoutKey(t *testing.T) {
 	setCachedPublicKeyForTest(t, "") // Empty key to trigger error
 
 	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
-	u := toUnstructured(t, codeInterpreter, "CodeInterpreter")
-	err := store.Add(u)
-	if err != nil {
-		t.Fatalf("failed to add to store: %v", err)
-	}
+	addRuntimeObjectToStore(t, store, codeInterpreter, "CodeInterpreter")
 
 	informer := &fakeInformer{store: store}
 	ifm := &Informers{
 		CodeInterpreterInformer: informer,
 	}
 
-	_, _, _, err = buildSandboxByCodeInterpreter("default", "ci-picod-no-key", ifm)
+	_, _, _, err := buildSandboxByCodeInterpreter(testNamespace, "ci-picod-no-key", ifm)
 	if !errors.Is(err, api.ErrPublicKeyMissing) {
 		t.Fatalf("expected error %v, got %v", api.ErrPublicKeyMissing, err)
 	}
@@ -470,7 +505,7 @@ func TestBuildSandboxByCodeInterpreter_SuccessNoWarmPool(t *testing.T) {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "ci-no-wp",
-			Namespace: "default",
+			Namespace: testNamespace,
 		},
 		Spec: runtimev1alpha1.CodeInterpreterSpec{
 			AuthMode: runtimev1alpha1.AuthModeNone,
@@ -483,18 +518,14 @@ func TestBuildSandboxByCodeInterpreter_SuccessNoWarmPool(t *testing.T) {
 	}
 
 	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
-	u := toUnstructured(t, codeInterpreter, "CodeInterpreter")
-	err := store.Add(u)
-	if err != nil {
-		t.Fatalf("failed to add to store: %v", err)
-	}
+	addRuntimeObjectToStore(t, store, codeInterpreter, "CodeInterpreter")
 
 	informer := &fakeInformer{store: store}
 	ifm := &Informers{
 		CodeInterpreterInformer: informer,
 	}
 
-	sandbox, claim, entry, err := buildSandboxByCodeInterpreter("default", "ci-no-wp", ifm)
+	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, "ci-no-wp", ifm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -528,9 +559,9 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 			Kind:       "CodeInterpreter",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "ci-with-wp",
-			Namespace: "default",
-			UID:       "ci-uid-123",
+			Name:      testCodeInterpreterWarmPool,
+			Namespace: testNamespace,
+			UID:       testCodeInterpreterUID,
 		},
 		Spec: runtimev1alpha1.CodeInterpreterSpec{
 			AuthMode:     runtimev1alpha1.AuthModeNone,
@@ -544,18 +575,14 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 	}
 
 	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
-	u := toUnstructured(t, codeInterpreter, "CodeInterpreter")
-	err := store.Add(u)
-	if err != nil {
-		t.Fatalf("failed to add to store: %v", err)
-	}
+	addRuntimeObjectToStore(t, store, codeInterpreter, "CodeInterpreter")
 
 	informer := &fakeInformer{store: store}
 	ifm := &Informers{
 		CodeInterpreterInformer: informer,
 	}
 
-	sandbox, claim, entry, err := buildSandboxByCodeInterpreter("default", "ci-with-wp", ifm)
+	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, testCodeInterpreterWarmPool, ifm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -570,16 +597,15 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 		t.Fatal("expected claim not to be nil for warm pool path")
 	}
 
-	if !strings.HasPrefix(sandbox.Name, "ci-with-wp-") {
-		t.Errorf("expected sandbox name to start with 'ci-with-wp-', got %q", sandbox.Name)
-	}
+	assertSandboxMetadata(t, sandbox.Labels, sandbox.Name, sandbox.Namespace, testCodeInterpreterWarmPool+"-", testCodeInterpreterWarmPool, entry.SessionID)
 	if entry.Kind != types.SandboxClaimsKind {
 		t.Errorf("expected entry.Kind to be %q, got %q", types.SandboxClaimsKind, entry.Kind)
 	}
-	if claim.Spec.TemplateRef.Name != "ci-with-wp" {
-		t.Errorf("expected templateRef name 'ci-with-wp', got %q", claim.Spec.TemplateRef.Name)
+	if claim.Spec.TemplateRef.Name != testCodeInterpreterWarmPool {
+		t.Errorf("expected templateRef name %q, got %q", testCodeInterpreterWarmPool, claim.Spec.TemplateRef.Name)
 	}
-	if len(claim.OwnerReferences) != 1 || claim.OwnerReferences[0].Name != "ci-with-wp" {
-		t.Errorf("expected claim owner reference to be set to 'ci-with-wp'")
+	if len(claim.OwnerReferences) != 1 {
+		t.Fatalf("expected 1 owner reference, got %d", len(claim.OwnerReferences))
 	}
+	assertOwnerReference(t, claim.OwnerReferences[0])
 }

@@ -386,7 +386,8 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				Namespace: namespace,
 				Name:      sandboxName,
 				Labels: map[string]string{
-					SessionIdLabelKey: sessionID,
+					SessionIdLabelKey:    sessionID,
+					WorkloadNameLabelKey: codeInterpreterName,
 				},
 			},
 		}

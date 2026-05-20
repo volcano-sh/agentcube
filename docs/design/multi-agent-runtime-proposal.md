@@ -210,7 +210,7 @@ In both policies, coordinator failure always causes full rollback and an error r
 Before a dependent role's sandbox is created, stable DNS-based endpoints of its dependencies are injected as environment variables into the pod template. To ensure stable communication under the `BestEffort` policy where failed worker pods are replaced and get new IP addresses, the Workload Manager automatically creates a Headless Kubernetes Service for each role in the group. 
 
 * **Service Name:** `mar-{shortHash}-{roleNameSanitized}` (where `{shortHash}` is the first 8 characters of the SHA-256 hash of the `groupSessionID`, and `{roleNameSanitized}` replaces non-DNS-compliant characters with hyphens, **truncated to 50 characters, then stripped of any trailing hyphens**). With a 13-character prefix (`mar-` + 8-char hash + `-`), this guarantees the full service name always fits within the Kubernetes 63-character DNS label limit and is a valid DNS label (no trailing hyphens).
-* **Service Selector:** Matches `SessionIdLabelKey` and `Role` metadata on the sandbox.
+* **Service Selector:** Matches `GroupSessionID` and `Role` metadata on the sandbox. This ensures the Service remains stable and targets replacement pods correctly under `BestEffort` policies.
 * **Service Lifecycle:** Created during `createSandboxGroup()` and cleaned up automatically via OwnerReferences when the MultiAgentRuntime is deleted.
 
 The environment variables injected into the dependent pod's containers point to the stable Service DNS name:
@@ -331,6 +331,13 @@ func (s *Server) createSandboxGroup(
     for _, wave := range waves {
         g, waveCtx := errgroup.WithContext(ctx)
 
+        // Take a snapshot of dependencies created in previous waves to prevent
+        // mutex contention when injecting endpoints concurrently across the wave.
+        createdMutex.Lock()
+        createdSnapshot := make([]createdRole, len(created))
+        copy(createdSnapshot, created)
+        createdMutex.Unlock()
+
         for _, r := range wave {
             role := r // capture loop variable
             g.Go(func() error {
@@ -385,9 +392,7 @@ func (s *Server) createSandboxGroup(
                 createdMutex.Unlock()
 
                 if len(role.Dependencies) > 0 {
-                    createdMutex.Lock()
-                    injectErr := injectDependencyEndpoints(&sandbox.Spec.PodTemplate, groupSessionID, role.Dependencies, created)
-                    createdMutex.Unlock()
+                    injectErr := injectDependencyEndpoints(&sandbox.Spec.PodTemplate, groupSessionID, role.Dependencies, createdSnapshot)
                     if injectErr != nil {
                         return fmt.Errorf("role %s: inject dependency endpoints: %w", role.Name, injectErr)
                     }
@@ -640,9 +645,10 @@ GetAgentGroup(ctx context.Context, groupSessionID string) (*types.AgentGroupMani
 // DeleteAgentGroup removes a group manifest by groupSessionID.
 DeleteAgentGroup(ctx context.Context, groupSessionID string) error
 
-// DeleteAgentGroupRole atomically removes a single role entry from the group manifest
-// using HDEL. Preferred over a read-modify-write cycle during GC to avoid race conditions.
-// If the role was the last entry, it also deletes the _metadata field and the key.
+// DeleteAgentGroupRole atomically removes a single role entry from the group manifest.
+// To prevent race conditions during concurrent GC, the check-then-delete sequence
+// (removing the role, and deleting the manifest if it was the last role) MUST be
+// implemented using a Redis Lua script or transaction.
 DeleteAgentGroupRole(ctx context.Context, groupSessionID, roleName string) error
 
 // UpdateAgentGroupRoleStatus atomically updates the status and endpoint of a specific role

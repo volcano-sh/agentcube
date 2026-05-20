@@ -209,7 +209,7 @@ In both policies, coordinator failure always causes full rollback and an error r
 
 Before a dependent role's sandbox is created, stable DNS-based endpoints of its dependencies are injected as environment variables into the pod template. To ensure stable communication under the `BestEffort` policy where failed worker pods are replaced and get new IP addresses, the Workload Manager automatically creates a Headless Kubernetes Service for each role in the group. 
 
-* **Service Name:** `mar-{shortHash}-{roleNameSanitized}` (where `{shortHash}` is the first 8 characters of the SHA-256 hash of the `groupSessionID`, and `{roleNameSanitized}` replaces non-DNS-compliant characters with hyphens, **truncated to 50 characters**). With a 13-character prefix (`mar-` + 8-char hash + `-`), truncating the role name to 50 characters guarantees the full service name always fits within the Kubernetes 63-character DNS label limit.
+* **Service Name:** `mar-{shortHash}-{roleNameSanitized}` (where `{shortHash}` is the first 8 characters of the SHA-256 hash of the `groupSessionID`, and `{roleNameSanitized}` replaces non-DNS-compliant characters with hyphens, **truncated to 50 characters, then stripped of any trailing hyphens**). With a 13-character prefix (`mar-` + 8-char hash + `-`), this guarantees the full service name always fits within the Kubernetes 63-character DNS label limit and is a valid DNS label (no trailing hyphens).
 * **Service Selector:** Matches `SessionIdLabelKey` and `Role` metadata on the sandbox.
 * **Service Lifecycle:** Created during `createSandboxGroup()` and cleaned up automatically via OwnerReferences when the MultiAgentRuntime is deleted.
 
@@ -223,6 +223,7 @@ The environment variables injected into the dependent pod's containers point to 
      * If `targetPort` is explicitly defined in the dependency's `RoleSpec` (either as a port name or number), that port is used as the default.
      * If `targetPort` is not specified, and the dependency's `AgentRuntime` CRD defines a single port, that port is used.
      * If `targetPort` is not specified, and it defines multiple ports, the system first looks for a port named `http` or `default`. If no such port is found, it falls back to the first port in the ports list.
+     * If `targetPort` is not specified and the dependency's `AgentRuntime` CRD defines **no ports**, endpoint injection is skipped for that dependency and `injectDependencyEndpoints()` returns an error. The `ValidatingAdmissionWebhook` should reject at admission time any role that lists a dependency whose referenced `AgentRuntime` exposes no ports, preventing this error from reaching the creation path.
 
 2. **Named Port Endpoints (For multi-service agents exposing multiple ports):**
    If the dependency's `AgentRuntime` CRD defines named ports, an endpoint environment variable is additionally injected for each named port:
@@ -232,6 +233,7 @@ The environment variables injected into the dependent pod's containers point to 
 
 **Validation against Naming Collisions:**
 * Because multiple role names or port names could map to the same sanitized environment variable (e.g., `my-agent` and `my.agent` both sanitize to `AGENTCUBE_DEP_MY_AGENT_ENDPOINT`), the API server validates the group configuration at request admission time. If any two roles or named ports within the group result in the same sanitized environment variable key, the request is rejected with a `400 Bad Request` validation error.
+* The `ValidatingAdmissionWebhook` also explicitly checks for **Service name collisions after truncation**: after computing `mar-{shortHash}-{roleNameSanitized-truncated-stripped}` for each role, if any two roles in the same group produce an identical service name, the request is rejected. This prevents the edge case where two roles whose names are identical in their first 50 characters would silently share a single Headless Service.
 
 **Injection Scope:**
 * The dependency endpoints are injected into the `Env` list of **all containers** (including primary, sidecar, and init-containers) defined in the pod spec. This ensures that any multi-container runtime configuration can reliably resolve the endpoints.
@@ -360,8 +362,11 @@ func (s *Server) createSandboxGroup(
 
                 if len(role.Dependencies) > 0 {
                     createdMutex.Lock()
-                    injectDependencyEndpoints(&sandbox.Spec.PodTemplate, role.Dependencies, created)
+                    injectErr := injectDependencyEndpoints(&sandbox.Spec.PodTemplate, groupSessionID, role.Dependencies, created)
                     createdMutex.Unlock()
+                    if injectErr != nil {
+                        return fmt.Errorf("role %s: inject dependency endpoints: %w", role.Name, injectErr)
+                    }
                 }
 
                 // Watch and create sandbox in a closure to prevent watcher resource accumulation from defer in a loop

@@ -223,7 +223,7 @@ The environment variables injected into the dependent pod's containers point to 
      * If `targetPort` is explicitly defined in the dependency's `RoleSpec` (either as a port name or number), that port is used as the default.
      * If `targetPort` is not specified, and the dependency's `AgentRuntime` CRD defines a single port, that port is used.
      * If `targetPort` is not specified, and it defines multiple ports, the system first looks for a port named `http` or `default`. If no such port is found, it falls back to the first port in the ports list.
-     * If `targetPort` is not specified and the dependency's `AgentRuntime` CRD defines **no ports**, endpoint injection is skipped for that dependency and `injectDependencyEndpoints()` returns an error. The `ValidatingAdmissionWebhook` should reject at admission time any role that lists a dependency whose referenced `AgentRuntime` exposes no ports, preventing this error from reaching the creation path.
+     * If `targetPort` is not specified and the dependency's `AgentRuntime` CRD defines **no ports**, endpoint injection fails and `injectDependencyEndpoints()` returns an error, which in turn causes the entire group creation to fail (triggering a full rollback under `Atomic` policy). The `ValidatingAdmissionWebhook` should reject at admission time any role that lists a dependency whose referenced `AgentRuntime` exposes no ports, preventing this error from reaching the creation path.
 
 2. **Named Port Endpoints (For multi-service agents exposing multiple ports):**
    If the dependency's `AgentRuntime` CRD defines named ports, an endpoint environment variable is additionally injected for each named port:
@@ -278,12 +278,13 @@ agentgroup:{grp-xxx} -> AgentGroupManifest{
 
 ```go
 type createdRole struct {
-    name       string
-    resp       *types.CreateSandboxResponse
-    sandbox    *sandboxv1alpha1.Sandbox
-    sessionID  string
-    serviceDNS string // stable DNS from the Headless Service (e.g., mar-abc-planner.ns.svc.cluster.local)
-    failed     bool
+    name         string
+    resp         *types.CreateSandboxResponse
+    sandbox      *sandboxv1alpha1.Sandbox
+    sandboxClaim *extensionsv1alpha1.SandboxClaim
+    sessionID    string
+    serviceDNS   string // stable DNS from the Headless Service (e.g., mar-abc-planner.ns.svc.cluster.local)
+    failed       bool
 }
 
 func (s *Server) createSandboxGroup(
@@ -308,7 +309,7 @@ func (s *Server) createSandboxGroup(
             if c.failed {
                 continue
             }
-            s.rollbackSandboxCreation(dynamicClient, c.sandbox, nil, c.sessionID)
+            s.rollbackSandboxCreation(dynamicClient, c.sandbox, c.sandboxClaim, c.sessionID)
         }
         // Clean up any Headless Services created during group setup.
         for _, svcName := range createdServices {
@@ -414,12 +415,13 @@ func (s *Server) createSandboxGroup(
 
                 createdMutex.Lock()
                 created = append(created, createdRole{
-                    name:       role.Name,
-                    resp:       resp,
-                    sandbox:    sandbox,
-                    sessionID:  sandboxEntry.SessionID,
-                    serviceDNS: svcDNS,
-                    failed:     false,
+                    name:         role.Name,
+                    resp:         resp,
+                    sandbox:      sandbox,
+                    sandboxClaim: sandboxClaim,
+                    sessionID:    sandboxEntry.SessionID,
+                    serviceDNS:   svcDNS,
+                    failed:       false,
                 })
                 createdMutex.Unlock()
                 return nil

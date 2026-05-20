@@ -209,7 +209,7 @@ In both policies, coordinator failure always causes full rollback and an error r
 
 Before a dependent role's sandbox is created, stable DNS-based endpoints of its dependencies are injected as environment variables into the pod template. To ensure stable communication under the `BestEffort` policy where failed worker pods are replaced and get new IP addresses, the Workload Manager automatically creates a Headless Kubernetes Service for each role in the group. 
 
-* **Service Name:** `mar-{shortHash}-{roleNameSanitized}` (where `{shortHash}` is the first 8 characters of the SHA-256 hash of the `groupSessionID`, and `{roleNameSanitized}` replaces non-DNS-compliant characters with hyphens). This ensures the service name stays well under the Kubernetes 63-character DNS label limit even with long role names.
+* **Service Name:** `mar-{shortHash}-{roleNameSanitized}` (where `{shortHash}` is the first 8 characters of the SHA-256 hash of the `groupSessionID`, and `{roleNameSanitized}` replaces non-DNS-compliant characters with hyphens, **truncated to 50 characters**). With a 13-character prefix (`mar-` + 8-char hash + `-`), truncating the role name to 50 characters guarantees the full service name always fits within the Kubernetes 63-character DNS label limit.
 * **Service Selector:** Matches `SessionIdLabelKey` and `Role` metadata on the sandbox.
 * **Service Lifecycle:** Created during `createSandboxGroup()` and cleaned up automatically via OwnerReferences when the MultiAgentRuntime is deleted.
 
@@ -322,10 +322,21 @@ func (s *Server) createSandboxGroup(
         for _, r := range wave {
             role := r // capture loop variable
             g.Go(func() error {
-                // buildSandboxByAgentRuntime is called as-is (no changes to the function).
-                sandbox, sandboxEntry, err := buildSandboxByAgentRuntime(
-                    mar.Namespace, role.RuntimeRef, s.informers,
-                )
+                // Dispatch to the correct builder based on role Kind.
+                var sandbox *sandboxv1alpha1.Sandbox
+                var sandboxClaim *extensionsv1alpha1.SandboxClaim
+                var sandboxEntry *sandboxEntry
+                var err error
+                if role.Kind == types.CodeInterpreterKind {
+                    sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(
+                        mar.Namespace, role.RuntimeRef, s.informers,
+                    )
+                } else {
+                    // Default: AgentRuntime
+                    sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(
+                        mar.Namespace, role.RuntimeRef, s.informers,
+                    )
+                }
                 if err != nil {
                     return fmt.Errorf("role %s: build sandbox: %w", role.Name, err)
                 }
@@ -357,7 +368,7 @@ func (s *Server) createSandboxGroup(
                 resp, err := func() (*types.CreateSandboxResponse, error) {
                     resultChan := s.sandboxController.WatchSandboxOnce(waveCtx, sandbox.Namespace, sandbox.Name)
                     defer s.sandboxController.UnWatchSandbox(sandbox.Namespace, sandbox.Name)
-                    return s.createSandbox(waveCtx, dynamicClient, sandbox, nil, sandboxEntry, resultChan)
+                    return s.createSandbox(waveCtx, dynamicClient, sandbox, sandboxClaim, sandboxEntry, resultChan)
                 }()
                 if err != nil {
                     if mar.Spec.StartupPolicy == StartupPolicyBestEffort && !role.IsCoordinator {
@@ -407,7 +418,7 @@ func (s *Server) createSandboxGroup(
 - **Consistent TTL:** A single `baseTime` is captured before the creation loop begins and used for all `ShutdownTime` calculations. This ensures every sandbox in the group shares a synchronized absolute TTL, regardless of how long it takes to create each wave.
 - The deferred rollback calls the existing `rollbackSandboxCreation()` function, without modification, for every sandbox in `created`.
 - Roles are created in topological order. A dependency's endpoint is guaranteed to be in `created` before the dependent role's sandbox is built.
-- `buildSandboxByAgentRuntime()`, `createSandbox()`, `WatchSandboxOnce()`, and `rollbackSandboxCreation()` are all called as-is.
+- `buildSandboxByAgentRuntime()`, `buildSandboxByCodeInterpreter()`, `createSandbox()`, `WatchSandboxOnce()`, and `rollbackSandboxCreation()` are all called as-is. The correct builder is selected by the `role.Kind` field.
 - The `needGroupRollback` flag is only cleared after `SaveAgentGroup` succeeds. A store failure after all sandboxes are created will roll back the Kubernetes resources, maintaining consistency between the cluster state and the store.
 
 > [!NOTE]
@@ -597,6 +608,11 @@ GetAgentGroup(ctx context.Context, groupSessionID string) (*types.AgentGroupMani
 // DeleteAgentGroup removes a group manifest by groupSessionID.
 DeleteAgentGroup(ctx context.Context, groupSessionID string) error
 
+// DeleteAgentGroupRole atomically removes a single role entry from the group manifest
+// using HDEL. Preferred over a read-modify-write cycle during GC to avoid race conditions.
+// If the role was the last entry, it also deletes the _metadata field and the key.
+DeleteAgentGroupRole(ctx context.Context, groupSessionID, roleName string) error
+
 // UpdateAgentGroupRoleStatus atomically updates the status and endpoint of a specific role
 // within a group manifest. Used by the reconciler during self-healing.
 UpdateAgentGroupRoleStatus(ctx context.Context, groupSessionID, roleName, status, endpoint string) error
@@ -664,7 +680,14 @@ type RoleSpec struct {
     // +kubebuilder:validation:MinLength=1
     Name string `json:"name"`
 
-    // RuntimeRef is the name of an existing AgentRuntime CRD in the same namespace.
+    // Kind specifies the type of the referenced runtime.
+    // Defaults to "AgentRuntime". Set to "CodeInterpreter" to reference a CodeInterpreter CRD.
+    // +optional
+    // +kubebuilder:default="AgentRuntime"
+    // +kubebuilder:validation:Enum=AgentRuntime;CodeInterpreter
+    Kind string `json:"kind,omitempty"`
+
+    // RuntimeRef is the name of an existing AgentRuntime or CodeInterpreter CRD in the same namespace.
     // +kubebuilder:validation:MinLength=1
     RuntimeRef string `json:"runtimeRef"`
 
@@ -684,8 +707,8 @@ type RoleSpec struct {
     // +optional
     Dependencies []string `json:"dependencies,omitempty"`
 
-    // TargetPort specifies the name or number of the port in the referenced AgentRuntime 
-    // to be used by dependent roles. If empty, the default Port Resolution Rule applies.
+    // TargetPort specifies the name or number of the port in the referenced AgentRuntime
+    // or CodeInterpreter to be used by dependent roles. If empty, the default Port Resolution Rule applies.
     // +optional
     TargetPort string `json:"targetPort,omitempty"`
 }
@@ -772,20 +795,20 @@ The existing GC in `pkg/workloadmanager/garbage_collection.go` is extended with 
 Because the Router only proxies external traffic directly to the coordinator, only the coordinator's `LastActivityAt` timestamp in the store is updated during active sessions. Internal worker sandboxes that receive no direct external traffic would otherwise retain static `LastActivityAt` values, causing the GC to prematurely delete them while the coordinator is still active.
 
 To prevent this, the GC evaluates idle timeouts group-wide:
-1. When checking if a sandbox is idle, if its `GroupSessionID` is non-empty, the GC retrieves the group's coordinator sandbox from the store.
+1. When checking if a sandbox is idle, if its `GroupSessionID` is non-empty, the GC retrieves the group manifest once per GC cycle (cached in a `map[string]*AgentGroupManifest` local to the cycle) and looks up the coordinator sandbox from the manifest.
 2. The idle duration for **all members of the group** is calculated based on the coordinator's `LastActivityAt` timestamp (or the maximum `LastActivityAt` among all group member sandboxes if the coordinator's timestamp is unavailable).
 3. Individual sandboxes in a group are only deleted for inactivity if the group as a whole is determined to be idle.
+
+Caching the manifest per group per GC cycle avoids O(N) redundant store lookups where N is the number of worker sandboxes in the group.
 
 ### Group Metadata Cleanup
 
 When the GC deletes a sandbox that has a non-empty `GroupSessionID`:
 
-1. It calls `GetAgentGroup()` to retrieve the group manifest.
-2. It removes the deleted role from the manifest.
-3. If no roles remain in the manifest, it calls `DeleteAgentGroup()` to remove the `agentgroup:` key from the store.
-4. If other roles remain, it calls `SaveAgentGroup()` with the updated manifest.
+1. It calls `DeleteAgentGroupRole(ctx, groupSessionID, roleName)` to atomically remove the role's entry from the Redis Hash using `HDEL`. This avoids a read-modify-write cycle and prevents race conditions when multiple GC goroutines may be cleaning up members of the same group concurrently.
+2. `DeleteAgentGroupRole()` additionally checks if any `role:*` fields remain in the hash after deletion. If none remain, it deletes the `_metadata` field and removes the entire `agentgroup:` key.
 
-This ensures that group manifests do not accumulate indefinitely in the store after their member sandboxes expire. Group membership is an additional cleanup concern layered on top of existing GC, not a replacement.
+This ensures group manifests do not accumulate indefinitely in the store after their member sandboxes expire. The atomic `HDEL` approach also prevents data loss from concurrent GC deletions of sibling roles within the same group.
 
 ---
 
@@ -884,7 +907,7 @@ This feature is fully backward compatible. No existing behavior changes unless t
 | `pkg/workloadmanager/handlers_test.go` | Add group creation and rollback test cases |
 | `pkg/workloadmanager/server.go` | Add 3 new routes under `/v1/multi-agent-runtime` |
 | `pkg/workloadmanager/garbage_collection.go` | Group manifest cleanup when last member sandbox is GC'd |
-| `pkg/store/interface.go` | Add `SaveAgentGroup`, `GetAgentGroup`, `DeleteAgentGroup`, `UpdateAgentGroupRoleStatus` |
+| `pkg/store/interface.go` | Add `SaveAgentGroup`, `GetAgentGroup`, `DeleteAgentGroup`, `DeleteAgentGroupRole`, `UpdateAgentGroupRoleStatus` |
 | `pkg/store/store_redis.go` | Implement all 4 group methods |
 | `pkg/store/store_redis_test.go` | Group CRUD tests |
 | `pkg/store/store_valkey.go` | Implement all 4 group methods |

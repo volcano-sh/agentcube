@@ -278,11 +278,12 @@ agentgroup:{grp-xxx} -> AgentGroupManifest{
 
 ```go
 type createdRole struct {
-    name      string
-    resp      *types.CreateSandboxResponse
-    sandbox   *sandboxv1alpha1.Sandbox
-    sessionID string
-    failed    bool
+    name       string
+    resp       *types.CreateSandboxResponse
+    sandbox    *sandboxv1alpha1.Sandbox
+    sessionID  string
+    serviceDNS string // stable DNS from the Headless Service (e.g., mar-abc-planner.ns.svc.cluster.local)
+    failed     bool
 }
 
 func (s *Server) createSandboxGroup(
@@ -298,6 +299,7 @@ func (s *Server) createSandboxGroup(
     baseTime := time.Now()
 
     needGroupRollback := true
+    var createdServices []string // tracks Headless Service names for rollback
     defer func() {
         if !needGroupRollback {
             return
@@ -306,8 +308,15 @@ func (s *Server) createSandboxGroup(
             if c.failed {
                 continue
             }
-            // rollbackSandboxCreation is called as-is (no changes to the function).
             s.rollbackSandboxCreation(dynamicClient, c.sandbox, nil, c.sessionID)
+        }
+        // Clean up any Headless Services created during group setup.
+        for _, svcName := range createdServices {
+            if err := s.kubeClient.CoreV1().Services(mar.Namespace).Delete(
+                ctx, svcName, metav1.DeleteOptions{},
+            ); err != nil && !apierrors.IsNotFound(err) {
+                klog.Warningf("group %s: rollback service %s: %v", groupSessionID, svcName, err)
+            }
         }
     }()
 
@@ -360,6 +369,17 @@ func (s *Server) createSandboxGroup(
                     sandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
                 }
 
+                // Create a Headless Service for this role to provide a stable DNS endpoint.
+                svcName, svcDNS, err := s.createHeadlessServiceForRole(
+                    ctx, mar.Namespace, groupSessionID, role.Name, sandbox,
+                )
+                if err != nil {
+                    return fmt.Errorf("role %s: create headless service: %w", role.Name, err)
+                }
+                createdMutex.Lock()
+                createdServices = append(createdServices, svcName)
+                createdMutex.Unlock()
+
                 if len(role.Dependencies) > 0 {
                     createdMutex.Lock()
                     injectErr := injectDependencyEndpoints(&sandbox.Spec.PodTemplate, groupSessionID, role.Dependencies, created)
@@ -391,11 +411,12 @@ func (s *Server) createSandboxGroup(
 
                 createdMutex.Lock()
                 created = append(created, createdRole{
-                    name:      role.Name,
-                    resp:      resp,
-                    sandbox:   sandbox,
-                    sessionID: sandboxEntry.SessionID,
-                    failed:    false,
+                    name:       role.Name,
+                    resp:       resp,
+                    sandbox:    sandbox,
+                    sessionID:  sandboxEntry.SessionID,
+                    serviceDNS: svcDNS,
+                    failed:     false,
                 })
                 createdMutex.Unlock()
                 return nil
@@ -421,10 +442,11 @@ func (s *Server) createSandboxGroup(
 
 - **Parallel Sandbox Creation:** To prevent HTTP gateway or client timeouts when launching large groups, roles that do not share mutual dependencies (i.e., reside at the same level of the dependency DAG) are created in parallel. Sandbox creation proceeds in "dependency waves": all sandboxes within a wave are launched concurrently, and the server waits for all to be ready before proceeding to the next dependent wave.
 - **Consistent TTL:** A single `baseTime` is captured before the creation loop begins and used for all `ShutdownTime` calculations. This ensures every sandbox in the group shares a synchronized absolute TTL, regardless of how long it takes to create each wave.
-- The deferred rollback calls the existing `rollbackSandboxCreation()` function, without modification, for every sandbox in `created`.
-- Roles are created in topological order. A dependency's endpoint is guaranteed to be in `created` before the dependent role's sandbox is built.
+- **Headless Service per role:** Before each sandbox is created, `createHeadlessServiceForRole()` provisions a Headless Service whose DNS name (`serviceDNS`) is stored in `createdRole`. The `injectDependencyEndpoints()` function reads `serviceDNS` from `created` to construct stable DNS-based environment variables. On rollback, all created Services are explicitly deleted alongside their sandboxes.
+- The deferred rollback calls `rollbackSandboxCreation()` for every sandbox in `created` **and** deletes all Headless Services tracked in `createdServices`, preventing resource leaks on partial failure.
+- Roles are created in topological order. A dependency's `serviceDNS` is guaranteed to be in `created` before the dependent role's sandbox is built.
 - `buildSandboxByAgentRuntime()`, `buildSandboxByCodeInterpreter()`, `createSandbox()`, `WatchSandboxOnce()`, and `rollbackSandboxCreation()` are all called as-is. The correct builder is selected by the `role.Kind` field.
-- The `needGroupRollback` flag is only cleared after `SaveAgentGroup` succeeds. A store failure after all sandboxes are created will roll back the Kubernetes resources, maintaining consistency between the cluster state and the store.
+- The `needGroupRollback` flag is only cleared after `SaveAgentGroup` succeeds. A store failure after all sandboxes are created will roll back both Kubernetes resources and Headless Services, maintaining consistency.
 
 > [!NOTE]
 > **Future Improvement: Reconciler-Based Orchestration.** The current design executes `createSandboxGroup()` synchronously within the API handler. For very large groups where the cumulative creation time may approach HTTP proxy timeouts, a more resilient approach would be to have the API handler persist the `MultiAgentRuntime` CRD with a `Creating` status and delegate the actual sandbox orchestration to the `MultiAgentRuntimeReconciler`. This ensures the system can recover and resume group creation even if the Workload Manager restarts mid-process. This is left as a future optimization since the wave-based parallelism already significantly reduces total startup latency for practical group sizes.
@@ -444,20 +466,23 @@ sequenceDiagram
     WM->>WM: topoSort(roles) -> [planner, researcher, coder]
 
     Note over WM, K8s: Role 1: planner (coordinator)
+    WM->>K8s: Create Headless Service [planner]
     WM->>Store: StoreSandbox(placeholder)
     WM->>K8s: Create Sandbox [planner]
     K8s-->>WM: Sandbox Ready
     WM->>Store: UpdateSandbox(ready)
 
     Note over WM, K8s: Role 2: researcher (depends on planner)
-    WM->>WM: injectDependencyEndpoints(planner IP)
+    WM->>WM: injectDependencyEndpoints(planner Service DNS)
+    WM->>K8s: Create Headless Service [researcher]
     WM->>Store: StoreSandbox(placeholder)
     WM->>K8s: Create Sandbox [researcher]
     K8s-->>WM: Sandbox Ready
     WM->>Store: UpdateSandbox(ready)
 
     Note over WM, K8s: Role 3: coder (depends on planner, researcher)
-    WM->>WM: injectDependencyEndpoints(planner IP, researcher IP)
+    WM->>WM: injectDependencyEndpoints(planner Service DNS, researcher Service DNS)
+    WM->>K8s: Create Headless Service [coder]
     WM->>Store: StoreSandbox(placeholder)
     WM->>K8s: Create Sandbox [coder]
     K8s-->>WM: Sandbox Ready
@@ -481,7 +506,15 @@ func topoSort(roles []RoleSpec) ([][]RoleSpec, error) {
         if _, exists := inDegree[r.Name]; !exists {
             inDegree[r.Name] = 0
         }
+    }
+
+    // Validate all dependency references before running Kahn's algorithm.
+    // This provides clear "missing dependency" errors instead of confusing cycle errors.
+    for _, r := range roles {
         for _, dep := range r.Dependencies {
+            if _, exists := roleMap[dep]; !exists {
+                return nil, fmt.Errorf("role %s depends on non-existent role %s", r.Name, dep)
+            }
             adj[dep] = append(adj[dep], r.Name)
             inDegree[r.Name]++
         }
@@ -516,15 +549,7 @@ func topoSort(roles []RoleSpec) ([][]RoleSpec, error) {
     }
 
     if totalSorted != len(roles) {
-        // Check for missing dependencies first to provide a better error message.
-        for _, r := range roles {
-            for _, dep := range r.Dependencies {
-                if _, exists := roleMap[dep]; !exists {
-                    return nil, fmt.Errorf("role %s depends on non-existent role %s", r.Name, dep)
-                }
-            }
-        }
-        // Identify and name the roles involved in the cycle for the error message.
+        // All dependencies are valid (checked above), so this must be a cycle.
         var cycled []string
         for name, deg := range inDegree {
             if deg > 0 {
@@ -538,7 +563,7 @@ func topoSort(roles []RoleSpec) ([][]RoleSpec, error) {
 }
 ```
 
-The algorithm is Kahn's BFS-based topological sort grouped into level-order waves, O(V+E). Cycle detection is derived from the invariant that Kahn's algorithm only produces a complete ordering when no cycle exists. If `totalSorted < len(roles)`, the roles with remaining in-degree are in a cycle or have missing dependencies. Their names are included in the error message to aid debugging.
+The algorithm is Kahn's BFS-based topological sort grouped into level-order waves, O(V+E). Missing dependencies are validated **upfront** before the sort begins, ensuring clear error messages. Cycle detection is then derived from the invariant that Kahn's algorithm only produces a complete ordering when no cycle exists. If `totalSorted < len(roles)` after the upfront check passes, the remaining roles must form a cycle. Their names are included in the error message to aid debugging.
 
 ---
 
@@ -549,7 +574,7 @@ The algorithm is Kahn's BFS-based topological sort grouped into level-order wave
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/v1/multi-agent-runtime` | Create a new agent group. Returns group session ID and coordinator entrypoints. |
-| `DELETE` | `/v1/multi-agent-runtime/groups/:groupSessionId` | Delete all sandboxes in the group and remove the group manifest from the store. |
+| `DELETE` | `/v1/multi-agent-runtime/groups/:groupSessionId` | Delete all sandboxes in the group, their associated Headless Services (via OwnerReference cascading), and remove the group manifest from the store. Returns `204 No Content` on success. |
 | `GET` | `/v1/multi-agent-runtime/groups/:groupSessionId/topology` | Return the group manifest including all role endpoints and statuses. Intended for use by the coordinator at startup to discover worker endpoints. |
 
 ### Request and Response Types
@@ -567,16 +592,18 @@ type CreateAgentGroupRequest struct {
 #### Create Group Response
 
 ```go
-type CreateAgentGroupResponse struct {
-    GroupSessionID string                   `json:"groupSessionId"`
-    Roles          []AgentGroupRoleResponse `json:"roles"`
-}
-
-type AgentGroupRoleResponse struct {
+// AgentGroupRoleState is the shared type used across the API response, group manifest,
+// and topology endpoint. A single type prevents structural drift between these surfaces.
+type AgentGroupRoleState struct {
     Name      string `json:"name"`
     SessionID string `json:"sessionId"`
     Endpoint  string `json:"endpoint"`
     Status    string `json:"status"` // "ready" | "failed"
+}
+
+type CreateAgentGroupResponse struct {
+    GroupSessionID string                `json:"groupSessionId"`
+    Roles          []AgentGroupRoleState `json:"roles"`
 }
 ```
 
@@ -584,16 +611,9 @@ type AgentGroupRoleResponse struct {
 
 ```go
 type AgentGroupManifest struct {
-    GroupSessionID string           `json:"groupSessionId"`
-    Roles          []AgentGroupRole `json:"roles"`
-    CreatedAt      time.Time        `json:"createdAt"`
-}
-
-type AgentGroupRole struct {
-    Name      string `json:"name"`
-    SessionID string `json:"sessionId"`
-    Endpoint  string `json:"endpoint"`
-    Status    string `json:"status"` // "ready" | "failed"
+    GroupSessionID string                `json:"groupSessionId"`
+    Roles          []AgentGroupRoleState `json:"roles"`
+    CreatedAt      time.Time             `json:"createdAt"`
 }
 ```
 
@@ -671,6 +691,9 @@ type MultiAgentRuntimeSpec struct {
 
     // SessionTimeout is the idle timeout applied to all sandboxes in the group.
     // Defaults to 15m.
+    // NOTE: Although this is a pointer type (*metav1.Duration), kubebuilder applies the
+    // default value at admission time, so the pointer is always non-nil after defaulting.
+    // The nil check in createSandboxGroup() is a defensive guard for programmatic callers.
     // +kubebuilder:default="15m"
     SessionTimeout *metav1.Duration `json:"sessionTimeout,omitempty"`
 
@@ -734,6 +757,21 @@ type MultiAgentRuntimeStatus struct {
 
     // Ready is true when all required roles are running and healthy.
     Ready bool `json:"ready,omitempty"`
+
+    // RoleStatuses tracks per-role operational state. Updated by the reconciler
+    // during self-healing (Phase 4). Complements the store-side group manifest
+    // by providing Kubernetes-native observability via kubectl.
+    // +optional
+    RoleStatuses []RoleStatusEntry `json:"roleStatuses,omitempty"`
+}
+
+type RoleStatusEntry struct {
+    // Name is the role name matching RoleSpec.Name.
+    Name string `json:"name"`
+    // Status is the current operational state: "Ready", "Failed", "Replacing".
+    Status string `json:"status"`
+    // SessionID is the sandbox session ID for this role, if available.
+    SessionID string `json:"sessionId,omitempty"`
 }
 ```
 
@@ -851,7 +889,8 @@ group = client.create_group(
     namespace="default",
 )
 print(f"Group created: {group.group_session_id}")
-print(f"Coordinator endpoint: {group.roles[0].endpoint}")
+coordinator = next(r for r in group.roles if r.name == "planner")
+print(f"Coordinator endpoint: {coordinator.endpoint}")
 
 # Discover worker topology (coordinator calls this at startup)
 topology = client.get_topology(group.group_session_id)
@@ -891,6 +930,9 @@ This feature is fully backward compatible. No existing behavior changes unless t
 | `pkg/apis/runtime/v1alpha1/multiagentruntime_types.go` | CRD types with kubebuilder markers |
 | `pkg/workloadmanager/multiagent_controller.go` | `MultiAgentRuntimeReconciler` |
 | `pkg/workloadmanager/multiagent_controller_test.go` | Reconciler unit tests |
+| `pkg/workloadmanager/multiagent_webhook.go` | `ValidatingAdmissionWebhook` for `MultiAgentRuntime` configuration validation |
+| `pkg/workloadmanager/multiagent_webhook_test.go` | Webhook unit tests (coordinator count, naming collisions, missing deps, DNS label) |
+| `manifests/charts/base/templates/multiagentruntime-webhook.yaml` | Webhook `ValidatingWebhookConfiguration` manifest |
 | `sdk-python/agentcube/multi_agent.py` | `MultiAgentRuntimeClient` for the Python SDK |
 | `sdk-python/examples/multi_agent_usage.py` | End-to-end usage example |
 | `test/e2e/multi_agent_runtime.yaml` | E2E test fixtures |
@@ -937,7 +979,7 @@ Deliverables that satisfy the mentorship expected outcomes on their own.
   - No two roles may produce the same sanitized environment variable key (naming collision detection).
   - `dependencies[]` references must point to roles defined within the same spec.
   - Role names must be valid DNS label fragments (lowercase alphanumeric and hyphens, max 63 characters).
-- Implement `createSandboxGroup()` with `Atomic` rollback (no `BestEffort` yet).
+- Implement `createSandboxGroup()` with `Atomic` rollback (no `BestEffort` yet), including `topoSort()`, `injectDependencyEndpoints()`, and Headless Service creation per role.
 - Add `GroupSessionID` + `Role` to `SandboxInfo`; propagate through `buildSandboxPlaceHolder()` + `buildSandboxInfo()`.
 - Implement all 5 store methods in `store_redis.go` + `store_valkey.go` with full unit test coverage.
 - Add `MultiAgentRuntimeKind` to Router endpoint switch.
@@ -953,9 +995,8 @@ Deliverables that satisfy the mentorship expected outcomes on their own.
 - Group creation uses `SandboxClaim` for warm roles, cold `Sandbox` creation for others.
 - Add E2E test comparing cold-start vs warm-start group creation latency.
 
-### Phase 3 - DAG Startup and Topology (Weeks 7-8)
+### Phase 3 - Topology Endpoint and SDK (Weeks 7-8)
 
-- Implement `dependencies[]` field: `topoSort()` + `injectDependencyEndpoints()`.
 - Add `GET /v1/multi-agent-runtime/groups/:groupSessionId/topology` endpoint.
 - Add `get_topology()` to Python SDK `MultiAgentRuntimeClient`.
 - E2E test: verify dependency endpoint env vars are present in dependent pod environment.

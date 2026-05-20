@@ -370,6 +370,9 @@ func (s *Server) createSandboxGroup(
                 }
 
                 // Create a Headless Service for this role to provide a stable DNS endpoint.
+                // NOTE: The service is intentionally created before injectDependencyEndpoints()
+                // and registered in createdServices immediately, so that if the subsequent
+                // injection step fails, the deferred rollback will still clean up this service.
                 svcName, svcDNS, err := s.createHeadlessServiceForRole(
                     ctx, mar.Namespace, groupSessionID, role.Name, sandbox,
                 )
@@ -612,6 +615,8 @@ type CreateAgentGroupResponse struct {
 ```go
 type AgentGroupManifest struct {
     GroupSessionID string                `json:"groupSessionId"`
+    StartupPolicy  string                `json:"startupPolicy"`
+    Namespace      string                `json:"namespace"`
     Roles          []AgentGroupRoleState `json:"roles"`
     CreatedAt      time.Time             `json:"createdAt"`
 }

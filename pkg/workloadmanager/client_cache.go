@@ -246,7 +246,8 @@ func (c *TokenCache) Get(token string) (found bool, authenticated bool, username
 		return false, false, ""
 	}
 
-	// Move to front on access for proper LRU ordering
+	// Move to front on access for proper LRU ordering and sliding TTL.
+	entry.lastAccess = time.Now()
 	c.lruList.MoveToFront(entry.element)
 	return true, entry.authenticated, entry.username
 }

@@ -26,6 +26,14 @@ type AgentRuntimeListerExpansion interface{}
 // AgentRuntimeNamespaceLister.
 type AgentRuntimeNamespaceListerExpansion interface{}
 
+// BrowserUseListerExpansion allows custom methods to be added to
+// BrowserUseLister.
+type BrowserUseListerExpansion interface{}
+
+// BrowserUseNamespaceListerExpansion allows custom methods to be added to
+// BrowserUseNamespaceLister.
+type BrowserUseNamespaceListerExpansion interface{}
+
 // CodeInterpreterListerExpansion allows custom methods to be added to
 // CodeInterpreterLister.
 type CodeInterpreterListerExpansion interface{}

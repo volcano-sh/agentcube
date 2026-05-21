@@ -71,9 +71,11 @@ find "${SCRIPT_ROOT}/client-go/listers" -name "*.go" -type f | while read -r fil
   if [[ "$OSTYPE" == "darwin"* ]]; then
     sed -i '' 's/runtimev1alpha1\.Resource("codeinterpreter")/runtimev1alpha1.Resource("codeinterpreter").GroupResource()/g' "$file"
     sed -i '' 's/runtimev1alpha1\.Resource("agentruntime")/runtimev1alpha1.Resource("agentruntime").GroupResource()/g' "$file"
+    sed -i '' 's/runtimev1alpha1\.Resource("browseruse")/runtimev1alpha1.Resource("browseruse").GroupResource()/g' "$file"
   else
     sed -i 's/runtimev1alpha1\.Resource("codeinterpreter")/runtimev1alpha1.Resource("codeinterpreter").GroupResource()/g' "$file"
     sed -i 's/runtimev1alpha1\.Resource("agentruntime")/runtimev1alpha1.Resource("agentruntime").GroupResource()/g' "$file"
+    sed -i 's/runtimev1alpha1\.Resource("browseruse")/runtimev1alpha1.Resource("browseruse").GroupResource()/g' "$file"
   fi
 done
 

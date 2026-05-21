@@ -37,6 +37,11 @@ var (
 		Version:  "v1alpha1",
 		Resource: "codeinterpreters",
 	}
+	BrowserUseGVR = schema.GroupVersionResource{
+		Group:    "runtime.agentcube.volcano.sh",
+		Version:  "v1alpha1",
+		Resource: "browseruses",
+	}
 	SandboxGVR = schema.GroupVersionResource{
 		Group:    "agents.x-k8s.io",
 		Version:  "v1alpha1",
@@ -52,6 +57,7 @@ var (
 type Informers struct {
 	AgentRuntimeInformer    cache.SharedIndexInformer
 	CodeInterpreterInformer cache.SharedIndexInformer
+	BrowserUseInformer      cache.SharedIndexInformer
 	PodInformer             cache.SharedIndexInformer
 	informerFactory         informers.SharedInformerFactory
 }
@@ -60,6 +66,7 @@ func NewInformers(k8sClient *K8sClient) *Informers {
 	return &Informers{
 		AgentRuntimeInformer:    k8sClient.dynamicInformer.ForResource(AgentRuntimeGVR).Informer(),
 		CodeInterpreterInformer: k8sClient.dynamicInformer.ForResource(CodeInterpreterGVR).Informer(),
+		BrowserUseInformer:      k8sClient.dynamicInformer.ForResource(BrowserUseGVR).Informer(),
 		PodInformer:             k8sClient.podInformer,
 		informerFactory:         k8sClient.informerFactory,
 	}
@@ -79,6 +86,7 @@ func (ifm *Informers) run(stopCh <-chan struct{}) {
 	ifm.informerFactory.Start(stopCh)
 	go ifm.AgentRuntimeInformer.Run(stopCh)
 	go ifm.CodeInterpreterInformer.Run(stopCh)
+	go ifm.BrowserUseInformer.Run(stopCh)
 }
 
 func (ifm *Informers) waitForCacheSync(ctx context.Context) error {
@@ -93,6 +101,12 @@ func (ifm *Informers) waitForCacheSync(ctx context.Context) error {
 			return fmt.Errorf("timed out waiting for %v caches to sync: %w", CodeInterpreterGVR, err)
 		}
 		return fmt.Errorf("timed out waiting for %v caches to sync", CodeInterpreterGVR)
+	}
+	if !cache.WaitForCacheSync(ctx.Done(), ifm.BrowserUseInformer.HasSynced) {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("timed out waiting for %v caches to sync: %w", BrowserUseGVR, err)
+		}
+		return fmt.Errorf("timed out waiting for %v caches to sync", BrowserUseGVR)
 	}
 	if !cache.WaitForCacheSync(ctx.Done(), ifm.PodInformer.HasSynced) {
 		if err := ctx.Err(); err != nil {

@@ -72,24 +72,35 @@ func TestRunAndWaitForCacheSync_ContextCancellation(t *testing.T) {
 		name                    string
 		agentRuntime            cache.SharedIndexInformer
 		codeInterpreter         cache.SharedIndexInformer
+		browserUse              cache.SharedIndexInformer
 		pod                     cache.SharedIndexInformer
 	}{
 		{
 			name:            "AgentRuntimeInformer never syncs",
 			agentRuntime:    never(),
 			codeInterpreter: never(),
+			browserUse:      never(),
 			pod:             never(),
 		},
 		{
 			name:            "CodeInterpreterInformer never syncs",
 			agentRuntime:    always(),
 			codeInterpreter: never(),
+			browserUse:      never(),
+			pod:             never(),
+		},
+		{
+			name:            "BrowserUseInformer never syncs",
+			agentRuntime:    always(),
+			codeInterpreter: always(),
+			browserUse:      never(),
 			pod:             never(),
 		},
 		{
 			name:            "PodInformer never syncs",
 			agentRuntime:    always(),
 			codeInterpreter: always(),
+			browserUse:      always(),
 			pod:             never(),
 		},
 	}
@@ -99,6 +110,7 @@ func TestRunAndWaitForCacheSync_ContextCancellation(t *testing.T) {
 			ifm := &Informers{
 				AgentRuntimeInformer:    tc.agentRuntime,
 				CodeInterpreterInformer: tc.codeInterpreter,
+				BrowserUseInformer:      tc.browserUse,
 				PodInformer:             tc.pod,
 				informerFactory:         newFactory(),
 			}
@@ -114,6 +126,7 @@ func TestRunAndWaitForCacheSync_AllSynced(t *testing.T) {
 	ifm := &Informers{
 		AgentRuntimeInformer:    &alwaysSyncedInformer{},
 		CodeInterpreterInformer: &alwaysSyncedInformer{},
+		BrowserUseInformer:      &alwaysSyncedInformer{},
 		PodInformer:             &alwaysSyncedInformer{},
 		informerFactory:         newFactory(),
 	}

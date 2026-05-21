@@ -14,7 +14,7 @@
                                                                    │ reverse proxy
                                                    ┌───────────────▼───────────────┐
                                                    │  Playwright MCP Tool (sandbox) │
-                                                   │  AgentRuntime microVM pod      │
+                                                   │  BrowserUse microVM pod        │
                                                    │  official MCP browser service  │
                                                    └───────────────────────────────┘
 ```
@@ -23,7 +23,7 @@
 
 | Component | Type | Image | Description |
 |-----------|------|-------|-------------|
-| **Playwright MCP Tool** | `AgentRuntime` CRD | `mcr.microsoft.com/playwright/mcp:latest` | Official Playwright MCP container from Microsoft. Runs as a real browser tool server in the sandbox, not as a custom in-repo agent. |
+| **Playwright MCP Tool** | `BrowserUse` CRD | `mcr.microsoft.com/playwright/mcp:latest` | Official Playwright MCP container from Microsoft. Runs as a real browser tool server in the sandbox, not as a custom in-repo agent. |
 | **Browser Agent** | `Deployment` | `browser-agent:latest` | LLM-powered orchestrator that receives user requests, plans browser tasks, and calls the Playwright MCP tool via the AgentCube Router. |
 
 ### How It Works
@@ -52,11 +52,11 @@ kubectl create secret generic browser-agent-secrets \
   --from-literal=openai-api-key=<YOUR_API_KEY>
 ```
 
-### 2. Deploy the Playwright MCP Tool (AgentRuntime)
+### 2. Deploy the Playwright MCP Tool (BrowserUse)
 
 ```bash
-# Create the AgentRuntime CRD using the official Microsoft image
-kubectl apply -f example/browser-agent/browser-use-tool.yaml
+# Create the BrowserUse CRD using the official Microsoft image
+kubectl apply -f example/browser-agent/browseruse.yaml
 ```
 
 ### 3. Deploy the Browser Agent
@@ -99,12 +99,13 @@ curl -s http://localhost:8000/chat \
 | `OPENAI_API_BASE` | `https://api.openai.com/v1` | LLM API base URL |
 | `OPENAI_MODEL` | `gpt-4o` | LLM model name |
 | `ROUTER_URL` | `http://router.agentcube.svc.cluster.local:8080` | AgentCube Router URL |
-| `PLAYWRIGHT_MCP_NAME` | `browser-use-tool` | Name of the Playwright MCP AgentRuntime CRD |
-| `PLAYWRIGHT_MCP_NAMESPACE` | `default` | Namespace of the AgentRuntime |
+| `PLAYWRIGHT_MCP_KIND` | `BrowserUse` | Runtime kind for the Playwright MCP backend (`BrowserUse` or `AgentRuntime`) |
+| `PLAYWRIGHT_MCP_NAME` | `browser-use-tool` | Name of the Playwright MCP BrowserUse/AgentRuntime CRD |
+| `PLAYWRIGHT_MCP_NAMESPACE` | `default` | Namespace of the Playwright MCP runtime |
 | `BROWSER_TASK_TIMEOUT` | `300` | Timeout (seconds) for browser task execution |
 | `MAX_TOOL_ROUNDS` | `10` | Maximum LLM-to-tool interaction rounds |
 
-### Playwright MCP Tool (AgentRuntime)
+### Playwright MCP Tool (BrowserUse)
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
@@ -119,6 +120,7 @@ curl -s http://localhost:8000/chat \
 example/browser-agent/
 ├── README.md                   # This file
 ├── browser_agent.py            # Browser Agent: LLM planner + MCP client
+├── browseruse.yaml             # BrowserUse CRD for the Playwright MCP tool
 ├── browser-use-tool.yaml       # AgentRuntime CRD for the Playwright MCP tool
 ├── deployment.yaml             # K8s Deployment for the browser agent
 ├── Dockerfile                  # Dockerfile for browser agent

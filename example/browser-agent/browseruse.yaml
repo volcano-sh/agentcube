@@ -1,0 +1,35 @@
+apiVersion: runtime.agentcube.volcano.sh/v1alpha1
+kind: BrowserUse
+metadata:
+  name: browser-use-tool
+  namespace: default
+spec:
+  targetPort:
+    - pathPrefix: "/"
+      port: 8931
+      protocol: "HTTP"
+  podTemplate:
+    labels:
+      app: browser-use-tool
+    spec:
+      containers:
+        - name: browser-use-tool
+          image: mcr.microsoft.com/playwright/mcp:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--port"
+            - "8931"
+            - "--host"
+            - "0.0.0.0"
+          ports:
+            - containerPort: 8931
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+  sessionTimeout: "30m"
+  maxSessionDuration: "8h"

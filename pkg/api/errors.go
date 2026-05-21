@@ -31,12 +31,14 @@ const (
 	sessionResourceName         = "sessions"
 	agentRuntimeResourceName    = "agentruntimes"
 	codeInterpreterResourceName = "codeinterpreters"
+	browserUseResourceName      = "browseruses"
 )
 
 var (
 	sessionResource         = schema.GroupResource{Group: resourceGroup, Resource: sessionResourceName}
 	agentRuntimeResource    = schema.GroupResource{Group: resourceGroup, Resource: agentRuntimeResourceName}
 	codeInterpreterResource = schema.GroupResource{Group: resourceGroup, Resource: codeInterpreterResourceName}
+	browserUseResource      = schema.GroupResource{Group: resourceGroup, Resource: browserUseResourceName}
 )
 
 var (
@@ -45,6 +47,9 @@ var (
 
 	// ErrCodeInterpreterNotFound indicates that the requested CodeInterpreter does not exist.
 	ErrCodeInterpreterNotFound = errors.New("code interpreter not found")
+
+	// ErrBrowserUseNotFound indicates that the requested BrowserUse does not exist.
+	ErrBrowserUseNotFound = errors.New("browser use not found")
 
 	// ErrTemplateMissing indicates that the resource exists but has no pod template.
 	ErrTemplateMissing = errors.New("resource has no pod template")
@@ -61,6 +66,8 @@ func workloadResource(kind string) schema.GroupResource {
 	switch kind {
 	case types.CodeInterpreterKind:
 		return codeInterpreterResource
+	case types.BrowserUseKind:
+		return browserUseResource
 	default:
 		return agentRuntimeResource
 	}

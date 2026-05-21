@@ -40,6 +40,9 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
+
+	agentcubeclientset "github.com/volcano-sh/agentcube/client-go/clientset/versioned"
+	agentcubeinformers "github.com/volcano-sh/agentcube/client-go/informers/externalversions"
 )
 
 const (
@@ -67,10 +70,11 @@ type K8sClient struct {
 	scheme          *runtime.Scheme
 	baseConfig      *rest.Config // Store base config for creating user clients
 	clientCache     *ClientCache // LRU cache for user clients
-	dynamicInformer dynamicinformer.DynamicSharedInformerFactory
-	informerFactory informers.SharedInformerFactory
-	podInformer     cache.SharedIndexInformer
-	podLister       listersv1.PodLister
+	dynamicInformer     dynamicinformer.DynamicSharedInformerFactory
+	informerFactory     informers.SharedInformerFactory
+	agentcubeInformer   agentcubeinformers.SharedInformerFactory
+	podInformer         cache.SharedIndexInformer
+	podLister           listersv1.PodLister
 }
 
 type sandboxEntry struct {
@@ -128,16 +132,26 @@ func NewK8sClient() (*K8sClient, error) {
 	podInformer := informerFactory.Core().V1().Pods().Informer()
 	podLister := informerFactory.Core().V1().Pods().Lister()
 
+	// Create AgentCube clientset
+	agentcubeClient, err := agentcubeclientset.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create agentcube clientset: %w", err)
+	}
+
+	// Create informer factory for AgentCube resources
+	agentcubeInformer := agentcubeinformers.NewSharedInformerFactory(agentcubeClient, 0)
+
 	return &K8sClient{
-		clientset:       clientset,
-		dynamicClient:   dynamicClient,
-		scheme:          scheme,
-		baseConfig:      config,
-		clientCache:     NewClientCache(100), // Cache up to 100 clients
-		dynamicInformer: dynamicinformer.NewDynamicSharedInformerFactory(dynamicClient, 0),
-		informerFactory: informerFactory,
-		podInformer:     podInformer,
-		podLister:       podLister,
+		clientset:         clientset,
+		dynamicClient:     dynamicClient,
+		scheme:            scheme,
+		baseConfig:        config,
+		clientCache:       NewClientCache(100), // Cache up to 100 clients
+		dynamicInformer:   dynamicinformer.NewDynamicSharedInformerFactory(dynamicClient, 0),
+		informerFactory:   informerFactory,
+		agentcubeInformer: agentcubeInformer,
+		podInformer:       podInformer,
+		podLister:         podLister,
 	}, nil
 }
 

@@ -43,10 +43,10 @@ func TestMetricsRegistrationAndCollection(t *testing.T) {
 
 	// Histogram test
 	sandboxCreateDuration.WithLabelValues("AgentRuntime", "success").Observe(1.5)
-	
+
 	// Garbage Collection metrics
 	gcCycleDuration.Observe(0.5)
-	
+
 	initialReclaimed := testutil.ToFloat64(gcSandboxesReclaimedTotal.WithLabelValues("expired"))
 	gcSandboxesReclaimedTotal.WithLabelValues("expired").Inc()
 	assert.Equal(t, initialReclaimed+1, testutil.ToFloat64(gcSandboxesReclaimedTotal.WithLabelValues("expired")))
@@ -60,6 +60,7 @@ func TestMetricsRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	server := &Server{}
 	server.setupRoutes()
+	sandboxCreateTotal.WithLabelValues("AgentRuntime", "success").Add(0)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/metrics", nil)

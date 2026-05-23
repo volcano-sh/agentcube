@@ -336,7 +336,7 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	
+
 	kind := sandbox.Kind
 
 	dynamicClient := s.k8sClient.dynamicClient

@@ -50,6 +50,7 @@ func TestRouterMetricsRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	server := &Server{config: &Config{MaxConcurrentRequests: 10}}
 	server.setupRoutes()
+	routerProxyErrorsTotal.WithLabelValues("other").Add(0)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/metrics", nil)

@@ -47,6 +47,7 @@ type fakeStore struct {
 	store.Store
 	storeErr         error
 	updateErr        error
+	updateErrs       []error
 	storeCalls       int
 	updateCalls      int
 	deleteStoreCalls int32
@@ -61,7 +62,14 @@ func (f *fakeStore) StoreSandbox(_ context.Context, _ *types.SandboxInfo) error 
 	return f.storeErr
 }
 func (f *fakeStore) UpdateSandbox(_ context.Context, _ *types.SandboxInfo) error {
+	idx := f.updateCalls
 	f.updateCalls++
+	if f.updateErrs != nil {
+		if idx < len(f.updateErrs) {
+			return f.updateErrs[idx]
+		}
+		return f.updateErrs[len(f.updateErrs)-1]
+	}
 	return f.updateErr
 }
 func (f *fakeStore) DeleteSandboxBySessionID(_ context.Context, _ string) error {
@@ -115,6 +123,7 @@ func TestServerCreateSandbox(t *testing.T) {
 		podIPErr               error
 		readyErr               error
 		updateErr              error
+		updateErrs             []error // per-call sequence; overrides updateErr when set
 		sendResult             bool
 		expectErr              bool
 		expectCreateCalls      int
@@ -183,9 +192,31 @@ func TestServerCreateSandbox(t *testing.T) {
 			sendResult:             true,
 			expectErr:              true,
 			expectCreateCalls:      1,
-			expectUpdateCalls:      3, // 3 retries
-			expectDeleteCalls:      1, // K8s rollback restored
+			expectUpdateCalls:      3, // 3 attempts exhausted
+			expectDeleteCalls:      1, // K8s rollback must execute
 			expectDeleteStoreCalls: 1,
+		},
+		{
+			// Transient failure: first attempt fails, second succeeds.
+			// The retry loop must recover without touching K8s.
+			name:              "update store fails once then succeeds — no K8s rollback",
+			updateErrs:        []error{errors.New("transient store blip"), nil},
+			sendResult:        true,
+			expectErr:         false,
+			expectCreateCalls: 1,
+			expectUpdateCalls: 2, // 1 failure + 1 success
+			expectDeleteCalls: 0, // healthy pod must be preserved
+		},
+		{
+			// Transient failure: first two attempts fail, third succeeds.
+			// The retry loop must recover without touching K8s.
+			name:              "update store fails twice then succeeds — no K8s rollback",
+			updateErrs:        []error{errors.New("blip 1"), errors.New("blip 2"), nil},
+			sendResult:        true,
+			expectErr:         false,
+			expectCreateCalls: 1,
+			expectUpdateCalls: 3, // 2 failures + 1 success
+			expectDeleteCalls: 0, // healthy pod must be preserved
 		},
 	}
 
@@ -239,7 +270,7 @@ func TestServerCreateSandbox(t *testing.T) {
 			claimCalls = 0
 			deleteCalls = 0
 
-			fakeStoreInst := &fakeStore{storeErr: tt.storeErr, updateErr: tt.updateErr}
+			fakeStoreInst := &fakeStore{storeErr: tt.storeErr, updateErr: tt.updateErr, updateErrs: tt.updateErrs}
 			server.storeClient = fakeStoreInst
 
 			resultChan := make(chan SandboxStatusUpdate, 1)

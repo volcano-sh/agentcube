@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -325,11 +324,6 @@ func (s *Server) rollbackSandboxCreation(dynamicClient dynamic.Interface, sandbo
 
 // handleDeleteSandbox handles sandbox deletion requests
 func (s *Server) handleDeleteSandbox(c *gin.Context) {
-	kind := types.AgentRuntimeKind
-	if strings.Contains(c.Request.URL.Path, "code-interpreter") {
-		kind = types.CodeInterpreterKind
-	}
-
 	sessionID := c.Param("sessionId")
 	// Query sandbox from store
 	sandbox, err := s.storeClient.GetSandboxBySessionID(c.Request.Context(), sessionID)
@@ -342,6 +336,8 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	
+	kind := sandbox.Kind
 
 	dynamicClient := s.k8sClient.dynamicClient
 	if s.config.EnableAuth {

@@ -260,6 +260,9 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		if isContextError(updateErr) {
 			return nil, updateErr
 		}
+		// A permanent store update failure means the client will not receive the SessionID.
+		// We deliberately leave needRollbackSandbox as true so the deferred rollback
+		// deletes the K8s pod, preventing an inaccessible "zombie pod" resource leak.
 		return nil, api.NewInternalError(fmt.Errorf("update store cache failed after retries: %w", updateErr))
 	}
 

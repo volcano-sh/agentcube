@@ -187,13 +187,14 @@ func TestServerCreateSandbox(t *testing.T) {
 			expectDeleteStoreCalls: 1,
 		},
 		{
-			name:                   "update store fails triggers retries and full rollback",
+			// A permanent store failure must trigger K8s rollback to prevent an inaccessible zombie pod.
+			name:                   "update store fails permanently after retries triggers full rollback to prevent zombie pod",
 			updateErr:              errors.New("update failed"),
 			sendResult:             true,
 			expectErr:              true,
 			expectCreateCalls:      1,
 			expectUpdateCalls:      3, // 3 attempts exhausted
-			expectDeleteCalls:      1, // K8s rollback must execute
+			expectDeleteCalls:      1, // K8s rollback must execute to prevent resource leak
 			expectDeleteStoreCalls: 1,
 		},
 		{
@@ -292,14 +293,9 @@ func TestServerCreateSandbox(t *testing.T) {
 			require.Equal(t, 1, fakeStoreInst.storeCalls, "StoreSandbox call count")
 			require.Equal(t, tt.expectUpdateCalls, fakeStoreInst.updateCalls, "UpdateSandbox call count")
 
-			// Wait for async store cleanup goroutine safely
-			if tt.expectDeleteStoreCalls > 0 {
-				require.Eventually(t, func() bool {
-					return int(atomic.LoadInt32(&fakeStoreInst.deleteStoreCalls)) == tt.expectDeleteStoreCalls
-				}, 2*time.Second, 10*time.Millisecond, "DeleteSandboxBySessionID call count")
-			} else {
-				require.Equal(t, 0, int(atomic.LoadInt32(&fakeStoreInst.deleteStoreCalls)), "DeleteSandboxBySessionID call count")
-			}
+			// Store cleanup happens synchronously during the deferred rollback,
+			// so we can check the call count directly.
+			require.Equal(t, tt.expectDeleteStoreCalls, int(atomic.LoadInt32(&fakeStoreInst.deleteStoreCalls)), "DeleteSandboxBySessionID call count")
 
 			if tt.expectErr {
 				require.Error(t, err)

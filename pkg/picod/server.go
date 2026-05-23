@@ -35,8 +35,9 @@ const (
 
 // Config defines server configuration
 type Config struct {
-	Port      int    `json:"port"`
-	Workspace string `json:"workspace"`
+	Port            int           `json:"port"`
+	Workspace       string        `json:"workspace"`
+	ShutdownTimeout time.Duration `json:"shutdown_timeout"`
 }
 
 // Server defines the PicoD HTTP server
@@ -50,6 +51,9 @@ type Server struct {
 
 // NewServer creates a new PicoD server instance
 func NewServer(config Config) *Server {
+	if config.ShutdownTimeout <= 0 {
+		config.ShutdownTimeout = 90 * time.Second
+	}
 	s := &Server{
 		config:      config,
 		startTime:   time.Now(),
@@ -134,8 +138,12 @@ func (s *Server) Run(ctx context.Context) error {
 	idleConnsClosed := make(chan struct{})
 	go func() {
 		<-ctx.Done()
-		// Allow enough time for in-flight commands to finish (default timeout is 60s).
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		// Allow enough time for in-flight commands to finish.
+		shutdownTimeout := s.config.ShutdownTimeout
+		if shutdownTimeout <= 0 {
+			shutdownTimeout = 90 * time.Second
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
 			klog.Errorf("HTTP server shutdown error: %v", err)

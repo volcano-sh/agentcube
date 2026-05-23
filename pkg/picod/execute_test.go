@@ -395,6 +395,40 @@ func TestExecuteHandler_TimeoutHandling(t *testing.T) {
 	assert.Contains(t, resp.Stderr, "Command timed out")
 }
 
+func TestExecuteHandler_TimeoutCapping(t *testing.T) {
+	server, tmpDir := setupExecuteTestServer(t)
+	defer os.RemoveAll(tmpDir)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	// Set server shutdown timeout very low
+	server.config.ShutdownTimeout = 200 * time.Millisecond
+
+	// Command would take 2 seconds, but timeout is requested as 10s.
+	// Since 10s exceeds ShutdownTimeout (200ms), it should be capped to 200ms
+	// and therefore time out.
+	req := ExecuteRequest{
+		Command: []string{"sleep", "2"},
+		Timeout: "10s",
+	}
+	body, _ := json.Marshal(req)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request, _ = http.NewRequest("POST", "/api/execute", bytes.NewBuffer(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	server.ExecuteHandler(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp ExecuteResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	// It should have timed out due to capping
+	assert.Equal(t, TimeoutExitCode, resp.ExitCode)
+	assert.Contains(t, resp.Stderr, "Command timed out")
+}
+
 func TestExecuteHandler_EnvironmentVariables(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)

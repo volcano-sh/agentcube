@@ -278,8 +278,14 @@ func assertSandboxMetadata(t *testing.T, sandboxLabels map[string]string, sandbo
 	if namespace != testNamespace {
 		t.Errorf("expected namespace %q, got %q", testNamespace, namespace)
 	}
-	if sandboxLabels[WorkloadNameLabelKey] != workloadName {
-		t.Errorf("expected workload name label %q, got %q", workloadName, sandboxLabels[WorkloadNameLabelKey])
+	if workloadName != "" {
+		if sandboxLabels[WorkloadNameLabelKey] != workloadName {
+			t.Errorf("expected workload name label %q, got %q", workloadName, sandboxLabels[WorkloadNameLabelKey])
+		}
+	} else {
+		if v, ok := sandboxLabels[WorkloadNameLabelKey]; ok && v != "" {
+			t.Errorf("expected no workload name label, got %q", v)
+		}
 	}
 	if sandboxLabels[SessionIdLabelKey] != sessionID {
 		t.Errorf("expected sandbox label %s=%q, got %q", SessionIdLabelKey, sessionID, sandboxLabels[SessionIdLabelKey])
@@ -597,7 +603,7 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 		t.Fatal("expected claim not to be nil for warm pool path")
 	}
 
-	assertSandboxMetadata(t, sandbox.Labels, sandbox.Name, sandbox.Namespace, testCodeInterpreterWarmPool+"-", testCodeInterpreterWarmPool, entry.SessionID)
+	assertSandboxMetadata(t, sandbox.Labels, sandbox.Name, sandbox.Namespace, testCodeInterpreterWarmPool+"-", "", entry.SessionID)
 	if entry.Kind != types.SandboxClaimsKind {
 		t.Errorf("expected entry.Kind to be %q, got %q", types.SandboxClaimsKind, entry.Kind)
 	}

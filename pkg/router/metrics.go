@@ -18,10 +18,11 @@ package router
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 var (
-	routerRequestDuration = prometheus.NewHistogramVec(
+	routerRequestDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "agentcube_router_request_duration_seconds",
 			Help:    "Duration of proxy requests through the router in seconds.",
@@ -30,7 +31,7 @@ var (
 		[]string{"kind"},
 	)
 
-	routerProxyErrorsTotal = prometheus.NewCounterVec(
+	routerProxyErrorsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "agentcube_router_proxy_errors_total",
 			Help: "Total number of proxy errors encountered by the router.",
@@ -38,24 +39,17 @@ var (
 		[]string{"error_category"},
 	)
 
-	routerConcurrentRequests = prometheus.NewGauge(
+	routerConcurrentRequests = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "agentcube_router_concurrent_requests",
 			Help: "Current number of concurrent requests being processed by the router.",
 		},
 	)
 
-	routerSessionCreateTotal = prometheus.NewCounter(
+	routerSessionCreateTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "agentcube_router_session_create_total",
 			Help: "Total number of sandbox sessions implicitly created via the router.",
 		},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(routerRequestDuration)
-	prometheus.MustRegister(routerProxyErrorsTotal)
-	prometheus.MustRegister(routerConcurrentRequests)
-	prometheus.MustRegister(routerSessionCreateTotal)
-}

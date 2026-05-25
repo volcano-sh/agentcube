@@ -18,10 +18,11 @@ package workloadmanager
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 var (
-	sandboxCreateDuration = prometheus.NewHistogramVec(
+	sandboxCreateDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "agentcube_sandbox_create_duration_seconds",
 			Help:    "Duration of sandbox creation in seconds.",
@@ -30,7 +31,7 @@ var (
 		[]string{"kind", "status"},
 	)
 
-	sandboxCreateTotal = prometheus.NewCounterVec(
+	sandboxCreateTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "agentcube_sandbox_create_total",
 			Help: "Total number of sandboxes created.",
@@ -38,7 +39,7 @@ var (
 		[]string{"kind", "status"},
 	)
 
-	sandboxDeleteTotal = prometheus.NewCounterVec(
+	sandboxDeleteTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "agentcube_sandbox_delete_total",
 			Help: "Total number of sandboxes deleted.",
@@ -46,14 +47,14 @@ var (
 		[]string{"kind"},
 	)
 
-	sandboxRollbackTotal = prometheus.NewCounter(
+	sandboxRollbackTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "agentcube_sandbox_rollback_total",
 			Help: "Total number of sandbox creation rollbacks.",
 		},
 	)
 
-	gcCycleDuration = prometheus.NewHistogram(
+	gcCycleDuration = promauto.NewHistogram(
 		prometheus.HistogramOpts{
 			Name:    "agentcube_gc_cycle_duration_seconds",
 			Help:    "Duration of a GC cycle in seconds.",
@@ -61,7 +62,7 @@ var (
 		},
 	)
 
-	gcSandboxesReclaimedTotal = prometheus.NewCounterVec(
+	gcSandboxesReclaimedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "agentcube_gc_sandboxes_reclaimed_total",
 			Help: "Total number of sandboxes reclaimed by the garbage collector.",
@@ -69,20 +70,10 @@ var (
 		[]string{"reason"},
 	)
 
-	gcErrorsTotal = prometheus.NewCounter(
+	gcErrorsTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "agentcube_gc_errors_total",
 			Help: "Total number of garbage collection errors.",
 		},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(sandboxCreateDuration)
-	prometheus.MustRegister(sandboxCreateTotal)
-	prometheus.MustRegister(sandboxDeleteTotal)
-	prometheus.MustRegister(sandboxRollbackTotal)
-	prometheus.MustRegister(gcCycleDuration)
-	prometheus.MustRegister(gcSandboxesReclaimedTotal)
-	prometheus.MustRegister(gcErrorsTotal)
-}

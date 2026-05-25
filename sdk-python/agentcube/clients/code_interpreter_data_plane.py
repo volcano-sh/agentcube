@@ -131,14 +131,15 @@ class CodeInterpreterDataPlaneClient:
         Unlike ``execute_command``, this does not raise when ``exit_code != 0``.
         """
         timeout_value = timeout or self.timeout
-        timeout_str = f"{timeout_value}s" if isinstance(timeout_value, (int, float)) else str(timeout_value)
 
         cmd_list = shlex.split(command, posix=True) if isinstance(command, str) else command
 
         payload = {
             "command": cmd_list,
-            "timeout": timeout_str
         }
+        if timeout is not None:
+            timeout_str = f"{timeout}s" if isinstance(timeout, (int, float)) else str(timeout)
+            payload["timeout"] = timeout_str
         body = json.dumps(payload).encode('utf-8')
 
         read_timeout = timeout_value + 2.0 if isinstance(timeout_value, (int, float)) else timeout_value

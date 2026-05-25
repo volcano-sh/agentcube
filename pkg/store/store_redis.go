@@ -323,7 +323,7 @@ func (rs *redisStore) UpdateSessionLastActivity(ctx context.Context, sessionID s
 	sessionKey := rs.sessionKey(sessionID)
 	res, err := updateSessionLastActivityScript.Run(ctx, rs.cli, []string{sessionKey, rs.lastActivityIndexKey}, sessionID, at.Unix()).Int64()
 	if err != nil {
-		return fmt.Errorf("UpdateSessionLastActivity: script execution failed: %w", err)
+		return fmt.Errorf("UpdateSessionLastActivity: script execution failed for sessionID %s: %w", sessionID, err)
 	}
 
 	if res == 0 {

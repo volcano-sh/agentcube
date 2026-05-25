@@ -29,10 +29,6 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/workloadmanager"
 )
 
-var (
-	SessionExpirationTimeout = 15 * time.Minute
-)
-
 // Reconciler reconciles a Sandbox object
 type Reconciler struct {
 	client.Client
@@ -57,7 +53,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 		}
 
-		expirationTime := lastActivity.Add(SessionExpirationTimeout)
+		expirationTime := lastActivity.Add(workloadmanager.DefaultSandboxIdleTimeout)
+		
+		// Use custom idle timeout if defined.
+		// Ignore invalid, zero, or negative values and fall back to the default timeout.
+		if timeoutStr, exists := sandbox.Annotations[workloadmanager.IdleTimeoutAnnotationKey]; exists && timeoutStr != "" {
+			if customTimeout, err := time.ParseDuration(timeoutStr); err == nil && customTimeout > 0 {
+				expirationTime = lastActivity.Add(customTimeout)
+			}
+		}
 		// Delete sandbox if expired
 		if time.Now().After(expirationTime) {
 			if err := r.Delete(ctx, sandbox); err != nil {

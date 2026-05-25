@@ -160,7 +160,7 @@ func TestReconciler_Reconcile_LifecycleOrchestration(t *testing.T) {
 					Name:      "expired-sandbox",
 					Namespace: "default",
 					Annotations: map[string]string{
-						workloadmanager.LastActivityAnnotationKey: now.Add(-SessionExpirationTimeout).Format(time.RFC3339),
+						workloadmanager.LastActivityAnnotationKey: now.Add(-workloadmanager.DefaultSandboxIdleTimeout).Format(time.RFC3339),
 					},
 				},
 			},
@@ -175,7 +175,7 @@ func TestReconciler_Reconcile_LifecycleOrchestration(t *testing.T) {
 					Name:      "past-expired-sandbox",
 					Namespace: "default",
 					Annotations: map[string]string{
-						workloadmanager.LastActivityAnnotationKey: now.Add(-SessionExpirationTimeout - 1*time.Minute).Format(time.RFC3339),
+						workloadmanager.LastActivityAnnotationKey: now.Add(-workloadmanager.DefaultSandboxIdleTimeout - 1*time.Minute).Format(time.RFC3339),
 					},
 				},
 			},
@@ -190,7 +190,7 @@ func TestReconciler_Reconcile_LifecycleOrchestration(t *testing.T) {
 					Name:      "near-expiration-sandbox",
 					Namespace: "default",
 					Annotations: map[string]string{
-						workloadmanager.LastActivityAnnotationKey: now.Add(-SessionExpirationTimeout + 1*time.Minute).Format(time.RFC3339),
+						workloadmanager.LastActivityAnnotationKey: now.Add(-workloadmanager.DefaultSandboxIdleTimeout + 1*time.Minute).Format(time.RFC3339),
 					},
 				},
 			},
@@ -198,6 +198,90 @@ func TestReconciler_Reconcile_LifecycleOrchestration(t *testing.T) {
 			expectRequeue:     true,
 			expectedRequeueAt: 1 * time.Minute,
 			description:       "Should requeue when close to expiration",
+		},
+		{
+			name: "Sandbox with custom short timeout should be deleted",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "custom-short-timeout-sandbox",
+					Namespace: "default",
+					Annotations: map[string]string{
+						workloadmanager.LastActivityAnnotationKey: now.Add(-6 * time.Minute).Format(time.RFC3339),
+						workloadmanager.IdleTimeoutAnnotationKey:  "5m",
+					},
+				},
+			},
+			expectDeletion: true,
+			expectRequeue:  false,
+			description:    "Should delete when past custom shorter expiration time",
+		},
+		{
+			name: "Sandbox with custom long timeout should be requeued",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "custom-long-timeout-sandbox",
+					Namespace: "default",
+					Annotations: map[string]string{
+						workloadmanager.LastActivityAnnotationKey: now.Add(-20 * time.Minute).Format(time.RFC3339),
+						workloadmanager.IdleTimeoutAnnotationKey:  "1h",
+					},
+				},
+			},
+			expectDeletion:    false,
+			expectRequeue:     true,
+			expectedRequeueAt: 40 * time.Minute, // 1h timeout - 20m elapsed
+			description:       "Should requeue when not past custom longer expiration time",
+		},
+		{
+			name: "Sandbox with invalid custom timeout should fallback to default",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "invalid-timeout-sandbox",
+					Namespace: "default",
+					Annotations: map[string]string{
+						workloadmanager.LastActivityAnnotationKey: now.Add(-10 * time.Minute).Format(time.RFC3339),
+						workloadmanager.IdleTimeoutAnnotationKey:  "invalid-duration",
+					},
+				},
+			},
+			expectDeletion:    false,
+			expectRequeue:     true,
+			expectedRequeueAt: 5 * time.Minute, // Falls back to 15m default timeout - 10m elapsed
+			description:       "Should fallback to default expiration time when custom timeout is invalid",
+		},
+		{
+			name: "Sandbox with negative custom timeout should fallback to default",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "negative-timeout-sandbox",
+					Namespace: "default",
+					Annotations: map[string]string{
+						workloadmanager.LastActivityAnnotationKey: now.Add(-10 * time.Minute).Format(time.RFC3339),
+						workloadmanager.IdleTimeoutAnnotationKey:  "-5m",
+					},
+				},
+			},
+			expectDeletion:    false,
+			expectRequeue:     true,
+			expectedRequeueAt: 5 * time.Minute, // Falls back to 15m default timeout - 10m elapsed
+			description:       "Should fallback to default expiration time when custom timeout is negative",
+		},
+		{
+			name: "Sandbox with zero custom timeout should fallback to default",
+			sandbox: &sandboxv1alpha1.Sandbox{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "zero-timeout-sandbox",
+					Namespace: "default",
+					Annotations: map[string]string{
+						workloadmanager.LastActivityAnnotationKey: now.Add(-10 * time.Minute).Format(time.RFC3339),
+						workloadmanager.IdleTimeoutAnnotationKey:  "0s",
+					},
+				},
+			},
+			expectDeletion:    false,
+			expectRequeue:     true,
+			expectedRequeueAt: 5 * time.Minute, // Falls back to 15m default timeout - 10m elapsed
+			description:       "Should fallback to default expiration time when custom timeout is zero",
 		},
 	}
 
@@ -334,10 +418,6 @@ func TestReconciler_Reconcile_ErrorPaths(t *testing.T) {
 	}
 }
 
-// TestSessionExpirationTimeout tests the timeout constant
-func TestSessionExpirationTimeout(t *testing.T) {
-	assert.Equal(t, 15*time.Minute, SessionExpirationTimeout, "SessionExpirationTimeout should be 15 minutes")
-}
 
 // TestReconciler_Reconcile_EdgeCases tests edge cases
 func TestReconciler_Reconcile_EdgeCases(t *testing.T) {

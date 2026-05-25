@@ -476,16 +476,14 @@ func TestHandleSandboxCreate(t *testing.T) {
 	}
 }
 
-/*
-This test verifies that the deleteSandbox handler correctly handles scenarios where the client disconnects (Context Cancellation) before the deletion operation completes.
-
-Key Points:
-
-The handler creates a new context for the K8s deletion operation using context.WithTimeout(ctx, deletionTimeout).
-This derived context remains valid even if the parent context (c.Request.Context()) is canceled.
-The test simulates a client disconnect by canceling the request context immediately after calling the deleteSandbox function.
-It verifies that the store deletion (the final cleanup step) still occurs by checking that the store's DeleteSandboxBySessionID method was called with a valid, non-canceled context.
-*/
+// This test verifies that the deleteSandbox handler correctly handles scenarios where the client disconnects (Context Cancellation) before the deletion operation completes.
+//
+// Key Points:
+//
+// The handler creates a new context for the K8s deletion operation using context.WithTimeout(ctx, deletionTimeout).
+// This derived context remains valid even if the parent context (c.Request.Context()) is canceled.
+// The test simulates a client disconnect by canceling the request context immediately after calling the deleteSandbox function.
+// It verifies that the store deletion (the final cleanup step) still occurs by checking that the store's DeleteSandboxBySessionID method was called with a valid, non-canceled context.
 func TestHandleDeleteSandbox_DetachedContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	fakeServer := newFakeServer()

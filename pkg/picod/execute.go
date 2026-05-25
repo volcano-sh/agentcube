@@ -36,7 +36,7 @@ const (
 // ExecuteRequest defines command execution request body
 type ExecuteRequest struct {
 	Command    []string          `json:"command" binding:"required"` // The command and its arguments to execute. The first element is the executable.
-	Timeout    string            `json:"timeout"`                    // Optional: Timeout for the command execution (e.g., "30s", "500ms"). Defaults to "60s".
+	Timeout    string            `json:"timeout"`                    // Optional: Timeout for the command execution (e.g., "30s", "500ms"). Defaults to 60s; capped to MaxExecutionTimeout.
 	WorkingDir string            `json:"working_dir"`                // Optional: The working directory for the command.
 	Env        map[string]string `json:"env"`                        // Optional: Environment variables to set for the command.
 }
@@ -157,10 +157,11 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 }
 
 // parseAndCapTimeout parses the timeout string and rejects it if it exceeds
-// the server's shutdown grace period, ensuring no command can outlive the server.
-// s.config.ShutdownTimeout is guaranteed to be > 0 by NewServer.
+// the server's per-command maximum (MaxExecutionTimeout), ensuring no command
+// can outlive the server during graceful shutdown.
+// s.config.MaxExecutionTimeout is guaranteed to be > 0 by NewServer.
 func (s *Server) parseAndCapTimeout(timeoutStr string) (time.Duration, error) {
-	timeoutDuration := 60 * time.Second // Default timeout
+	timeoutDuration := s.config.MaxExecutionTimeout // Default: use the configured maximum
 	if timeoutStr != "" {
 		var err error
 		timeoutDuration, err = time.ParseDuration(timeoutStr)
@@ -169,10 +170,10 @@ func (s *Server) parseAndCapTimeout(timeoutStr string) (time.Duration, error) {
 		}
 	}
 
-	if timeoutDuration > s.config.ShutdownTimeout {
+	if timeoutDuration > s.config.MaxExecutionTimeout {
 		return 0, fmt.Errorf(
 			"requested timeout %v exceeds the maximum allowed execution timeout %v",
-			timeoutDuration, s.config.ShutdownTimeout,
+			timeoutDuration, s.config.MaxExecutionTimeout,
 		)
 	}
 	return timeoutDuration, nil

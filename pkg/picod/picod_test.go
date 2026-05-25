@@ -466,7 +466,8 @@ func TestPicoD_SymlinkUploadGuard(t *testing.T) {
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+		// A symlink escape is a security violation — expect 403 Forbidden, not 500.
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 
 		// Verify file was NOT created in outsideDir
 		outsideFile := filepath.Join(outsideDir, "newdir/malicious.txt")
@@ -491,7 +492,8 @@ func TestPicoD_SymlinkUploadGuard(t *testing.T) {
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+		// A symlink escape is a security violation, expect 403 Forbidden, not 500.
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 
 		// Verify file was NOT created in outsideDir
 		outsideFile := filepath.Join(outsideDir, "newdir/malicious_multipart.txt")

@@ -400,10 +400,10 @@ func TestExecuteHandler_TimeoutCapping(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 	defer os.Unsetenv(PublicKeyEnvVar)
 
-	// Set server shutdown timeout very low so that a "10s" request exceeds it.
-	server.config.ShutdownTimeout = 200 * time.Millisecond
+	// Set the per-command maximum very low so that a "10s" request exceeds it.
+	server.config.MaxExecutionTimeout = 200 * time.Millisecond
 
-	// Request a timeout that exceeds the shutdown grace period.
+	// Request a timeout that exceeds the configured maximum.
 	// The server must reject the request with a 400 rather than silently capping it,
 	// so the client is aware of the enforced maximum.
 	req := ExecuteRequest{

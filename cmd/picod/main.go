@@ -32,15 +32,17 @@ func main() {
 	port := flag.Int("port", 8080, "Port for the PicoD server to listen on")
 	workspace := flag.String("workspace", "", "Root directory for file operations (default: current working directory)")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 90*time.Second, "Grace period for graceful shutdown")
+	maxExecutionTimeout := flag.Duration("max-execution-timeout", 60*time.Second, "Maximum allowed per-command execution timeout")
 
 	// Initialize klog flags
 	klog.InitFlags(nil)
 	flag.Parse()
 
 	config := picod.Config{
-		Port:            *port,
-		Workspace:       *workspace,
-		ShutdownTimeout: *shutdownTimeout,
+		Port:                *port,
+		Workspace:           *workspace,
+		ShutdownTimeout:     *shutdownTimeout,
+		MaxExecutionTimeout: *maxExecutionTimeout,
 	}
 
 	// Create a context that is canceled on SIGINT or SIGTERM.

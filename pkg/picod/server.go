@@ -35,9 +35,10 @@ const (
 
 // Config defines server configuration
 type Config struct {
-	Port            int           `json:"port"`
-	Workspace       string        `json:"workspace"`
-	ShutdownTimeout time.Duration `json:"shutdown_timeout"`
+	Port                int           `json:"port"`
+	Workspace           string        `json:"workspace"`
+	ShutdownTimeout     time.Duration `json:"shutdown_timeout"`
+	MaxExecutionTimeout time.Duration `json:"max_execution_timeout"`
 }
 
 // Server defines the PicoD HTTP server
@@ -53,6 +54,14 @@ type Server struct {
 func NewServer(config Config) *Server {
 	if config.ShutdownTimeout <= 0 {
 		config.ShutdownTimeout = 90 * time.Second
+	}
+	// MaxExecutionTimeout defaults to 60s. It is also capped to ShutdownTimeout
+	// so that no command can outlive the server during graceful shutdown.
+	if config.MaxExecutionTimeout <= 0 {
+		config.MaxExecutionTimeout = 60 * time.Second
+	}
+	if config.MaxExecutionTimeout > config.ShutdownTimeout {
+		config.MaxExecutionTimeout = config.ShutdownTimeout
 	}
 	s := &Server{
 		config:      config,

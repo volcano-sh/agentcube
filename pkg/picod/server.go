@@ -148,7 +148,7 @@ func (s *Server) Run(ctx context.Context) error {
 				klog.Errorf("HTTP server shutdown error: %v", err)
 			}
 		case <-stop:
-			// ListenAndServe failed before the context was cancelled; nothing to shut down.
+			// ListenAndServe failed before the context was canceled; nothing to shut down.
 		}
 	}()
 

@@ -54,7 +54,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 
 		expirationTime := lastActivity.Add(workloadmanager.DefaultSandboxIdleTimeout)
-		
+
 		// Use custom idle timeout if defined.
 		// Ignore invalid, zero, or negative values and fall back to the default timeout.
 		if timeoutStr, exists := sandbox.Annotations[workloadmanager.IdleTimeoutAnnotationKey]; exists && timeoutStr != "" {

@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	testToken = "test-token"
+	testToken          = "test-token"
 	testServiceAccount = "system:serviceaccount:default:test-sa"
 )
 
@@ -85,7 +85,7 @@ func TestAuthMiddleware_InvalidHeaderFormat(t *testing.T) {
 			name:             "no Bearer prefix",
 			header:           "token123",
 			expectedBodyPart: "Invalid authorization header format",
- 		},
+		},
 		{
 			name:             "wrong prefix",
 			header:           "Basic token123",

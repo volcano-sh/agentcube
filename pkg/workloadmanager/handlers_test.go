@@ -245,7 +245,7 @@ func TestServerCreateSandbox(t *testing.T) {
 				claim = &extensionsv1alpha1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: sb.Name, Namespace: sb.Namespace}}
 			}
 
-			resp, err := server.createSandbox(context.Background(), nil, sb, claim, makeEntry(), resultChan)
+			resp, err := server.createSandbox(context.Background(), nil, sb, claim, makeEntry(), resultChan, "")
 
 			require.Equal(t, tt.expectCreateCalls, createCalls, "createSandbox call count")
 			require.Equal(t, tt.expectClaimCalls, claimCalls, "createSandboxClaim call count")
@@ -445,7 +445,7 @@ func TestHandleSandboxCreate(t *testing.T) {
 			})
 
 			createCalls := 0
-			patches.ApplyPrivateMethod(reflect.TypeOf(fakeServer), "createSandbox", func(_ *Server, _ context.Context, _ dynamic.Interface, _ *sandboxv1alpha1.Sandbox, _ *extensionsv1alpha1.SandboxClaim, _ *sandboxEntry, _ <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
+			patches.ApplyPrivateMethod(reflect.TypeOf(fakeServer), "createSandbox", func(_ *Server, _ context.Context, _ dynamic.Interface, _ *sandboxv1alpha1.Sandbox, _ *extensionsv1alpha1.SandboxClaim, _ *sandboxEntry, _ <-chan SandboxStatusUpdate, _ string) (*types.CreateSandboxResponse, error) {
 				createCalls++
 				if tc.createErr != nil {
 					return nil, tc.createErr
@@ -541,6 +541,20 @@ func TestHandleGetSandbox(t *testing.T) {
 			},
 			expectStatus:  http.StatusNotFound,
 			expectMessage: "Session ID sess-auth-fail not found",
+		},
+		{
+			name:          "forbidden with auth matching namespace but different service account",
+			sessionID:     "sess-wrong-sa",
+			enableAuth:    true,
+			userNamespace: "user-ns",
+			storeResult: &types.SandboxInfo{
+				SessionID:        "sess-wrong-sa",
+				SandboxNamespace: "user-ns",
+				Kind:             types.AgentRuntimeKind,
+				CreatedBy:        "other-sa",
+			},
+			expectStatus:  http.StatusNotFound,
+			expectMessage: "Session ID sess-wrong-sa not found",
 		},
 		{
 			name:      "wrong kind",
@@ -651,6 +665,22 @@ func TestHandleListSandboxes(t *testing.T) {
 			},
 			expectStatus: http.StatusOK,
 			expectCount:  1,
+		},
+		{
+			name:          "success with auth filters by service account",
+			kind:          types.AgentRuntimeKind,
+			enableAuth:    true,
+			userNamespace: "user-ns",
+			storeResult: []*types.SandboxInfo{
+				// Same namespace, created by the requesting SA — should be included
+				{SessionID: "1", SandboxNamespace: "user-ns", Kind: types.AgentRuntimeKind, CreatedBy: "mock-sa"},
+				// Same namespace, different SA — should be excluded
+				{SessionID: "2", SandboxNamespace: "user-ns", Kind: types.AgentRuntimeKind, CreatedBy: "other-sa"},
+				// Same namespace, no CreatedBy (legacy) — should be included (backward compat)
+				{SessionID: "3", SandboxNamespace: "user-ns", Kind: types.AgentRuntimeKind, CreatedBy: ""},
+			},
+			expectStatus: http.StatusOK,
+			expectCount:  2,
 		},
 	}
 

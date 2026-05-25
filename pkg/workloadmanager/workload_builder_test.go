@@ -248,6 +248,9 @@ func toUnstructured(t *testing.T, obj interface{}, kind string) *unstructured.Un
 	return u
 }
 
+// setCachedPublicKeyForTest directly mutates the package-level cachedPublicKey
+// behind a mutex. This is fine for serial test execution, but if tests ever run
+// with t.Parallel() can cause race condition.
 func setCachedPublicKeyForTest(t *testing.T, value string) {
 	t.Helper()
 	publicKeyCacheMutex.Lock()

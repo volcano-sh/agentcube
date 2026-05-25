@@ -7,6 +7,7 @@ toolchain go1.24.9
 require (
 	github.com/agiledragon/gomonkey/v2 v2.13.0
 	github.com/alicebob/miniredis/v2 v2.35.0
+	github.com/gin-contrib/gzip v1.0.1
 	github.com/gin-gonic/gin v1.10.0
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/uuid v1.6.0

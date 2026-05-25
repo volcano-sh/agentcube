@@ -371,6 +371,83 @@ func TestNewServer_DifferentPorts(t *testing.T) {
 	}
 }
 
+func TestServer_GzipMiddleware_CompressesResponse(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	pubKeyPEM := generateTestPublicKeyPEM(t)
+	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	server := NewServer(Config{
+		Port:      8080,
+		Workspace: tmpDir,
+	})
+
+	ts := httptest.NewServer(server.engine)
+	defer ts.Close()
+
+	// A client that sends Accept-Encoding: gzip should receive a gzip-compressed response.
+	// The /health endpoint responds with a JSON body that gin-contrib/gzip will compress.
+	// However, /health is in the excluded paths — so we use /api/execute (which returns
+	// 401 Unauthorized, a non-empty JSON body that gzip will still compress).
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/execute", nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	client := &http.Client{
+		// Disable automatic transparent decompression so we can inspect the raw header.
+		Transport: &http.Transport{
+			DisableCompression: true,
+		},
+	}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	// The middleware must set Content-Encoding: gzip on the wire.
+	assert.Equal(t, "gzip", resp.Header.Get("Content-Encoding"),
+		"response should be gzip-compressed when client advertises Accept-Encoding: gzip")
+}
+
+func TestServer_GzipMiddleware_ExcludesHealthEndpoint(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	pubKeyPEM := generateTestPublicKeyPEM(t)
+	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	server := NewServer(Config{
+		Port:      8080,
+		Workspace: tmpDir,
+	})
+
+	ts := httptest.NewServer(server.engine)
+	defer ts.Close()
+
+	// /health is in the WithExcludedPaths list, so even when the client requests gzip
+	// the middleware must NOT set Content-Encoding: gzip on that path.
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/health", nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			DisableCompression: true,
+		},
+	}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.NotEqual(t, "gzip", resp.Header.Get("Content-Encoding"),
+		"/health is an excluded path and must not be gzip-compressed")
+}
+
 func TestServer_MaxBodySizeMiddleware(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
 	require.NoError(t, err)

@@ -297,6 +297,11 @@ func (rs *redisStore) Close() error {
 	return rs.cli.Close()
 }
 
+// updateSessionLastActivityScript atomically checks if the session key exists
+// and updates its last activity time in the sorted-set index.
+// It uses EXISTS to verify presence rather than GET (which retrieved the
+// actual value in older implementations). This saves data transfer overhead,
+// if in future the value is required GET can be used instead.
 var updateSessionLastActivityScript = redisv9.NewScript(`
 if redis.call("EXISTS", KEYS[1]) == 1 then
 	redis.call("ZADD", KEYS[2], ARGV[2], ARGV[1])

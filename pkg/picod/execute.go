@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"k8s.io/klog/v2"
 )
 
 const (
@@ -75,7 +74,7 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	timeoutDuration, err := s.parseAndCapTimeout(req.Timeout)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("Invalid timeout format: %v", err),
+			"error": err.Error(),
 			"code":  http.StatusBadRequest,
 		})
 		return
@@ -157,24 +156,24 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	})
 }
 
-// parseAndCapTimeout parses the timeout string and caps it to the shutdown timeout
+// parseAndCapTimeout parses the timeout string and rejects it if it exceeds
+// the server's shutdown grace period, ensuring no command can outlive the server.
+// s.config.ShutdownTimeout is guaranteed to be > 0 by NewServer.
 func (s *Server) parseAndCapTimeout(timeoutStr string) (time.Duration, error) {
 	timeoutDuration := 60 * time.Second // Default timeout
 	if timeoutStr != "" {
 		var err error
 		timeoutDuration, err = time.ParseDuration(timeoutStr)
 		if err != nil {
-			return 0, err
+			return 0, fmt.Errorf("invalid timeout format: %w", err)
 		}
 	}
 
-	shutdownTimeout := s.config.ShutdownTimeout
-	if shutdownTimeout <= 0 {
-		shutdownTimeout = 90 * time.Second
-	}
-	if timeoutDuration > shutdownTimeout {
-		klog.Infof("Requested timeout %v exceeds shutdown grace period; capping to %v", timeoutDuration, shutdownTimeout)
-		timeoutDuration = shutdownTimeout
+	if timeoutDuration > s.config.ShutdownTimeout {
+		return 0, fmt.Errorf(
+			"requested timeout %v exceeds the maximum allowed execution timeout %v",
+			timeoutDuration, s.config.ShutdownTimeout,
+		)
 	}
 	return timeoutDuration, nil
 }

@@ -136,18 +136,25 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	idleConnsClosed := make(chan struct{})
+	stop := make(chan struct{})
 	go func() {
-		<-ctx.Done()
-		// Allow enough time for in-flight commands to finish.
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.config.ShutdownTimeout)
-		defer cancel()
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			klog.Errorf("HTTP server shutdown error: %v", err)
+		defer close(idleConnsClosed)
+		select {
+		case <-ctx.Done():
+			// Allow enough time for in-flight commands to finish.
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), s.config.ShutdownTimeout)
+			defer cancel()
+			if err := httpServer.Shutdown(shutdownCtx); err != nil {
+				klog.Errorf("HTTP server shutdown error: %v", err)
+			}
+		case <-stop:
+			// ListenAndServe failed before the context was cancelled; nothing to shut down.
 		}
-		close(idleConnsClosed)
 	}()
 
 	if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
+		close(stop)
+		<-idleConnsClosed // wait for the goroutine to exit
 		return err
 	}
 

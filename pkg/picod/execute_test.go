@@ -130,19 +130,19 @@ func TestExecuteHandler_TimeoutFormats(t *testing.T) {
 			name:          "invalid format string",
 			timeout:       "invalid",
 			expectError:   true,
-			errorContains: "Invalid timeout format",
+			errorContains: "invalid timeout format",
 		},
 		{
 			name:          "malformed duration (no unit)",
 			timeout:       "10",
 			expectError:   true,
-			errorContains: "Invalid timeout format",
+			errorContains: "invalid timeout format",
 		},
 		{
 			name:          "empty string with quotes",
 			timeout:       `""`,
 			expectError:   true,
-			errorContains: "Invalid timeout format",
+			errorContains: "invalid timeout format",
 		},
 		{
 			name:        "valid seconds format",
@@ -156,7 +156,7 @@ func TestExecuteHandler_TimeoutFormats(t *testing.T) {
 		},
 		{
 			name:        "valid minutes format",
-			timeout:     "2m",
+			timeout:     "1m",
 			expectError: false,
 		},
 		{
@@ -186,7 +186,7 @@ func TestExecuteHandler_TimeoutFormats(t *testing.T) {
 				assert.Contains(t, w.Body.String(), tt.errorContains)
 			} else {
 				if w.Code == http.StatusBadRequest {
-					assert.NotContains(t, w.Body.String(), "Invalid timeout format")
+					assert.NotContains(t, w.Body.String(), "invalid timeout format")
 				}
 			}
 		})
@@ -400,12 +400,12 @@ func TestExecuteHandler_TimeoutCapping(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 	defer os.Unsetenv(PublicKeyEnvVar)
 
-	// Set server shutdown timeout very low
+	// Set server shutdown timeout very low so that a "10s" request exceeds it.
 	server.config.ShutdownTimeout = 200 * time.Millisecond
 
-	// Command would take 2 seconds, but timeout is requested as 10s.
-	// Since 10s exceeds ShutdownTimeout (200ms), it should be capped to 200ms
-	// and therefore time out.
+	// Request a timeout that exceeds the shutdown grace period.
+	// The server must reject the request with a 400 rather than silently capping it,
+	// so the client is aware of the enforced maximum.
 	req := ExecuteRequest{
 		Command: []string{"sleep", "2"},
 		Timeout: "10s",
@@ -419,14 +419,9 @@ func TestExecuteHandler_TimeoutCapping(t *testing.T) {
 
 	server.ExecuteHandler(c)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp ExecuteResponse
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	// It should have timed out due to capping
-	assert.Equal(t, TimeoutExitCode, resp.ExitCode)
-	assert.Contains(t, resp.Stderr, "Command timed out")
+	// Expect a 400 with a clear message about the enforced maximum.
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "exceeds the maximum allowed execution timeout")
 }
 
 func TestExecuteHandler_EnvironmentVariables(t *testing.T) {

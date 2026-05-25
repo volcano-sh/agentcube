@@ -465,6 +465,7 @@ func TestPicoD_SymlinkUploadGuard(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := client.Do(req)
 		require.NoError(t, err)
+		defer resp.Body.Close()
 		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 
 		// Verify file was NOT created in outsideDir
@@ -489,6 +490,7 @@ func TestPicoD_SymlinkUploadGuard(t *testing.T) {
 		req.Header.Set("Content-Type", writer.FormDataContentType())
 		resp, err := client.Do(req)
 		require.NoError(t, err)
+		defer resp.Body.Close()
 		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 
 		// Verify file was NOT created in outsideDir

@@ -139,11 +139,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 		// Allow enough time for in-flight commands to finish.
-		shutdownTimeout := s.config.ShutdownTimeout
-		if shutdownTimeout <= 0 {
-			shutdownTimeout = 90 * time.Second
-		}
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.config.ShutdownTimeout)
 		defer cancel()
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
 			klog.Errorf("HTTP server shutdown error: %v", err)

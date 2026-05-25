@@ -1,0 +1,27 @@
+# CodeInterpreter for LangChain Deep Agents integration.
+# picod --workspace=/ aligns Deep Agents virtual paths (/hello.py) with the container filesystem.
+apiVersion: runtime.agentcube.volcano.sh/v1alpha1
+kind: CodeInterpreter
+metadata:
+  name: my-interpreter
+  namespace: default
+spec:
+  ports:
+    - pathPrefix: "/"
+      port: 8080
+      protocol: "HTTP"
+  template:
+    image: ghcr.io/volcano-sh/picod:latest
+    imagePullPolicy: IfNotPresent
+    args:
+      - --workspace=/
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+  sessionTimeout: "15m"
+  maxSessionDuration: "8h"
+  warmPoolSize: 2

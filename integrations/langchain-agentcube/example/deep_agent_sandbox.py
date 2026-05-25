@@ -4,7 +4,10 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 
-"""Example: create_deep_agent with AgentcubeSandbox. See ../README.md."""
+"""Example: create_deep_agent with AgentcubeSandbox. See ../README.md.
+
+Requires a Code Interpreter whose picod uses ``--workspace=/`` (see ../code-interpreter.yaml).
+"""
 
 from __future__ import annotations
 

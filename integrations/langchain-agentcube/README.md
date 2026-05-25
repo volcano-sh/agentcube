@@ -2,7 +2,7 @@
 
 Wire AgentCube **Code Interpreter** to [LangChain Deep Agents](https://docs.langchain.com/oss/python/deepagents/sandboxes) as the `backend`.
 
-**Prerequisites**: AgentCube cluster with a `CodeInterpreter` CR deployed; see [getting-started](../../docs/getting-started.md). Local **Python >= 3.11**.
+**Prerequisites**: AgentCube cluster (control plane + Router / Workload Manager); see [getting-started](../../docs/getting-started.md). Local **Python >= 3.11**.Picod must use **`--workspace=/`** 
 
 ---
 
@@ -19,7 +19,17 @@ pip install langchain-openai       # DeepSeek and OpenAI-compatible APIs
 
 ---
 
-## 2. Cluster environment variables
+## 2. Deploy Code Interpreter
+
+Edit `code-interpreter.yaml` if needed (`metadata.name`, `metadata.namespace`), then:
+
+```bash
+kubectl apply -f integrations/langchain-agentcube/code-interpreter.yaml
+```
+
+---
+
+## 3. Cluster environment variables
 
 After `kubectl port-forward` to `workloadmanager` and `agentcube-router`:
 
@@ -33,7 +43,7 @@ export AGENTCUBE_NAMESPACE="default"    # same namespace as the CodeInterpreter 
 
 ---
 
-## 3. LLM API keys
+## 4. LLM API keys
 
 **DeepSeek** (OpenAI-compatible; `pip install langchain-openai`):
 
@@ -60,13 +70,13 @@ If several keys are set, the example script prefers **DeepSeek, then Claude, the
 
 ---
 
-## 4. Run the example
+## 5. Run the example
 
 ```bash
 python integrations/langchain-agentcube/example/deep_agent_sandbox.py
 ```
 
-Flags: `--interpreter`, `--namespace`, `--prompt`. A full fix is to rename the CLI top-level package (e.g. `agentcube_cli`) in the future.
+Flags: `--interpreter`, `--namespace`, `--prompt`.
 
 ---
 

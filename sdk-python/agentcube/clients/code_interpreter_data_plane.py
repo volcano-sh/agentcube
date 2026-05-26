@@ -18,7 +18,7 @@ import time
 import os
 import ast
 import shlex
-from typing import Optional, Any, List, Union
+from typing import Optional, Any, Dict, List, Union
 from urllib.parse import urljoin
 
 import requests
@@ -123,14 +123,13 @@ class CodeInterpreterDataPlaneClient:
             **kwargs
         )
 
-    def execute_command(self, command: Union[str, List[str]], timeout: Optional[float] = None) -> str:
-        """Execute a shell command.
+    def execute_command_result(
+        self, command: Union[str, List[str]], timeout: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """Execute a shell command and return stdout, stderr, and exit_code.
 
-        Args:
-            command: The command to execute, either as a single string or a list of arguments.
-            timeout: Optional timeout for the command execution.
+        Unlike ``execute_command``, this does not raise when ``exit_code != 0``.
         """
-        # Convert timeout to string with 's' suffix as expected by PicoD
         timeout_value = timeout or self.timeout
         timeout_str = f"{timeout_value}s" if isinstance(timeout_value, (int, float)) else str(timeout_value)
 
@@ -142,20 +141,32 @@ class CodeInterpreterDataPlaneClient:
         }
         body = json.dumps(payload).encode('utf-8')
 
-        # Add a buffer to the read timeout to allow PicoD to return the timeout response
-        # otherwise requests might raise ReadTimeout before we get the JSON response with exit_code 124
         read_timeout = timeout_value + 2.0 if isinstance(timeout_value, (int, float)) else timeout_value
 
         resp = self._request("POST", "api/execute", body=body, timeout=read_timeout)
         resp.raise_for_status()
 
         result = resp.json()
+        return {
+            "stdout": result.get("stdout") or "",
+            "stderr": result.get("stderr") or "",
+            "exit_code": int(result.get("exit_code", -1)),
+        }
+
+    def execute_command(self, command: Union[str, List[str]], timeout: Optional[float] = None) -> str:
+        """Execute a shell command.
+
+        Args:
+            command: The command to execute, either as a single string or a list of arguments.
+            timeout: Optional timeout for the command execution.
+        """
+        result = self.execute_command_result(command, timeout)
         if result["exit_code"] != 0:
-             raise CommandExecutionError(
-                 exit_code=result["exit_code"],
-                 stderr=result["stderr"],
-                 command=command
-             )
+            raise CommandExecutionError(
+                exit_code=result["exit_code"],
+                stderr=result["stderr"],
+                command=command
+            )
 
         return result["stdout"]
 

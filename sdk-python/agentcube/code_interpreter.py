@@ -14,7 +14,7 @@
 
 import os
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from agentcube.clients.control_plane import ControlPlaneClient
 from agentcube.clients.code_interpreter_data_plane import CodeInterpreterDataPlaneClient
@@ -175,6 +175,12 @@ class CodeInterpreterClient:
             str: The output of the command.
         """
         return self.dp_client.execute_command(command, timeout)
+
+    def execute_command_result(
+        self, command: str, timeout: Optional[float] = None
+    ) -> dict[str, Any]:
+        """Run a shell command and return ``stdout``, ``stderr``, and ``exit_code`` (no raise on failure)."""
+        return self.dp_client.execute_command_result(command, timeout)
 
     def run_code(self, language: str, code: str, timeout: Optional[float] = None) -> str:
         """

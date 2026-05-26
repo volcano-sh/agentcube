@@ -32,7 +32,7 @@ type neverSyncedInformer struct {
 	cache.SharedIndexInformer
 }
 
-func (n *neverSyncedInformer) HasSynced() bool           { return false }
+func (n *neverSyncedInformer) HasSynced() bool            { return false }
 func (n *neverSyncedInformer) Run(stopCh <-chan struct{}) { <-stopCh }
 
 // alwaysSyncedInformer is a cache.SharedIndexInformer whose HasSynced always returns true.
@@ -40,7 +40,7 @@ type alwaysSyncedInformer struct {
 	cache.SharedIndexInformer
 }
 
-func (a *alwaysSyncedInformer) HasSynced() bool           { return true }
+func (a *alwaysSyncedInformer) HasSynced() bool            { return true }
 func (a *alwaysSyncedInformer) Run(stopCh <-chan struct{}) { <-stopCh }
 
 // runCanceled starts RunAndWaitForCacheSync in a goroutine, cancels the context
@@ -69,10 +69,10 @@ func TestRunAndWaitForCacheSync_ContextCancellation(t *testing.T) {
 	always := func() cache.SharedIndexInformer { return &alwaysSyncedInformer{} }
 
 	tests := []struct {
-		name                    string
-		agentRuntime            cache.SharedIndexInformer
-		codeInterpreter         cache.SharedIndexInformer
-		pod                     cache.SharedIndexInformer
+		name            string
+		agentRuntime    cache.SharedIndexInformer
+		codeInterpreter cache.SharedIndexInformer
+		pod             cache.SharedIndexInformer
 	}{
 		{
 			name:            "AgentRuntimeInformer never syncs",

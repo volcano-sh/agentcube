@@ -301,5 +301,3 @@ func TestAuthMiddleware_TokenValidation(t *testing.T) {
 		})
 	}
 }
-
-

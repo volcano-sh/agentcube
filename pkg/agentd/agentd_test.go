@@ -418,7 +418,6 @@ func TestReconciler_Reconcile_ErrorPaths(t *testing.T) {
 	}
 }
 
-
 // TestReconciler_Reconcile_EdgeCases tests edge cases
 func TestReconciler_Reconcile_EdgeCases(t *testing.T) {
 	testScheme := setupTestScheme()

@@ -316,4 +316,3 @@ func TestMkdirSafe(t *testing.T) {
 		assert.True(t, os.IsNotExist(statErr), "directory should not exist outside workspace")
 	})
 }
-

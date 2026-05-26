@@ -57,12 +57,12 @@ const (
 	// ownerKindSandboxWarmPool is the owner reference kind for SandboxWarmPool resources
 	ownerKindSandboxWarmPool = "SandboxWarmPool"
 
-	agentcubeNamespace     = "agentcube"
 	e2eCodeInterpreterName = "e2e-code-interpreter"
 )
 
 var (
-	scheme = runtime.NewScheme()
+	agentcubeNamespace = getEnv("WORKLOAD_NAMESPACE", "agentcube")
+	scheme             = runtime.NewScheme()
 )
 
 func init() {
@@ -155,6 +155,16 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// skipIfMTLS skips the test when MTLS_ENABLED=true.
+// When mTLS is active, direct calls to WorkloadManager require a client cert.
+// The mTLS handshake is validated indirectly via the Router→WM path in AgentRuntime tests.
+func skipIfMTLS(t *testing.T) {
+	t.Helper()
+	if os.Getenv("MTLS_ENABLED") == "true" {
+		t.Skip("skipping direct-WM test: mTLS is active (test client has no client cert)")
+	}
 }
 
 // runAgentRuntimeTestCase executes a single AgentRuntime test case
@@ -783,6 +793,7 @@ func TestAgentRuntimeSessionTTL(t *testing.T) {
 
 // TestCodeInterpreterWarmPool tests: Code interpreter with warmpool functionality
 func TestCodeInterpreterWarmPool(t *testing.T) {
+	skipIfMTLS(t)
 	env := newTestEnv(t)
 	ctx, err := newE2ETestContext()
 	require.NoError(t, err)
@@ -815,6 +826,7 @@ func TestCodeInterpreterWarmPool(t *testing.T) {
 
 // TestCodeInterpreterBasicInvocation tests basic code interpreter invocation
 func TestCodeInterpreterBasicInvocation(t *testing.T) {
+	skipIfMTLS(t)
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace
@@ -858,6 +870,7 @@ func TestCodeInterpreterBasicInvocation(t *testing.T) {
 
 // TestCodeInterpreterFileOperations tests file upload/download via code interpreter API
 func TestCodeInterpreterFileOperations(t *testing.T) {
+	skipIfMTLS(t)
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace
@@ -1069,6 +1082,7 @@ func loadCodeInterpreterYAML(path string) (*v1alpha1.CodeInterpreter, error) {
 		return nil, fmt.Errorf("object in %s is not a CodeInterpreter", path)
 	}
 
+	ci.Namespace = agentcubeNamespace
 	return ci, nil
 }
 
@@ -1092,6 +1106,7 @@ func loadYAML(path string) (client.Object, error) {
 		return nil, fmt.Errorf("object in %s is not a client.Object", path)
 	}
 
+	clientObj.SetNamespace(agentcubeNamespace)
 	return clientObj, nil
 }
 
@@ -1487,6 +1502,7 @@ func runCodeInterpreterLoadTest(
 
 // TestCodeInterpreterWarmPoolLoad tests code interpreter with warmpool under load (10 requests per second)
 func TestCodeInterpreterWarmPoolLoad(t *testing.T) {
+	skipIfMTLS(t)
 	env := newTestEnv(t)
 	ctx, err := newE2ETestContext()
 	require.NoError(t, err)
@@ -1528,6 +1544,7 @@ func TestCodeInterpreterWarmPoolLoad(t *testing.T) {
 
 // TestCodeInterpreterBasicInvocationLoad tests code interpreter without warmpool under load (2 requests per second)
 func TestCodeInterpreterBasicInvocationLoad(t *testing.T) {
+	skipIfMTLS(t)
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace

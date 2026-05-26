@@ -16,7 +16,11 @@ limitations under the License.
 
 package router
 
-import "time"
+import (
+	"time"
+
+	"github.com/volcano-sh/agentcube/pkg/mtls"
+)
 
 // LastActivityAnnotationKey is the annotation key for tracking last activity
 const LastActivityAnnotationKey = "agentcube.volcano.sh/last-activity"
@@ -47,4 +51,9 @@ type Config struct {
 
 	// InitialConnectRetryInterval is the delay between preflight retries.
 	InitialConnectRetryInterval time.Duration
+
+	// MTLSConfig holds the mTLS certificate paths (cert, key, CA bundle).
+	// When all paths are present, mutual TLS is used for
+	// Router-to-WorkloadManager connections.
+	MTLSConfig mtls.Config
 }

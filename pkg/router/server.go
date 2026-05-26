@@ -58,8 +58,8 @@ func NewServer(config *Config) (*Server, error) {
 		config.InitialConnectRetryInterval = 200 * time.Millisecond
 	}
 
-	// Create session manager with store client
-	sessionManager, err := NewSessionManager(store.Storage())
+	// Create session manager with store client and mTLS config
+	sessionManager, err := NewSessionManager(store.Storage(), &config.MTLSConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session manager: %w", err)
 	}
@@ -179,17 +179,26 @@ func (s *Server) Start(ctx context.Context) error {
 		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
 			klog.Errorf("Server shutdown error: %v", err)
 		}
+		if s.sessionManager != nil {
+			_ = s.sessionManager.Close()
+		}
 	}()
 
 	klog.Infof("Router server listening on %s", addr)
 
 	// Start HTTP or HTTPS server
+	var err error
 	if s.config.EnableTLS {
 		if s.config.TLSCert == "" || s.config.TLSKey == "" {
 			return fmt.Errorf("TLS enabled but cert/key not provided")
 		}
-		return s.httpServer.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
+		err = s.httpServer.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
+	} else {
+		err = s.httpServer.ListenAndServe()
 	}
 
-	return s.httpServer.ListenAndServe()
+	if err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	return nil
 }

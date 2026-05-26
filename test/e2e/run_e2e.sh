@@ -6,12 +6,20 @@ IFS=$'\n\t'
 E2E_CLUSTER_NAME=${E2E_CLUSTER_NAME:-agentcube-e2e}
 E2E_CLEAN_CLUSTER=${E2E_CLEAN_CLUSTER:-true}
 E2E_SKIP_SETUP=${E2E_SKIP_SETUP:-false}
+if [ -z "${MTLS_ENABLED+x}" ]; then
+    if [ "${E2E_SKIP_SETUP}" = "true" ]; then
+        MTLS_ENABLED=false
+    else
+        MTLS_ENABLED=true
+    fi
+fi
 AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION:-v0.1.1}
 WORKLOAD_MANAGER_IMAGE=${WORKLOAD_MANAGER_IMAGE:-workloadmanager:latest}
 ROUTER_IMAGE=${ROUTER_IMAGE:-agentcube-router:latest}
 PICOD_IMAGE=${PICOD_IMAGE:-picod:latest}
 REDIS_IMAGE=${REDIS_IMAGE:-redis:7-alpine}
-AGENTCUBE_NAMESPACE=${AGENTCUBE_NAMESPACE:-agentcube}
+AGENTCUBE_NAMESPACE=${AGENTCUBE_NAMESPACE:-agentcube-system}
+WORKLOAD_NAMESPACE=${WORKLOAD_NAMESPACE:-agentcube}
 E2E_VENV_DIR=${E2E_VENV_DIR:-/tmp/agentcube-e2e-venv}
 MCP_K8S_LOCAL_PORT=${MCP_K8S_LOCAL_PORT:-19446}
 
@@ -101,6 +109,23 @@ require_python() {
         echo "Python package 'agentcube' not found in virtual environment. Please ensure sdk-python is properly installed." >&2
         exit 1
     }
+}
+
+apply_workload_fixture() {
+    local source=$1
+    local rendered
+    rendered=$(mktemp)
+    sed -E "s/^([[:space:]]*)namespace:[[:space:]]*.*/\1namespace: ${WORKLOAD_NAMESPACE}/" "$source" > "$rendered"
+    if ! kubectl apply --validate=false -f "$rendered"; then
+        rm -f "$rendered"
+        return 1
+    fi
+    rm -f "$rendered"
+}
+
+tcp_port_open() {
+    local port=$1
+    : 2>/dev/null </dev/tcp/127.0.0.1/"${port}"
 }
 
 step() {
@@ -327,8 +352,12 @@ run_setup() {
 
     step "Deploying AgentCube via Helm (using native parameters)..."
     # Prepare extra environment variables as JSON for Helm
-    WM_EXTRA_ENV='[{"name":"REDIS_PASSWORD_REQUIRED","value":"false"},{"name":"JWT_KEY_SECRET_NAMESPACE","value":"agentcube"}]'
+    WM_EXTRA_ENV=$(printf '[{"name":"REDIS_PASSWORD_REQUIRED","value":"false"},{"name":"JWT_KEY_SECRET_NAMESPACE","value":"%s"}]' "${AGENTCUBE_NAMESPACE}")
     ROUTER_EXTRA_ENV='[{"name":"REDIS_PASSWORD_REQUIRED","value":"false"}]'
+
+    # Install SPIRE CRDs (Required before installing the chart with spire.enabled=true)
+    step "Installing SPIRE CRDs..."
+    kubectl apply -k "https://github.com/spiffe/spire-controller-manager/config/crd?ref=v0.6.4"
 
     # Install using Helm directly from the source chart
     # We use --set-json to pass the extra environment variables and enable RBAC/SA for the router
@@ -345,7 +374,14 @@ run_setup() {
         --set router.rbac.create=true \
         --set router.serviceAccountName="agentcube-router" \
         --set-json "router.extraEnv=${ROUTER_EXTRA_ENV}" \
-        --wait
+        --set spire.enabled=true \
+        --set spire.agent.insecureBootstrap=true \
+        --set spire.agent.skipKubeletVerification=true \
+        --wait --timeout=10m
+
+    step "Waiting for SPIRE infrastructure..."
+    kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status statefulset/spire-server --timeout=300s
+    kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status daemonset/spire-agent --timeout=300s
 
     step "Waiting for deployments..."
     kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/workloadmanager --timeout=300s
@@ -356,21 +392,22 @@ run_setup() {
     kubectl create clusterrolebinding e2e-test-binding --clusterrole=workloadmanager --serviceaccount="${AGENTCUBE_NAMESPACE}:e2e-test" || true
 
     step "Creating test AgentRuntimes..."
+    kubectl create namespace "${WORKLOAD_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
     # Create normal echo-agent
-    kubectl apply --validate=false -f test/e2e/echo_agent.yaml
+    apply_workload_fixture test/e2e/echo_agent.yaml
     # Create echo-agent-short-ttl with short sessionTimeout for TTL testing
     tmp_ttl_agent=$(mktemp)
     sed 's/name: echo-agent/name: echo-agent-short-ttl/; s/app: echo-agent/app: echo-agent-short-ttl/; s/sessionTimeout: "15m"/sessionTimeout: "30s"/' test/e2e/echo_agent.yaml > "$tmp_ttl_agent"
-    kubectl apply --validate=false -f "$tmp_ttl_agent"
+    apply_workload_fixture "$tmp_ttl_agent"
     rm -f "$tmp_ttl_agent"
 
     step "Creating test CodeInterpreter..."
     # Create e2e-code-interpreter CodeInterpreter
-    kubectl apply --validate=false -f test/e2e/e2e_code_interpreter.yaml
+    apply_workload_fixture test/e2e/e2e_code_interpreter.yaml
 
     step "Waiting for AgentRuntimes to be ready..."
-    kubectl get agentruntime echo-agent -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.name}{"\n"}' || echo "echo-agent may still be starting..."
-    kubectl get agentruntime echo-agent-short-ttl -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.name}{"\n"}' || echo "echo-agent-short-ttl may still be starting..."
+    kubectl get agentruntime echo-agent -n "${WORKLOAD_NAMESPACE}" -o jsonpath='{.metadata.name}{"\n"}' || echo "echo-agent may still be starting..."
+    kubectl get agentruntime echo-agent-short-ttl -n "${WORKLOAD_NAMESPACE}" -o jsonpath='{.metadata.name}{"\n"}' || echo "echo-agent-short-ttl may still be starting..."
     echo "AgentRuntimes created, waiting for pods to be ready..."
     sleep 10
 }
@@ -430,16 +467,28 @@ echo "Router port forward started with PID $ROUTER_PID"
 
 # Wait for port-forwards to be ready
 echo "Waiting for port-forwards..."
-for i in $(seq 1 10); do
-    if curl -sf -o /dev/null "http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}/health" && curl -sf -o /dev/null "http://localhost:${ROUTER_LOCAL_PORT}/health/live"; then
+for i in $(seq 1 30); do
+    # WorkloadManager uses mTLS, so an unauthenticated HTTP health check cannot complete.
+    # Router exposes a non-mTLS health endpoint and should be verified at HTTP level.
+    wm_ok=false
+    router_ok=false
+    if [ "${MTLS_ENABLED}" = "true" ]; then
+        tcp_port_open "${WORKLOAD_MANAGER_LOCAL_PORT}" && wm_ok=true
+    else
+        curl -fsS "http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}/health" >/dev/null 2>&1 && wm_ok=true
+    fi
+    curl -fsS "http://localhost:${ROUTER_LOCAL_PORT}/health/live" >/dev/null 2>&1 && router_ok=true
+    if $wm_ok && $router_ok; then
         echo "Port-forwards are ready."
         break
     fi
-    if [ $i -eq 10 ]; then
-        echo "Timed out waiting for port-forwards." >&2
+    if [ $i -eq 30 ]; then
+        echo "Timed out waiting for port-forwards (wm_ready=$wm_ok router_ready=$router_ok)." >&2
+        cat /tmp/workload_port_forward.log
+        cat /tmp/router_port_forward.log
         exit 1
     fi
-    sleep 1
+    sleep 2
 done
 
 # Setup Python virtual environment for testing
@@ -465,14 +514,25 @@ require_python
 TEST_FAILED=0
 
 echo "Running Go tests..."
-if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN go test -v ./test/e2e/...; then
+# When SPIRE/mTLS is active, direct-WM tests skip because the test client has no client cert.
+if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" \
+   ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" \
+   MTLS_ENABLED="${MTLS_ENABLED}" \
+   WORKLOAD_NAMESPACE="${WORKLOAD_NAMESPACE}" \
+   API_TOKEN=$API_TOKEN \
+   go test -v ./test/e2e/...; then
     TEST_FAILED=1
 fi
 
 echo "Running Python CodeInterpreter tests..."
 cd "$(dirname "$0")"
 
-if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py; then
+if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" \
+   ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" \
+   MTLS_ENABLED="${MTLS_ENABLED}" \
+   API_TOKEN=$API_TOKEN \
+   AGENTCUBE_NAMESPACE="${WORKLOAD_NAMESPACE}" \
+   "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py; then
     TEST_FAILED=1
 fi
 
@@ -482,12 +542,12 @@ if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUT
 fi
 
 echo "Running Python Code Interpreter MCP tests (streamable-http, local subprocess)..."
-if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_mcp_code_interpreter.py; then
+if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" MTLS_ENABLED="${MTLS_ENABLED}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${WORKLOAD_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_mcp_code_interpreter.py; then
     TEST_FAILED=1
 fi
 
 echo "Running Python Code Interpreter MCP stdio tests..."
-if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_mcp_code_interpreter_stdio.py; then
+if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" MTLS_ENABLED="${MTLS_ENABLED}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${WORKLOAD_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_mcp_code_interpreter_stdio.py; then
     TEST_FAILED=1
 fi
 
@@ -498,7 +558,18 @@ else
     cd "$REPO_ROOT"
     docker build -f integrations/code-interpreter-mcp/Dockerfile -t agentcube-code-interpreter-mcp:latest .
     kind load docker-image agentcube-code-interpreter-mcp:latest --name "${E2E_CLUSTER_NAME}"
-    kubectl apply -f integrations/code-interpreter-mcp/deployment.yaml
+    # The deployment manifest hardcodes namespace "agentcube". Render it so the
+    # pod and service URLs target AGENTCUBE_NAMESPACE (system), while the
+    # AGENTCUBE_NAMESPACE env var inside the pod points to WORKLOAD_NAMESPACE
+    # (where CodeInterpreters are deployed).
+    mcp_rendered=""
+    mcp_rendered="$(mktemp)"
+    sed -e "s|namespace: agentcube|namespace: ${AGENTCUBE_NAMESPACE}|g" \
+        -e "s|\.agentcube\.svc\.cluster\.local|.${AGENTCUBE_NAMESPACE}.svc.cluster.local|g" \
+        -e "s|value: \"agentcube\"|value: \"${WORKLOAD_NAMESPACE}\"|g" \
+        integrations/code-interpreter-mcp/deployment.yaml > "${mcp_rendered}"
+    kubectl apply --validate=false -f "${mcp_rendered}"
+    rm -f "${mcp_rendered}"
     kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/agentcube-code-interpreter-mcp --timeout=300s
     kubectl -n "${AGENTCUBE_NAMESPACE}" set env deployment/agentcube-code-interpreter-mcp "API_TOKEN=${API_TOKEN}"
     kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/agentcube-code-interpreter-mcp --timeout=300s
@@ -515,7 +586,7 @@ else
         echo "Running Python Code Interpreter MCP in-cluster (K8s Pod) tests..."
         cd "$_SCRIPT_DIR"
         export MCP_K8S_MCP_URL="http://127.0.0.1:${MCP_K8S_LOCAL_PORT}/mcp"
-        if ! "$E2E_VENV_DIR/bin/python" test_mcp_code_interpreter_k8s.py; then
+        if ! MTLS_ENABLED="${MTLS_ENABLED}" "$E2E_VENV_DIR/bin/python" test_mcp_code_interpreter_k8s.py; then
             TEST_FAILED=1
         fi
     fi

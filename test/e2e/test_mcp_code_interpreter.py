@@ -101,6 +101,16 @@ def _run_async(coro: Any) -> Any:
 class TestMCPCodeInterpreterE2E(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # The MCP subprocess connects to WorkloadManager directly (via
+        # port-forward) using CodeInterpreterClient.  When mTLS is active the
+        # WM requires a client certificate that neither the subprocess nor the
+        # port-forward have.  Same reason test_codeinterpreter.py skips.
+        if os.getenv("MTLS_ENABLED") == "true":
+            raise unittest.SkipTest(
+                "skipping MCP E2E: mTLS is active "
+                "(MCP subprocess has no client cert for direct-WM calls)"
+            )
+
         cls.host = os.environ.get("MCP_E2E_HOST", "127.0.0.1")
         cls.port = int(os.environ.get("MCP_E2E_PORT", "19245"))
         cls.router = os.environ["ROUTER_URL"]

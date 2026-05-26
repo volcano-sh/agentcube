@@ -19,12 +19,14 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"k8s.io/klog/v2"
 
+	"github.com/volcano-sh/agentcube/pkg/mtls"
 	"github.com/volcano-sh/agentcube/pkg/router"
 )
 
@@ -32,10 +34,16 @@ func main() {
 	var (
 		port                  = flag.String("port", "8080", "Router API server port")
 		enableTLS             = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
-		tlsCert               = flag.String("tls-cert", "", "Path to TLS certificate file")
-		tlsKey                = flag.String("tls-key", "", "Path to TLS key file")
+		tlsCert               = flag.String("tls-cert", "", "Path to TLS certificate file for the Router listener")
+		tlsKey                = flag.String("tls-key", "", "Path to TLS key file for the Router listener")
 		debug                 = flag.Bool("debug", false, "Enable debug mode")
 		maxConcurrentRequests = flag.Int("max-concurrent-requests", 1000, "Maximum number of concurrent requests that a router server can handle (0 = unlimited)")
+
+		// mTLS client certificates used by the Router to authenticate with upstream WorkloadManager.
+		// These are distinct from --tls-cert/--tls-key which serve the Router's own HTTPS listener.
+		mtlsCert = flag.String("mtls-cert", "", "Path to mTLS client certificate for upstream WorkloadManager connections")
+		mtlsKey  = flag.String("mtls-key", "", "Path to mTLS client key for upstream WorkloadManager connections")
+		mtlsCA   = flag.String("mtls-ca", "", "Path to mTLS CA bundle for verifying upstream WorkloadManager identity")
 	)
 
 	// Initialize klog flags
@@ -43,6 +51,21 @@ func main() {
 
 	// Parse command line flags
 	flag.Parse()
+
+	tlsConfig := mtls.Config{
+		CertFile: *mtlsCert,
+		KeyFile:  *mtlsKey,
+		CAFile:   *mtlsCA,
+	}
+	if err := validateMTLSFlags(tlsConfig); err != nil {
+		klog.Fatalf("Invalid mTLS configuration: %v", err)
+	}
+	if tlsConfig.CertFile != "" && tlsConfig.KeyFile != "" && tlsConfig.CAFile != "" {
+		klog.Infof("Waiting for Router mTLS cert/key/CA files")
+		if err := mtls.WaitForCertificateFiles(tlsConfig, mtls.DefaultCertificateFileWaitTimeout); err != nil {
+			klog.Fatalf("Invalid mTLS configuration: %v", err)
+		}
+	}
 
 	// Create Router API server configuration
 	config := &router.Config{
@@ -52,6 +75,7 @@ func main() {
 		TLSCert:               *tlsCert,
 		TLSKey:                *tlsKey,
 		MaxConcurrentRequests: *maxConcurrentRequests,
+		MTLSConfig:            tlsConfig,
 	}
 
 	// Create Router API server
@@ -87,4 +111,14 @@ func main() {
 	}
 
 	klog.Info("Router server stopped")
+}
+
+func validateMTLSFlags(cfg mtls.Config) error {
+	if cfg.CertFile == "" && cfg.KeyFile == "" && cfg.CAFile == "" {
+		return nil
+	}
+	if cfg.CertFile == "" || cfg.KeyFile == "" || cfg.CAFile == "" {
+		return fmt.Errorf("mtls-cert, mtls-key, and mtls-ca must all be specified together")
+	}
+	return nil
 }

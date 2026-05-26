@@ -330,10 +330,9 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 
 	// Create reverse proxy with reusable transport
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
-
-	// Use the shared HTTP transport for connection pooling
 	proxy.Transport = s.httpTransport
 
+	// Sign the request with a JWT for sandbox authentication
 	jwtToken, ok := s.generateSandboxJWT(c, sandbox)
 	if !ok {
 		return

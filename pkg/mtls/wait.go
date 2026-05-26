@@ -32,7 +32,7 @@ func WaitForCertificateFiles(cfg Config, timeout time.Duration) error {
 	if cfg.CertFile == "" || cfg.KeyFile == "" || cfg.CAFile == "" {
 		return fmt.Errorf("mTLS requires cert, key, and CA file paths to be provided (got cert=%q, key=%q, ca=%q)", cfg.CertFile, cfg.KeyFile, cfg.CAFile)
 	}
-	
+
 	deadline := time.Now().Add(timeout)
 	var missing []string
 	for {

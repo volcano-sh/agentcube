@@ -22,14 +22,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	cubefake "github.com/volcano-sh/agentcube/client-go/clientset/versioned/fake"
+	cubeinformers "github.com/volcano-sh/agentcube/client-go/informers/externalversions"
 	"github.com/volcano-sh/agentcube/pkg/api"
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/ptr"
 )
 
@@ -219,34 +219,12 @@ func TestBuildSandboxClaimObject(t *testing.T) {
 	})
 }
 
-// fakeInformer wraps a cache.Store to satisfy cache.SharedIndexInformer (partially) for testing.
-type fakeInformer struct {
-	cache.SharedIndexInformer
-	store cache.Store
-}
-
 const (
 	testNamespace               = "default"
 	testAgentRuntimeName        = "test-runtime"
 	testCodeInterpreterWarmPool = "ci-with-wp"
 	testCodeInterpreterUID      = "ci-uid-123"
 )
-
-func (f *fakeInformer) GetStore() cache.Store {
-	return f.store
-}
-
-func toUnstructured(t *testing.T, obj interface{}, kind string) *unstructured.Unstructured {
-	t.Helper()
-	data, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
-	if err != nil {
-		t.Fatalf("failed to convert to unstructured: %v", err)
-	}
-	u := &unstructured.Unstructured{Object: data}
-	u.SetAPIVersion("runtime.agentcube.volcano.sh/v1alpha1")
-	u.SetKind(kind)
-	return u
-}
 
 // setCachedPublicKeyForTest directly mutates the package-level cachedPublicKey
 // behind a mutex. This is fine for serial test execution, but if tests ever run
@@ -263,14 +241,6 @@ func setCachedPublicKeyForTest(t *testing.T, value string) {
 		cachedPublicKey = previous
 		publicKeyCacheMutex.Unlock()
 	})
-}
-
-func addRuntimeObjectToStore(t *testing.T, store cache.Store, obj interface{}, kind string) {
-	t.Helper()
-	u := toUnstructured(t, obj, kind)
-	if err := store.Add(u); err != nil {
-		t.Fatalf("failed to add to store: %v", err)
-	}
 }
 
 func assertSandboxMetadata(t *testing.T, sandboxLabels map[string]string, sandboxName, namespace, namePrefix, workloadName, sessionID string) {
@@ -380,10 +350,15 @@ func TestBuildCodeInterpreterEnvVars(t *testing.T) {
 }
 
 func TestBuildSandboxByAgentRuntime_NotFound(t *testing.T) {
-	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
-	informer := &fakeInformer{store: store}
+	fakeClient := cubefake.NewSimpleClientset()
+	factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
+	agentRuntimeInformer := factory.Runtime().V1alpha1().AgentRuntimes()
+
 	ifm := &Informers{
-		AgentRuntimeInformer: informer,
+		AgentRuntimeLister:   agentRuntimeInformer.Lister(),
+		AgentRuntimeInformer: agentRuntimeInformer.Informer(),
+		informerFactory:      newFactory(),
+		cubeInformerFactory:  factory,
 	}
 
 	_, _, err := buildSandboxByAgentRuntime(testNamespace, "missing", ifm)
@@ -394,10 +369,6 @@ func TestBuildSandboxByAgentRuntime_NotFound(t *testing.T) {
 
 func TestBuildSandboxByAgentRuntime_Success(t *testing.T) {
 	agentRuntime := &runtimev1alpha1.AgentRuntime{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "runtime.agentcube.volcano.sh/v1alpha1",
-			Kind:       "AgentRuntime",
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testAgentRuntimeName,
 			Namespace: testNamespace,
@@ -419,12 +390,17 @@ func TestBuildSandboxByAgentRuntime_Success(t *testing.T) {
 		},
 	}
 
-	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
-	addRuntimeObjectToStore(t, store, agentRuntime, "AgentRuntime")
+	fakeClient := cubefake.NewSimpleClientset(agentRuntime)
+	factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
+	agentRuntimeInformer := factory.Runtime().V1alpha1().AgentRuntimes()
+	err := agentRuntimeInformer.Informer().GetStore().Add(agentRuntime)
+	assert.NoError(t, err)
 
-	informer := &fakeInformer{store: store}
 	ifm := &Informers{
-		AgentRuntimeInformer: informer,
+		AgentRuntimeLister:   agentRuntimeInformer.Lister(),
+		AgentRuntimeInformer: agentRuntimeInformer.Informer(),
+		informerFactory:      newFactory(),
+		cubeInformerFactory:  factory,
 	}
 
 	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, ifm)
@@ -459,11 +435,99 @@ func TestBuildSandboxByAgentRuntime_Success(t *testing.T) {
 	}
 }
 
-func TestBuildSandboxByCodeInterpreter_NotFound(t *testing.T) {
-	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
-	informer := &fakeInformer{store: store}
+func TestBuildSandboxByAgentRuntime_DefaultTimeouts(t *testing.T) {
+	ar := &runtimev1alpha1.AgentRuntime{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: testNamespace,
+			Name:      testAgentRuntimeName,
+		},
+		Spec: runtimev1alpha1.AgentRuntimeSpec{
+			Template: &runtimev1alpha1.SandboxTemplate{
+				Labels: map[string]string{"foo": "bar"},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "main", Image: "nginx"},
+					},
+				},
+			},
+		},
+	}
+
+	fakeClient := cubefake.NewSimpleClientset(ar)
+	factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
+	agentRuntimeInformer := factory.Runtime().V1alpha1().AgentRuntimes()
+	err := agentRuntimeInformer.Informer().GetStore().Add(ar)
+	assert.NoError(t, err)
+
 	ifm := &Informers{
-		CodeInterpreterInformer: informer,
+		AgentRuntimeLister:   agentRuntimeInformer.Lister(),
+		AgentRuntimeInformer: agentRuntimeInformer.Informer(),
+		informerFactory:      newFactory(),
+		cubeInformerFactory:  factory,
+	}
+
+	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, ifm)
+	assert.NoError(t, err)
+	assert.NotNil(t, sandbox)
+	assert.NotNil(t, entry)
+
+	assert.Equal(t, types.SandboxKind, entry.Kind)
+	assert.Equal(t, DefaultSandboxIdleTimeout, entry.IdleTimeout)
+	assert.Equal(t, sandbox.Name, sandbox.Spec.PodTemplate.ObjectMeta.Labels[SandboxNameLabelKey])
+}
+
+func TestBuildSandboxByAgentRuntime_CustomTimeouts(t *testing.T) {
+	ar := &runtimev1alpha1.AgentRuntime{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: testNamespace,
+			Name:      testAgentRuntimeName,
+		},
+		Spec: runtimev1alpha1.AgentRuntimeSpec{
+			SessionTimeout:     &metav1.Duration{Duration: 30 * time.Minute},
+			MaxSessionDuration: &metav1.Duration{Duration: 4 * time.Hour},
+			Template: &runtimev1alpha1.SandboxTemplate{
+				Spec: corev1.PodSpec{
+					RuntimeClassName: ptr.To(""),
+					Containers: []corev1.Container{
+						{Name: "main", Image: "nginx"},
+					},
+				},
+			},
+		},
+	}
+
+	fakeClient := cubefake.NewSimpleClientset(ar)
+	factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
+	agentRuntimeInformer := factory.Runtime().V1alpha1().AgentRuntimes()
+	err := agentRuntimeInformer.Informer().GetStore().Add(ar)
+	assert.NoError(t, err)
+
+	ifm := &Informers{
+		AgentRuntimeLister:   agentRuntimeInformer.Lister(),
+		AgentRuntimeInformer: agentRuntimeInformer.Informer(),
+		informerFactory:      newFactory(),
+		cubeInformerFactory:  factory,
+	}
+
+	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, ifm)
+	assert.NoError(t, err)
+	assert.NotNil(t, sandbox)
+	assert.NotNil(t, entry)
+
+	assert.Equal(t, 30*time.Minute, entry.IdleTimeout)
+	assert.Nil(t, sandbox.Spec.PodTemplate.Spec.RuntimeClassName)
+}
+
+func TestBuildSandboxByCodeInterpreter_NotFound(t *testing.T) {
+	fakeClient := cubefake.NewSimpleClientset()
+	factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
+	codeInterpreterInformer := factory.Runtime().V1alpha1().CodeInterpreters()
+
+	ifm := &Informers{
+		CodeInterpreterLister:   codeInterpreterInformer.Lister(),
+		CodeInterpreterInformer: codeInterpreterInformer.Informer(),
+		informerFactory:         newFactory(),
+		cubeInformerFactory:     factory,
 	}
 
 	_, _, _, err := buildSandboxByCodeInterpreter(testNamespace, "missing", ifm)
@@ -474,10 +538,6 @@ func TestBuildSandboxByCodeInterpreter_NotFound(t *testing.T) {
 
 func TestBuildSandboxByCodeInterpreter_PicodAuthFailsWithoutKey(t *testing.T) {
 	codeInterpreter := &runtimev1alpha1.CodeInterpreter{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "runtime.agentcube.volcano.sh/v1alpha1",
-			Kind:       "CodeInterpreter",
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "ci-picod-no-key",
 			Namespace: testNamespace,
@@ -492,15 +552,20 @@ func TestBuildSandboxByCodeInterpreter_PicodAuthFailsWithoutKey(t *testing.T) {
 
 	setCachedPublicKeyForTest(t, "") // Empty key to trigger error
 
-	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
-	addRuntimeObjectToStore(t, store, codeInterpreter, "CodeInterpreter")
+	fakeClient := cubefake.NewSimpleClientset(codeInterpreter)
+	factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
+	codeInterpreterInformer := factory.Runtime().V1alpha1().CodeInterpreters()
+	err := codeInterpreterInformer.Informer().GetStore().Add(codeInterpreter)
+	assert.NoError(t, err)
 
-	informer := &fakeInformer{store: store}
 	ifm := &Informers{
-		CodeInterpreterInformer: informer,
+		CodeInterpreterLister:   codeInterpreterInformer.Lister(),
+		CodeInterpreterInformer: codeInterpreterInformer.Informer(),
+		informerFactory:         newFactory(),
+		cubeInformerFactory:     factory,
 	}
 
-	_, _, _, err := buildSandboxByCodeInterpreter(testNamespace, "ci-picod-no-key", ifm)
+	_, _, _, err = buildSandboxByCodeInterpreter(testNamespace, "ci-picod-no-key", ifm)
 	if !errors.Is(err, api.ErrPublicKeyMissing) {
 		t.Fatalf("expected error %v, got %v", api.ErrPublicKeyMissing, err)
 	}
@@ -508,10 +573,6 @@ func TestBuildSandboxByCodeInterpreter_PicodAuthFailsWithoutKey(t *testing.T) {
 
 func TestBuildSandboxByCodeInterpreter_SuccessNoWarmPool(t *testing.T) {
 	codeInterpreter := &runtimev1alpha1.CodeInterpreter{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "runtime.agentcube.volcano.sh/v1alpha1",
-			Kind:       "CodeInterpreter",
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "ci-no-wp",
 			Namespace: testNamespace,
@@ -526,12 +587,17 @@ func TestBuildSandboxByCodeInterpreter_SuccessNoWarmPool(t *testing.T) {
 		},
 	}
 
-	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
-	addRuntimeObjectToStore(t, store, codeInterpreter, "CodeInterpreter")
+	fakeClient := cubefake.NewSimpleClientset(codeInterpreter)
+	factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
+	codeInterpreterInformer := factory.Runtime().V1alpha1().CodeInterpreters()
+	err := codeInterpreterInformer.Informer().GetStore().Add(codeInterpreter)
+	assert.NoError(t, err)
 
-	informer := &fakeInformer{store: store}
 	ifm := &Informers{
-		CodeInterpreterInformer: informer,
+		CodeInterpreterLister:   codeInterpreterInformer.Lister(),
+		CodeInterpreterInformer: codeInterpreterInformer.Informer(),
+		informerFactory:         newFactory(),
+		cubeInformerFactory:     factory,
 	}
 
 	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, "ci-no-wp", ifm)
@@ -563,10 +629,6 @@ func TestBuildSandboxByCodeInterpreter_SuccessNoWarmPool(t *testing.T) {
 
 func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 	codeInterpreter := &runtimev1alpha1.CodeInterpreter{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "runtime.agentcube.volcano.sh/v1alpha1",
-			Kind:       "CodeInterpreter",
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testCodeInterpreterWarmPool,
 			Namespace: testNamespace,
@@ -583,12 +645,17 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 		},
 	}
 
-	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
-	addRuntimeObjectToStore(t, store, codeInterpreter, "CodeInterpreter")
+	fakeClient := cubefake.NewSimpleClientset(codeInterpreter)
+	factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
+	codeInterpreterInformer := factory.Runtime().V1alpha1().CodeInterpreters()
+	err := codeInterpreterInformer.Informer().GetStore().Add(codeInterpreter)
+	assert.NoError(t, err)
 
-	informer := &fakeInformer{store: store}
 	ifm := &Informers{
-		CodeInterpreterInformer: informer,
+		CodeInterpreterLister:   codeInterpreterInformer.Lister(),
+		CodeInterpreterInformer: codeInterpreterInformer.Informer(),
+		informerFactory:         newFactory(),
+		cubeInformerFactory:     factory,
 	}
 
 	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, testCodeInterpreterWarmPool, ifm)

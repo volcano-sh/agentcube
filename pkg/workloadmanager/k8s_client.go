@@ -23,6 +23,8 @@ import (
 
 	"k8s.io/klog/v2"
 
+	cubeversioned "github.com/volcano-sh/agentcube/client-go/clientset/versioned"
+	cubeinformers "github.com/volcano-sh/agentcube/client-go/informers/externalversions"
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -62,15 +64,17 @@ var (
 
 // K8sClient encapsulates the Kubernetes client
 type K8sClient struct {
-	clientset       *kubernetes.Clientset
-	dynamicClient   dynamic.Interface
-	scheme          *runtime.Scheme
-	baseConfig      *rest.Config // Store base config for creating user clients
-	clientCache     *ClientCache // LRU cache for user clients
-	dynamicInformer dynamicinformer.DynamicSharedInformerFactory
-	informerFactory informers.SharedInformerFactory
-	podInformer     cache.SharedIndexInformer
-	podLister       listersv1.PodLister
+	clientset           *kubernetes.Clientset
+	cubeClientset       cubeversioned.Interface
+	dynamicClient       dynamic.Interface
+	scheme              *runtime.Scheme
+	baseConfig          *rest.Config // Store base config for creating user clients
+	clientCache         *ClientCache // LRU cache for user clients
+	dynamicInformer     dynamicinformer.DynamicSharedInformerFactory
+	informerFactory     informers.SharedInformerFactory
+	cubeInformerFactory cubeinformers.SharedInformerFactory
+	podInformer         cache.SharedIndexInformer
+	podLister           listersv1.PodLister
 }
 
 type sandboxEntry struct {
@@ -109,6 +113,12 @@ func NewK8sClient() (*K8sClient, error) {
 		return nil, fmt.Errorf("failed to create clientset: %w", err)
 	}
 
+	// Create typed versioned clientset for agentcube
+	cubeClientset, err := cubeversioned.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create typed versioned clientset: %w", err)
+	}
+
 	// Create dynamic client (for CRD operations)
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
@@ -124,20 +134,25 @@ func NewK8sClient() (*K8sClient, error) {
 	// Create informer factory for core resources (Pods, etc.)
 	informerFactory := informers.NewSharedInformerFactory(clientset, 0)
 
+	// Create shared informer factory for typed objects
+	cubeInformerFactory := cubeinformers.NewSharedInformerFactory(cubeClientset, 0)
+
 	// Get pod informer and lister
 	podInformer := informerFactory.Core().V1().Pods().Informer()
 	podLister := informerFactory.Core().V1().Pods().Lister()
 
 	return &K8sClient{
-		clientset:       clientset,
-		dynamicClient:   dynamicClient,
-		scheme:          scheme,
-		baseConfig:      config,
-		clientCache:     NewClientCache(100), // Cache up to 100 clients
-		dynamicInformer: dynamicinformer.NewDynamicSharedInformerFactory(dynamicClient, 0),
-		informerFactory: informerFactory,
-		podInformer:     podInformer,
-		podLister:       podLister,
+		clientset:           clientset,
+		cubeClientset:       cubeClientset,
+		dynamicClient:       dynamicClient,
+		scheme:              scheme,
+		baseConfig:          config,
+		clientCache:         NewClientCache(100), // Cache up to 100 clients
+		dynamicInformer:     dynamicinformer.NewDynamicSharedInformerFactory(dynamicClient, 0),
+		informerFactory:     informerFactory,
+		cubeInformerFactory: cubeInformerFactory,
+		podInformer:         podInformer,
+		podLister:           podLister,
 	}, nil
 }
 

@@ -1019,13 +1019,21 @@ func TestCodeInterpreterSandboxAccessAfterPodRestart(t *testing.T) {
 		return false
 	}, 3*time.Minute, 5*time.Second, "New pod should become ready after recreation")
 
-	// 4. Invoke again with same session - should succeed via ServiceFQDN
+	// 4. Invoke again with same session - should succeed via ServiceFQDN.
+	// Retry invoke: Pod Ready can precede per-sandbox Service DNS (no such host).
 	reqAfter := &CodeInterpreterExecuteRequest{
 		Command: []string{"echo", "after-pod-restart"},
 	}
-	respAfter, err := env.invokeCodeInterpreter(namespace, name, sessionID, reqAfter)
-	require.NoError(t, err, "Invoke after pod restart should succeed (ServiceFQDN resilience)")
-	require.Contains(t, respAfter.Stdout, "after-pod-restart")
+	var respAfter *CodeInterpreterExecuteResponse
+	require.Eventually(t, func() bool {
+		var invokeErr error
+		respAfter, invokeErr = env.invokeCodeInterpreter(namespace, name, sessionID, reqAfter)
+		if invokeErr != nil {
+			t.Logf("Invoke after pod restart retry: %v", invokeErr)
+			return false
+		}
+		return strings.Contains(respAfter.Stdout, "after-pod-restart")
+	}, 3*time.Minute, 2*time.Second, "Invoke after pod restart should succeed (ServiceFQDN resilience)")
 
 	t.Logf("Sandbox access after pod restart verified successfully")
 }

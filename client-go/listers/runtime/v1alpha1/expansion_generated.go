@@ -33,3 +33,11 @@ type CodeInterpreterListerExpansion interface{}
 // CodeInterpreterNamespaceListerExpansion allows custom methods to be added to
 // CodeInterpreterNamespaceLister.
 type CodeInterpreterNamespaceListerExpansion interface{}
+
+// MultiAgentRuntimeListerExpansion allows custom methods to be added to
+// MultiAgentRuntimeLister.
+type MultiAgentRuntimeListerExpansion interface{}
+
+// MultiAgentRuntimeNamespaceListerExpansion allows custom methods to be added to
+// MultiAgentRuntimeNamespaceLister.
+type MultiAgentRuntimeNamespaceListerExpansion interface{}

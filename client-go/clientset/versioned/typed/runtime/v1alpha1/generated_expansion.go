@@ -21,3 +21,5 @@ package v1alpha1
 type AgentRuntimeExpansion interface{}
 
 type CodeInterpreterExpansion interface{}
+
+type MultiAgentRuntimeExpansion interface{}

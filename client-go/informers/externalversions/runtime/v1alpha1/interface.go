@@ -28,6 +28,8 @@ type Interface interface {
 	AgentRuntimes() AgentRuntimeInformer
 	// CodeInterpreters returns a CodeInterpreterInformer.
 	CodeInterpreters() CodeInterpreterInformer
+	// MultiAgentRuntimes returns a MultiAgentRuntimeInformer.
+	MultiAgentRuntimes() MultiAgentRuntimeInformer
 }
 
 type version struct {
@@ -49,4 +51,9 @@ func (v *version) AgentRuntimes() AgentRuntimeInformer {
 // CodeInterpreters returns a CodeInterpreterInformer.
 func (v *version) CodeInterpreters() CodeInterpreterInformer {
 	return &codeInterpreterInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// MultiAgentRuntimes returns a MultiAgentRuntimeInformer.
+func (v *version) MultiAgentRuntimes() MultiAgentRuntimeInformer {
+	return &multiAgentRuntimeInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }

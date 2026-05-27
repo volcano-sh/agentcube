@@ -43,7 +43,7 @@ type multiAgentRuntimeLister struct {
 
 // NewMultiAgentRuntimeLister returns a new MultiAgentRuntimeLister.
 func NewMultiAgentRuntimeLister(indexer cache.Indexer) MultiAgentRuntimeLister {
-	return &multiAgentRuntimeLister{listers.New[*runtimev1alpha1.MultiAgentRuntime](indexer, runtimev1alpha1.Resource("multiagentruntime").GroupResource())}
+	return &multiAgentRuntimeLister{listers.New[*runtimev1alpha1.MultiAgentRuntime](indexer, runtimev1alpha1.Resource("multiagentruntimes").GroupResource())}
 }
 
 // MultiAgentRuntimes returns an object that can list and get MultiAgentRuntimes.

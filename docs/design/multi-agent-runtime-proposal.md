@@ -264,6 +264,7 @@ A separate group manifest key stores aggregated role metadata:
 agentgroup:{grp-xxx} -> AgentGroupManifest{
     GroupSessionID: "grp-xxx",
     CreatedAt: ...,
+    ExpiresAt: ...,
     Roles: [
         { Name: "planner",    SessionID: "...", Endpoint: "10.0.0.4:8080", Status: "ready" },
         { Name: "researcher", SessionID: "...", Endpoint: "10.0.0.5:8080", Status: "ready" },
@@ -407,6 +408,10 @@ func (s *Server) createSandboxGroup(
                 if err != nil {
                     if mar.Spec.StartupPolicy == StartupPolicyBestEffort && !role.IsCoordinator {
                         klog.Warningf("group %s: role %s failed (BestEffort policy): %v", groupSessionID, role.Name, err)
+                        // Clean up the orphaned Headless Service for the failed worker role
+                        if delErr := s.kubeClient.CoreV1().Services(mar.Namespace).Delete(ctx, svcName, metav1.DeleteOptions{}); delErr != nil && !apierrors.IsNotFound(delErr) {
+                            klog.Warningf("group %s: failed to clean up orphaned service %s: %v", groupSessionID, svcName, delErr)
+                        }
                         createdMutex.Lock()
                         created = append(created, createdRole{
                             name:   role.Name,
@@ -452,7 +457,7 @@ func (s *Server) createSandboxGroup(
 
 - **Parallel Sandbox Creation:** To prevent HTTP gateway or client timeouts when launching large groups, roles that do not share mutual dependencies (i.e., reside at the same level of the dependency DAG) are created in parallel. Sandbox creation proceeds in "dependency waves": all sandboxes within a wave are launched concurrently, and the server waits for all to be ready before proceeding to the next dependent wave.
 - **Consistent TTL:** A single `baseTime` is captured before the creation loop begins and used for all `ShutdownTime` calculations. This ensures every sandbox in the group shares a synchronized absolute TTL, regardless of how long it takes to create each wave.
-- **Headless Service per role:** Before each sandbox is created, `createHeadlessServiceForRole()` provisions a Headless Service whose DNS name (`serviceDNS`) is stored in `createdRole`. The `injectDependencyEndpoints()` function reads `serviceDNS` from `created` to construct stable DNS-based environment variables. On rollback, all created Services are explicitly deleted alongside their sandboxes.
+- **Headless Service per role:** Before each sandbox is created, `createHeadlessServiceForRole()` provisions a Headless Service whose DNS name (`serviceDNS`) is stored in `createdRole`. The `injectDependencyEndpoints()` function reads `serviceDNS` from `created` to construct stable DNS-based environment variables, explicitly skipping any dependency in `createdSnapshot` where `failed == true` to avoid injecting unreachable endpoints under the `BestEffort` policy. On rollback, all created Services are explicitly deleted alongside their sandboxes.
 - The deferred rollback calls `rollbackSandboxCreation()` for every sandbox in `created` **and** deletes all Headless Services tracked in `createdServices`, preventing resource leaks on partial failure.
 - Roles are created in topological order. A dependency's `serviceDNS` is guaranteed to be in `created` before the dependent role's sandbox is built.
 - `buildSandboxByAgentRuntime()`, `buildSandboxByCodeInterpreter()`, `createSandbox()`, `WatchSandboxOnce()`, and `rollbackSandboxCreation()` are all called as-is. The correct builder is selected by the `role.Kind` field.
@@ -531,9 +536,9 @@ func topoSort(roles []RoleSpec) ([][]RoleSpec, error) {
     }
 
     var currentQueue []string
-    for name, deg := range inDegree {
-        if deg == 0 {
-            currentQueue = append(currentQueue, name)
+    for _, r := range roles {
+        if inDegree[r.Name] == 0 {
+            currentQueue = append(currentQueue, r.Name)
         }
     }
 
@@ -554,6 +559,7 @@ func topoSort(roles []RoleSpec) ([][]RoleSpec, error) {
                 }
             }
         }
+        sort.Strings(nextQueue)
         waves = append(waves, wave)
         currentQueue = nextQueue
     }
@@ -626,6 +632,7 @@ type AgentGroupManifest struct {
     Namespace      string                `json:"namespace"`
     Roles          []AgentGroupRoleState `json:"roles"`
     CreatedAt      time.Time             `json:"createdAt"`
+    ExpiresAt      time.Time             `json:"expiresAt"`
 }
 ```
 

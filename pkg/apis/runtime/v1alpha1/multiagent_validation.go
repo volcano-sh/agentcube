@@ -57,8 +57,9 @@ func ValidateMultiAgentRuntimeSpec(spec *MultiAgentRuntimeSpec, fldPath *field.P
 		// Check for duplicate role names
 		if roleMap[role.Name] {
 			allErrs = append(allErrs, field.Duplicate(idxPath.Child("name"), role.Name))
+		} else {
+			roleMap[role.Name] = true
 		}
-		roleMap[role.Name] = true
 
 		if role.IsCoordinator {
 			coordinatorCount++

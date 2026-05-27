@@ -195,6 +195,49 @@ func (s *Server) createK8sResources(ctx context.Context, dynamicClient dynamic.I
 	return nil
 }
 
+func (s *Server) waitForSandboxReady(ctx context.Context, sandbox *sandboxv1alpha1.Sandbox, resultChan <-chan SandboxStatusUpdate) (*sandboxv1alpha1.Sandbox, error) {
+	// Use NewTimer so we can stop it explicitly when another branch wins,
+	// preventing the runtime from retaining the timer until it fires.
+	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
+
+	select {
+	case result := <-resultChan:
+		timer.Stop()
+		createdSandbox := result.Sandbox
+		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
+		return createdSandbox, nil
+	case <-ctx.Done():
+		timer.Stop()
+		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
+		return nil, ctx.Err()
+	case <-timer.C:
+		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
+		return nil, errSandboxCreationTimeout
+	}
+}
+
+// resolveSandboxAccessHost returns ServiceFQDN when set, otherwise the sandbox pod IP.
+func (s *Server) resolveSandboxAccessHost(ctx context.Context, createdSandbox, sandbox *sandboxv1alpha1.Sandbox) (string, error) {
+	if host := createdSandbox.Status.ServiceFQDN; host != "" {
+		return host, nil
+	}
+
+	// agent-sandbox create pod with same name as sandbox if no warmpool is used
+	// if warmpool is used, the pod name is stored in sandbox's annotation `agents.x-k8s.io/sandbox-pod-name`
+	sandboxPodName := sandbox.Name
+	if podName, exists := createdSandbox.Annotations[controllers.SandboxPodNameAnnotation]; exists {
+		sandboxPodName = podName
+	}
+	host, err := s.k8sClient.GetSandboxPodIP(ctx, sandbox.Namespace, sandbox.Name, sandboxPodName)
+	if err != nil {
+		if isContextError(err) {
+			return "", err
+		}
+		return "", api.NewInternalError(fmt.Errorf("failed to get sandbox %s/%s pod IP: %w", sandbox.Namespace, sandbox.Name, err))
+	}
+	return host, nil
+}
+
 // createSandbox performs sandbox creation and returns the response payload or an error with an HTTP status code.
 func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
 	placeholder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
@@ -219,43 +262,14 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		return nil, err
 	}
 
-	// Use NewTimer so we can stop it explicitly when another branch wins,
-	// preventing the runtime from retaining the timer until it fires.
-	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
-
-	var createdSandbox *sandboxv1alpha1.Sandbox
-	select {
-	case result := <-resultChan:
-		timer.Stop()
-		createdSandbox = result.Sandbox
-		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
-	case <-ctx.Done():
-		timer.Stop()
-		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
-		return nil, ctx.Err()
-	case <-timer.C:
-		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
-		return nil, errSandboxCreationTimeout
+	createdSandbox, err := s.waitForSandboxReady(ctx, sandbox, resultChan)
+	if err != nil {
+		return nil, err
 	}
 
-	// Prefer ServiceFQDN: K8s Endpoints controller keeps DNS in sync when pod is evicted/recreated.
-	// Fallback to pod IP for agent-sandbox without ServiceFQDN.
-	host := createdSandbox.Status.ServiceFQDN
-	if host == "" {
-		// agent-sandbox create pod with same name as sandbox if no warmpool is used
-		// if warmpool is used, the pod name is stored in sandbox's annotation `agents.x-k8s.io/sandbox-pod-name`
-		sandboxPodName := sandbox.Name
-		if podName, exists := createdSandbox.Annotations[controllers.SandboxPodNameAnnotation]; exists {
-			sandboxPodName = podName
-		}
-		var err error
-		host, err = s.k8sClient.GetSandboxPodIP(ctx, sandbox.Namespace, sandbox.Name, sandboxPodName)
-		if err != nil {
-			if isContextError(err) {
-				return nil, err
-			}
-			return nil, api.NewInternalError(fmt.Errorf("failed to get sandbox %s/%s pod IP: %w", sandbox.Namespace, sandbox.Name, err))
-		}
+	host, err := s.resolveSandboxAccessHost(ctx, createdSandbox, sandbox)
+	if err != nil {
+		return nil, err
 	}
 	if err := s.waitForSandboxEntryPointsReady(ctx, host, sandboxEntry); err != nil {
 		if isContextError(err) {

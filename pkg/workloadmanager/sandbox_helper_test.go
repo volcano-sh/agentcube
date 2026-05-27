@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	sandboxHelperTestPodIP   = "10.0.0.1"
+	sandboxHelperTestPodIP       = "10.0.0.1"
 	sandboxHelperTestServiceFQDN = "test-sandbox.default.svc.cluster.local"
 )
 

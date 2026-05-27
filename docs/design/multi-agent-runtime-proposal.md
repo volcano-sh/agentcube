@@ -233,7 +233,7 @@ The environment variables injected into the dependent pod's containers point to 
 
 **Validation against Naming Collisions:**
 * Because multiple role names or port names could map to the same sanitized environment variable (e.g., `my-agent` and `my.agent` both sanitize to `AGENTCUBE_DEP_MY_AGENT_ENDPOINT`), the API server validates the group configuration at request admission time. If any two roles or named ports within the group result in the same sanitized environment variable key, the request is rejected with a `400 Bad Request` validation error.
-* The `ValidatingAdmissionWebhook` also explicitly checks for **Service name collisions after truncation**: after computing `mar-{shortHash}-{roleNameSanitized-truncated-stripped}` for each role, if any two roles in the same group produce an identical service name, the request is rejected. This prevents the edge case where two roles whose names are identical in their first 50 characters would silently share a single Headless Service.
+* The `ValidatingAdmissionWebhook` also explicitly checks for **Role name collisions after truncation**: after computing the sanitized and truncated role name (`{roleNameSanitized-truncated-stripped}`) for each role, if any two roles in the same group produce an identical sanitized name, the request is rejected. This prevents the edge case where two roles whose names are identical in their first 50 characters would silently share a single Headless Service. The webhook cannot compute the final Service name because the `groupSessionID` (which provides the random hash) is only generated at runtime.
 
 **Injection Scope:**
 * The dependency endpoints are injected into the `Env` list of **all containers** (including primary, sidecar, and init-containers) defined in the pod spec. This ensures that any multi-container runtime configuration can reliably resolve the endpoints.
@@ -646,9 +646,10 @@ GetAgentGroup(ctx context.Context, groupSessionID string) (*types.AgentGroupMani
 DeleteAgentGroup(ctx context.Context, groupSessionID string) error
 
 // DeleteAgentGroupRole atomically removes a single role entry from the group manifest.
-// To prevent race conditions during concurrent GC, the check-then-delete sequence
-// (removing the role, and deleting the manifest if it was the last role) MUST be
-// implemented using a Redis Lua script or transaction.
+// To ensure atomicity and prevent race conditions where the manifest might be deleted
+// while a concurrent process is adding a role, the implementation should use a Redis Lua script.
+// This script should perform the HDEL and then check HLEN to decide whether to delete
+// the entire key in a single atomic operation.
 DeleteAgentGroupRole(ctx context.Context, groupSessionID, roleName string) error
 
 // UpdateAgentGroupRoleStatus atomically updates the status and endpoint of a specific role
@@ -862,8 +863,8 @@ Caching both the group manifest and the coordinator `SandboxInfo` per group per 
 
 When the GC deletes a sandbox that has a non-empty `GroupSessionID`:
 
-1. It calls `DeleteAgentGroupRole(ctx, groupSessionID, roleName)` to atomically remove the role's entry from the Redis Hash using `HDEL`. This avoids a read-modify-write cycle and prevents race conditions when multiple GC goroutines may be cleaning up members of the same group concurrently.
-2. `DeleteAgentGroupRole()` additionally checks if any `role:*` fields remain in the hash after deletion. If none remain, it deletes the `_metadata` field and removes the entire `agentgroup:` key.
+1. It calls `DeleteAgentGroupRole(ctx, groupSessionID, roleName)` to atomically remove the role's entry from the Redis Hash using a Lua script. This script executes `HDEL` and avoids a read-modify-write cycle, preventing race conditions when multiple GC goroutines may be cleaning up members of the same group concurrently.
+2. `DeleteAgentGroupRole()`'s Lua script additionally checks `HLEN` after deletion. If no `role:*` fields remain in the hash, it deletes the `_metadata` field and removes the entire `agentgroup:` key in the same atomic transaction.
 
 This ensures group manifests do not accumulate indefinitely in the store after their member sandboxes expire. The atomic `HDEL` approach also prevents data loss from concurrent GC deletions of sibling roles within the same group.
 

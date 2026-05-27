@@ -59,36 +59,6 @@ func teardownEnv() {
 	os.Unsetenv("WORKLOAD_MANAGER_URL")
 }
 
-func TestHandleHealth(t *testing.T) {
-	// Set required environment variables
-	setupEnv()
-	defer func() {
-		teardownEnv()
-	}()
-
-	config := &Config{
-		Port: "8080",
-	}
-
-	server, err := NewServer(config)
-	if err != nil {
-		t.Fatalf("Failed to create server: %v", err)
-	}
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/health/live", nil)
-	server.engine.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected status code %d, got %d", http.StatusOK, w.Code)
-	}
-
-	expectedBody := `{"status":"alive"}`
-	if w.Body.String() != expectedBody {
-		t.Errorf("Expected body %s, got %s", expectedBody, w.Body.String())
-	}
-}
-
 func TestHandleHealthLive(t *testing.T) {
 	// Set required environment variables
 	setupEnv()

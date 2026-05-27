@@ -343,4 +343,13 @@ func TestUpdateSandboxLastActivity(t *testing.T) {
 	if int64(score) != newLastActivity.Unix() {
 		t.Fatalf("unexpected lastActivity score after update: got %v, want %v", score, newLastActivity.Unix())
 	}
+
+	// session not exists
+	err = c.UpdateSessionLastActivity(ctx, "sess-1-not-exist", newLastActivity)
+	if err == nil {
+		t.Fatalf("expected error for non-existent session")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
 }

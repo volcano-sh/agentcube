@@ -297,6 +297,20 @@ func (rs *redisStore) Close() error {
 	return rs.cli.Close()
 }
 
+// updateSessionLastActivityScript atomically checks if the session key exists
+// and updates its last activity time in the sorted-set index.
+// It uses EXISTS to verify presence rather than GET (which retrieved the
+// actual value in older implementations). This saves data transfer overhead,
+// if in future the value is required GET can be used instead.
+var updateSessionLastActivityScript = redisv9.NewScript(`
+if redis.call("EXISTS", KEYS[1]) == 1 then
+	redis.call("ZADD", KEYS[2], ARGV[2], ARGV[1])
+	return 1
+else
+	return 0
+end
+`)
+
 // UpdateSessionLastActivity updates the last-activity index for the given session.
 func (rs *redisStore) UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error {
 	if sessionID == "" {
@@ -306,21 +320,14 @@ func (rs *redisStore) UpdateSessionLastActivity(ctx context.Context, sessionID s
 		at = time.Now()
 	}
 
-	// Ensure the sandbox mapping exists; otherwise treat as not found.
 	sessionKey := rs.sessionKey(sessionID)
-	_, err := rs.cli.Get(ctx, sessionKey).Result()
-	if errors.Is(err, redisv9.Nil) {
-		return ErrNotFound
-	}
+	res, err := updateSessionLastActivityScript.Run(ctx, rs.cli, []string{sessionKey, rs.lastActivityIndexKey}, sessionID, at.Unix()).Int64()
 	if err != nil {
-		return fmt.Errorf("UpdateSessionLastActivity: get mapping for sessionID %s: %w", sessionID, err)
+		return fmt.Errorf("UpdateSessionLastActivity: script execution failed for sessionID %s: %w", sessionID, err)
 	}
 
-	if _, err := rs.cli.ZAdd(ctx, rs.lastActivityIndexKey, redisv9.Z{
-		Score:  float64(at.Unix()),
-		Member: sessionID,
-	}).Result(); err != nil {
-		return fmt.Errorf("UpdateSessionLastActivity: ZAdd: %w", err)
+	if res == 0 {
+		return ErrNotFound
 	}
 
 	return nil

@@ -61,7 +61,7 @@ func runCanceled(t *testing.T, ifm *Informers) error {
 }
 
 func newFactory() informers.SharedInformerFactory {
-	return informers.NewSharedInformerFactory(fake.NewSimpleClientset(), 0)
+	return informers.NewSharedInformerFactory(fake.NewClientset(), 0)
 }
 
 func TestRunAndWaitForCacheSync_ContextCancellation(t *testing.T) {

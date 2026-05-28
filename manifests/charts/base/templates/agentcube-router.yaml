@@ -22,6 +22,10 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.spire.enabled }}
+      securityContext:
+        fsGroup: 1000
+      {{- end }}
       containers:
         {{- if .Values.spire.enabled }}
         - name: spiffe-helper
@@ -64,12 +68,21 @@ spec:
               value: {{ .Values.redis.password | quote }}
             - name: WORKLOAD_MANAGER_URL
               value: "http://workloadmanager.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.workloadmanager.service.port }}"
+            {{- if .Values.spire.enabled }}
+            - name: AGENTCUBE_SPIFFE_TRUST_DOMAIN
+              value: {{ .Values.spire.trustDomain | quote }}
+            {{- end }}
             {{- with .Values.router.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           args:
             - --port={{ .Values.router.service.targetPort }}
             - --debug
+            {{- if .Values.spire.enabled }}
+            - --mtls-cert={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.certFileName }}
+            - --mtls-key={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.keyFileName }}
+            - --mtls-ca={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.bundleFileName }}
+            {{- end }}
           resources:
             {{- toYaml .Values.router.resources | nindent 12 }}
           livenessProbe:

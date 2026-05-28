@@ -42,6 +42,16 @@ class TestMCPCodeInterpreterStdioE2E(unittest.TestCase):
     """Requires ROUTER_URL, WORKLOAD_MANAGER_URL (same as other CodeInterpreter E2E)."""
 
     def test_stdio_initialize_list_tools_run_code(self):
+        # The MCP subprocess connects to WorkloadManager directly (via
+        # port-forward) using CodeInterpreterClient.  When mTLS is active the
+        # WM requires a client certificate that neither the subprocess nor the
+        # port-forward have.  Same reason test_codeinterpreter.py skips.
+        if os.getenv("MTLS_ENABLED") == "true":
+            raise unittest.SkipTest(
+                "skipping MCP stdio E2E: mTLS is active "
+                "(MCP subprocess has no client cert for direct-WM calls)"
+            )
+
         router = os.environ.get("ROUTER_URL")
         wm = os.environ.get("WORKLOAD_MANAGER_URL")
         if not router or not wm:

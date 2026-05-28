@@ -448,6 +448,31 @@ func TestServer_GzipMiddleware_ExcludesHealthEndpoint(t *testing.T) {
 		"/health is an excluded path and must not be gzip-compressed")
 }
 
+func TestNewServer_JWTMode_RequiresAuth(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	pubKeyPEM := generateTestPublicKeyPEM(t)
+	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	config := Config{
+		Port:      8080,
+		Workspace: tmpDir,
+	}
+
+	server := NewServer(config)
+	ts := httptest.NewServer(server.engine)
+	defer ts.Close()
+
+	// API endpoint should return 401 when JWT mode is active
+	resp, err := http.Post(ts.URL+"/api/execute", "application/json", nil)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "JWT mode should require auth")
+	resp.Body.Close()
+}
+
 func TestServer_MaxBodySizeMiddleware(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
 	require.NoError(t, err)

@@ -23,6 +23,27 @@ from agentcube import CodeInterpreterClient
 from agentcube.exceptions import CommandExecutionError
 
 
+def _skip_if_mtls(test_method):
+    """Decorator: skip direct-WorkloadManager tests when MTLS_ENABLED=true.
+
+    mTLS is only enabled between Router and WorkloadManager. The test client
+    connects directly through a port-forward and has no Router client
+    certificate, so direct WorkloadManager calls cannot authenticate in this
+    mode. The Router-to-WorkloadManager mTLS path is covered by the Go
+    AgentRuntime e2e tests; sandbox traffic is not part of this mTLS boundary.
+    """
+    def wrapper(self, *args, **kwargs):
+        if os.getenv("MTLS_ENABLED") == "true":
+            self.skipTest(
+                "skipping direct-WM test: mTLS is active "
+                "(test client has no client cert; validated via Router→WM path)"
+            )
+        return test_method(self, *args, **kwargs)
+    wrapper.__name__ = test_method.__name__
+    wrapper.__doc__ = test_method.__doc__
+    return wrapper
+
+
 class TestCodeInterpreterE2E(unittest.TestCase):
     """E2E tests for CodeInterpreter functionality using Python SDK."""
 
@@ -44,6 +65,7 @@ class TestCodeInterpreterE2E(unittest.TestCase):
             f"workload_manager={self.workload_manager_url}, router={self.router_url}"
         )
 
+    @_skip_if_mtls
     def test_case1_simple_code_execution_auto_session(self):
         """
         Case1. Simple code execution with session auto-creation
@@ -78,6 +100,7 @@ class TestCodeInterpreterE2E(unittest.TestCase):
             # Assert: Should contain "2\n" in output
             self.assertIn("2", result.strip(), f"Expected '2' in output, got: {result}")
 
+    @_skip_if_mtls
     def test_case2_code_execution_in_session(self):
         """
         Case2. Code execution within a session (stateless expectation)
@@ -112,6 +135,7 @@ class TestCodeInterpreterE2E(unittest.TestCase):
                 f"Expected NameError due to stateless execution, got stderr: {stderr}",
             )
 
+    @_skip_if_mtls
     def test_case3_file_based_workflow_fibonacci_json(self):
         """
         Case3. File-based workflow via CodeInterpreter (Fibonacci JSON)

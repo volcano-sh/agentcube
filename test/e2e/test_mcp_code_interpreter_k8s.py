@@ -42,6 +42,15 @@ def _run_async(coro: Any) -> Any:
 
 class TestMCPCodeInterpreterK8sDeploymentE2E(unittest.TestCase):
     def test_in_cluster_mcp_http_roundtrip(self):
+        # The in-cluster MCP pod connects to WorkloadManager/Router using
+        # CodeInterpreterClient.  When mTLS is active the WM requires a client
+        # certificate that the MCP pod does not have.
+        if os.getenv("MTLS_ENABLED") == "true":
+            raise unittest.SkipTest(
+                "skipping MCP K8s E2E: mTLS is active "
+                "(MCP pod has no client cert for direct-WM calls)"
+            )
+
         url = os.environ.get("MCP_K8S_MCP_URL", "").strip()
         if not url:
             raise unittest.SkipTest("MCP_K8S_MCP_URL not set (in-cluster MCP E2E not started)")

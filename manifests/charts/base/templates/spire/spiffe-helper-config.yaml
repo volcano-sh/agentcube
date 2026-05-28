@@ -16,4 +16,6 @@ data:
     svid_file_name = "{{ .Values.spire.spiffeHelper.certFileName }}"
     svid_key_file_name = "{{ .Values.spire.spiffeHelper.keyFileName }}"
     svid_bundle_file_name = "{{ .Values.spire.spiffeHelper.bundleFileName }}"
+    # Allow non-root app containers (via fsGroup) to read the private key
+    key_file_mode = "0640"
 {{- end }}

@@ -17,7 +17,11 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"flag"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"k8s.io/klog/v2"
 
@@ -37,10 +41,32 @@ func main() {
 		Workspace: *workspace,
 	}
 
-	// Create and start server
+	// Create server
 	server := picod.NewServer(config)
 
-	if err := server.Run(); err != nil {
-		klog.Fatalf("Failed to start server: %v", err)
+	// Setup signal handling with context cancellation
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	// Start PicoD server in goroutine
+	errCh := make(chan error, 1)
+	go func() {
+		klog.Infof("Starting PicoD server on port %d", *port)
+		if err := server.Start(ctx); err != nil {
+			errCh <- err
+		}
+		close(errCh)
+	}()
+
+	// Wait for signal or fatal error
+	select {
+	case <-ctx.Done():
+		klog.Info("Received shutdown signal, shutting down gracefully...")
+		cancel()
+		<-errCh
+	case err := <-errCh:
+		klog.Fatalf("Server error: %v", err)
 	}
+
+	klog.Info("PicoD server stopped")
 }

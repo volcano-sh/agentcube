@@ -132,3 +132,25 @@ spire:
       requests:
         cpu: 50m
         memory: 64Mi
+
+# Keycloak Configuration (External User Authentication)
+keycloak:
+  enabled: false
+  devMode: true  # Use start-dev mode (embedded H2 DB, HTTP). Set false for production.
+  image:
+    repository: quay.io/keycloak/keycloak
+    tag: "26.0"
+    pullPolicy: IfNotPresent
+  adminUser: "admin"
+  adminPassword: "admin"  # Override in production via --set or external Secret
+  service:
+    type: ClusterIP
+    port: 8080
+  realm: "agentcube"
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 512Mi

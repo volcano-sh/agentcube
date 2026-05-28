@@ -1,0 +1,106 @@
+{{- if .Values.keycloak.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: keycloak
+data:
+  # Filename must follow <realm-name>-realm.json convention for --import-realm to detect it.
+  agentcube-realm.json: |
+    {
+      "realm": {{ .Values.keycloak.realm | quote }},
+      "enabled": true,
+      "sslRequired": "none",
+
+      "roles": {
+        "realm": [
+          {
+            "name": "sandbox:invoke",
+            "description": "Permission to invoke agent runtimes and code interpreters."
+          },
+          {
+            "name": "sandbox:manage",
+            "description": "Permission to create/delete AgentRuntime and CodeInterpreter CRDs. Inherits sandbox:invoke.",
+            "composite": true,
+            "composites": {
+              "realm": ["sandbox:invoke"]
+            }
+          },
+          {
+            "name": "admin",
+            "description": "Full administrative access. Inherits sandbox:manage.",
+            "composite": true,
+            "composites": {
+              "realm": ["sandbox:manage"]
+            }
+          }
+        ]
+      },
+
+      "defaultRoles": ["sandbox:invoke"],
+
+      "clients": [
+        {
+          "clientId": "agentcube-sdk",
+          "name": "AgentCube SDK",
+          "description": "Confidential client for SDK access. Supports client_credentials for service accounts and authorization_code for interactive users.",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "serviceAccountsEnabled": true,
+          "redirectUris": ["*"],
+          "webOrigins": ["*"]
+        },
+        {
+          "clientId": "agentcube-router",
+          "name": "AgentCube Router",
+          "description": "Internal service client for the Router component.",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "standardFlowEnabled": false,
+          "directAccessGrantsEnabled": false,
+          "serviceAccountsEnabled": true,
+          "redirectUris": [],
+          "webOrigins": []
+        },
+        {
+          "clientId": "workloadmanager",
+          "name": "WorkloadManager",
+          "description": "Audience client for downstream JWT validation. All auth flows disabled (modern replacement for deprecated bearer-only).",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "standardFlowEnabled": false,
+          "directAccessGrantsEnabled": false,
+          "serviceAccountsEnabled": false,
+          "redirectUris": [],
+          "webOrigins": []
+        },
+        {
+          "clientId": "agentcube-admin",
+          "name": "AgentCube Admin",
+          "description": "Confidential client for administrative operations.",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "standardFlowEnabled": false,
+          "directAccessGrantsEnabled": false,
+          "serviceAccountsEnabled": true,
+          "redirectUris": [],
+          "webOrigins": []
+        }
+      ],
+
+      "scopeMappings": [
+        {
+          "client": "agentcube-sdk",
+          "roles": ["sandbox:invoke"]
+        }
+      ]
+    }
+{{- end }}

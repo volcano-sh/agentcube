@@ -16,6 +16,10 @@ spec:
       labels:
         app: keycloak
     spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: keycloak
           image: "{{ .Values.keycloak.image.repository }}:{{ .Values.keycloak.image.tag }}"
@@ -36,11 +40,47 @@ spec:
             - name: KC_BOOTSTRAP_ADMIN_USERNAME
               value: {{ .Values.keycloak.adminUser | quote }}
             - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              {{- if .Values.keycloak.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.existingSecret }}
+                  key: {{ .Values.keycloak.existingSecretKey | default "admin-password" }}
+              {{- else }}
               value: {{ .Values.keycloak.adminPassword | quote }}
+              {{- end }}
             - name: KC_HEALTH_ENABLED
               value: "true"
             - name: KC_HTTP_PORT
               value: "8080"
+            {{- if .Values.keycloak.database.vendor }}
+            - name: KC_DB
+              value: {{ .Values.keycloak.database.vendor | quote }}
+            - name: KC_DB_URL
+              value: {{ .Values.keycloak.database.url | quote }}
+            - name: KC_DB_USERNAME
+              value: {{ .Values.keycloak.database.username | quote }}
+            - name: KC_DB_PASSWORD
+              {{- if .Values.keycloak.database.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.database.existingSecret }}
+                  key: {{ .Values.keycloak.database.existingSecretKey | default "db-password" }}
+              {{- else }}
+              value: {{ .Values.keycloak.database.password | quote }}
+              {{- end }}
+            {{- end }}
+            {{- if .Values.keycloak.proxy.headers }}
+            - name: KC_PROXY_HEADERS
+              value: {{ .Values.keycloak.proxy.headers | quote }}
+            {{- end }}
+            {{- if .Values.keycloak.proxy.httpEnabled }}
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            {{- end }}
+            {{- if .Values.keycloak.proxy.hostname }}
+            - name: KC_HOSTNAME
+              value: {{ .Values.keycloak.proxy.hostname | quote }}
+            {{- end }}
           volumeMounts:
             - name: realm-config
               mountPath: /opt/keycloak/data/import
@@ -82,7 +122,7 @@ spec:
   type: {{ .Values.keycloak.service.type }}
   ports:
     - port: {{ .Values.keycloak.service.port }}
-      targetPort: 8080
+      targetPort: http
       protocol: TCP
       name: http
   selector:

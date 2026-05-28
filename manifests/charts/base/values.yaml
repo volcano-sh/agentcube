@@ -136,17 +136,39 @@ spire:
 # Keycloak Configuration (External User Authentication)
 keycloak:
   enabled: false
-  devMode: true  # Use start-dev mode (embedded H2 DB, HTTP). Set false for production.
+  # Use start-dev mode (embedded H2 DB, HTTP) for local development.
+  # Set to false for production — requires database.vendor and proxy settings below.
+  devMode: true
   image:
     repository: quay.io/keycloak/keycloak
     tag: "26.0"
     pullPolicy: IfNotPresent
   adminUser: "admin"
   adminPassword: "admin"  # Override in production via --set or external Secret
+  existingSecret: ""       # Name of a pre-existing Secret containing admin credentials
+  existingSecretKey: "admin-password"  # Key within the Secret holding the password
+  # External database configuration (required when devMode is false)
+  database:
+    vendor: ""             # Database type: "postgres", "mysql", "mariadb". Empty = embedded H2 (dev only).
+    url: ""                # JDBC URL, e.g., "jdbc:postgresql://postgres:5432/keycloak"
+    username: ""
+    password: ""
+    existingSecret: ""     # Name of a pre-existing Secret containing the database password
+    existingSecretKey: "db-password"
+  # Reverse proxy configuration (required when Keycloak is behind an Ingress or load balancer)
+  proxy:
+    headers: ""            # Proxy header mode: "xforwarded" or "forwarded". Empty = disabled.
+    httpEnabled: false     # Allow HTTP traffic when running behind a TLS-terminating proxy
+    hostname: ""           # Public hostname, e.g., "keycloak.example.com". Empty = auto-detect.
   service:
     type: ClusterIP
     port: 8080
   realm: "agentcube"
+  sdk:
+    redirectUris:
+      - "http://localhost*"
+    webOrigins:
+      - "http://localhost*"
   resources:
     limits:
       cpu: 500m

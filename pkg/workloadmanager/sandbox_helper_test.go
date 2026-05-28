@@ -28,7 +28,10 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 )
 
-const sandboxHelperTestPodIP = "10.0.0.1"
+const (
+	sandboxHelperTestPodIP       = "10.0.0.1"
+	sandboxHelperTestServiceFQDN = "test-sandbox.default.svc.cluster.local"
+)
 
 func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 	now := time.Now()
@@ -163,7 +166,7 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 	tests := []struct {
 		name           string
 		setupSandbox   func() *sandboxv1alpha1.Sandbox
-		podIP          string
+		host           string // ServiceFQDN or pod IP
 		entry          *sandboxEntry
 		validateResult func(t *testing.T, result *types.SandboxInfo)
 	}{
@@ -187,7 +190,7 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 					},
 				}
 			},
-			podIP: sandboxHelperTestPodIP,
+			host: sandboxHelperTestPodIP,
 			entry: &sandboxEntry{
 				Kind:      types.AgentRuntimeKind,
 				SessionID: "test-session-123",
@@ -211,6 +214,39 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 				assert.Equal(t, sandboxHelperTestPodIP+":8080", result.EntryPoints[0].Endpoint)
 				assert.Equal(t, "/metrics", result.EntryPoints[1].Path)
 				assert.Equal(t, sandboxHelperTestPodIP+":9090", result.EntryPoints[1].Endpoint)
+			},
+		},
+		{
+			name: "sandbox with ServiceFQDN (resilient to pod restart)",
+			setupSandbox: func() *sandboxv1alpha1.Sandbox {
+				return &sandboxv1alpha1.Sandbox{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "test-sandbox",
+						Namespace:         "default",
+						UID:               "test-uid-123",
+						CreationTimestamp: metav1.NewTime(now),
+					},
+					Status: sandboxv1alpha1.SandboxStatus{
+						ServiceFQDN: sandboxHelperTestServiceFQDN,
+						Conditions: []metav1.Condition{
+							{
+								Type:   string(sandboxv1alpha1.SandboxConditionReady),
+								Status: metav1.ConditionTrue,
+							},
+						},
+					},
+				}
+			},
+			host: sandboxHelperTestServiceFQDN,
+			entry: &sandboxEntry{
+				Kind:      types.AgentRuntimeKind,
+				SessionID: "test-session-123",
+				Ports: []runtimev1alpha1.TargetPort{
+					{Port: 8080, Protocol: runtimev1alpha1.ProtocolTypeHTTP, PathPrefix: "/api"},
+				},
+			},
+			validateResult: func(t *testing.T, result *types.SandboxInfo) {
+				assert.Equal(t, sandboxHelperTestServiceFQDN+":8080", result.EntryPoints[0].Endpoint)
 			},
 		},
 		{
@@ -239,7 +275,7 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 					},
 				}
 			},
-			podIP: sandboxHelperTestPodIP,
+			host: sandboxHelperTestPodIP,
 			entry: &sandboxEntry{
 				Kind:      types.AgentRuntimeKind,
 				SessionID: "test-session-123",
@@ -271,7 +307,7 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 					},
 				}
 			},
-			podIP: sandboxHelperTestPodIP,
+			host: sandboxHelperTestPodIP,
 			entry: &sandboxEntry{
 				Kind:      types.AgentRuntimeKind,
 				SessionID: "test-session-123",
@@ -282,7 +318,7 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 			},
 		},
 		{
-			name: "sandbox with empty pod IP",
+			name: "sandbox with empty host",
 			setupSandbox: func() *sandboxv1alpha1.Sandbox {
 				return &sandboxv1alpha1.Sandbox{
 					ObjectMeta: metav1.ObjectMeta{
@@ -301,7 +337,7 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 					},
 				}
 			},
-			podIP: "",
+			host: "",
 			entry: &sandboxEntry{
 				Kind:      types.AgentRuntimeKind,
 				SessionID: "test-session-123",
@@ -322,7 +358,7 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sandbox := tt.setupSandbox()
-			result := buildSandboxInfo(sandbox, tt.podIP, tt.entry)
+			result := buildSandboxInfo(sandbox, tt.host, tt.entry)
 			tt.validateResult(t, result)
 		})
 	}

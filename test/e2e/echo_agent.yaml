@@ -100,3 +100,4 @@ spec:
   sessionTimeout: "15m"
   maxSessionDuration: "8h"
 status: {}
+

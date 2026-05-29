@@ -395,11 +395,15 @@ run_setup() {
     kubectl create namespace "${WORKLOAD_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
     # Create normal echo-agent
     apply_workload_fixture test/e2e/echo_agent.yaml
-    # Create echo-agent-short-ttl with short sessionTimeout for TTL testing
+    # Create echo-agent-short-ttl with short sessionTimeout for TTL testing.
+    # maxSessionDuration is intentionally omitted (deleted by sed) — the TTL test
+    # exercises idle-timeout (sessionTimeout) cleanup, not hard-expiry (maxSessionDuration).
+    # This also validates the PR change that makes maxSessionDuration optional for AgentRuntime.
     tmp_ttl_agent=$(mktemp)
-    sed 's/name: echo-agent/name: echo-agent-short-ttl/; s/app: echo-agent/app: echo-agent-short-ttl/; s/sessionTimeout: "15m"/sessionTimeout: "30s"/' test/e2e/echo_agent.yaml > "$tmp_ttl_agent"
+    sed 's/name: echo-agent/name: echo-agent-short-ttl/; s/app: echo-agent/app: echo-agent-short-ttl/; s/sessionTimeout: "15m"/sessionTimeout: "30s"/; /maxSessionDuration:/d' test/e2e/echo_agent.yaml > "$tmp_ttl_agent"
     apply_workload_fixture "$tmp_ttl_agent"
     rm -f "$tmp_ttl_agent"
+
 
     step "Creating test CodeInterpreter..."
     # Create e2e-code-interpreter CodeInterpreter

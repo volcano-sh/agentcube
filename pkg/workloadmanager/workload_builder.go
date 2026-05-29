@@ -401,10 +401,15 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				},
 			},
 		}
+		// CodeInterpreter always has a hard cap: use explicit MaxSessionDuration or
+		// fall back to DefaultSandboxTTL (8h). This differs from AgentRuntime where
+		// omitting MaxSessionDuration means no hard expiry.
+		ttl := DefaultSandboxTTL
 		if codeInterpreterObj.Spec.MaxSessionDuration != nil {
-			shutdownTime := metav1.NewTime(time.Now().Add(codeInterpreterObj.Spec.MaxSessionDuration.Duration))
-			simpleSandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
+			ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration
 		}
+		shutdownTime := metav1.NewTime(time.Now().Add(ttl))
+		simpleSandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
 		sandboxEntry.Kind = types.SandboxClaimsKind
 		return simpleSandbox, sandboxClaim, sandboxEntry, nil
 	}
@@ -444,8 +449,13 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		idleTimeout:    idleTimeout,
 	}
 
+	// CodeInterpreter always has a hard cap: use explicit MaxSessionDuration or
+	// fall back to DefaultSandboxTTL (8h). This differs from AgentRuntime where
+	// omitting MaxSessionDuration means no hard expiry.
 	if codeInterpreterObj.Spec.MaxSessionDuration != nil {
 		buildParams.ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration
+	} else {
+		buildParams.ttl = DefaultSandboxTTL
 	}
 	sandbox := buildSandboxObject(buildParams)
 	return sandbox, nil, sandboxEntry, nil

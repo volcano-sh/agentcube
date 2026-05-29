@@ -343,13 +343,70 @@ func TestUpdateSandboxLastActivity(t *testing.T) {
 	if int64(score) != newLastActivity.Unix() {
 		t.Fatalf("unexpected lastActivity score after update: got %v, want %v", score, newLastActivity.Unix())
 	}
+}
 
-	// session not exists
-	err = c.UpdateSessionLastActivity(ctx, "sess-1-not-exist", newLastActivity)
-	if err == nil {
-		t.Fatalf("expected error for non-existent session")
+// TestRedisStore_StoreSandbox_ZeroExpiresAt verifies the behavior for AgentRuntime
+// sandboxes that have no MaxSessionDuration (ExpiresAt == zero time):
+//   - The session is still stored and retrievable by session ID.
+//   - The session is NOT added to the expiry sorted-set (no hard cap).
+//   - The session IS tracked in the last-activity index after UpdateSessionLastActivity,
+//     so idle-timeout GC still works correctly.
+func TestRedisStore_StoreSandbox_ZeroExpiresAt(t *testing.T) {
+	ctx := context.Background()
+	c, mr := newTestRedisClient(t)
+
+	// Zero ExpiresAt — simulates an AgentRuntime sandbox with no MaxSessionDuration.
+	sb := &types.SandboxInfo{
+		SandboxID: "sb-no-expiry",
+		Name:      "test-sandbox-no-expiry",
+		SessionID: "sess-no-expiry",
+		CreatedAt: time.Now().UTC(),
+		ExpiresAt: time.Time{}, // zero
+		Status:    "running",
 	}
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expected ErrNotFound, got %v", err)
+
+	// StoreSandbox must succeed even with zero ExpiresAt.
+	if err := c.StoreSandbox(ctx, sb); err != nil {
+		t.Fatalf("StoreSandbox with zero ExpiresAt failed: %v", err)
+	}
+
+	// The session must be retrievable.
+	got, err := c.GetSandboxBySessionID(ctx, "sess-no-expiry")
+	if err != nil {
+		t.Fatalf("GetSandboxBySessionID failed: %v", err)
+	}
+	if got.SandboxID != "sb-no-expiry" {
+		t.Errorf("expected SandboxID sb-no-expiry, got %q", got.SandboxID)
+	}
+
+	// Must NOT be in the expiry sorted-set (zero ExpiresAt = no hard cap).
+	_, err = mr.ZScore(c.expiryIndexKey, "sess-no-expiry")
+	if err == nil {
+		t.Error("expected sess-no-expiry to be absent from expiry index, but ZScore succeeded")
+	}
+
+	// Must NOT appear in ListExpiredSandboxes even at a very late cutoff.
+	farFuture := time.Now().Add(100 * 365 * 24 * time.Hour)
+	expired, err := c.ListExpiredSandboxes(ctx, farFuture, 100)
+	if err != nil {
+		t.Fatalf("ListExpiredSandboxes error: %v", err)
+	}
+	for _, s := range expired {
+		if s.SessionID == "sess-no-expiry" {
+			t.Error("sess-no-expiry must not appear in ListExpiredSandboxes")
+		}
+	}
+
+	// After UpdateSessionLastActivity the session MUST be tracked in the activity index.
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := c.UpdateSessionLastActivity(ctx, "sess-no-expiry", now); err != nil {
+		t.Fatalf("UpdateSessionLastActivity failed: %v", err)
+	}
+	score, err := mr.ZScore(c.lastActivityIndexKey, "sess-no-expiry")
+	if err != nil {
+		t.Fatalf("expected sess-no-expiry in last-activity index: %v", err)
+	}
+	if int64(score) != now.Unix() {
+		t.Errorf("unexpected last-activity score: got %v, want %v", int64(score), now.Unix())
 	}
 }

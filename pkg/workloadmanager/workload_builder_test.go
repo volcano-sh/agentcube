@@ -51,7 +51,7 @@ func TestBuildSandboxObject_DoesNotMutateCallerLabels(t *testing.T) {
 		namespace:   "default",
 		sandboxName: "sandbox-abc",
 		sessionID:   "session-123",
-		ttl:         DefaultSandboxTTL,
+		ttl:         time.Hour,
 		idleTimeout: DefaultSandboxIdleTimeout,
 		podLabels:   original,
 	}
@@ -112,6 +112,26 @@ func TestBuildSandboxObject_NilLabels(t *testing.T) {
 	}
 	if podLabels[SandboxNameLabelKey] != "sandbox-xyz" {
 		t.Errorf("expected %s=sandbox-xyz, got %q", SandboxNameLabelKey, podLabels[SandboxNameLabelKey])
+	}
+}
+
+// TestBuildSandboxObject_NoTTL verifies that when ttl==0 (AgentRuntime with no
+// MaxSessionDuration configured), ShutdownTime is nil — the sandbox runs
+// indefinitely and is only cleaned up by idle timeout.
+func TestBuildSandboxObject_NoTTL(t *testing.T) {
+	params := &buildSandboxParams{
+		namespace:   "default",
+		sandboxName: "sandbox-no-ttl",
+		sessionID:   "session-no-ttl",
+		ttl:         0, // explicitly no TTL — AgentRuntime without MaxSessionDuration
+		idleTimeout: 15 * time.Minute,
+	}
+
+	sandbox := buildSandboxObject(params)
+
+	if sandbox.Spec.Lifecycle.ShutdownTime != nil {
+		t.Errorf("expected ShutdownTime to be nil for zero-ttl sandbox, got %v",
+			sandbox.Spec.Lifecycle.ShutdownTime)
 	}
 }
 

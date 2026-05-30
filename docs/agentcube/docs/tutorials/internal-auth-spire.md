@@ -78,7 +78,9 @@ clusterspiffeids.spire.spiffe.io      2025-XX-XXTXX:XX:XXZ
 
 ## Step 2 - Upgrade the Helm release with SPIRE enabled
 
-Run the Helm upgrade with `spire.enabled=true`. The extra `--set` flags for
+Run the Helm upgrade with `spire.enabled=true`. Keep `--reuse-values` so your
+existing install-time settings (for example Redis, images, RBAC, or service
+accounts) are preserved while enabling SPIRE. The extra `--set` flags for
 `insecureBootstrap` and `skipKubeletVerification` are needed for local
 development clusters (Kind / Minikube). On a production cluster with proper
 kubelet certificates, you can omit them.
@@ -86,6 +88,7 @@ kubelet certificates, you can omit them.
 ```bash
 helm upgrade agentcube manifests/charts/base \
   -n agentcube-system \
+  --reuse-values \
   --set spire.enabled=true \
   --set spire.agent.insecureBootstrap=true \
   --set spire.agent.skipKubeletVerification=true
@@ -305,11 +308,13 @@ plane components, run the Helm upgrade again with `spire.enabled=false`:
 ```bash
 helm upgrade agentcube manifests/charts/base \
   -n agentcube-system \
+  --reuse-values \
   --set spire.enabled=false
 ```
 
-This removes all SPIRE resources (Server, Agent, CRDs, sidecars) and the
-Router/WorkloadManager pods will restart with `1/1` containers.
+This removes all SPIRE workloads (Server, Agent), sidecars, and ClusterSPIFFEID
+resources from this Helm release. The Router/WorkloadManager pods will restart
+with `1/1` containers.
 
 To also remove the SPIRE Controller Manager CRDs:
 

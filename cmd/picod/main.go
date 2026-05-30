@@ -52,8 +52,8 @@ func main() {
 	// Create and start server
 	server := picod.NewServer(config)
 
-	if err := server.Run(ctx); err != nil {
-		klog.Fatalf("Failed to start server: %v", err)
+	if err := server.Start(ctx); err != nil {
+		klog.Fatalf("PicoD server exited with error: %v", err)
 	}
 
 	klog.Info("PicoD server stopped")

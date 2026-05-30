@@ -18,6 +18,7 @@ package picod
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -31,6 +32,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
 )
+
+// ErrAccessDenied is returned by mkdirSafe when a path escapes the workspace
+// jail via a symlink. Callers should use errors.Is to detect it.
+var ErrAccessDenied = errors.New("access denied: path escapes workspace jail via symlink")
 
 const (
 	maxFileMode = 0777 // Maximum allowed file permission mode
@@ -96,7 +101,7 @@ func (s *Server) handleMultipartUpload(c *gin.Context) {
 	dir := filepath.Dir(safePath)
 	if err := s.mkdirSafe(dir); err != nil {
 		code := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "access denied") {
+		if errors.Is(err, ErrAccessDenied) {
 			code = http.StatusForbidden
 		}
 		c.JSON(code, gin.H{
@@ -192,7 +197,7 @@ func (s *Server) handleJSONBase64Upload(c *gin.Context) {
 	dir := filepath.Dir(safePath)
 	if err := s.mkdirSafe(dir); err != nil {
 		code := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "access denied") {
+		if errors.Is(err, ErrAccessDenied) {
 			code = http.StatusForbidden
 		}
 		c.JSON(code, gin.H{
@@ -418,7 +423,7 @@ func (s *Server) mkdirSafe(dir string) error {
 			}
 			rel, relErr := filepath.Rel(resolvedWorkspace, resolved)
 			if relErr != nil || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || rel == ".." {
-				return fmt.Errorf("access denied: path %q escapes workspace jail via symlink", dir)
+				return fmt.Errorf("%w: path %q escapes workspace jail via symlink", ErrAccessDenied, dir)
 			}
 			break
 		}

@@ -18,6 +18,7 @@ package picod
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -133,8 +134,8 @@ func maxBodySizeMiddleware() gin.HandlerFunc {
 	}
 }
 
-// Run starts the server and blocks until ctx is canceled or a fatal error occurs.
-func (s *Server) Run(ctx context.Context) error {
+// Start starts the server and blocks until ctx is canceled or a fatal error occurs.
+func (s *Server) Start(ctx context.Context) error {
 	addr := fmt.Sprintf(":%d", s.config.Port)
 	klog.Infof("PicoD server starting on %s", addr)
 
@@ -161,7 +162,7 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}()
 
-	if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
+	if err := httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		close(stop)
 		<-idleConnsClosed // wait for the goroutine to exit
 		return err

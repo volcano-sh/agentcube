@@ -129,8 +129,19 @@ class CodeInterpreterDataPlaneClient:
         """Execute a shell command and return stdout, stderr, and exit_code.
 
         Unlike ``execute_command``, this does not raise when ``exit_code != 0``.
+
+        Args:
+            command: The command to execute.
+            timeout: Per-command execution timeout in seconds sent to PicoD.
+                When omitted, the ``timeout`` field is not included in the
+                payload and PicoD uses its own server-side default
+                (``--max-execution-timeout``). ``self.timeout`` is an HTTP
+                socket timeout used only for the underlying requests call and
+                is not forwarded to PicoD as a command timeout.
         """
-        timeout_value = timeout or self.timeout
+        # self.timeout is the HTTP socket read-timeout; use it to size the
+        # underlying HTTP call. timeout_value is only referenced for read_timeout.
+        timeout_value = timeout if timeout is not None else self.timeout
 
         cmd_list = shlex.split(command, posix=True) if isinstance(command, str) else command
 

@@ -62,6 +62,8 @@ func NewServer(config Config) *Server {
 		config.MaxExecutionTimeout = 60 * time.Second
 	}
 	if config.MaxExecutionTimeout > config.ShutdownTimeout {
+		klog.Warningf("MaxExecutionTimeout (%v) exceeds ShutdownTimeout (%v); capping to ShutdownTimeout to prevent commands from outliving graceful shutdown",
+			config.MaxExecutionTimeout, config.ShutdownTimeout)
 		config.MaxExecutionTimeout = config.ShutdownTimeout
 	}
 	s := &Server{

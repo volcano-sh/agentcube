@@ -29,6 +29,20 @@ from agentcube import CodeInterpreterClient
 from langchain_agentcube import AgentcubeSandbox
 
 
+def _skip_if_mtls(test_method):
+    """Decorator: skip direct-WorkloadManager tests when MTLS_ENABLED=true."""
+    def wrapper(self, *args, **kwargs):
+        if os.getenv("MTLS_ENABLED") == "true":
+            self.skipTest(
+                "skipping direct-WM test: mTLS is active "
+                "(test client has no client cert; validated via Router→WM path)"
+            )
+        return test_method(self, *args, **kwargs)
+    wrapper.__name__ = test_method.__name__
+    wrapper.__doc__ = test_method.__doc__
+    return wrapper
+
+
 class TestLangchainAgentcubeSandboxE2E(unittest.TestCase):
     """E2E for ``AgentcubeSandbox`` backed by a real Code Interpreter session."""
 
@@ -48,6 +62,7 @@ class TestLangchainAgentcubeSandboxE2E(unittest.TestCase):
             f"wm={self.workload_manager_url}, router={self.router_url}"
         )
 
+    @_skip_if_mtls
     def test_sandbox_execute_echo(self):
         with CodeInterpreterClient(
             name="e2e-code-interpreter",
@@ -64,6 +79,7 @@ class TestLangchainAgentcubeSandboxE2E(unittest.TestCase):
             self.assertIn("lc-sandbox-ok", r.output)
             print(f"[LangChain sandbox E2E] execute ok: {r.output!r}")
 
+    @_skip_if_mtls
     def test_sandbox_execute_nonzero_exit(self):
         """``BaseSandbox.execute`` must return ``ExecuteResponse``, not raise."""
         with CodeInterpreterClient(
@@ -79,6 +95,7 @@ class TestLangchainAgentcubeSandboxE2E(unittest.TestCase):
             self.assertEqual(r.exit_code, 7, r.output)
             print(f"[LangChain sandbox E2E] nonzero exit as expected: {r.exit_code}")
 
+    @_skip_if_mtls
     def test_sandbox_upload_download_roundtrip(self):
         marker = f"lc-roundtrip-{os.getpid()}\n".encode("utf-8")
         remote = f"lc_e2e_roundtrip_{os.getpid()}.txt"
@@ -101,6 +118,7 @@ class TestLangchainAgentcubeSandboxE2E(unittest.TestCase):
             self.assertEqual(dl[0].content, marker)
             print(f"[LangChain sandbox E2E] upload/download ok remote={remote!r}")
 
+    @_skip_if_mtls
     def test_sandbox_absolute_path_normalized(self):
         """Deep Agents often use absolute paths; ensure strip + upload/download works."""
         marker = b"abs-path-ok\n"

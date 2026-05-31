@@ -45,11 +45,6 @@ const (
 	IdentitySecretName = "picod-router-identity" //nolint:gosec // This is a name reference, not a credential
 	// PublicKeyDataKey is the key in the Secret data map for the public key
 	PublicKeyDataKey = "public.pem"
-
-	// CodeInterpreterKind is the Kind of the CodeInterpreter custom resource.
-	CodeInterpreterKind = "CodeInterpreter"
-	// CodeInterpreterAPIVersion is the API version (Group/Version) of the CodeInterpreter custom resource.
-	CodeInterpreterAPIVersion = "runtime.agentcube.volcano.sh/v1alpha1"
 )
 
 // IdentitySecretNamespace is the namespace where the identity secret is stored
@@ -358,8 +353,8 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 			sessionID:           sessionID,
 			idleTimeout:         idleTimeout,
 			ownerReference: &metav1.OwnerReference{
-				APIVersion: CodeInterpreterAPIVersion,
-				Kind:       CodeInterpreterKind,
+				APIVersion: runtimev1alpha1.CodeInterpreterGroupVersionKind.GroupVersion().String(),
+				Kind:       runtimev1alpha1.CodeInterpreterKind,
 				Name:       codeInterpreterObj.Name,
 				UID:        codeInterpreterObj.UID,
 			},

@@ -501,4 +501,3 @@ func TestPicoD_SymlinkUploadGuard(t *testing.T) {
 		assert.True(t, os.IsNotExist(statErr), "File should not be created outside workspace")
 	})
 }
-

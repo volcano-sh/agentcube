@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"time"
 
+	cubeinformers "github.com/volcano-sh/agentcube/client-go/informers/externalversions"
+	cubelisters "github.com/volcano-sh/agentcube/client-go/listers/runtime/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
@@ -50,18 +52,27 @@ var (
 )
 
 type Informers struct {
+	AgentRuntimeLister      cubelisters.AgentRuntimeLister
+	CodeInterpreterLister   cubelisters.CodeInterpreterLister
 	AgentRuntimeInformer    cache.SharedIndexInformer
 	CodeInterpreterInformer cache.SharedIndexInformer
 	PodInformer             cache.SharedIndexInformer
 	informerFactory         informers.SharedInformerFactory
+	cubeInformerFactory     cubeinformers.SharedInformerFactory
 }
 
 func NewInformers(k8sClient *K8sClient) *Informers {
+	agentRuntimeInformer := k8sClient.cubeInformerFactory.Runtime().V1alpha1().AgentRuntimes()
+	codeInterpreterInformer := k8sClient.cubeInformerFactory.Runtime().V1alpha1().CodeInterpreters()
+
 	return &Informers{
-		AgentRuntimeInformer:    k8sClient.dynamicInformer.ForResource(AgentRuntimeGVR).Informer(),
-		CodeInterpreterInformer: k8sClient.dynamicInformer.ForResource(CodeInterpreterGVR).Informer(),
+		AgentRuntimeLister:      agentRuntimeInformer.Lister(),
+		CodeInterpreterLister:   codeInterpreterInformer.Lister(),
+		AgentRuntimeInformer:    agentRuntimeInformer.Informer(),
+		CodeInterpreterInformer: codeInterpreterInformer.Informer(),
 		PodInformer:             k8sClient.podInformer,
 		informerFactory:         k8sClient.informerFactory,
+		cubeInformerFactory:     k8sClient.cubeInformerFactory,
 	}
 }
 
@@ -77,8 +88,7 @@ func (ifm *Informers) RunAndWaitForCacheSync(ctx context.Context) error {
 
 func (ifm *Informers) run(stopCh <-chan struct{}) {
 	ifm.informerFactory.Start(stopCh)
-	go ifm.AgentRuntimeInformer.Run(stopCh)
-	go ifm.CodeInterpreterInformer.Run(stopCh)
+	ifm.cubeInformerFactory.Start(stopCh)
 }
 
 func (ifm *Informers) waitForCacheSync(ctx context.Context) error {

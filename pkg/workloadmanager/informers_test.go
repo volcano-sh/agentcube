@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	cubefake "github.com/volcano-sh/agentcube/client-go/clientset/versioned/fake"
+	cubeinformers "github.com/volcano-sh/agentcube/client-go/informers/externalversions"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
@@ -64,6 +66,10 @@ func newFactory() informers.SharedInformerFactory {
 	return informers.NewSharedInformerFactory(fake.NewSimpleClientset(), 0)
 }
 
+func newCubeFactory() cubeinformers.SharedInformerFactory {
+	return cubeinformers.NewSharedInformerFactory(cubefake.NewSimpleClientset(), 0)
+}
+
 func TestRunAndWaitForCacheSync_ContextCancellation(t *testing.T) {
 	never := func() cache.SharedIndexInformer { return &neverSyncedInformer{} }
 	always := func() cache.SharedIndexInformer { return &alwaysSyncedInformer{} }
@@ -101,6 +107,7 @@ func TestRunAndWaitForCacheSync_ContextCancellation(t *testing.T) {
 				CodeInterpreterInformer: tc.codeInterpreter,
 				PodInformer:             tc.pod,
 				informerFactory:         newFactory(),
+				cubeInformerFactory:     newCubeFactory(),
 			}
 			err := runCanceled(t, ifm)
 			if !errors.Is(err, context.Canceled) {
@@ -116,6 +123,7 @@ func TestRunAndWaitForCacheSync_AllSynced(t *testing.T) {
 		CodeInterpreterInformer: &alwaysSyncedInformer{},
 		PodInformer:             &alwaysSyncedInformer{},
 		informerFactory:         newFactory(),
+		cubeInformerFactory:     newCubeFactory(),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

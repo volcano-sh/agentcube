@@ -29,9 +29,8 @@ import (
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
@@ -242,22 +241,12 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 }
 
 func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
-	agentRuntimeKey := namespace + "/" + name
-	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
-	runtimeObj, exists, _ := ifm.AgentRuntimeInformer.GetStore().GetByKey(agentRuntimeKey)
-	if !exists {
-		return nil, nil, api.ErrAgentRuntimeNotFound
-	}
-
-	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
-	if !ok {
-		klog.Errorf("agent runtime %s type asserting unstructured.Unstructured failed", agentRuntimeKey)
-		return nil, nil, fmt.Errorf("agent runtime type asserting failed")
-	}
-
-	var agentRuntimeObj runtimev1alpha1.AgentRuntime
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.Object, &agentRuntimeObj); err != nil {
-		return nil, nil, fmt.Errorf("failed to convert unstructured to AgentRuntime: %w", err)
+	agentRuntimeObj, err := ifm.AgentRuntimeLister.AgentRuntimes(namespace).Get(name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil, api.ErrAgentRuntimeNotFound
+		}
+		return nil, nil, fmt.Errorf("failed to get agent runtime %s/%s: %w", namespace, name, err)
 	}
 
 	sessionID := uuid.New().String()
@@ -316,35 +305,14 @@ func buildCodeInterpreterEnvVars(templateEnv []corev1.EnvVar, authMode runtimev1
 	return envVars
 }
 
-func getCodeInterpreterFromInformer(namespace, name string, informer *Informers) (*runtimev1alpha1.CodeInterpreter, error) {
-	key := namespace + "/" + name
-	// TODO(hzxuzhonghu): make use of typed informer, so we don't need to do type conversion below
-	runtimeObj, exists, err := informer.CodeInterpreterInformer.GetStore().GetByKey(key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get code interpreter %s from informer cache: %w", key, err)
-	}
-	if !exists {
-		return nil, api.ErrCodeInterpreterNotFound
-	}
-	unstructuredObj, ok := runtimeObj.(*unstructured.Unstructured)
-	if !ok {
-		klog.Errorf("code interpreter %s type asserting unstructured.Unstructured failed", key)
-		return nil, fmt.Errorf("code interpreter type asserting failed")
-	}
-
-	var codeInterpreterObj runtimev1alpha1.CodeInterpreter
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.Object, &codeInterpreterObj); err != nil {
-		return nil, fmt.Errorf("failed to convert unstructured to CodeInterpreter: %w", err)
-	}
-	return &codeInterpreterObj, nil
-}
-
 func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
-	codeInterpreterObjPtr, err := getCodeInterpreterFromInformer(namespace, codeInterpreterName, informer)
+	codeInterpreterObj, err := informer.CodeInterpreterLister.CodeInterpreters(namespace).Get(codeInterpreterName)
 	if err != nil {
-		return nil, nil, nil, err
+		if apierrors.IsNotFound(err) {
+			return nil, nil, nil, api.ErrCodeInterpreterNotFound
+		}
+		return nil, nil, nil, fmt.Errorf("failed to get code interpreter %s/%s: %w", namespace, codeInterpreterName, err)
 	}
-	codeInterpreterObj := *codeInterpreterObjPtr
 
 	// Check public key available if authMode is picod
 	if codeInterpreterObj.Spec.AuthMode == runtimev1alpha1.AuthModePicoD && !IsPublicKeyCached() {
@@ -385,8 +353,8 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 			sessionID:           sessionID,
 			idleTimeout:         idleTimeout,
 			ownerReference: &metav1.OwnerReference{
-				APIVersion: codeInterpreterObj.APIVersion,
-				Kind:       codeInterpreterObj.Kind,
+				APIVersion: runtimev1alpha1.CodeInterpreterGroupVersionKind.GroupVersion().String(),
+				Kind:       runtimev1alpha1.CodeInterpreterKind,
 				Name:       codeInterpreterObj.Name,
 				UID:        codeInterpreterObj.UID,
 			},

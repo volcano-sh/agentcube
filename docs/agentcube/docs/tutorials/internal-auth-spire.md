@@ -19,23 +19,23 @@ automatically.
 3. Confirm AgentCube is running without SPIRE:
 
    ```bash
-   kubectl get pods -n agentcube-system
+   kubectl get pods -n agentcube
    ```
 
    You should see the Router and WorkloadManager pods in `Running` state, each
    showing `1/1` containers ready (no sidecar yet):
 
-   ```
-   NAME                                READY   STATUS    RESTARTS   AGE
-   agentcube-router-5d8f9b7c4-xxxxx    1/1     Running   0          5m
-   workloadmanager-6b6bb75d98-xxxxx    1/1     Running   0          5m
-   ```
+```
+  NAME                               READY   STATUS    RESTARTS   AGE
+  agentcube-router-7fbb7b54c-7khq5   1/1     Running   0          8s
+  workloadmanager-6c44454f68-zmfcc   1/1     Running   0          8s
+```
 
-> **Tip :**
+> **Tip:**
 > If you are running on a local [Kind](https://kind.sigs.k8s.io/) or
-[Minikube](https://minikube.sigs.k8s.io/) cluster, you will need to pass two
-extra overrides in the Helm upgrade command shown below. These are already
-included in the instructions, so just keep them in..
+> [Minikube](https://minikube.sigs.k8s.io/) cluster, you will need to pass two
+> extra overrides in the Helm upgrade command shown below. These are already
+> included in the instructions, so just keep them in.
 
 
 ## What gets deployed
@@ -73,7 +73,7 @@ Expected output:
 
 ```
 NAME                                  CREATED AT
-clusterspiffeids.spire.spiffe.io      2025-XX-XXTXX:XX:XXZ
+clusterspiffeids.spire.spiffe.io      2026-06-01T16:22:32Z
 ```
 
 ## Step 2 - Upgrade the Helm release with SPIRE enabled
@@ -87,7 +87,7 @@ kubelet certificates, you can omit them.
 
 ```bash
 helm upgrade agentcube manifests/charts/base \
-  -n agentcube-system \
+  -n agentcube \
   --reuse-values \
   --set spire.enabled=true \
   --set spire.agent.insecureBootstrap=true \
@@ -100,10 +100,10 @@ This single command deploys the full SPIRE infrastructure **and** injects the
 Wait for everything to become ready:
 
 ```bash
-kubectl rollout status statefulset/spire-server -n agentcube-system --timeout=120s
-kubectl rollout status daemonset/spire-agent -n agentcube-system --timeout=120s
-kubectl rollout status deployment/agentcube-router -n agentcube-system --timeout=120s
-kubectl rollout status deployment/workloadmanager -n agentcube-system --timeout=120s
+kubectl rollout status statefulset/spire-server -n agentcube --timeout=120s
+kubectl rollout status daemonset/spire-agent -n agentcube --timeout=120s
+kubectl rollout status deployment/agentcube-router -n agentcube --timeout=120s
+kubectl rollout status deployment/workloadmanager -n agentcube --timeout=120s
 ```
 
 ## Step 3 - Verify SPIRE is healthy
@@ -111,16 +111,16 @@ kubectl rollout status deployment/workloadmanager -n agentcube-system --timeout=
 Check that the SPIRE Server is up and has registered agents:
 
 ```bash
-kubectl exec -n agentcube-system statefulset/spire-server -c spire-server -- \
+kubectl exec -n agentcube statefulset/spire-server -c spire-server -- \
   /opt/spire/bin/spire-server agent list
 ```
 
 You should see at least one agent entry (one per cluster node):
 
 ```
-Found X attested agent(s):
+Found 1 attested agent(s):
 
-SPIFFE ID         : spiffe://cluster.local/spire/agent/k8s_psat/agentcube-cluster/...
+SPIFFE ID         : spiffe://cluster.local/spire/agent/k8s_psat/agentcube-cluster/67790303-3657-42d6-bf4f-c3833ec6dd5e
 Attestation type  : k8s_psat
 ...
 ```
@@ -129,23 +129,23 @@ Next, confirm the identity registrations were picked up from the
 `ClusterSPIFFEID` resources:
 
 ```bash
-kubectl exec -n agentcube-system statefulset/spire-server -c spire-server -- \
+kubectl exec -n agentcube statefulset/spire-server -c spire-server -- \
   /opt/spire/bin/spire-server entry show
 ```
 
 You should see entries for both the Router and WorkloadManager, with SPIFFE IDs
 following the format
-`spiffe://cluster.local/ns/agentcube-system/sa/<service-account>`:
+`spiffe://cluster.local/ns/agentcube/sa/<service-account>`:
 
 ```
-Entry ID         : ...
-SPIFFE ID        : spiffe://cluster.local/ns/agentcube-system/sa/agentcube-router
-Parent ID        : ...
+Entry ID         : bfd507ec-10d8-43e5-b984-861a3ff81167
+SPIFFE ID        : spiffe://cluster.local/ns/agentcube/sa/agentcube-router
+Parent ID        : spiffe://cluster.local/spire/agent/k8s_psat/agentcube-cluster/67790303-3657-42d6-bf4f-c3833ec6dd5e
 Revision         : 0
 
-Entry ID         : ...
-SPIFFE ID        : spiffe://cluster.local/ns/agentcube-system/sa/workloadmanager
-Parent ID        : ...
+Entry ID         : 21e3ba6f-ad13-4076-9e08-90a2d4ff518f
+SPIFFE ID        : spiffe://cluster.local/ns/agentcube/sa/workloadmanager
+Parent ID        : spiffe://cluster.local/spire/agent/k8s_psat/agentcube-cluster/67790303-3657-42d6-bf4f-c3833ec6dd5e
 Revision         : 0
 ```
 
@@ -155,46 +155,47 @@ Confirm that both the Router and WorkloadManager pods now show `2/2` containers
 (the main container + the `spiffe-helper` sidecar):
 
 ```bash
-kubectl get pods -n agentcube-system
+kubectl get pods -n agentcube
 ```
 
 Expected output:
 
 ```
-NAME                                READY   STATUS    RESTARTS   AGE
-agentcube-router-7f8d4b9c6-xxxxx    2/2     Running   0          2m
-workloadmanager-8c7dd85f9-xxxxx     2/2     Running   0          2m
-spire-agent-xxxxx                   1/1     Running   0          2m
-spire-server-0                      2/2     Running   0          2m
+NAME                               READY   STATUS    RESTARTS        AGE
+agentcube-router-574d98b76-tr2nr   2/2     Running   5 (2m24s ago)   3m17s
+spire-agent-8r9jx                  1/1     Running   3 (2m44s ago)   3m17s
+spire-server-0                     2/2     Running   0               3m17s
+workloadmanager-5797888bd4-jm2qj   2/2     Running   3 (118s ago)    3m17s
 ```
 
 Check the Router logs to confirm mTLS is active. You should see a log line
 indicating it is waiting for, and then successfully loading, the certificates:
 
 ```bash
-kubectl logs -n agentcube-system deployment/agentcube-router -c agentcube-router | grep -i mtls
+kubectl logs -n agentcube deployment/agentcube-router -c agentcube-router | grep -i mtls
 ```
 
 Expected output:
 
 ```
-Waiting for Router mTLS cert/key/CA files
-All mTLS cert/key/CA files are present
-Router→WorkloadManager mTLS enabled: expecting server SPIFFE ID spiffe://cluster.local/ns/agentcube-system/sa/workloadmanager
+I0601 16:25:21.444099       1 main.go:64] Waiting for Router mTLS cert/key/CA files
+I0601 16:25:21.444259       1 wait.go:46] All mTLS cert/key/CA files are present
+I0601 16:25:21.445161       1 session_manager.go:84] Using https:// for WORKLOAD_MANAGER_URL because mTLS is configured
+I0601 16:25:21.445482       1 session_manager.go:93] Router→WorkloadManager mTLS enabled: expecting server SPIFFE ID spiffe://cluster.local/ns/agentcube/sa/workloadmanager
 ```
 
 Do the same for the WorkloadManager:
 
 ```bash
-kubectl logs -n agentcube-system deployment/workloadmanager -c workloadmanager | grep -i mtls
+kubectl logs -n agentcube deployment/workloadmanager -c workloadmanager | grep -i mtls
 ```
 
 Expected output:
 
 ```
-Waiting for WorkloadManager mTLS cert/key/CA files
-All mTLS cert/key/CA files are present
-WorkloadManager mTLS enabled: accepting clients with valid SPIRE-provisioned certificates
+I0601 16:25:22.561316       1 main.go:80] Waiting for WorkloadManager mTLS cert/key/CA files
+I0601 16:25:22.561931       1 wait.go:46] All mTLS cert/key/CA files are present
+I0601 16:25:22.678777       1 server.go:218] WorkloadManager mTLS enabled: accepting clients with valid SPIRE-provisioned certificates
 ```
 
 ## Step 5 - Test it end-to-end
@@ -230,18 +231,22 @@ spec:
 EOF
 ```
 
-Port-forward the Router and send a request:
+Open a new terminal and port-forward the Router:
 
 ```bash
-kubectl port-forward -n agentcube-system svc/agentcube-router 8080:8080 &
-curl -s -o /dev/null -w "%{http_code}" \
-  http://localhost:8080/v1/namespaces/default/agent-runtimes/mtls-test/invocations/test/
+kubectl port-forward -n agentcube svc/agentcube-router 8080:8080
+```
+
+In your original terminal, send a request to the root path of the sandbox:
+
+```bash
+curl -i http://localhost:8080/v1/namespaces/default/agent-runtimes/mtls-test/invocations/
 ```
 
 If the mTLS handshake between Router and WorkloadManager succeeds, you will see
-a `200` (or `502` while the sandbox is still booting - retry after a few
-seconds). A TLS-related error in the Router logs would indicate a
-misconfiguration.
+a `200 OK` response with a directory listing from the python server (or a `502`
+while the sandbox is still booting - just retry after a few seconds). A
+TLS-related error in the Router logs would indicate a misconfiguration.
 
 ## Understanding what changed
 
@@ -262,7 +267,7 @@ The Helm chart passes these flags to the Router binary:
 When all three are present, the Router creates a dedicated HTTPS transport for
 its WorkloadManager connection. It verifies that the WorkloadManager's
 certificate contains the expected SPIFFE ID
-(`spiffe://cluster.local/ns/agentcube-system/sa/workloadmanager`).
+(`spiffe://cluster.local/ns/agentcube/sa/workloadmanager`).
 
 ### WorkloadManager (mTLS server)
 
@@ -307,7 +312,7 @@ plane components, run the Helm upgrade again with `spire.enabled=false`:
 
 ```bash
 helm upgrade agentcube manifests/charts/base \
-  -n agentcube-system \
+  -n agentcube \
   --reuse-values \
   --set spire.enabled=false
 ```

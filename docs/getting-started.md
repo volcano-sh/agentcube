@@ -9,6 +9,7 @@ Before you begin, ensure you have the following tools installed:
 - **Kubernetes cluster**: v1.24 or later (local clusters like [Kind](https://kind.sigs.k8s.io/) or [minikube](https://minikube.sigs.k8s.io/) work well for testing)
 - **kubectl**: Configured to access your cluster
 - **Helm**: v3.x or later
+- **Python**: 3.10 or later (for using the SDK)
 
 ## Architecture Overview
 
@@ -158,27 +159,32 @@ kubectl get codeinterpreter
 pip install agentcube-sdk
 ```
 
-### Run Your First Code
+### Set Up Access
 
-You need access to a running AgentCube instance (WorkloadManager and Router).
+To access the services from your local machine, use port-forwarding.
 
-Set the following environment variables to point to your AgentCube services:
+Open **two separate terminals** and run:
 
 ```bash
-# To access the services from your local machine, you can use port-forwarding.
-
-# In one terminal, forward the Workload Manager:
+# Terminal 1: Forward the Workload Manager
 kubectl port-forward -n agentcube svc/workloadmanager 8080:8080
+```
 
-# In another terminal, forward the Router:
+```bash
+# Terminal 2: Forward the Router
 kubectl port-forward -n agentcube svc/agentcube-router 8081:8080
+```
 
-# Then, set your environment variables:
+Then, in a **third terminal**, set your environment variables:
+
+```bash
 export WORKLOAD_MANAGER_URL="http://localhost:8080"
 export ROUTER_URL="http://localhost:8081"
-
-# Optional: If your instance requires authentication
 ```
+
+### Run Your First Code
+
+Create a file called `quickstart.py` with the following content:
 
 ```python
 from agentcube import CodeInterpreterClient
@@ -186,6 +192,19 @@ from agentcube import CodeInterpreterClient
 with CodeInterpreterClient(name="my-interpreter") as client:
     result = client.run_code("python", "print('Hello from AgentCube!')")
     print(result)
+```
+
+This script connects to the CodeInterpreter you created in Step 4, launches an isolated sandbox session, sends a Python snippet to be executed inside it, and prints the output.
+Run it:
+
+```bash
+python quickstart.py
+```
+
+Expected output:
+
+```
+Hello from AgentCube!
 ```
 
 For detailed SDK usage, see the [Python SDK Guide](devguide/code-interpreter-python-sdk.md).

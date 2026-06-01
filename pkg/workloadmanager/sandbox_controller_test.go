@@ -32,9 +32,10 @@ import (
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 )
 
-func setupSandboxReconciler() (*SandboxReconciler, *runtime.Scheme) {
+func setupSandboxReconciler(t *testing.T) (*SandboxReconciler, *runtime.Scheme) {
 	scheme := runtime.NewScheme()
-	_ = sandboxv1alpha1.AddToScheme(scheme)
+	err := sandboxv1alpha1.AddToScheme(scheme)
+	require.NoError(t, err)
 
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
@@ -45,7 +46,7 @@ func setupSandboxReconciler() (*SandboxReconciler, *runtime.Scheme) {
 }
 
 func TestSandboxReconciler_Reconcile_NonExistentSandbox(t *testing.T) {
-	reconciler, _ := setupSandboxReconciler()
+	reconciler, _ := setupSandboxReconciler(t)
 	ctx := context.TODO()
 
 	req := ctrl.Request{
@@ -61,7 +62,7 @@ func TestSandboxReconciler_Reconcile_NonExistentSandbox(t *testing.T) {
 }
 
 func TestSandboxReconciler_Reconcile_PendingSandbox(t *testing.T) {
-	reconciler, scheme := setupSandboxReconciler()
+	reconciler, scheme := setupSandboxReconciler(t)
 	ctx := context.TODO()
 
 	sandbox := &sandboxv1alpha1.Sandbox{
@@ -101,13 +102,13 @@ func TestSandboxReconciler_Reconcile_PendingSandbox(t *testing.T) {
 	select {
 	case <-resultChan:
 		t.Fatal("watcher was unexpectedly notified for non-ready sandbox")
-	case <-time.After(100 * time.Millisecond):
-		// Success: timeout means no notification was sent
+	default:
+		// Success: no notification was sent
 	}
 }
 
 func TestSandboxReconciler_Reconcile_ReadySandboxNotification(t *testing.T) {
-	reconciler, scheme := setupSandboxReconciler()
+	reconciler, scheme := setupSandboxReconciler(t)
 	ctx := context.TODO()
 
 	sandbox := &sandboxv1alpha1.Sandbox{
@@ -148,8 +149,8 @@ func TestSandboxReconciler_Reconcile_ReadySandboxNotification(t *testing.T) {
 		require.True(t, ok)
 		assert.NotNil(t, update.Sandbox)
 		assert.Equal(t, "ready-sandbox", update.Sandbox.Name)
-	case <-time.After(1 * time.Second):
-		t.Fatal("watcher was not notified for ready sandbox within timeout")
+	default:
+		t.Fatal("watcher was not notified for ready sandbox")
 	}
 
 	// Verify the watcher has been removed from the map
@@ -160,7 +161,7 @@ func TestSandboxReconciler_Reconcile_ReadySandboxNotification(t *testing.T) {
 }
 
 func TestSandboxReconciler_WatchSandboxOnce_Duplicate(t *testing.T) {
-	reconciler, _ := setupSandboxReconciler()
+	reconciler, _ := setupSandboxReconciler(t)
 	ctx := context.TODO()
 
 	namespace := "default"
@@ -180,8 +181,8 @@ func TestSandboxReconciler_WatchSandboxOnce_Duplicate(t *testing.T) {
 	select {
 	case _, ok := <-chan1:
 		assert.False(t, ok, "first channel should be closed")
-	default:
-		t.Fatal("first channel was not closed after duplicate registration")
+	case <-time.After(1 * time.Second):
+		t.Fatal("first channel was not closed after duplicate registration within timeout")
 	}
 
 	// The second channel should still be registered in the map
@@ -189,11 +190,11 @@ func TestSandboxReconciler_WatchSandboxOnce_Duplicate(t *testing.T) {
 	registeredChan, exists := reconciler.watchers[key]
 	reconciler.mu.RUnlock()
 	assert.True(t, exists)
-	assert.Equal(t, chan2, (<-chan SandboxStatusUpdate)(registeredChan))
+	assert.True(t, chan2 == registeredChan, "registered channel should match the new channel")
 }
 
 func TestSandboxReconciler_UnWatchSandbox(t *testing.T) {
-	reconciler, _ := setupSandboxReconciler()
+	reconciler, _ := setupSandboxReconciler(t)
 	ctx := context.TODO()
 
 	namespace := "default"

@@ -1,4 +1,18 @@
 {{- if .Values.keycloak.enabled }}
+{{- if not .Values.keycloak.devMode }}
+{{- if empty .Values.keycloak.database.vendor }}
+  {{- fail "keycloak.database.vendor is required when devMode is false (production mode requires an external database)" }}
+{{- end }}
+{{- if empty .Values.keycloak.database.url }}
+  {{- fail "keycloak.database.url is required when devMode is false (production mode requires a database URL)" }}
+{{- end }}
+{{- if empty .Values.keycloak.database.username }}
+  {{- fail "keycloak.database.username is required when devMode is false (production mode requires a database username)" }}
+{{- end }}
+{{- if empty .Values.keycloak.proxy.hostname }}
+  {{- fail "keycloak.proxy.hostname is required when devMode is false (production mode requires a strict hostname)" }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,14 +30,26 @@ spec:
       labels:
         app: keycloak
     spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
         - name: keycloak
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           image: "{{ .Values.keycloak.image.repository }}:{{ .Values.keycloak.image.tag }}"
           imagePullPolicy: {{ .Values.keycloak.image.pullPolicy }}
+          # Note: --import-realm only applies on an empty database/first start.
+          # Realm Secret updates will not be re-applied on subsequent pod restarts.
           {{- if .Values.keycloak.devMode }}
           args: ["start-dev", "--import-realm"]
           {{- else }}
@@ -40,14 +66,10 @@ spec:
             - name: KC_BOOTSTRAP_ADMIN_USERNAME
               value: {{ .Values.keycloak.adminUser | quote }}
             - name: KC_BOOTSTRAP_ADMIN_PASSWORD
-              {{- if .Values.keycloak.existingSecret }}
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.keycloak.existingSecret }}
+                  name: {{ .Values.keycloak.existingSecret | default "keycloak-credentials" }}
                   key: {{ .Values.keycloak.existingSecretKey | default "admin-password" }}
-              {{- else }}
-              value: {{ .Values.keycloak.adminPassword | quote }}
-              {{- end }}
             - name: KC_HEALTH_ENABLED
               value: "true"
             - name: KC_HTTP_PORT
@@ -60,14 +82,10 @@ spec:
             - name: KC_DB_USERNAME
               value: {{ .Values.keycloak.database.username | quote }}
             - name: KC_DB_PASSWORD
-              {{- if .Values.keycloak.database.existingSecret }}
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.keycloak.database.existingSecret }}
+                  name: {{ .Values.keycloak.database.existingSecret | default "keycloak-credentials" }}
                   key: {{ .Values.keycloak.database.existingSecretKey | default "db-password" }}
-              {{- else }}
-              value: {{ .Values.keycloak.database.password | quote }}
-              {{- end }}
             {{- end }}
             {{- if .Values.keycloak.proxy.headers }}
             - name: KC_PROXY_HEADERS
@@ -107,8 +125,8 @@ spec:
             {{- toYaml .Values.keycloak.resources | nindent 12 }}
       volumes:
         - name: realm-config
-          configMap:
-            name: keycloak-realm-config
+          secret:
+            secretName: keycloak-realm-config
 
 ---
 apiVersion: v1

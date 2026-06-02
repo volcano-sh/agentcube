@@ -141,10 +141,10 @@ keycloak:
   devMode: true
   image:
     repository: quay.io/keycloak/keycloak
-    tag: "26.0"
+    tag: "26.0.8"
     pullPolicy: IfNotPresent
   adminUser: "admin"
-  adminPassword: "admin"  # Override in production via --set or external Secret
+  adminPassword: "admin"  # Dev only. Production must use existingSecret.
   existingSecret: ""       # Name of a pre-existing Secret containing admin credentials
   existingSecretKey: "admin-password"  # Key within the Secret holding the password
   # External database configuration (required when devMode is false)
@@ -164,6 +164,15 @@ keycloak:
     type: ClusterIP
     port: 8080
   realm: "agentcube"
+  # Client secrets for confidential OAuth2 clients. Override in production via --set.
+  # The workloadmanager client has all auth flows disabled and does not require a secret.
+  clients:
+    sdk:
+      secret: "agentcube-sdk-dev-secret"
+    router:
+      secret: "agentcube-router-dev-secret"
+    admin:
+      secret: "agentcube-admin-dev-secret"
   sdk:
     redirectUris:
       - "http://localhost*"

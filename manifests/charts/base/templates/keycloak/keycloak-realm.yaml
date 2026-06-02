@@ -1,12 +1,17 @@
 {{- if .Values.keycloak.enabled }}
 apiVersion: v1
-kind: ConfigMap
+kind: Secret
 metadata:
   name: keycloak-realm-config
   namespace: {{ .Release.Namespace }}
   labels:
     app: keycloak
-data:
+type: Opaque
+# stringData accepts plain text and Kubernetes base64-encodes it automatically.
+stringData:
+  # Note: The --import-realm flag only applies this JSON on an empty/first start.
+  # Once the realm exists, subsequent pod restarts will silently IGNORE updates to this Secret.
+  # To update a live production realm, use the Keycloak Admin API or a declarative tool.
   # Filename must follow <realm-name>-realm.json convention for --import-realm to detect it.
   {{ .Values.keycloak.realm }}-realm.json: |
     {
@@ -14,8 +19,26 @@ data:
       "enabled": true,
       "sslRequired": {{ if .Values.keycloak.devMode }}"none"{{ else }}"external"{{ end }},
 
+      "defaultRole": {
+        "name": "default-roles-{{ .Values.keycloak.realm }}",
+        "description": "${role_default-roles}",
+        "composite": true,
+        "clientRole": false
+      },
+
       "roles": {
         "realm": [
+          {
+            "name": "default-roles-{{ .Values.keycloak.realm }}",
+            "description": "${role_default-roles}",
+            "composite": true,
+            "clientRole": false,
+            "composites": {
+              "realm": [
+                "sandbox:invoke"
+              ]
+            }
+          },
           {
             "name": "sandbox:invoke",
             "description": "Permission to invoke agent runtimes and code interpreters."
@@ -39,8 +62,6 @@ data:
         ]
       },
 
-      "defaultRoles": ["sandbox:invoke"],
-
       "clients": [
         {
           "clientId": "agentcube-sdk",
@@ -49,6 +70,7 @@ data:
           "enabled": true,
           "protocol": "openid-connect",
           "publicClient": false,
+          "secret": {{ .Values.keycloak.clients.sdk.secret | quote }},
           "standardFlowEnabled": true,
           "directAccessGrantsEnabled": false,
           "serviceAccountsEnabled": true,
@@ -62,6 +84,7 @@ data:
           "enabled": true,
           "protocol": "openid-connect",
           "publicClient": false,
+          "secret": {{ .Values.keycloak.clients.router.secret | quote }},
           "standardFlowEnabled": false,
           "directAccessGrantsEnabled": false,
           "serviceAccountsEnabled": true,
@@ -88,6 +111,7 @@ data:
           "enabled": true,
           "protocol": "openid-connect",
           "publicClient": false,
+          "secret": {{ .Values.keycloak.clients.admin.secret | quote }},
           "standardFlowEnabled": false,
           "directAccessGrantsEnabled": false,
           "serviceAccountsEnabled": true,

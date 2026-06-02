@@ -1,13 +1,24 @@
 {{- if .Values.keycloak.enabled }}
+{{- if empty .Values.keycloak.adminUser }}
+  {{- fail "keycloak.adminUser is required when keycloak.enabled is true" }}
+{{- end }}
+{{- if .Values.keycloak.database.vendor }}
+{{- if empty .Values.keycloak.database.url }}
+  {{- fail "keycloak.database.url is required when keycloak.database.vendor is set" }}
+{{- end }}
+{{- if empty .Values.keycloak.database.username }}
+  {{- fail "keycloak.database.username is required when keycloak.database.vendor is set" }}
+{{- end }}
+{{- end }}
 {{- if not .Values.keycloak.devMode }}
+{{- if empty .Values.keycloak.existingSecret }}
+  {{- fail "keycloak.existingSecret is required when devMode is false (production mode requires an external Secret for the admin password)" }}
+{{- end }}
 {{- if empty .Values.keycloak.database.vendor }}
   {{- fail "keycloak.database.vendor is required when devMode is false (production mode requires an external database)" }}
 {{- end }}
-{{- if empty .Values.keycloak.database.url }}
-  {{- fail "keycloak.database.url is required when devMode is false (production mode requires a database URL)" }}
-{{- end }}
-{{- if empty .Values.keycloak.database.username }}
-  {{- fail "keycloak.database.username is required when devMode is false (production mode requires a database username)" }}
+{{- if empty .Values.keycloak.database.existingSecret }}
+  {{- fail "keycloak.database.existingSecret is required when devMode is false (production mode requires an external Secret for the database password)" }}
 {{- end }}
 {{- if empty .Values.keycloak.proxy.hostname }}
   {{- fail "keycloak.proxy.hostname is required when devMode is false (production mode requires a strict hostname)" }}
@@ -69,7 +80,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.keycloak.existingSecret | default "keycloak-credentials" }}
-                  key: {{ .Values.keycloak.existingSecretKey | default "admin-password" }}
+                  key: {{ if .Values.keycloak.existingSecret }}{{ .Values.keycloak.existingSecretKey | default "admin-password" }}{{ else }}admin-password{{ end }}
             - name: KC_HEALTH_ENABLED
               value: "true"
             - name: KC_HTTP_PORT
@@ -85,7 +96,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.keycloak.database.existingSecret | default "keycloak-credentials" }}
-                  key: {{ .Values.keycloak.database.existingSecretKey | default "db-password" }}
+                  key: {{ if .Values.keycloak.database.existingSecret }}{{ .Values.keycloak.database.existingSecretKey | default "db-password" }}{{ else }}db-password{{ end }}
             {{- end }}
             {{- if .Values.keycloak.proxy.headers }}
             - name: KC_PROXY_HEADERS

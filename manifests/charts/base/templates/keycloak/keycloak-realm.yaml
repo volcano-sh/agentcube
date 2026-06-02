@@ -13,7 +13,7 @@ stringData:
   # Once the realm exists, subsequent pod restarts will silently IGNORE updates to this Secret.
   # To update a live production realm, use the Keycloak Admin API or a declarative tool.
   # Filename must follow <realm-name>-realm.json convention for --import-realm to detect it.
-  {{ .Values.keycloak.realm }}-realm.json: |
+  {{ printf "%s-realm.json" .Values.keycloak.realm | quote }}: |
     {
       "realm": {{ .Values.keycloak.realm | quote }},
       "enabled": true,
@@ -70,7 +70,7 @@ stringData:
           "enabled": true,
           "protocol": "openid-connect",
           "publicClient": false,
-          "secret": {{ .Values.keycloak.clients.sdk.secret | quote }},
+          "secret": {{ required "keycloak.clients.sdk.secret is required when keycloak.enabled is true" .Values.keycloak.clients.sdk.secret | quote }},
           "standardFlowEnabled": true,
           "directAccessGrantsEnabled": false,
           "serviceAccountsEnabled": true,
@@ -84,7 +84,7 @@ stringData:
           "enabled": true,
           "protocol": "openid-connect",
           "publicClient": false,
-          "secret": {{ .Values.keycloak.clients.router.secret | quote }},
+          "secret": {{ required "keycloak.clients.router.secret is required when keycloak.enabled is true" .Values.keycloak.clients.router.secret | quote }},
           "standardFlowEnabled": false,
           "directAccessGrantsEnabled": false,
           "serviceAccountsEnabled": true,
@@ -111,7 +111,7 @@ stringData:
           "enabled": true,
           "protocol": "openid-connect",
           "publicClient": false,
-          "secret": {{ .Values.keycloak.clients.admin.secret | quote }},
+          "secret": {{ required "keycloak.clients.admin.secret is required when keycloak.enabled is true" .Values.keycloak.clients.admin.secret | quote }},
           "standardFlowEnabled": false,
           "directAccessGrantsEnabled": false,
           "serviceAccountsEnabled": true,

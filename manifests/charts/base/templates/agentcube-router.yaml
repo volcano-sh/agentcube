@@ -64,8 +64,13 @@ spec:
                   fieldPath: metadata.namespace
             - name: REDIS_ADDR
               value: {{ .Values.redis.addr | quote }}
+            {{- if or .Values.redis.password .Values.redis.existingSecret }}
             - name: REDIS_PASSWORD
-              value: {{ .Values.redis.password | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentcube.redis.secretName" . | quote }}
+                  key: {{ include "agentcube.redis.passwordKey" . | quote }}
+            {{- end }}
             - name: WORKLOAD_MANAGER_URL
               value: "http://workloadmanager.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.workloadmanager.service.port }}"
             {{- if .Values.spire.enabled }}

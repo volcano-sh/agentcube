@@ -9,7 +9,13 @@ fullnameOverride: ""
 # These must be provided by the user during installation
 redis:
   addr: ""
+  # Populates the chart-managed Secret (not plain text in Deployment manifests).
+  # For production, prefer creating a Secret yourself and set existingSecret instead.
   password: ""
+  # Name of an existing Secret containing the Redis password (skips chart Secret creation).
+  existingSecret: ""
+  # Key within existingSecret or chart-managed Secret (default: password).
+  existingSecretPasswordKey: "password"
 
 # AgentCube Router
 router:

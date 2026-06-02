@@ -60,8 +60,13 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- if or .Values.redis.password .Values.redis.existingSecret }}
             - name: REDIS_PASSWORD
-              value: {{ .Values.redis.password | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentcube.redis.secretName" . | quote }}
+                  key: {{ include "agentcube.redis.passwordKey" . | quote }}
+            {{- end }}
             - name: REDIS_ADDR
               value: {{ .Values.redis.addr | quote }}
             {{- if .Values.spire.enabled }}

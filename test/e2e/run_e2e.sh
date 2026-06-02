@@ -537,7 +537,12 @@ if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" \
 fi
 
 echo "Running LangChain AgentcubeSandbox E2E..."
-if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" MTLS_ENABLED="${MTLS_ENABLED}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_langchain_agentcube_sandbox.py; then
+if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" \
+   ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" \
+   MTLS_ENABLED="${MTLS_ENABLED}" \
+   API_TOKEN=$API_TOKEN \
+   AGENTCUBE_NAMESPACE="${WORKLOAD_NAMESPACE}" \
+   "$E2E_VENV_DIR/bin/python" test_langchain_agentcube_sandbox.py; then
     TEST_FAILED=1
 fi
 

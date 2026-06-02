@@ -70,7 +70,7 @@ helm install agentcube ./manifests/charts/base \
     --set router.serviceAccountName="agentcube-router"
 ```
 
-The Redis password is not stored in Deployment manifests. It is injected via `secretKeyRef` from a Kubernetes Secret. With the command above, Helm creates a chart-managed Secret from `redis.password` (the value is also stored in Helm release metadata). For production, use `redis.existingSecret` to avoid passing the password through Helm values.
+The Redis password is not stored in Deployment manifests. It is injected via `secretKeyRef` from a Kubernetes Secret. With the command above, Helm creates a chart-managed Secret from `redis.password` (the value is also stored in Helm release metadata). For production, use `redis.secretName` to avoid passing the password through Helm values.
 
 For production, create your own Secret and reference it:
 
@@ -82,7 +82,7 @@ helm install agentcube ./manifests/charts/base \
     --namespace agentcube \
     --create-namespace \
     --set redis.addr="redis.agentcube.svc.cluster.local:6379" \
-    --set redis.existingSecret="agentcube-redis" \
+    --set redis.secretName="agentcube-redis" \
     --set router.rbac.create=true \
     --set router.serviceAccountName="agentcube-router"
 ```
@@ -100,9 +100,9 @@ Key Helm values you can customize:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `redis.addr` | `""` | Redis address (required) |
-| `redis.password` | `""` | Redis password (stored in chart-managed Secret when `existingSecret` is unset) |
-| `redis.existingSecret` | `""` | Name of an existing Secret with the Redis password (recommended for production) |
-| `redis.existingSecretPasswordKey` | `password` | Key in the Redis Secret |
+| `redis.password` | `""` | Redis password (stored in chart-managed Secret when `secretName` is unset) |
+| `redis.secretName` | `""` | Name of a Secret with the Redis password (recommended for production) |
+| `redis.secretKey` | `password` | Key in the Redis Secret |
 | `router.replicas` | `1` | Router replica count |
 | `router.service.type` | `ClusterIP` | Router service type |
 | `workloadmanager.replicas` | `1` | Workload Manager replica count |

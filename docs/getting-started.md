@@ -66,7 +66,6 @@ helm install agentcube ./manifests/charts/base \
     --create-namespace \
     --set redis.addr="redis.agentcube.svc.cluster.local:6379" \
     --set redis.password="''''" \
-    --set router.rbac.create=true \
     --set router.serviceAccountName="agentcube-router"
 ```
 
@@ -83,9 +82,10 @@ helm install agentcube ./manifests/charts/base \
     --create-namespace \
     --set redis.addr="redis.agentcube.svc.cluster.local:6379" \
     --set redis.secretName="agentcube-redis" \
-    --set router.rbac.create=true \
     --set router.serviceAccountName="agentcube-router"
 ```
+
+When upgrading an existing release, Helm adds or updates the Redis Secret and Deployment env refs; expect a rolling restart of router and workload manager pods.
 
 This will install:
 
@@ -100,7 +100,7 @@ Key Helm values you can customize:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `redis.addr` | `""` | Redis address (required) |
-| `redis.password` | `""` | Redis password (stored in chart-managed Secret when `secretName` is unset) |
+| `redis.password` | `""` | Redis password for chart-managed Secret; use `secretName` instead for production (not both) |
 | `redis.secretName` | `""` | Name of a Secret with the Redis password (recommended for production) |
 | `redis.secretKey` | `password` | Key in the Redis Secret |
 | `router.replicas` | `1` | Router replica count |

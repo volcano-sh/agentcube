@@ -165,9 +165,9 @@ keycloak:
     port: 8080
   realm: "agentcube"
   # Client secrets for confidential OAuth2 clients. Required when keycloak.enabled=true.
-  # The workloadmanager client has all auth flows disabled and does not require a secret.
+  # The agentcube-sdk client is public (PKCE) and does not require a secret.
   clients:
-    sdk:
+    service:
       secret: ""
     router:
       secret: ""

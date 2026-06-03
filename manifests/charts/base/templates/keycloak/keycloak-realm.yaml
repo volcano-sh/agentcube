@@ -64,18 +64,60 @@ stringData:
 
       "clients": [
         {
-          "clientId": "agentcube-sdk",
-          "name": "AgentCube SDK",
-          "description": "Confidential client for SDK access. Supports client_credentials for service accounts and authorization_code for interactive users.",
+          "clientId": "agentcube-service",
+          "name": "AgentCube Service",
+          "description": "Confidential client for server-side authentication using client_credentials grant.",
           "enabled": true,
           "protocol": "openid-connect",
           "publicClient": false,
-          "secret": {{ required "keycloak.clients.sdk.secret is required when keycloak.enabled is true" .Values.keycloak.clients.sdk.secret | quote }},
-          "standardFlowEnabled": true,
+          "secret": {{ required "keycloak.clients.service.secret is required when keycloak.enabled is true" .Values.keycloak.clients.service.secret | quote }},
+          "standardFlowEnabled": false,
           "directAccessGrantsEnabled": false,
           "serviceAccountsEnabled": true,
+          "redirectUris": [],
+          "webOrigins": [],
+          "protocolMappers": [
+            {
+              "name": "agentcube-api-audience",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.custom.audience": "agentcube-api",
+                "id.token.claim": "false",
+                "access.token.claim": "true"
+              }
+            }
+          ]
+        },
+        {
+          "clientId": "agentcube-sdk",
+          "name": "AgentCube SDK",
+          "description": "Public client for interactive SDK and CLI authentication using authorization code with PKCE.",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": true,
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "serviceAccountsEnabled": false,
           "redirectUris": {{ .Values.keycloak.sdk.redirectUris | toJson }},
-          "webOrigins": {{ .Values.keycloak.sdk.webOrigins | toJson }}
+          "webOrigins": {{ .Values.keycloak.sdk.webOrigins | toJson }},
+          "attributes": {
+            "pkce.code.challenge.method": "S256"
+          },
+          "protocolMappers": [
+            {
+              "name": "agentcube-api-audience",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.custom.audience": "agentcube-api",
+                "id.token.claim": "false",
+                "access.token.claim": "true"
+              }
+            }
+          ]
         },
         {
           "clientId": "agentcube-router",
@@ -88,19 +130,6 @@ stringData:
           "standardFlowEnabled": false,
           "directAccessGrantsEnabled": false,
           "serviceAccountsEnabled": true,
-          "redirectUris": [],
-          "webOrigins": []
-        },
-        {
-          "clientId": "workloadmanager",
-          "name": "WorkloadManager",
-          "description": "Audience client for downstream JWT validation. All auth flows disabled (modern replacement for deprecated bearer-only).",
-          "enabled": true,
-          "protocol": "openid-connect",
-          "publicClient": false,
-          "standardFlowEnabled": false,
-          "directAccessGrantsEnabled": false,
-          "serviceAccountsEnabled": false,
           "redirectUris": [],
           "webOrigins": []
         },
@@ -121,6 +150,10 @@ stringData:
       ],
 
       "scopeMappings": [
+        {
+          "client": "agentcube-service",
+          "roles": ["sandbox:invoke"]
+        },
         {
           "client": "agentcube-sdk",
           "roles": ["sandbox:invoke"]

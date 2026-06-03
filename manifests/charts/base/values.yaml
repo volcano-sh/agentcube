@@ -9,7 +9,12 @@ fullnameOverride: ""
 # These must be provided by the user during installation
 redis:
   addr: ""
+  # Chart-managed Secret from this value when secretName is unset. Do not set both password and secretName.
   password: ""
+  # User-provided Secret name. When set, the chart does not create {release}-redis.
+  secretName: ""
+  # Key in the Secret (chart-managed or secretName). Default: password.
+  secretKey: "password"
 
 # AgentCube Router
 router:

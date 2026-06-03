@@ -263,7 +263,7 @@ func TestLoadServerConfig_InvalidCAPEM(t *testing.T) {
 // --- SPIFFE ID verification ---
 
 func TestVerifyServerCert_MatchingID(t *testing.T) {
-	spiffeID := "spiffe://cluster.local/ns/agentcube-system/sa/workloadmanager"
+	spiffeID := "spiffe://cluster.local/ns/agentcube/sa/workloadmanager"
 	certFile, _, caFile := generateTestCertsWithSPIFFEID(t, spiffeID)
 
 	rawCert := readRawCert(t, certFile)
@@ -282,7 +282,7 @@ func TestVerifyServerCert_MatchingID(t *testing.T) {
 }
 
 func TestVerifyServerCert_UntrustedCA(t *testing.T) {
-	spiffeID := "spiffe://cluster.local/ns/agentcube-system/sa/workloadmanager"
+	spiffeID := "spiffe://cluster.local/ns/agentcube/sa/workloadmanager"
 	certFile, _, _ := generateTestCertsWithSPIFFEID(t, spiffeID)
 
 	// Use a DIFFERENT CA — chain verification should fail

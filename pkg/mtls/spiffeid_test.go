@@ -43,8 +43,8 @@ func TestConfiguredNamespace(t *testing.T) {
 }
 
 func TestComponentSPIFFEID(t *testing.T) {
-	got := componentSPIFFEID("example.org", "agentcube-system", "agentcube-router")
-	want := "spiffe://example.org/ns/agentcube-system/sa/agentcube-router"
+	got := componentSPIFFEID("example.org", "agentcube", "agentcube-router")
+	want := "spiffe://example.org/ns/agentcube/sa/agentcube-router"
 	if got != want {
 		t.Fatalf("componentSPIFFEID() = %q, want %q", got, want)
 	}

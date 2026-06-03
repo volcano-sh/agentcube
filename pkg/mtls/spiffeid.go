@@ -25,7 +25,7 @@ import (
 const (
 	defaultTrustDomain = "cluster.local"
 	trustDomainEnvVar  = "AGENTCUBE_SPIFFE_TRUST_DOMAIN"
-	defaultNamespace   = "agentcube-system"
+	defaultNamespace   = "agentcube"
 	namespaceEnvVar    = "AGENTCUBE_NAMESPACE"
 )
 
@@ -33,7 +33,7 @@ const (
 // These follow the Istio-convention format: spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>.
 // The trust domain defaults to cluster.local and can be overridden with AGENTCUBE_SPIFFE_TRUST_DOMAIN
 // to match the SPIRE trust domain configured by deployment tooling.
-// The namespace defaults to agentcube-system and can be overridden with AGENTCUBE_NAMESPACE.
+// The namespace defaults to agentcube and can be overridden with AGENTCUBE_NAMESPACE.
 var (
 	// RouterSPIFFEID is the SPIFFE identity for the Router component.
 	RouterSPIFFEID = componentSPIFFEID(configuredTrustDomain(), configuredNamespace(), "agentcube-router")

@@ -636,7 +636,7 @@ func generateTestCertsForRouter(t *testing.T, dir string) (certFile, keyFile, ca
 	if err != nil {
 		t.Fatalf("generate leaf key: %v", err)
 	}
-	spiffeURL, _ := url.Parse("spiffe://cluster.local/ns/agentcube-system/sa/agentcube-router")
+	spiffeURL, _ := url.Parse("spiffe://cluster.local/ns/agentcube/sa/agentcube-router")
 	leafTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
 		Subject:      pkix.Name{Organization: []string{"Test Router"}},

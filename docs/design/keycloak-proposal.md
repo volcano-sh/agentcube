@@ -4,7 +4,7 @@ Author: Mahil Patel
 
 ## Motivation
 
-AgentCube currently has no mechanism to authenticate external callers, anyone who can reach the Router endpoint can invoke agent runtimes and code interpreters without proving their identity. This proposal adds external authentication and authorization using Keycloak as the identity provider, covering OIDC token validation at the Router, role-based access control (RBAC), resource-level access control (RLAC), identity forwarding to downstream services, and Python SDK auth support. Everything is gated behind `keycloak.enabled` in Helm values, so existing deployments are unaffected.
+AgentCube currently has no mechanism to authenticate external callers, anyone who can reach the Router endpoint can invoke agent runtimes and code interpreters without proving their identity. This proposal adds external authentication and authorization using Keycloak as the identity provider, covering OIDC token validation at the Router, role-based access control (RBAC), resource-level access control (RLAC), identity forwarding to downstream services, and Python SDK auth support. Keycloak is deployed as a separate addon chart, and the core chart enables auth when `router.oidc.issuerUrl` is set, so existing deployments are unaffected.
 
 ## Architecture
 
@@ -37,7 +37,7 @@ sequenceDiagram
     Note over Router: 3. Edge Authentication
     Router->>Router: Validate JWT signature (cached JWKS)
     Router->>Router: Check expiry, issuer, audience
-    Router->>Router: Extract realm_access.roles
+    Router->>Router: Extract roles from configured claim (default: realm_access.roles)
 
     Note over Router: 4. RBAC Check
     Router->>Router: Require "sandbox:invoke" role
@@ -64,21 +64,21 @@ sequenceDiagram
 **JWKS-based offline validation.** The Router fetches Keycloak's public signing keys via OIDC discovery at startup. The `go-oidc` library caches and auto-rotates these keys - no per-request call to Keycloak.
 
 **Forwarding user identity via signed tokens, not plain headers.** The Router embeds the user's `sub` claim into existing channels:
-- For PicoD: added as a `user_sub` claim in the Router-signed internal JWT
-- For WorkloadManager: sent as a short-lived Router-signed identity JWT in the `X-AgentCube-User-Identity` header
+- For PicoD: added as a `user_sub` claim in the Router-signed internal JWT (allows the agent runtime to trace actions back to a specific human user for logging, context, and downstream internal AuthZ).
+- For WorkloadManager: the Router creates and signs a **new, short-lived internal JWT** (containing just the user's ID) and sends it in the `X-AgentCube-User-Identity` header. We do not pass the original Keycloak token, keeping WM decoupled from the external IDP.
 
-Downstream services trust the identity because it is cryptographically signed by the Router's private key (the same key used for PicoD auth). WM verifies this JWT using the Router's public key from the `picod-router-public-key` ConfigMap — no dependency on mTLS for identity trust.
+WorkloadManager and PicoD know they can trust this user identity because the internal JWT is cryptographically signed by the Router's private key. They verify the signature using the Router's public key (which is distributed via a Kubernetes ConfigMap). This guarantees the user identity was actually verified by the Router and prevents anyone from spoofing a fake identity header.
 
 ## Detailed Design
 
 ### 1. Keycloak Helm Deployment
 
-Keycloak runs as a single-replica Deployment inside the AgentCube namespace, gated behind `{{- if .Values.keycloak.enabled }}`. The Helm chart **bootstraps** the initial realm, clients, and roles — it is not a declarative management tool. After first startup, realm changes must be made via the Keycloak Admin API or Admin Console.
+Keycloak is deployed as a **separate addon chart** (`manifests/charts/addons/keycloak/`), independent of the core AgentCube chart. This keeps the core chart provider-agnostic - it only needs an OIDC issuer URL, which works with Keycloak, Okta, Auth0, or any OIDC-compliant provider. The addon chart **bootstraps** the initial realm, clients, and roles — it is not a declarative management tool. After first startup, realm changes must be made via the Keycloak Admin API or Admin Console.
 
-The Deployment runs `quay.io/keycloak/keycloak:26.0.8` and supports two modes:
+The Deployment runs the official `quay.io/keycloak/keycloak` image and supports two modes:
 
-- **Dev mode** (`keycloak.devMode: true`, default): Runs `start-dev` with an embedded H2 database. Suitable for local development and testing.
-- **Production mode** (`keycloak.devMode: false`): Runs `start` and requires an external database, an external Secret for credentials, and a public hostname. For production HA, we recommend using an external Keycloak instance or the [Keycloak Operator](https://www.keycloak.org/operator/installation) rather than the built-in single-replica chart.
+- **Dev mode** (`keycloak.devMode: true`, default): Runs `start-dev` with an embedded H2 database. Suitable for local development and testing. (Replicas must be 1).
+- **Production mode** (`keycloak.devMode: false`): Runs `start` and requires an external database, an external Secret for credentials, and a public hostname. For production HA, you can increase `replicas` in the addon chart values (which requires an external database), though for complex enterprise setups we recommend the [Keycloak Operator](https://www.keycloak.org/operator/installation).
 
 The Deployment uses `--import-realm` to load the realm configuration from a mounted Secret (`keycloak-realm-config`) on first startup. The `--import-realm` flag automatically skips existing realms - subsequent restarts do not overwrite the realm, so Helm value changes to the realm JSON will not take effect on an existing database. The pod runs as non-root with all capabilities dropped.
 
@@ -100,8 +100,8 @@ admin
 
 | Client ID | Type | Purpose |
 |-----------|------|---------|
-| `agentcube-service` | Confidential (`client_credentials`) | Server-side / automation authentication |
-| `agentcube-sdk` | Public (`authorization_code` + PKCE) | Interactive SDK and CLI authentication |
+| `agentcube-service` | Confidential (`client_credentials`) | External backend applications and automated scripts using the Python SDK (Machine-to-Machine / M2M) |
+| `agentcube-sdk` | Public (`authorization_code` + PKCE) | Human end users interacting via the CLI or browser (Interactive) |
 | `agentcube-router` | Confidential (`client_credentials`) | Internal Router service identity |
 | `agentcube-admin` | Confidential (`client_credentials`) | Administrative operations |
 
@@ -119,22 +119,28 @@ The Router uses the `coreos/go-oidc` library to validate incoming JWTs. This is 
 
 ```go
 type OIDCConfig struct {
-    IssuerURL string   // e.g. "http://keycloak.agentcube-system.svc:8080/realms/agentcube"
-    Audience  string   // expected "aud" claim, e.g. "agentcube-api"
+    IssuerURL  string // e.g. "http://keycloak.agentcube-system.svc:8080/realms/agentcube"
+    Audience   string // expected "aud" claim, e.g. "agentcube-api"
+    RolesClaim string // dot-separated path to roles array, e.g. "realm_access.roles"
 }
 
 type Claims struct {
-    Subject     string      `json:"sub"`
-    Email       string      `json:"email"`
-    RealmAccess RealmAccess `json:"realm_access"`
-}
-
-type RealmAccess struct {
-    Roles []string `json:"roles"`
+    Subject string   // from standard "sub" claim
+    Email   string   // from standard "email" claim
+    Roles   []string // extracted from the configured RolesClaim path
 }
 ```
 
-The `OIDCValidator` uses `go-oidc` for JWKS discovery and key caching (`oidc.NewProvider()`), but validates the token as an **OAuth2 access token**, not an ID token. Keycloak's `client_credentials` grant returns an access token, and while Keycloak issues these as signed JWTs using the same keys, the audience semantics differ from ID tokens. `ValidateToken` verifies the JWT signature against cached JWKS keys, then explicitly checks `iss`, `exp`, `nbf`, `aud`, and extracts `realm_access.roles` — all locally, no per-request call to Keycloak.
+Roles are extracted dynamically from the JWT using the configured `RolesClaim` path. For example, `realm_access.roles` means: parse the JWT payload as JSON, navigate into the `realm_access` object, then read the `roles` array. This makes the middleware work with any OIDC provider:
+
+| Provider | `--oidc-roles-claim` value |
+|----------|---------------------------|
+| Keycloak | `realm_access.roles` (default) |
+| Auth0 | `https://myapp.com/roles` |
+| Okta | `groups` |
+| Azure AD | `roles` |
+
+The `OIDCValidator` uses `go-oidc` for JWKS discovery and key caching (`oidc.NewProvider()`), but validates the token as an **OAuth2 access token**, not an ID token. Keycloak's `client_credentials` grant returns an access token, and while Keycloak issues these as signed JWTs using the same keys, the audience semantics differ from ID tokens. `ValidateToken` verifies the JWT signature against cached JWKS keys, then explicitly checks `iss`, `exp`, `nbf`, `aud`, and extracts roles from the configured claim path — all locally, no per-request call to Keycloak.
 
 ### 3. Authentication Middleware (Router)
 
@@ -143,7 +149,7 @@ The `OIDCValidator` uses `go-oidc` for JWKS discovery and key caching (`oidc.New
 Two gin middleware functions :
 
 - **`oidcAuthMiddleware()`** - extracts the Bearer token, validates it via the OIDC validator, stores Claims in context. No-op when auth is disabled.
-- **`requireRole(role)`** - checks `realm_access.roles` for the required role. Returns 403 if missing.
+- **`requireRole(role)`** - checks the extracted roles list (from the configured claim path) for the required role. Returns 403 if missing.
 
 Applied to the `/v1` route group:
 
@@ -261,25 +267,41 @@ The existing clients (`ControlPlaneClient`, Data Plane clients, high-level clien
 
 ### 7. Helm Wiring and CLI Flags
 
-When `keycloak.enabled` is true, the Router Deployment template passes additional args:
+The core AgentCube chart has provider-agnostic OIDC configuration under `router.oidc`. When `router.oidc.issuerUrl` is set, the Router Deployment template passes additional args:
 
 ```yaml
-{{- if .Values.keycloak.enabled }}
-- --enable-external-auth
-- --oidc-issuer-url=http://keycloak.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.keycloak.service.port }}/realms/{{ .Values.keycloak.realm }}
-- --oidc-audience=agentcube-api
+{{- if .Values.router.oidc.issuerUrl }}
+- --oidc-issuer-url={{ .Values.router.oidc.issuerUrl }}
+- --oidc-audience={{ .Values.router.oidc.audience }}
+- --oidc-roles-claim={{ .Values.router.oidc.rolesClaim }}
 {{- end }}
 ```
 
-Three new flags in `cmd/router/main.go`:
+When using the Keycloak addon chart, the user sets the issuer URL to point at the in-cluster Keycloak service:
+
+```bash
+# 1. Deploy the Keycloak addon
+helm install keycloak manifests/charts/addons/keycloak -n agentcube-system \
+  --set adminUser=admin --set adminPassword=admin \
+  --set clients.service.secret=my-svc-secret \
+  --set clients.router.secret=my-router-secret \
+  --set clients.admin.secret=my-admin-secret
+
+# 2. Deploy AgentCube with OIDC pointed at the addon
+helm install agentcube manifests/charts/base -n agentcube-system \
+  --set router.oidc.issuerUrl=http://keycloak.agentcube-system.svc:8080/realms/agentcube \
+  --set router.oidc.rolesClaim=realm_access.roles
+```
+
+Two new flags in `cmd/router/main.go`:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--enable-external-auth` | `false` | Enable Keycloak OIDC authentication |
-| `--oidc-issuer-url` | `""` | Keycloak realm issuer URL |
+| `--oidc-issuer-url` | `""` | OIDC provider issuer URL |
 | `--oidc-audience` | `"agentcube-api"` | Expected JWT audience claim |
+| `--oidc-roles-claim` | `""` | REQUIRED if issuer is set. Dot-separated path to the roles array in the JWT (e.g. `realm_access.roles` for Keycloak, `groups` for Okta). |
 
-When `--enable-external-auth` is set, `--oidc-issuer-url` is required. The Router will fail to start if it is missing.
+External authentication is automatically enabled when `--oidc-issuer-url` is provided. The Router will validate tokens against this issuer.
 
 ## Testing
 
@@ -294,6 +316,6 @@ When `--enable-external-auth` is set, `--oidc-issuer-url` is required. The Route
 The E2E suite (`test/e2e/`) will be extended to deploy Keycloak in the Kind cluster:
 
 1. Preload the Keycloak image into Kind
-2. Deploy with `keycloak.enabled=true` and test client secrets
+2. Deploy with the Keycloak addon and set `router.oidc.issuerUrl` in the base chart
 3. Obtain a real token via `client_credentials` grant
 4. Test cases: no token → 401, invalid token → 401, valid token → success, RLAC ownership → 403

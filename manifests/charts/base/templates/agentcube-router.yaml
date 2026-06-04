@@ -1,3 +1,8 @@
+{{- if .Values.router.oidc.issuerUrl }}
+{{- if empty .Values.router.oidc.rolesClaim }}
+  {{- fail "router.oidc.rolesClaim is required when router.oidc.issuerUrl is set" }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -87,6 +92,11 @@ spec:
             - --mtls-cert={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.certFileName }}
             - --mtls-key={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.keyFileName }}
             - --mtls-ca={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.bundleFileName }}
+            {{- end }}
+            {{- if .Values.router.oidc.issuerUrl }}
+            - --oidc-issuer-url={{ .Values.router.oidc.issuerUrl }}
+            - --oidc-audience={{ .Values.router.oidc.audience }}
+            - --oidc-roles-claim={{ .Values.router.oidc.rolesClaim }}
             {{- end }}
           resources:
             {{- toYaml .Values.router.resources | nindent 12 }}

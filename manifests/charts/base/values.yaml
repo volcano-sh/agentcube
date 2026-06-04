@@ -37,6 +37,13 @@ router:
   config: {}
   extraEnv: []
   serviceAccountName: "agentcube-router"
+  # OIDC configuration for external user authentication.
+  # When oidc.issuerUrl is set, the Router validates Bearer tokens against this OIDC provider.
+  # Works with any OIDC-compliant provider (Keycloak, Okta, Auth0, etc.).
+  oidc:
+    issuerUrl: ""              # e.g., "http://keycloak.agentcube-system.svc:8080/realms/agentcube"
+    audience: "agentcube-api"  # Expected "aud" claim in access tokens
+    rolesClaim: ""             # Required if issuerUrl is set. JSON path to the roles array in the JWT (e.g., "realm_access.roles" for Keycloak, "groups" for Okta).
 
 # AgentCube Workload Manager
 workloadmanager:
@@ -132,61 +139,3 @@ spire:
       requests:
         cpu: 50m
         memory: 64Mi
-
-# Keycloak Configuration (External User Authentication)
-keycloak:
-  enabled: false
-  # Use start-dev mode (embedded H2 DB, HTTP) for local development.
-  # Set to false for production — requires database.vendor and proxy settings below.
-  devMode: true
-  image:
-    repository: quay.io/keycloak/keycloak
-    tag: "26.0.8"
-    pullPolicy: IfNotPresent
-  adminUser: ""           # Required when keycloak.enabled=true.
-  adminPassword: ""       # Dev only. Production must use existingSecret.
-  existingSecret: ""       # Name of a pre-existing Secret containing admin credentials
-  existingSecretKey: "admin-password"  # Key within the Secret holding the password
-  # External database configuration (required when devMode is false)
-  database:
-    vendor: ""             # Database type: "postgres", "mysql", "mariadb". Empty = embedded H2 (dev only).
-    url: ""                # JDBC URL, e.g., "jdbc:postgresql://postgres:5432/keycloak"
-    username: ""
-    password: ""
-    existingSecret: ""     # Name of a pre-existing Secret containing the database password
-    existingSecretKey: "db-password"
-  # Reverse proxy configuration (required when Keycloak is behind an Ingress or load balancer)
-  proxy:
-    headers: ""            # Proxy header mode: "xforwarded" or "forwarded". Empty = disabled.
-    httpEnabled: false     # Allow HTTP traffic when running behind a TLS-terminating proxy
-    hostname: ""           # Public hostname, e.g., "keycloak.example.com". Empty = auto-detect.
-  service:
-    type: ClusterIP
-    port: 8080
-  realm: "agentcube"
-  # Client secrets for confidential OAuth2 clients. Required when keycloak.enabled=true.
-  # The agentcube-sdk client is public (PKCE) and does not require a secret.
-  clients:
-    existingSecret: ""       # Name of a pre-existing Secret containing client secrets
-    # The keys below are only used if existingSecret is empty
-    existingSecretServiceKey: "client-service-secret"
-    existingSecretRouterKey: "client-router-secret"
-    existingSecretAdminKey: "client-admin-secret"
-    service:
-      secret: ""
-    router:
-      secret: ""
-    admin:
-      secret: ""
-  sdk:
-    redirectUris:
-      - "http://localhost*"
-    webOrigins:
-      - "http://localhost*"
-  resources:
-    limits:
-      cpu: 500m
-      memory: 1Gi
-    requests:
-      cpu: 100m
-      memory: 512Mi

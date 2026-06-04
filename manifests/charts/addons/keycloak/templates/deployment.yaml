@@ -1,0 +1,182 @@
+{{- if empty .Values.adminUser }}
+  {{- fail "adminUser is required" }}
+{{- end }}
+{{- if .Values.database.vendor }}
+{{- if empty .Values.database.url }}
+  {{- fail "database.url is required when database.vendor is set" }}
+{{- end }}
+{{- if empty .Values.database.username }}
+  {{- fail "database.username is required when database.vendor is set" }}
+{{- end }}
+{{- end }}
+{{- if not .Values.devMode }}
+{{- if empty .Values.existingSecret }}
+  {{- fail "existingSecret is required when devMode is false (production mode requires an external Secret for the admin password)" }}
+{{- end }}
+{{- if empty .Values.database.vendor }}
+  {{- fail "database.vendor is required when devMode is false (production mode requires an external database)" }}
+{{- end }}
+{{- if empty .Values.database.existingSecret }}
+  {{- fail "database.existingSecret is required when devMode is false (production mode requires an external Secret for the database password)" }}
+{{- end }}
+{{- if empty .Values.proxy.hostname }}
+  {{- fail "proxy.hostname is required when devMode is false (production mode requires a strict hostname)" }}
+{{- end }}
+{{- range .Values.sdk.redirectUris }}
+  {{- if contains "*" . }}
+    {{- fail "Wildcard redirect URIs (e.g. '*') are not allowed in production mode (devMode=false) due to open redirect risks. Please provide explicit, fully-qualified URIs for sdk.redirectUris." }}
+  {{- end }}
+{{- end }}
+{{- range .Values.sdk.webOrigins }}
+  {{- if contains "*" . }}
+    {{- fail "Wildcard web origins (e.g. '*') are not allowed in production mode (devMode=false). Please provide explicit, fully-qualified URIs for sdk.webOrigins." }}
+  {{- end }}
+{{- end }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: keycloak
+spec:
+  replicas: {{ .Values.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: keycloak
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Note: --import-realm only applies on an empty database/first start.
+          # Realm Secret updates will not be re-applied on subsequent pod restarts.
+          {{- if .Values.devMode }}
+          args: ["start-dev", "--import-realm"]
+          {{- else }}
+          args: ["start", "--import-realm"]
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+            - name: management
+              containerPort: 9000
+              protocol: TCP
+          env:
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: {{ .Values.adminUser | quote }}
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret | default "keycloak-credentials" }}
+                  key: {{ if .Values.existingSecret }}{{ .Values.existingSecretKey | default "admin-password" }}{{ else }}admin-password{{ end }}
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_HTTP_PORT
+              value: {{ .Values.service.port | quote }}
+            {{- if .Values.database.vendor }}
+            - name: KC_DB
+              value: {{ .Values.database.vendor | quote }}
+            - name: KC_DB_URL
+              value: {{ .Values.database.url | quote }}
+            - name: KC_DB_USERNAME
+              value: {{ .Values.database.username | quote }}
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.existingSecret | default "keycloak-credentials" }}
+                  key: {{ if .Values.database.existingSecret }}{{ .Values.database.existingSecretKey | default "db-password" }}{{ else }}db-password{{ end }}
+            {{- end }}
+            {{- if .Values.proxy.headers }}
+            - name: KC_PROXY_HEADERS
+              value: {{ .Values.proxy.headers | quote }}
+            {{- end }}
+            {{- if .Values.proxy.httpEnabled }}
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            {{- end }}
+            {{- if .Values.proxy.hostname }}
+            - name: KC_HOSTNAME
+              value: {{ .Values.proxy.hostname | quote }}
+            {{- end }}
+            - name: KC_CLIENT_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clients.existingSecret | default "keycloak-credentials" }}
+                  key: {{ if .Values.clients.existingSecret }}{{ .Values.clients.existingSecretServiceKey | default "client-service-secret" }}{{ else }}client-service-secret{{ end }}
+            - name: KC_CLIENT_ROUTER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clients.existingSecret | default "keycloak-credentials" }}
+                  key: {{ if .Values.clients.existingSecret }}{{ .Values.clients.existingSecretRouterKey | default "client-router-secret" }}{{ else }}client-router-secret{{ end }}
+            - name: KC_CLIENT_ADMIN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clients.existingSecret | default "keycloak-credentials" }}
+                  key: {{ if .Values.clients.existingSecret }}{{ .Values.clients.existingSecretAdminKey | default "client-admin-secret" }}{{ else }}client-admin-secret{{ end }}
+          volumeMounts:
+            - name: realm-config
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+          # Keycloak's JVM + realm import takes 60-90s. The startup probe gives a 300s
+          # window before liveness checks begin, preventing premature pod restarts.
+          startupProbe:
+            httpGet:
+              path: /health/started
+              port: management
+            failureThreshold: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: management
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: management
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: realm-config
+          secret:
+            secretName: keycloak-realm-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: keycloak
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app: keycloak

@@ -167,6 +167,11 @@ keycloak:
   # Client secrets for confidential OAuth2 clients. Required when keycloak.enabled=true.
   # The agentcube-sdk client is public (PKCE) and does not require a secret.
   clients:
+    existingSecret: ""       # Name of a pre-existing Secret containing client secrets
+    # The keys below are only used if existingSecret is empty
+    existingSecretServiceKey: "client-service-secret"
+    existingSecretRouterKey: "client-router-secret"
+    existingSecretAdminKey: "client-admin-secret"
     service:
       secret: ""
     router:

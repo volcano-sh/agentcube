@@ -68,7 +68,7 @@ spec:
           {{- end }}
           ports:
             - name: http
-              containerPort: 8080
+              containerPort: {{ .Values.keycloak.service.port }}
               protocol: TCP
             - name: management
               containerPort: 9000
@@ -84,7 +84,7 @@ spec:
             - name: KC_HEALTH_ENABLED
               value: "true"
             - name: KC_HTTP_PORT
-              value: "8080"
+              value: {{ .Values.keycloak.service.port | quote }}
             {{- if .Values.keycloak.database.vendor }}
             - name: KC_DB
               value: {{ .Values.keycloak.database.vendor | quote }}
@@ -110,6 +110,21 @@ spec:
             - name: KC_HOSTNAME
               value: {{ .Values.keycloak.proxy.hostname | quote }}
             {{- end }}
+            - name: KC_CLIENT_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.clients.existingSecret | default "keycloak-credentials" }}
+                  key: {{ if .Values.keycloak.clients.existingSecret }}{{ .Values.keycloak.clients.existingSecretServiceKey | default "client-service-secret" }}{{ else }}client-service-secret{{ end }}
+            - name: KC_CLIENT_ROUTER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.clients.existingSecret | default "keycloak-credentials" }}
+                  key: {{ if .Values.keycloak.clients.existingSecret }}{{ .Values.keycloak.clients.existingSecretRouterKey | default "client-router-secret" }}{{ else }}client-router-secret{{ end }}
+            - name: KC_CLIENT_ADMIN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.clients.existingSecret | default "keycloak-credentials" }}
+                  key: {{ if .Values.keycloak.clients.existingSecret }}{{ .Values.keycloak.clients.existingSecretAdminKey | default "client-admin-secret" }}{{ else }}client-admin-secret{{ end }}
           volumeMounts:
             - name: realm-config
               mountPath: /opt/keycloak/data/import

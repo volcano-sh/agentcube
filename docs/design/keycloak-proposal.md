@@ -80,7 +80,7 @@ The Deployment runs `quay.io/keycloak/keycloak:26.0.8` and supports two modes:
 - **Dev mode** (`keycloak.devMode: true`, default): Runs `start-dev` with an embedded H2 database. Suitable for local development and testing.
 - **Production mode** (`keycloak.devMode: false`): Runs `start` and requires an external database, an external Secret for credentials, and a public hostname. For production HA, we recommend using an external Keycloak instance or the [Keycloak Operator](https://www.keycloak.org/operator/installation) rather than the built-in single-replica chart.
 
-The Deployment uses `--import-realm` to load the realm configuration from a mounted Secret (`keycloak-realm-config`) on first startup. The import uses `IGNORE_EXISTING` strategy — subsequent restarts do not overwrite the realm, so Helm value changes to the realm JSON will not take effect on an existing database. The pod runs as non-root with all capabilities dropped.
+The Deployment uses `--import-realm` to load the realm configuration from a mounted Secret (`keycloak-realm-config`) on first startup. The `--import-realm` flag automatically skips existing realms - subsequent restarts do not overwrite the realm, so Helm value changes to the realm JSON will not take effect on an existing database. The pod runs as non-root with all capabilities dropped.
 
 The Service exposes Keycloak on port 8080 (configurable) as a ClusterIP service.
 
@@ -105,7 +105,7 @@ admin
 | `agentcube-router` | Confidential (`client_credentials`) | Internal Router service identity |
 | `agentcube-admin` | Confidential (`client_credentials`) | Administrative operations |
 
-Confidential client secrets are enforced via Helm's `required` function — the chart fails to render if they're missing. The `agentcube-sdk` client is a **public client** (no secret) that uses authorization code with PKCE for interactive flows, following RFC 8252 (OAuth 2.0 for Native Apps). The `agentcube-service` client is confidential and used for server-side `client_credentials` flows where a secret can be stored securely. Both clients have `sandbox:invoke` mapped via `scopeMappings`.
+Confidential client secrets can be provided securely via an existing Kubernetes Secret (`keycloak.clients.existingSecret`) to prevent leaking them in Helm values. They are injected into the Keycloak pod as environment variables and securely substituted into the realm JSON during import. The `agentcube-sdk` client is a **public client** (no secret) that uses authorization code with PKCE for interactive flows, following RFC 8252 (OAuth 2.0 for Native Apps). The `agentcube-service` client is confidential and used for server-side `client_credentials` flows where a secret can be stored securely. Both clients have `sandbox:invoke` mapped via `scopeMappings`.
 
 Both clients include a **hardcoded audience protocol mapper** (`oidc-audience-mapper`) that injects `agentcube-api` into the access token's `aud` claim. The Router validates `aud = "agentcube-api"`. This follows OAuth2 convention — the audience identifies the resource server (the Router API), not the client that requested the token.
 

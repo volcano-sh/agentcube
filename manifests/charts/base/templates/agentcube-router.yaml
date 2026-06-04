@@ -94,9 +94,9 @@ spec:
             - --mtls-ca={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.bundleFileName }}
             {{- end }}
             {{- if .Values.router.oidc.issuerUrl }}
-            - --oidc-issuer-url={{ .Values.router.oidc.issuerUrl }}
-            - --oidc-audience={{ .Values.router.oidc.audience }}
-            - --oidc-roles-claim={{ .Values.router.oidc.rolesClaim }}
+            - {{ printf "--oidc-issuer-url=%s" .Values.router.oidc.issuerUrl | quote }}
+            - {{ printf "--oidc-audience=%s" .Values.router.oidc.audience | quote }}
+            - {{ printf "--oidc-roles-claim=%s" .Values.router.oidc.rolesClaim | quote }}
             {{- end }}
           resources:
             {{- toYaml .Values.router.resources | nindent 12 }}

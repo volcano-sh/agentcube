@@ -1,4 +1,4 @@
-apiVersion: v1
+apiVersion: v2
 name: agentcube-keycloak
 description: Keycloak identity provider addon for AgentCube
 version: 0.1.0

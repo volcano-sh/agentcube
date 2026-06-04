@@ -1,6 +1,9 @@
 {{- if empty .Values.adminUser }}
   {{- fail "adminUser is required" }}
 {{- end }}
+{{- if and .Values.devMode (gt (int (default 1 .Values.replicas)) 1) }}
+  {{- fail "replicas cannot be greater than 1 when devMode is true. Keycloak dev mode uses an embedded H2 database which does not support clustering." }}
+{{- end }}
 {{- if .Values.database.vendor }}
 {{- if empty .Values.database.url }}
   {{- fail "database.url is required when database.vendor is set" }}

@@ -36,7 +36,8 @@ realm: "agentcube"
 # The agentcube-sdk client is public (PKCE) and does not require a secret.
 clients:
   existingSecret: ""       # Name of a pre-existing Secret containing client secrets
-  # The keys below are only used if existingSecret is empty
+  # The keys below are only used if existingSecret is SET.
+  # They define which keys inside your external Secret hold the actual passwords.
   existingSecretServiceKey: "client-service-secret"
   existingSecretRouterKey: "client-router-secret"
   existingSecretAdminKey: "client-admin-secret"

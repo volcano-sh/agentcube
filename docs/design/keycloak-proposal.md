@@ -67,7 +67,7 @@ sequenceDiagram
 - For PicoD: added as a `user_sub` claim in the Router-signed internal JWT (allows the agent runtime to trace actions back to a specific human user for logging, context, and downstream internal AuthZ).
 - For WorkloadManager: the Router creates and signs a **new, short-lived internal JWT** (containing just the user's ID) and sends it in the `X-AgentCube-User-Identity` header. We do not pass the original Keycloak token, keeping WM decoupled from the external IDP.
 
-WorkloadManager and PicoD know they can trust this user identity because the internal JWT is cryptographically signed by the Router's private key. They verify the signature using the Router's public key (which is distributed via a Kubernetes ConfigMap). This guarantees the user identity was actually verified by the Router and prevents anyone from spoofing a fake identity header.
+WorkloadManager and PicoD know they can trust this user identity because the internal JWT is cryptographically signed by the Router's private key. They verify the signature using the Router's public key (which is distributed via the `picod-router-identity` Kubernetes Secret). This guarantees the user identity was actually verified by the Router and prevents anyone from spoofing a fake identity header.
 
 ## Detailed Design
 
@@ -196,7 +196,7 @@ identityToken, _ := s.jwtManager.GenerateToken(identityClaims)
 req.Header.Set("X-AgentCube-User-Identity", identityToken)
 ```
 
-WM verifies this JWT using the Router's public key from the `picod-router-public-key` ConfigMap (already mounted for PicoD auth). This provides cryptographic proof of the user identity without depending on mTLS — the identity is trustworthy regardless of transport security configuration. WM continues to authenticate the Router itself via the existing K8s SA token.
+WM verifies this JWT using the Router's public key from the `picod-router-identity` Secret. This provides cryptographic proof of the user identity without depending on mTLS — the identity is trustworthy regardless of transport security configuration. WM continues to authenticate the Router itself via the existing K8s SA token.
 
 ### 5. RLAC - Resource-Level Access Control
 
@@ -271,9 +271,9 @@ The core AgentCube chart has provider-agnostic OIDC configuration under `router.
 
 ```yaml
 {{- if .Values.router.oidc.issuerUrl }}
-- --oidc-issuer-url={{ .Values.router.oidc.issuerUrl }}
-- --oidc-audience={{ .Values.router.oidc.audience }}
-- --oidc-roles-claim={{ .Values.router.oidc.rolesClaim }}
+- {{ printf "--oidc-issuer-url=%s" .Values.router.oidc.issuerUrl | quote }}
+- {{ printf "--oidc-audience=%s" .Values.router.oidc.audience | quote }}
+- {{ printf "--oidc-roles-claim=%s" .Values.router.oidc.rolesClaim | quote }}
 {{- end }}
 ```
 

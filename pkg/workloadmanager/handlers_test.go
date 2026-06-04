@@ -72,7 +72,14 @@ func (f *fakeStore) ListInactiveSandboxes(_ context.Context, _ time.Time, _ int6
 func (f *fakeStore) UpdateSessionLastActivity(_ context.Context, _ string, _ time.Time) error {
 	return nil
 }
-func (f *fakeStore) Close() error { return nil }
+func (f *fakeStore) StoreSessionPrivateKey(_ context.Context, _ string, _ string, _ time.Duration) error {
+	return nil
+}
+func (f *fakeStore) GetSessionPrivateKey(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+func (f *fakeStore) Close() error                    { return nil }
+func (f *fakeStore) SetEncryptionKey(_ []byte) error { return nil }
 
 func readySandbox() *sandboxv1alpha1.Sandbox {
 	return &sandboxv1alpha1.Sandbox{
@@ -431,7 +438,7 @@ func TestHandleSandboxCreate(t *testing.T) {
 				return sb, entry, nil
 			})
 
-			patches.ApplyFunc(buildSandboxByCodeInterpreter, func(_, _ string, _ *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+			patches.ApplyFunc(buildSandboxByCodeInterpreter, func(_, _ string, _ *Informers, _ string) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
 				if tc.kind != types.CodeInterpreterKind {
 					return nil, nil, nil, errors.New("unexpected kind")
 				}

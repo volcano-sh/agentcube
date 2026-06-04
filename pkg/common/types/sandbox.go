@@ -38,10 +38,16 @@ type SandboxInfo struct {
 	// metav1.Duration marshals as a human-readable string (e.g. "15m0s") rather than
 	// a raw nanosecond integer, making the persisted JSON unambiguous.
 	IdleTimeout metav1.Duration `json:"idleTimeout,omitempty"`
+	// SessionPrivateKey is intentionally excluded from JSON serialization so it
+	// is not embedded in the SandboxInfo JSON payload in the KV store.
+	// It is persisted separately via StoreSessionPrivateKey (keyed by session ID)
+	// and populated transiently in the WM→Router HTTP response path.
+	SessionPrivateKey string `json:"-"`
 	// LastActivityAt is populated transiently from the store's last-activity sorted set
 	// during ListInactiveSandboxes. It is intentionally excluded from JSON serialization.
 	LastActivityAt time.Time `json:"-"`
 	Status         string    `json:"status"`
+	AuthMode       string    `json:"authMode,omitempty"`
 }
 
 type SandboxEntryPoint struct {
@@ -62,6 +68,7 @@ type CreateSandboxResponse struct {
 	SandboxID   string              `json:"sandboxId"`
 	SandboxName string              `json:"sandboxName"`
 	EntryPoints []SandboxEntryPoint `json:"entryPoints"`
+	AuthMode    string              `json:"authMode,omitempty"`
 }
 
 func (car *CreateSandboxRequest) Validate() error {

@@ -18,12 +18,16 @@ package store
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
+
+	"k8s.io/klog/v2"
 
 	redisv9 "github.com/redis/go-redis/v9"
 
@@ -35,6 +39,8 @@ type redisStore struct {
 	sessionPrefix        string
 	expiryIndexKey       string
 	lastActivityIndexKey string
+	crypto               *Crypto
+	warnPlaintextOnce    sync.Once
 }
 
 // initRedisStore init redis store client
@@ -215,9 +221,14 @@ func (rs *redisStore) UpdateSandbox(ctx context.Context, sandboxRedis *types.San
 
 func (rs *redisStore) DeleteSandboxBySessionID(ctx context.Context, sessionID string) error {
 	sessionKey := rs.sessionKey(sessionID)
+	sessionPrivKey := sessionPrivKeyPrefix + sessionID
 
+	// Use a regular (non-transactional) pipeline rather than TxPipeline so that
+	// this works in Redis Cluster mode. MULTI/EXEC across keys in different hash
+	// slots produces a CROSSSLOT error in cluster deployments.
 	pipe := rs.cli.Pipeline()
 	pipe.Del(ctx, sessionKey)
+	pipe.Del(ctx, sessionPrivKey)
 	pipe.ZRem(ctx, rs.expiryIndexKey, sessionID)
 	pipe.ZRem(ctx, rs.lastActivityIndexKey, sessionID)
 
@@ -330,5 +341,79 @@ func (rs *redisStore) UpdateSessionLastActivity(ctx context.Context, sessionID s
 		return ErrNotFound
 	}
 
+	return nil
+}
+
+func (rs *redisStore) StoreSessionPrivateKey(ctx context.Context, sessionID string, privateKey string, ttl time.Duration) error {
+	if sessionID == "" {
+		return errors.New("StoreSessionPrivateKey: sessionID is empty")
+	}
+	key := sessionPrivKeyPrefix + sessionID
+
+	var dataToStore string
+	if rs.crypto != nil {
+		ciphertext, err := rs.crypto.Encrypt([]byte(privateKey))
+		if err != nil {
+			return fmt.Errorf("StoreSessionPrivateKey: encryption failed: %w", err)
+		}
+		dataToStore = "enc:" + base64.StdEncoding.EncodeToString(ciphertext)
+	} else {
+		rs.warnPlaintextOnce.Do(func() {
+			klog.Warning("session key encryption is not configured; private keys will be stored in plaintext")
+		})
+		dataToStore = privateKey
+	}
+
+	var err error
+	if ttl > 0 {
+		err = rs.cli.Set(ctx, key, dataToStore, ttl).Err()
+	} else {
+		// go-redis treats 0 as "no expiration", which is desired here
+		err = rs.cli.Set(ctx, key, dataToStore, 0).Err()
+	}
+
+	if err != nil {
+		return fmt.Errorf("StoreSessionPrivateKey: redis SET %s failed: %w", key, err)
+	}
+	return nil
+}
+
+func (rs *redisStore) GetSessionPrivateKey(ctx context.Context, sessionID string) (string, error) {
+	if sessionID == "" {
+		return "", errors.New("GetSessionPrivateKey: sessionID is empty")
+	}
+	key := sessionPrivKeyPrefix + sessionID
+	val, err := rs.cli.Get(ctx, key).Result()
+	if errors.Is(err, redisv9.Nil) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("GetSessionPrivateKey: redis GET %s failed: %w", key, err)
+	}
+
+	if strings.HasPrefix(val, "enc:") {
+		if rs.crypto == nil {
+			return "", errors.New("GetSessionPrivateKey: decryption key is required but not configured")
+		}
+		ciphertext, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(val, "enc:"))
+		if err != nil {
+			return "", fmt.Errorf("GetSessionPrivateKey: base64 decode failed: %w", err)
+		}
+		plaintext, err := rs.crypto.Decrypt(ciphertext)
+		if err != nil {
+			return "", fmt.Errorf("GetSessionPrivateKey: decryption failed: %w", err)
+		}
+		return string(plaintext), nil
+	}
+
+	return val, nil
+}
+
+func (rs *redisStore) SetEncryptionKey(key []byte) error {
+	c, err := NewCrypto(key)
+	if err != nil {
+		return fmt.Errorf("SetEncryptionKey failed: %w", err)
+	}
+	rs.crypto = c
 	return nil
 }

@@ -228,6 +228,7 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 		Name:             res.SandboxName,
 		SessionID:        res.SessionID,
 		EntryPoints:      res.EntryPoints,
+		AuthMode:         res.AuthMode,
 	}
 
 	return sandbox, nil

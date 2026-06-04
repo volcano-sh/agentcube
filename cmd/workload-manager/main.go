@@ -97,21 +97,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	sandboxReconciler := &workloadmanager.SandboxReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}
-
-	codeInterpreterReconciler := &workloadmanager.CodeInterpreterReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}
-
-	if err := setupControllers(mgr, sandboxReconciler, codeInterpreterReconciler); err != nil {
-		fmt.Fprintf(os.Stderr, "unable to setup controllers: %v\n", err)
-		os.Exit(1)
-	}
-
 	// Create API server configuration
 	config := &workloadmanager.Config{
 		Port:             *port,
@@ -123,10 +108,26 @@ func main() {
 		MTLSConfig:       tlsConfig,
 	}
 
+	sandboxReconciler := &workloadmanager.SandboxReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}
+
 	// Create and initialize API server
 	server, err := workloadmanager.NewServer(config, sandboxReconciler)
 	if err != nil {
 		klog.Fatalf("Failed to create API server: %v", err)
+	}
+
+	codeInterpreterReconciler := &workloadmanager.CodeInterpreterReconciler{
+		Client:                 mgr.GetClient(),
+		Scheme:                 mgr.GetScheme(),
+		BootstrapPublicKeyFunc: server.GetBootstrapPublicKeyPEM,
+	}
+
+	if err := setupControllers(mgr, sandboxReconciler, codeInterpreterReconciler); err != nil {
+		fmt.Fprintf(os.Stderr, "unable to setup controllers: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Setup signal handling

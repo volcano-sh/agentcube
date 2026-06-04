@@ -17,11 +17,18 @@ limitations under the License.
 package workloadmanager
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"math/rand"
 	"net"
+	"net/http"
 	"strconv"
 	"time"
+
+	"k8s.io/klog/v2"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
@@ -33,9 +40,13 @@ const (
 	defaultSandboxReadyProbeTimeout  = 15 * time.Second
 	defaultSandboxReadyProbeInterval = 1 * time.Second
 	defaultSandboxReadyDialTimeout   = 1 * time.Second
+	defaultPicoInitTimeout           = 5 * time.Second
 
 	sandboxStatusReady    = "ready"
 	sandboxStatusNotReady = "not-ready"
+
+	// defaultPicoDPort is the fallback port for the PicoD /init management endpoint.
+	defaultPicoDPort uint32 = 8080
 )
 
 var sandboxEntrypointDial = func(ctx context.Context, endpoint string, timeout time.Duration) error {
@@ -88,16 +99,19 @@ func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *san
 		idleTimeout = DefaultSandboxIdleTimeout
 	}
 	return &types.SandboxInfo{
-		Kind:             entry.Kind,
-		SandboxID:        string(sandbox.GetUID()),
-		Name:             sandbox.GetName(),
-		SandboxNamespace: sandbox.GetNamespace(),
-		EntryPoints:      accesses,
-		SessionID:        entry.SessionID,
-		CreatedAt:        createdAt,
-		ExpiresAt:        expiresAt,
-		Status:           getSandboxStatus(sandbox),
-		IdleTimeout:      metav1.Duration{Duration: idleTimeout},
+		Kind:              entry.Kind,
+		SandboxID:         string(sandbox.GetUID()),
+		Name:              sandbox.GetName(),
+		SandboxNamespace:  sandbox.GetNamespace(),
+		EntryPoints:       accesses,
+		SessionID:         entry.SessionID,
+		CreatedAt:         createdAt,
+		ExpiresAt:         expiresAt,
+		Status:            getSandboxStatus(sandbox),
+		AuthMode:          string(entry.AuthMode),
+		IdleTimeout:       metav1.Duration{Duration: idleTimeout},
+		SessionPrivateKey: "", // Explicitly zeroed: json:"-" prevents JSON marshaling, but this guards
+		// against accidental key exposure via fmt.Sprintf("%+v", info) style log calls.
 	}
 }
 
@@ -160,4 +174,124 @@ func probeSandboxEntryPoints(ctx context.Context, podIP string, ports []runtimev
 	}
 
 	return nil
+}
+
+// picodInitPortName is the well-known port name used for PicoD's management HTTP API.
+// The /init call is always sent here, regardless of what other ports are present.
+const picodInitPortName = "picod"
+
+// findPicoDInitPort returns the port to use for the /init call.
+// It prefers a port whose name matches picodInitPortName; falls back to port 8080.
+func findPicoDInitPort(ports []runtimev1alpha1.TargetPort) uint32 {
+	for _, p := range ports {
+		if p.Name == picodInitPortName {
+			return p.Port
+		}
+	}
+	// Fallback: use defaultPicoDPort. The absence of a named port is a misconfiguration —
+	// log a warning so operators can fix the runtime spec.
+	klog.Warningf("no port named %q found in sandbox entry; using fallback port %d for /init", picodInitPortName, defaultPicoDPort)
+	return defaultPicoDPort
+}
+
+func (s *Server) initializePicoD(ctx context.Context, podIP string, entry *sandboxEntry) error {
+	if entry == nil || entry.AuthMode != runtimev1alpha1.AuthModePicoD {
+		return nil
+	}
+	if s.bootstrapAuth == nil {
+		return fmt.Errorf("initializePicoD: bootstrapAuth is not configured")
+	}
+	if s.httpClient == nil {
+		return fmt.Errorf("initializePicoD: httpClient is not configured")
+	}
+
+	// Use the configured timeout so operators can tune it; fall back to the
+	// compile-time default for tests where s.config may be nil.
+	initTimeout := defaultPicoInitTimeout
+	if s.config != nil && s.config.PicoInitTimeout > 0 {
+		initTimeout = s.config.PicoInitTimeout
+	}
+	initCtx, cancel := context.WithTimeout(ctx, initTimeout)
+	defer cancel()
+
+	port := findPicoDInitPort(entry.Ports)
+	endpoint := fmt.Sprintf("http://%s:%d/init", podIP, port)
+
+	privPEM, pubPEM, err := GenerateSessionKeyPair()
+	if err != nil {
+		return fmt.Errorf("failed to generate session key pair: %w", err)
+	}
+
+	// Use the struct-based manager (not a global function) so tests can inject
+	// an isolated BootstrapAuthManager instance.
+	token, err := s.bootstrapAuth.GenerateInitJWT(entry.SessionID, pubPEM)
+	if err != nil {
+		return fmt.Errorf("failed to generate init JWT: %w", err)
+	}
+
+	payload := map[string]string{"token": token}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal /init request for %s: %w", endpoint, err)
+	}
+
+	resp, err := s.sendInitRequestWithRetry(initCtx, endpoint, bodyBytes)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		// 409 Conflict is NOT treated as success. A retry would have generated a
+		// NEW key pair; if PicoD already holds an earlier public key, returning
+		// success here would persist the wrong private key and break every
+		// subsequent request with a 401. Treat 409 as a terminal error so the
+		// sandbox is rolled back and re-created with a clean key pair.
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		if decErr := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&errResp); decErr == nil && errResp.Error != "" {
+			return fmt.Errorf("POST /init %s returned %s: %s", endpoint, resp.Status, errResp.Error)
+		}
+		return fmt.Errorf("POST /init %s returned status: %s", endpoint, resp.Status)
+	}
+
+	// Assign SessionPrivateKey ONLY after confirmed 200 OK or 409 (already initialized).
+	// This prevents a partial-init state where the Router holds a key
+	// that PicoD never accepted.
+	entry.SessionPrivateKey = privPEM
+	return nil
+}
+
+func (s *Server) sendInitRequestWithRetry(ctx context.Context, endpoint string, bodyBytes []byte) (*http.Response, error) {
+	var resp *http.Response
+	var err error
+	maxRetries := 3
+
+	for i := 0; i < maxRetries; i++ {
+		var req *http.Request
+		req, err = http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, fmt.Errorf("failed to build /init request for %s: %w", endpoint, err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err = s.httpClient.Do(req)
+		if err == nil {
+			return resp, nil
+		}
+		klog.V(4).Infof("POST /init failed on attempt %d/%d: %v", i+1, maxRetries, err)
+		if i < maxRetries-1 {
+			// Add jitter (400–700ms) to avoid thundering herd when multiple
+			// WorkloadManager replicas provision sandboxes concurrently.
+			//nolint:gosec // non-cryptographic jitter for backoff
+			jitter := time.Duration(400+rand.Intn(300)) * time.Millisecond
+			select {
+			case <-time.After(jitter):
+			case <-ctx.Done():
+				return nil, fmt.Errorf("POST /init canceled during backoff: %w", ctx.Err())
+			}
+		}
+	}
+	return nil, fmt.Errorf("POST /init failed after %d attempts: %w", maxRetries, err)
 }

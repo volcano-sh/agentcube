@@ -37,7 +37,7 @@ import jwt
 import requests
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import rsa, ec
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -50,8 +50,7 @@ PICOD_PORT = 8080
 
 # --- Helper Functions ---
 
-def generate_key_pair():
-    """Generate RSA 2048 key pair."""
+def generate_rsa_key_pair():
     private_key = rsa.generate_private_key(
         public_exponent=65537,
         key_size=2048,
@@ -73,10 +72,29 @@ def generate_key_pair():
     return private_key, priv_pem, pub_pem
 
 
-def start_picod_container(public_key_pem: bytes):
+def generate_ecdsa_key_pair():
+    """Generate ECDSA P-256 key pair."""
+    private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
+
+    pub = private_key.public_key()
+    pub_pem = pub.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+    priv_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption()
+    )
+
+    return private_key, priv_pem, pub_pem
+
+
+def start_picod_container(bootstrap_pub_key_pem: bytes, session_id: str):
     """
-    Start PicoD container with public key injected via environment variable.
-    This simulates the new architecture where WorkloadManager injects PICOD_AUTH_PUBLIC_KEY.
+    Start PicoD container with bootstrap public key and session ID injected via environment variable.
+    This simulates the WorkloadManager initialization.
     """
     logger.info(f"Starting PicoD container {PICOD_CONTAINER_NAME}...")
 
@@ -84,19 +102,20 @@ def start_picod_container(public_key_pem: bytes):
     subprocess.run(["docker", "rm", "-f", PICOD_CONTAINER_NAME], capture_output=True)
 
     # Decode public key PEM for environment variable
-    pub_key_str = public_key_pem.decode('utf-8')
+    pub_key_str = bootstrap_pub_key_pem.decode('utf-8')
 
     cmd = [
         "docker", "run", "-d",
         "--name", PICOD_CONTAINER_NAME,
         "-p", f"{PICOD_PORT}:8080",
-        "-e", f"PICOD_AUTH_PUBLIC_KEY={pub_key_str}",
+        "-e", f"PICOD_BOOTSTRAP_PUBLIC_KEY={pub_key_str}",
+        "-e", f"PICOD_SESSION_ID={session_id}",
         PICOD_IMAGE
     ]
 
     logger.info(
         f"Running: docker run -d --name {PICOD_CONTAINER_NAME} "
-        f"-p {PICOD_PORT}:8080 -e PICOD_AUTH_PUBLIC_KEY=<key> {PICOD_IMAGE}"
+        f"-p {PICOD_PORT}:8080 -e PICOD_BOOTSTRAP_PUBLIC_KEY=<key> -e PICOD_SESSION_ID={session_id} {PICOD_IMAGE}"
     )
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -136,13 +155,29 @@ class RouterSimulator:
     we simulate Router by signing JWTs with the same algorithm.
     """
 
-    def __init__(self, private_key, picod_url: str):
-        self.private_key = private_key
+    def __init__(self, bootstrap_private_key, session_private_key, session_id: str, picod_url: str):
+        self.bootstrap_private_key = bootstrap_private_key
+        self.session_private_key = session_private_key
+        self.session_id = session_id
         self.picod_url = picod_url.rstrip("/")
         self.session = requests.Session()
 
+    def initialize_session(self, session_pub_key_pem: bytes):
+        """Call /init with an RSA-signed token containing the ECDSA session public key."""
+        now = datetime.now(timezone.utc)
+        payload = {
+            "iss": "agentcube-workload-manager",
+            "sub": self.session_id,
+            "iat": now,
+            "exp": now + timedelta(minutes=5),
+            "session_public_key": session_pub_key_pem.decode("utf-8")
+        }
+        token = jwt.encode(payload, self.bootstrap_private_key, algorithm="RS256")
+        resp = self.session.post(f"{self.picod_url}/init", json={"token": token})
+        resp.raise_for_status()
+
     def _sign_jwt(self, claims: dict = None) -> str:
-        """Generate a JWT token like Router would."""
+        """Generate an ECDSA JWT token like Router would."""
         now = datetime.now(timezone.utc)
         payload = {
             "iss": "agentcube-router",
@@ -152,7 +187,7 @@ class RouterSimulator:
         if claims:
             payload.update(claims)
 
-        return jwt.encode(payload, self.private_key, algorithm="RS256")
+        return jwt.encode(payload, self.session_private_key, algorithm="ES256")
 
     def request(self, method: str, endpoint: str, **kwargs) -> requests.Response:
         """Make an authenticated request (simulating Router's forwarding)."""
@@ -229,12 +264,12 @@ def test_invalid_token():
     """Test that requests with invalid JWT are rejected."""
     logger.info(">>> TEST: Invalid Token")
 
-    # Generate a different key pair
-    wrong_key, _, _ = generate_key_pair()
+    # Generate a different ECDSA key pair
+    wrong_key, _, _ = generate_ecdsa_key_pair()
     wrong_token = jwt.encode(
         {"iss": "fake", "iat": datetime.now(timezone.utc), "exp": datetime.now(timezone.utc) + timedelta(hours=1)},
         wrong_key,
-        algorithm="RS256"
+        algorithm="ES256"
     )
 
     resp = requests.post(
@@ -315,20 +350,25 @@ def test_timeout(client: RouterSimulator):
 
 def main():
     try:
-        # 1. Generate Router's key pair
-        logger.info("=== SETUP: Generating Router's JWT key pair ===")
-        router_private_key, _, router_public_key_pem = generate_key_pair()
+        # 1. Generate keys
+        logger.info("=== SETUP: Generating Bootstrap & Session keys ===")
+        bootstrap_priv, _, bootstrap_pub_pem = generate_rsa_key_pair()
+        session_priv, _, session_pub_pem = generate_ecdsa_key_pair()
+        session_id = "test-session-123"
 
-        # 2. Start PicoD with public key
+        # 2. Start PicoD with bootstrap public key and session id
         logger.info("=== SETUP: Starting PicoD container ===")
-        start_picod_container(router_public_key_pem)
+        start_picod_container(bootstrap_pub_pem, session_id)
 
-        # 3. Create Router simulator
-        logger.info("=== SETUP: Creating Router simulator ===")
+        # 3. Create Router simulator and initialize PicoD
+        logger.info("=== SETUP: Creating Router simulator & Initializing ===")
         client = RouterSimulator(
-            private_key=router_private_key,
+            bootstrap_private_key=bootstrap_priv,
+            session_private_key=session_priv,
+            session_id=session_id,
             picod_url=f"http://localhost:{PICOD_PORT}"
         )
+        client.initialize_session(session_pub_pem)
 
         # 4. Run tests
         logger.info("=== RUNNING TESTS ===")

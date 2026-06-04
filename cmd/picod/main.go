@@ -41,12 +41,12 @@ func main() {
 		Workspace: *workspace,
 	}
 
-	// Create server
-	server := picod.NewServer(config)
-
 	// Setup signal handling with context cancellation
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// Create server
+	server := picod.NewServer(ctx, config)
 
 	// Start PicoD server in goroutine
 	errCh := make(chan error, 1)

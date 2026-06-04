@@ -40,6 +40,12 @@ type Store interface {
 	ListInactiveSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error)
 	// UpdateSessionLastActivity updates the last-activity index for the given session
 	UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error
+	// StoreSessionPrivateKey stores the session private key associated with the session ID with an optional TTL (0 means no expiration).
+	StoreSessionPrivateKey(ctx context.Context, sessionID string, privateKey string, ttl time.Duration) error
+	// GetSessionPrivateKey retrieves the session private key associated with the session ID.
+	GetSessionPrivateKey(ctx context.Context, sessionID string) (string, error)
+	// SetEncryptionKey sets the AES-GCM encryption key for the store's Crypto engine.
+	SetEncryptionKey(key []byte) error
 	// Close releases all resources held by the store (e.g. connection pools)
 	Close() error
 }

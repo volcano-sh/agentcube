@@ -18,12 +18,14 @@ package store
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -38,6 +40,8 @@ type valkeyStore struct {
 	sessionPrefix        string
 	expiryIndexKey       string
 	lastActivityIndexKey string
+	crypto               *Crypto
+	warnPlaintextOnce    sync.Once
 }
 
 // initValkeyStore init valkey store client
@@ -227,9 +231,14 @@ func (vs *valkeyStore) UpdateSandbox(ctx context.Context, sandboxStore *types.Sa
 // DeleteSandboxBySessionID delete sandbox by session ID
 func (vs *valkeyStore) DeleteSandboxBySessionID(ctx context.Context, sessionID string) error {
 	sessionKey := vs.sessionKey(sessionID)
+	sessionPrivKey := sessionPrivKeyPrefix + sessionID
 
+	// Use DoMulti without MULTI/EXEC so commands are routed independently in
+	// Valkey Cluster mode. MULTI/EXEC across keys in different hash slots
+	// produces a CROSSSLOT error in cluster deployments.
 	commands := make(valkey.Commands, 0, 4)
 	commands = append(commands, vs.cli.B().Del().Key(sessionKey).Build())
+	commands = append(commands, vs.cli.B().Del().Key(sessionPrivKey).Build())
 	commands = append(commands, vs.cli.B().Zrem().Key(vs.expiryIndexKey).Member(sessionID).Build())
 	commands = append(commands, vs.cli.B().Zrem().Key(vs.lastActivityIndexKey).Member(sessionID).Build())
 
@@ -325,5 +334,77 @@ func (vs *valkeyStore) UpdateSessionLastActivity(ctx context.Context, sessionID 
 	if err != nil {
 		return fmt.Errorf("UpdateSessionLastActivity: ZADD failed: %w", err)
 	}
+	return nil
+}
+
+func (vs *valkeyStore) StoreSessionPrivateKey(ctx context.Context, sessionID string, privateKey string, ttl time.Duration) error {
+	if sessionID == "" {
+		return errors.New("StoreSessionPrivateKey: sessionID is empty")
+	}
+	key := sessionPrivKeyPrefix + sessionID
+
+	var dataToStore string
+	if vs.crypto != nil {
+		ciphertext, err := vs.crypto.Encrypt([]byte(privateKey))
+		if err != nil {
+			return fmt.Errorf("StoreSessionPrivateKey: encryption failed: %w", err)
+		}
+		dataToStore = "enc:" + base64.StdEncoding.EncodeToString(ciphertext)
+	} else {
+		vs.warnPlaintextOnce.Do(func() {
+			klog.Warning("session key encryption is not configured; private keys will be stored in plaintext")
+		})
+		dataToStore = privateKey
+	}
+
+	var err error
+	if ttl > 0 {
+		err = vs.cli.Do(ctx, vs.cli.B().Set().Key(key).Value(dataToStore).Ex(ttl).Build()).Error()
+	} else {
+		err = vs.cli.Do(ctx, vs.cli.B().Set().Key(key).Value(dataToStore).Build()).Error()
+	}
+	if err != nil {
+		return fmt.Errorf("StoreSessionPrivateKey: valkey SET %s failed: %w", key, err)
+	}
+	return nil
+}
+
+func (vs *valkeyStore) GetSessionPrivateKey(ctx context.Context, sessionID string) (string, error) {
+	if sessionID == "" {
+		return "", errors.New("GetSessionPrivateKey: sessionID is empty")
+	}
+	key := sessionPrivKeyPrefix + sessionID
+	val, err := vs.cli.Do(ctx, vs.cli.B().Get().Key(key).Build()).ToString()
+	if err != nil {
+		if valkey.IsValkeyNil(err) {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("GetSessionPrivateKey: valkey GET %s: %w", key, err)
+	}
+
+	if strings.HasPrefix(val, "enc:") {
+		if vs.crypto == nil {
+			return "", errors.New("GetSessionPrivateKey: decryption key is required but not configured")
+		}
+		ciphertext, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(val, "enc:"))
+		if err != nil {
+			return "", fmt.Errorf("GetSessionPrivateKey: base64 decode failed: %w", err)
+		}
+		plaintext, err := vs.crypto.Decrypt(ciphertext)
+		if err != nil {
+			return "", fmt.Errorf("GetSessionPrivateKey: decryption failed: %w", err)
+		}
+		return string(plaintext), nil
+	}
+
+	return val, nil
+}
+
+func (vs *valkeyStore) SetEncryptionKey(key []byte) error {
+	c, err := NewCrypto(key)
+	if err != nil {
+		return fmt.Errorf("SetEncryptionKey failed: %w", err)
+	}
+	vs.crypto = c
 	return nil
 }

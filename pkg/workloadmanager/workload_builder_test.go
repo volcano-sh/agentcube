@@ -226,23 +226,6 @@ const (
 	testCodeInterpreterUID      = "ci-uid-123"
 )
 
-// setCachedPublicKeyForTest directly mutates the package-level cachedPublicKey
-// behind a mutex. This is fine for serial test execution, but if tests ever run
-// with t.Parallel() can cause race condition.
-func setCachedPublicKeyForTest(t *testing.T, value string) {
-	t.Helper()
-	publicKeyCacheMutex.Lock()
-	previous := cachedPublicKey
-	cachedPublicKey = value
-	publicKeyCacheMutex.Unlock()
-
-	t.Cleanup(func() {
-		publicKeyCacheMutex.Lock()
-		cachedPublicKey = previous
-		publicKeyCacheMutex.Unlock()
-	})
-}
-
 func assertSandboxMetadata(t *testing.T, sandboxLabels map[string]string, sandboxName, namespace, namePrefix, workloadName, sessionID string) {
 	t.Helper()
 	if !strings.HasPrefix(sandboxName, namePrefix) {
@@ -295,7 +278,6 @@ func assertOwnerReference(t *testing.T, owner metav1.OwnerReference) {
 }
 
 func TestBuildCodeInterpreterEnvVars(t *testing.T) {
-	setCachedPublicKeyForTest(t, "test-public-key")
 
 	tests := []struct {
 		name        string
@@ -321,7 +303,8 @@ func TestBuildCodeInterpreterEnvVars(t *testing.T) {
 			authMode: runtimev1alpha1.AuthModePicoD,
 			expected: []corev1.EnvVar{
 				{Name: "FOO", Value: "bar"},
-				{Name: "PICOD_AUTH_PUBLIC_KEY", Value: "test-public-key"},
+				{Name: "PICOD_BOOTSTRAP_PUBLIC_KEY", Value: "test-public-key"},
+				{Name: "PICOD_SESSION_ID", Value: "test-session-id"},
 			},
 		},
 		{
@@ -329,14 +312,15 @@ func TestBuildCodeInterpreterEnvVars(t *testing.T) {
 			templateEnv: nil,
 			authMode:    runtimev1alpha1.AuthModePicoD,
 			expected: []corev1.EnvVar{
-				{Name: "PICOD_AUTH_PUBLIC_KEY", Value: "test-public-key"},
+				{Name: "PICOD_BOOTSTRAP_PUBLIC_KEY", Value: "test-public-key"},
+				{Name: "PICOD_SESSION_ID", Value: "test-session-id"},
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildCodeInterpreterEnvVars(tt.templateEnv, tt.authMode)
+			result := buildCodeInterpreterEnvVars(tt.templateEnv, tt.authMode, "test-public-key", "test-session-id")
 			if len(result) != len(tt.expected) {
 				t.Fatalf("expected len %d, got %d", len(tt.expected), len(result))
 			}
@@ -530,7 +514,7 @@ func TestBuildSandboxByCodeInterpreter_NotFound(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	_, _, _, err := buildSandboxByCodeInterpreter(testNamespace, "missing", ifm)
+	_, _, _, err := buildSandboxByCodeInterpreter(testNamespace, "missing", ifm, "")
 	if !errors.Is(err, api.ErrCodeInterpreterNotFound) {
 		t.Fatalf("expected error %v, got %v", api.ErrCodeInterpreterNotFound, err)
 	}
@@ -550,8 +534,6 @@ func TestBuildSandboxByCodeInterpreter_PicodAuthFailsWithoutKey(t *testing.T) {
 		},
 	}
 
-	setCachedPublicKeyForTest(t, "") // Empty key to trigger error
-
 	fakeClient := cubefake.NewSimpleClientset(codeInterpreter)
 	factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
 	codeInterpreterInformer := factory.Runtime().V1alpha1().CodeInterpreters()
@@ -565,7 +547,7 @@ func TestBuildSandboxByCodeInterpreter_PicodAuthFailsWithoutKey(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	_, _, _, err = buildSandboxByCodeInterpreter(testNamespace, "ci-picod-no-key", ifm)
+	_, _, _, err = buildSandboxByCodeInterpreter(testNamespace, "ci-picod-no-key", ifm, "")
 	if !errors.Is(err, api.ErrPublicKeyMissing) {
 		t.Fatalf("expected error %v, got %v", api.ErrPublicKeyMissing, err)
 	}
@@ -600,7 +582,7 @@ func TestBuildSandboxByCodeInterpreter_SuccessNoWarmPool(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, "ci-no-wp", ifm)
+	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, "ci-no-wp", ifm, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -658,7 +640,7 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, testCodeInterpreterWarmPool, ifm)
+	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, testCodeInterpreterWarmPool, ifm, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

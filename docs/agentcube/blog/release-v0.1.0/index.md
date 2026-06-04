@@ -101,12 +101,12 @@ Key Capabilities:
 
 ### JWT Security Chain (Router → PicoD)
 
-Sandbox pods are ephemeral and may be replaced at any time; embedding a shared secret in cluster config is fragile and hard to rotate. AgentCube establishes an RSA-based trust chain: the Router generates an RSA-2048 key pair at startup, stores the public key in a Kubernetes Secret (`picod-router-identity`), and the Workload Manager injects it as `PICOD_AUTH_PUBLIC_KEY` for `CodeInterpreter` sandboxes when authentication is enabled (the default is `picod`; `none` disables injection). The Router signs short-lived (5-minute) RS256 JWTs for every proxied request. PicoD verifies these tokens entirely in-process — no network round-trip, no shared database.
+Sandbox pods are ephemeral and may be replaced at any time; embedding a shared secret in cluster config is fragile and hard to rotate. AgentCube establishes a two-stage trust chain: the Router generates an RSA-2048 bootstrap key pair at startup, stores the public key in a Kubernetes Secret (`agentcube-bootstrap-identity`), and the Workload Manager injects it as `PICOD_BOOTSTRAP_PUBLIC_KEY` for `CodeInterpreter` sandboxes when authentication is enabled (the default is `picod`; `none` disables injection). A dynamic ECDSA (P-256) session key is then generated for each sandbox instance via an `/init` handshake. The Router signs short-lived (5-minute) ES256 JWTs for every proxied request. PicoD verifies these tokens entirely in-process — no network round-trip, no shared database.
 
 Key Capabilities:
 
 - RSA-2048 key pair auto-generated at Router startup
-- Public key distributed via `picod-router-identity` Kubernetes Secret
+- Public key distributed via `agentcube-bootstrap-identity` Kubernetes Secret
 - Workload Manager injects public key into `CodeInterpreter` sandbox env when `spec.authMode` is not `none`
 - 5-minute token expiry limits blast radius of token leakage
 - PicoD rejects any request without a valid Router-issued JWT

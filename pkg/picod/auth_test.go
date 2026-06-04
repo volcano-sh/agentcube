@@ -17,6 +17,9 @@ limitations under the License.
 package picod
 
 import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -37,16 +40,35 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-func generateTestRSAKeyPair() (*rsa.PrivateKey, string, error) {
+func generateTestRSAKeyPair() (string, error) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return nil, "", err
+		return "", err
 	}
 
 	publicKey := &privateKey.PublicKey
 
 	// Encode public key to PEM
 	pubKeyBytes, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil {
+		return "", err
+	}
+
+	pubKeyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: pubKeyBytes,
+	})
+
+	return string(pubKeyPEM), nil
+}
+
+func generateTestECDSAKeyPair() (*ecdsa.PrivateKey, string, error) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, "", err
+	}
+
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
 	if err != nil {
 		return nil, "", err
 	}
@@ -60,11 +82,13 @@ func generateTestRSAKeyPair() (*rsa.PrivateKey, string, error) {
 }
 
 func TestNewAuthManager(t *testing.T) {
-	manager := NewAuthManager()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	manager := NewAuthManager(ctx)
 	assert.NotNil(t, manager)
 }
 
-func TestLoadPublicKeyFromEnv(t *testing.T) {
+func TestLoadBootstrapPublicKey(t *testing.T) {
 	tests := []struct {
 		name        string
 		setupEnv    func() string
@@ -74,9 +98,9 @@ func TestLoadPublicKeyFromEnv(t *testing.T) {
 		{
 			name: "valid RSA public key",
 			setupEnv: func() string {
-				_, pubKeyPEM, err := generateTestRSAKeyPair()
+				bootstrapPubKeyPEM, err := generateTestRSAKeyPair()
 				require.NoError(t, err)
-				return pubKeyPEM
+				return bootstrapPubKeyPEM
 			},
 			wantErr: false,
 		},
@@ -120,14 +144,16 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAinvalid
 		t.Run(tt.name, func(t *testing.T) {
 			envValue := tt.setupEnv()
 			if envValue != "" {
-				os.Setenv(PublicKeyEnvVar, envValue)
-				defer os.Unsetenv(PublicKeyEnvVar)
+				os.Setenv(BootstrapPublicKeyEnvVar, envValue)
+				defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 			} else {
-				os.Unsetenv(PublicKeyEnvVar)
+				os.Unsetenv(BootstrapPublicKeyEnvVar)
 			}
 
-			manager := NewAuthManager()
-			err := manager.LoadPublicKeyFromEnv()
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			manager := NewAuthManager(ctx)
+			err := manager.LoadBootstrapPublicKey()
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -142,14 +168,21 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAinvalid
 }
 
 func TestAuthMiddleware_HeaderValidation(t *testing.T) {
-	_, pubKeyPEM, err := generateTestRSAKeyPair()
+	bootstrapPubKeyPEM, err := generateTestRSAKeyPair()
 	require.NoError(t, err)
 
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	_, sessionPubKeyPEM, err := generateTestECDSAKeyPair()
+	require.NoError(t, err)
 
-	manager := NewAuthManager()
-	err = manager.LoadPublicKeyFromEnv()
+	os.Setenv(BootstrapPublicKeyEnvVar, bootstrapPubKeyPEM)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	manager := NewAuthManager(ctx)
+	err = manager.LoadBootstrapPublicKey()
+	require.NoError(t, err)
+	err = manager.SetSessionPublicKey(sessionPubKeyPEM)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -209,14 +242,21 @@ func TestAuthMiddleware_HeaderValidation(t *testing.T) {
 }
 
 func TestAuthMiddleware_TokenValidation(t *testing.T) {
-	privateKey, pubKeyPEM, err := generateTestRSAKeyPair()
+	bootstrapPubKeyPEM, err := generateTestRSAKeyPair()
 	require.NoError(t, err)
 
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	privateKey, sessionPubKeyPEM, err := generateTestECDSAKeyPair()
+	require.NoError(t, err)
 
-	manager := NewAuthManager()
-	err = manager.LoadPublicKeyFromEnv()
+	os.Setenv(BootstrapPublicKeyEnvVar, bootstrapPubKeyPEM)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	manager := NewAuthManager(ctx)
+	err = manager.LoadBootstrapPublicKey()
+	require.NoError(t, err)
+	err = manager.SetSessionPublicKey(sessionPubKeyPEM)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -228,7 +268,8 @@ func TestAuthMiddleware_TokenValidation(t *testing.T) {
 		{
 			name: "valid token",
 			setupToken: func() string {
-				token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+				token := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
+					"iss": "agentcube-router",
 					"exp": time.Now().Add(time.Hour).Unix(),
 					"iat": time.Now().Unix(),
 				})
@@ -240,7 +281,8 @@ func TestAuthMiddleware_TokenValidation(t *testing.T) {
 		{
 			name: "expired token",
 			setupToken: func() string {
-				token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+				token := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
+					"iss": "agentcube-router",
 					"exp": time.Now().Add(-time.Hour).Unix(),
 					"iat": time.Now().Add(-2 * time.Hour).Unix(),
 				})
@@ -253,8 +295,9 @@ func TestAuthMiddleware_TokenValidation(t *testing.T) {
 		{
 			name: "invalid signature",
 			setupToken: func() string {
-				wrongPrivateKey, _ := rsa.GenerateKey(rand.Reader, 2048)
-				token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+				wrongPrivateKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+				token := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
+					"iss": "agentcube-router",
 					"exp": time.Now().Add(time.Hour).Unix(),
 					"iat": time.Now().Unix(),
 				})
@@ -268,6 +311,7 @@ func TestAuthMiddleware_TokenValidation(t *testing.T) {
 			name: "wrong signing method (HS256)",
 			setupToken: func() string {
 				token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+					"iss": "agentcube-router",
 					"exp": time.Now().Add(time.Hour).Unix(),
 					"iat": time.Now().Unix(),
 				})
@@ -300,4 +344,43 @@ func TestAuthMiddleware_TokenValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAuthMiddleware_ValidToken(t *testing.T) {
+	bootstrapPubKeyPEM, err := generateTestRSAKeyPair()
+	require.NoError(t, err)
+
+	privateKey, sessionPubKeyPEM, err := generateTestECDSAKeyPair()
+	require.NoError(t, err)
+
+	os.Setenv(BootstrapPublicKeyEnvVar, bootstrapPubKeyPEM)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	manager := NewAuthManager(ctx)
+	err = manager.LoadBootstrapPublicKey()
+	require.NoError(t, err)
+	err = manager.SetSessionPublicKey(sessionPubKeyPEM)
+	require.NoError(t, err)
+
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
+		"iss": "agentcube-router",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+	tokenString, err := token.SignedString(privateKey)
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request, _ = http.NewRequest("POST", "/api/execute", nil)
+	c.Request.Header.Set("Authorization", "Bearer "+tokenString)
+
+	handler := manager.AuthMiddleware()
+	handler(c)
+
+	// A valid token should pass through the middleware without being rejected.
+	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+	assert.NotEqual(t, http.StatusServiceUnavailable, w.Code)
 }

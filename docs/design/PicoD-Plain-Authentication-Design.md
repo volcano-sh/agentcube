@@ -12,6 +12,13 @@ However, emerging use cases require a more flexible architecture where the clien
 
 The existing self-signed key-pair model is incompatible with this centralized management flow, as it bypasses the Router's ability to mediate access. To address this, we propose a new **Plain Authentication** mechanism for `picod`. This design enables the Router/Gateway to manage credentials and connection security, simplifying the client-side workflow while maintaining robust access control.
 
+> [!WARNING]
+> **Migration Note (Two-Stage Secure Initialization)**
+>
+> The flow described in this document was updated by PR #352 to address cross-sandbox token replay vulnerabilities. The original `PICOD_AUTH_PUBLIC_KEY` environment variable has been renamed to `PICOD_BOOTSTRAP_PUBLIC_KEY` (formerly `PICOD_AUTH_PUBLIC_KEY`).
+>
+> While `PICOD_AUTH_PUBLIC_KEY` is still supported as a fallback for backwards compatibility, deployments should migrate to `PICOD_BOOTSTRAP_PUBLIC_KEY`. Under the new model, this key is only used to verify the bootstrap payload during the `/init` handshake, which establishes a unique session keypair for subsequent requests.
+
 ## Use Cases
 
 ### Gateway-Managed Sandbox Access
@@ -24,15 +31,16 @@ A user requests a sandbox environment using the AgentCube Python SDK. The Router
 
 To ensure **High Availability (HA)** across multiple Router replicas and enforce the principle of **Least Privilege**, this design implements a **Shared Identity Model** backed by Kubernetes primitives.
 
-1. **Shared Authority (Router)**:
+1. **Shared Authority (Router & WorkloadManager)**:
     
-    - All Router replicas share a single cryptographic identity to function as a unified Token Issuer.
-    - **Private Key Storage**: Stored in a Kubernetes Secret (picod-router-identity). The Private Key is accessible only by the Router component.
-    - **Public Key Distribution**: Published to a Kubernetes ConfigMap (picod-router-public-key). This is accessible by the WorkloadManager and PicoD instances.
+    - All Router and WorkloadManager replicas share a single cryptographic identity to function as a unified Token Issuer.
+    - **Identity Storage**: Stored in a Kubernetes Secret (`agentcube-bootstrap-identity`). The Secret is accessible only by the Router and WorkloadManager components.
+    - **Bootstrap Keys**: The Secret contains the RSA private key (`bootstrap-private.pem`) and the public key (`bootstrap-public.pem`) used only during the initial bootstrap handshake.
+    - **Per-Session Keys**: During the `/init` handshake, the Router generates a unique ECDSA key pair for the sandbox session. The Router stores the per-session ECDSA private key in the central KV store (Redis/Valkey), while the sandbox PicoD instance holds the ECDSA public key in memory for verification of subsequent request JWTs.
         
 2. **Decoupled Provisioning (WorkloadManager)**:
     
-    - It provisions sandboxes by injecting the Public Key into the picod container as an Environment Variable (PICOD_AUTH_PUBLIC_KEY).
+    - It provisions sandboxes by injecting the Public Key into the picod container as an Environment Variable (`PICOD_BOOTSTRAP_PUBLIC_KEY`).
         
 3. **Local Verification (PicoD)**:
     
@@ -45,20 +53,20 @@ The authentication lifecycle is divided into three phases: **Bootstrap**, **Pr
 
 #### 1. Bootstrap Phase (Concurrency Control)
 
-Upon startup, every Router replica executes an **Atomic Initialization Routine** to resolve the shared identity. This logic handles race conditions using Kubernetes' optimistic locking capabilities:
+Upon startup, the WorkloadManager (or Router) executes an **Atomic Initialization Routine** to resolve the shared identity. This logic handles race conditions using Kubernetes' optimistic locking capabilities:
 
-1. **Identity Acquisition**: The Router attempts to retrieve the picod-router-identity Secret.
+1. **Identity Acquisition**: The WorkloadManager (or Router) attempts to retrieve the `agentcube-bootstrap-identity` Secret.
     
-    - If Missing: The Router generates a new RSA/ECDSA key pair in memory and attempts to **CREATE** the Secret.
-    - Concurrency Handling: If the creation fails with 409 Conflict (implying another replica initialized it simultaneously), the Router discards its generated key and fetches the existing Secret created by the peer.
+    - If Missing: The component generates a new RSA key pair and attempts to **CREATE** the Secret.
+    - Concurrency Handling: If the creation fails with `409 Conflict` (implying another replica initialized it simultaneously), the component discards its generated key and fetches the existing Secret created by the peer.
         
-2. **Public Key Publication**: Once the Private Key is successfully loaded, the Router reconciles the picod-router-public-key ConfigMap. It ensures the Public Key in the ConfigMap matches the Private Key in memory.
+2. **Identity Loading**: Once the Secret is successfully loaded, the Router reads the keys into memory, and the WorkloadManager retrieves the public key for injection.
 
 #### 2. Provisioning Phase
 
 - The **Router** sends a sandbox allocation request to the **WorkloadManager**. Crucially, this request **does not** contain key data.
-- The **WorkloadManager** constructs the Pod specification. It defines an environment variable `PICOD_AUTH_PUBLIC_KEY` that sources its value from the `picod-router-public-key` ConfigMap (using `valueFrom: configMapKeyRef`).
-- **PicoD** starts, reads the key from the **environment**, and initializes its JWT verifier.
+- The **WorkloadManager** constructs the Pod specification. It retrieves the public key from the `agentcube-bootstrap-identity` Secret and injects it directly as the value of the environment variable `PICOD_BOOTSTRAP_PUBLIC_KEY`. It also injects `PICOD_SESSION_ID` for defense-in-depth token validation.
+- **PicoD** starts, reads the key from the **environment**, and waits for the `/init` handshake which establishes the per-session ECDSA keypair.
 
 #### 3. Runtime Access Phase
 
@@ -76,36 +84,34 @@ sequenceDiagram
     autonumber
     participant SDK as SDK-Python
     participant Router as Router (Replica)
-    participant K8s as K8s API (Secret/CM)
+    participant K8s as K8s API (Secret)
     participant WM as WorkloadManager
     participant PicoD as PicoD
 
-    Note over Router, K8s: 1. Bootstrap (Identity Reconciliation)
-    Router->>K8s: GET Secret "picod-router-identity"
+    Note over WM, K8s: 1. Bootstrap (Identity Reconciliation)
+    WM->>K8s: GET Secret "agentcube-bootstrap-identity"
     
     alt Secret Missing (First Initialization)
-        Router->>Router: Generate New Key Pair (Priv/Pub)
-        Router->>K8s: CREATE Secret (Private Key)
+        WM->>WM: Generate New Key Pair (Priv/Pub)
+        WM->>K8s: CREATE Secret
         
         alt Success
-            Note right of Router: First to create (Created Key)
+            Note right of WM: First to create
         else Failure (409 Conflict)
-            Note right of Router: Others (Peer created Key)
-            Router->>K8s: GET Secret (Retry)
+            Note right of WM: Peer created Key
+            WM->>K8s: GET Secret (Retry)
         end
     else Secret Exists
-        Note right of Router: Load existing Identity
+        Note right of WM: Load existing Identity
     end
 
+    Router->>K8s: GET Secret "agentcube-bootstrap-identity" (Wait / Load)
     Router->>Router: Load Private Key into Memory
-    Router->>K8s: APPLY ConfigMap "picod-router-public-key"
-    Note right of Router: Publishes Public Key for consumption
 
     Note over Router, PicoD: 2. Provisioning
     Router->>WM: Request Sandbox (No Key Payload)
-    WM->>K8s: Create Pod (valueFrom: picod-router-public-key)
-    K8s-->>PicoD: Start Container (Env: PICOD_AUTH_PUBLIC_KEY)
-    PicoD->>PicoD: Load Key from Env
+    WM->>PicoD: Create Pod (Env: PICOD_BOOTSTRAP_PUBLIC_KEY, PICOD_SESSION_ID)
+    PicoD->>PicoD: Load Key from Env and await /init
 
     Note over SDK, PicoD: 3. Runtime Access
     SDK->>Router: Request (No Auth)
@@ -120,44 +126,29 @@ sequenceDiagram
 
 ### 1. Kubernetes Resources
 
-The Router manages two primary resources in the installation namespace (e.g., agentcube-system).
+The components manage the identity Secret in the installation namespace.
 
-**A. Identity Secret (Private)**
+**Identity Secret**
 
-- **Name**: picod-router-identity
-- **Type**: Opaque
-- **Purpose**: Stores the private key shared among Router replicas.
-
+- **Name**: `agentcube-bootstrap-identity`
+- **Type**: `Opaque`
+- **Purpose**: Stores the bootstrap RSA keypair shared among components.
 
 ```yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: picod-router-identity
+  name: agentcube-bootstrap-identity
   namespace: agentcube-system
 data:
-  # Base64 encoded PKCS#8 Private Key (RSA or ECDSA)
-  private.pem: <base64-encoded-key>
+  # Base64 encoded RSA Private Key
+  bootstrap-private.pem: <base64-encoded-key>
+  # Base64 encoded RSA Public Key
+  bootstrap-public.pem: <base64-encoded-key>
 ```
 
-**B. Identity ConfigMap (Public)**
-
-- **Name**: picod-router-public-key
-- **Purpose**: Stores the public key mounted into PicoD instances.
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: picod-router-public-key
-  namespace: agentcube-system
-data:
-  # Plain text Public Key (PEM format)
-  public.pem: |
-    -----BEGIN PUBLIC KEY-----
-    ...
-    -----END PUBLIC KEY-----
-```
+**Per-Session Private Key Storage**
+- The dynamic, per-session ECDSA private key is stored in the central KV store (Redis/Valkey) under the key `session:private_key:<sessionID>`. It is encrypted at rest using an AES key derived from the bootstrap RSA private key.
 
 ### 2. WorkloadManager Pod Spec
 
@@ -170,18 +161,17 @@ spec:
   containers:
     - name: picod
       env:
-        - name: PICOD_AUTH_PUBLIC_KEY
-          valueFrom:
-            configMapKeyRef:
-              name: picod-router-public-key
-              key: public.pem
+        - name: PICOD_BOOTSTRAP_PUBLIC_KEY
+          value: "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
+        - name: PICOD_SESSION_ID
+          value: "<dynamic-uuid-per-sandbox>"
 ```
   
 ### 3. PicoD Configuration
 The existing CLI flags for authentication are deprecated.
 
-* Environment Variable: picod requires `PICOD_AUTH_PUBLIC_KEY` to be set.
-* Behavior: If the environment variable is present, `picod` initializes the Plain Auth provider. If missing, it fails to start (or falls back to legacy mode if we decide to keep it for a transition period).
+* Environment Variable: picod requires `PICOD_BOOTSTRAP_PUBLIC_KEY` to be set. `PICOD_SESSION_ID` is also strongly recommended to prevent cross-sandbox token replays.
+* Behavior: If the environment variable is present, `picod` initializes the Plain Auth provider. If missing, it fails to start.
 
 ### 4. JWT Token Spec
 
@@ -198,7 +188,7 @@ The Router signs tokens using the standard JWT (RFC 7519) format.
   "iss": "agentcube-router",        // Issuer: Fixed identifier for the Router
   "iat": 1716239000,                // Issued At: Unix timestamp
   "exp": 1716242600,                // Expiration: e.g., +1 hour
-  "sub": "client-session-id",       // Subject: Identifies the client/session
+  "sub": "<dynamic-uuid-per-sandbox>", // Subject: Identifies the client/session
   "aud": "picod-service"            // Audience: Intended recipient
 }
 ```

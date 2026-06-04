@@ -18,6 +18,9 @@ package picod
 
 import (
 	"bytes"
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -41,19 +44,31 @@ func init() {
 }
 
 func setupExecuteTestServer(t *testing.T) (*Server, string) {
-	// Generate RSA key pair
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	// Generate RSA key pair for Bootstrap
+	rsaPriv, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	rsaPubBytes, err := x509.MarshalPKIXPublicKey(&rsaPriv.PublicKey)
 	require.NoError(t, err)
 
-	pubKeyPEM := pem.EncodeToMemory(&pem.Block{
+	rsaPubPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "PUBLIC KEY",
-		Bytes: pubKeyBytes,
+		Bytes: rsaPubBytes,
 	})
 
-	os.Setenv(PublicKeyEnvVar, string(pubKeyPEM))
+	os.Setenv(BootstrapPublicKeyEnvVar, string(rsaPubPEM))
+
+	// Generate ECDSA key pair for Session
+	ecdsaPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	ecdsaPubBytes, err := x509.MarshalPKIXPublicKey(&ecdsaPriv.PublicKey)
+	require.NoError(t, err)
+
+	ecdsaPubPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: ecdsaPubBytes,
+	})
 
 	tmpDir, err := os.MkdirTemp("", "picod-execute-test-*")
 	require.NoError(t, err)
@@ -63,14 +78,16 @@ func setupExecuteTestServer(t *testing.T) (*Server, string) {
 		Workspace: tmpDir,
 	}
 
-	server := NewServer(config)
+	server := NewServer(context.Background(), config)
+	err = server.authManager.SetSessionPublicKey(string(ecdsaPubPEM))
+	require.NoError(t, err)
 	return server, tmpDir
 }
 
 func TestExecuteHandler_RequestValidation(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	tests := []struct {
 		name          string
@@ -118,7 +135,7 @@ func TestExecuteHandler_RequestValidation(t *testing.T) {
 func TestExecuteHandler_TimeoutFormats(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	tests := []struct {
 		name          string
@@ -196,7 +213,7 @@ func TestExecuteHandler_TimeoutFormats(t *testing.T) {
 func TestExecuteHandler_WorkingDirectory(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	subDir := filepath.Join(tmpDir, "subdir")
 	require.NoError(t, os.Mkdir(subDir, 0755))
@@ -259,7 +276,7 @@ func TestExecuteHandler_WorkingDirectory(t *testing.T) {
 func TestExecuteHandler_WorkingDirectory_SymlinkEscape(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	// Plant a symlink inside the workspace that points outside it.
 	outsideDir := t.TempDir()
@@ -287,7 +304,7 @@ func TestExecuteHandler_WorkingDirectory_SymlinkEscape(t *testing.T) {
 func TestExecuteHandler_DefaultsToWorkspace(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	// No WorkingDir set — command should run inside the workspace directory.
 	req := ExecuteRequest{
@@ -322,7 +339,7 @@ func TestExecuteHandler_DefaultsToWorkspace(t *testing.T) {
 func TestExecuteHandler_ExitCodes(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	tests := []struct {
 		name         string
@@ -371,7 +388,7 @@ func TestExecuteHandler_ExitCodes(t *testing.T) {
 func TestExecuteHandler_TimeoutHandling(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	req := ExecuteRequest{
 		Command: []string{"sleep", "1"},
@@ -398,7 +415,7 @@ func TestExecuteHandler_TimeoutHandling(t *testing.T) {
 func TestExecuteHandler_EnvironmentVariables(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	req := ExecuteRequest{
 		Command: []string{"sh", "-c", "echo $TEST_VAR"},
@@ -426,7 +443,7 @@ func TestExecuteHandler_EnvironmentVariables(t *testing.T) {
 func TestExecuteHandler_ResponseStructure(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	req := ExecuteRequest{
 		Command: []string{"echo", "hello", "world"},
@@ -462,7 +479,7 @@ func TestExecuteHandler_ResponseStructure(t *testing.T) {
 func TestExecuteHandler_StderrCapture(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	req := ExecuteRequest{
 		Command: []string{"sh", "-c", "echo 'error message' >&2"},
@@ -487,7 +504,7 @@ func TestExecuteHandler_StderrCapture(t *testing.T) {
 func TestExecuteHandler_CommandWithArguments(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	req := ExecuteRequest{
 		Command: []string{"sh", "-c", "echo arg1 arg2 arg3"},
@@ -512,7 +529,7 @@ func TestExecuteHandler_CommandWithArguments(t *testing.T) {
 func TestExecuteHandler_EmptyEnvVars(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	req := ExecuteRequest{
 		Command: []string{"echo", "test"},
@@ -533,7 +550,7 @@ func TestExecuteHandler_EmptyEnvVars(t *testing.T) {
 func TestExecuteHandler_MultipleEnvVars(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	req := ExecuteRequest{
 		Command: []string{"sh", "-c", "echo $VAR1 $VAR2 $VAR3"},

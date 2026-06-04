@@ -18,6 +18,8 @@ package picod
 
 import (
 	"bytes"
+	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -39,7 +41,7 @@ import (
 )
 
 // Helper to generate RSA key pair
-func generateRSAKeys(t *testing.T) (*rsa.PrivateKey, string) {
+func generateRSAKeys(t *testing.T) string {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	publicKey := &privateKey.PublicKey
@@ -51,31 +53,32 @@ func generateRSAKeys(t *testing.T) (*rsa.PrivateKey, string) {
 		Bytes: pubASN1,
 	})
 
-	return privateKey, string(pubPEM)
+	return string(pubPEM)
 }
 
-// Helper to create signed JWT
-func createToken(t *testing.T, key *rsa.PrivateKey, claims jwt.MapClaims) string {
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+func createECDSAToken(t *testing.T, key *ecdsa.PrivateKey, claims jwt.MapClaims) string {
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
 	tokenString, err := token.SignedString(key)
 	require.NoError(t, err)
 	return tokenString
 }
 
 // setupTestServer creates a test server with public key loaded from env
-func setupTestServer(t *testing.T, pubPEM string) (*Server, *httptest.Server, string) {
+func setupTestServer(t *testing.T, bootstrapPubPEM string, sessionPubPEM string) (*Server, *httptest.Server, string) {
 	tmpDir, err := os.MkdirTemp("", "picod_test")
 	require.NoError(t, err)
 
-	// Set the public key environment variable
-	os.Setenv(PublicKeyEnvVar, pubPEM)
+	// Set the bootstrap public key environment variable
+	os.Setenv(BootstrapPublicKeyEnvVar, bootstrapPubPEM)
 
 	config := Config{
 		Port:      0,
 		Workspace: tmpDir,
 	}
 
-	server := NewServer(config)
+	server := NewServer(context.Background(), config)
+	err = server.authManager.SetSessionPublicKey(sessionPubPEM)
+	require.NoError(t, err)
 	ts := httptest.NewServer(server.engine)
 
 	return server, ts, tmpDir
@@ -83,13 +86,15 @@ func setupTestServer(t *testing.T, pubPEM string) (*Server, *httptest.Server, st
 
 func TestPicoD_EndToEnd(t *testing.T) {
 	// 1. Setup Keys - single key pair for Router-style auth
-	routerPriv, routerPubStr := generateRSAKeys(t)
+	bootstrapPubStr := generateRSAKeys(t)
+	routerPriv, routerPubStr, err := generateTestECDSAKeyPair()
+	require.NoError(t, err)
 
 	// 2. Setup Server
-	_, ts, tmpDir := setupTestServer(t, routerPubStr)
+	_, ts, tmpDir := setupTestServer(t, bootstrapPubStr, routerPubStr)
 	defer os.RemoveAll(tmpDir)
 	defer ts.Close()
-	defer os.Unsetenv(PublicKeyEnvVar)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	// Switch to temp dir for relative path tests
 	originalWd, err := os.Getwd()
@@ -132,10 +137,11 @@ func TestPicoD_EndToEnd(t *testing.T) {
 			bodyBytes, _ := json.Marshal(reqBody)
 
 			claims := jwt.MapClaims{
+				"iss": "agentcube-router",
 				"iat": time.Now().Unix(),
 				"exp": time.Now().Add(time.Hour * 6).Unix(),
 			}
-			token := createToken(t, routerPriv, claims)
+			token := createECDSAToken(t, routerPriv, claims)
 
 			req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(bodyBytes))
 			req.Header.Set("Authorization", "Bearer "+token)
@@ -179,10 +185,11 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		}
 		escapeBody, _ := json.Marshal(escapeReq)
 		claims := jwt.MapClaims{
+			"iss": "agentcube-router",
 			"iat": time.Now().Unix(),
 			"exp": time.Now().Add(time.Hour * 6).Unix(),
 		}
-		token := createToken(t, routerPriv, claims)
+		token := createECDSAToken(t, routerPriv, claims)
 
 		req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(escapeBody))
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -197,10 +204,11 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		// Helper to create auth headers
 		getAuthHeaders := func() http.Header {
 			claims := jwt.MapClaims{
+				"iss": "agentcube-router",
 				"iat": time.Now().Unix(),
 				"exp": time.Now().Add(time.Hour * 6).Unix(),
 			}
-			token := createToken(t, routerPriv, claims)
+			token := createECDSAToken(t, routerPriv, claims)
 
 			h := make(http.Header)
 			h.Set("Authorization", "Bearer "+token)
@@ -258,10 +266,11 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		writer.Close()
 
 		claims := jwt.MapClaims{
+			"iss": "agentcube-router",
 			"iat": time.Now().Unix(),
 			"exp": time.Now().Add(time.Hour * 6).Unix(),
 		}
-		token := createToken(t, routerPriv, claims)
+		token := createECDSAToken(t, routerPriv, claims)
 
 		req, _ = http.NewRequest("POST", ts.URL+"/api/files", bodyBuf)
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -304,12 +313,13 @@ func TestPicoD_EndToEnd(t *testing.T) {
 	t.Run("Security Checks", func(t *testing.T) {
 		// 1. Invalid Token Signature
 		// Create a different key pair and try to use it
-		wrongPriv, _ := generateRSAKeys(t)
+		wrongPriv, _, _ := generateTestECDSAKeyPair()
 		claims := jwt.MapClaims{
+			"iss": "agentcube-router",
 			"iat": time.Now().Unix(),
 			"exp": time.Now().Add(time.Hour * 6).Unix(),
 		}
-		token := createToken(t, wrongPriv, claims)
+		token := createECDSAToken(t, wrongPriv, claims)
 
 		reqBody := ExecuteRequest{Command: []string{"echo", "malicious"}}
 		realBody, _ := json.Marshal(reqBody)
@@ -341,9 +351,9 @@ func TestPicoD_DefaultWorkspace(t *testing.T) {
 	defer func() { require.NoError(t, os.Chdir(originalWd)) }()
 
 	// Set public key env
-	_, pubStr := generateRSAKeys(t)
-	os.Setenv(PublicKeyEnvVar, pubStr)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	pubStr := generateRSAKeys(t)
+	os.Setenv(BootstrapPublicKeyEnvVar, pubStr)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	// Initialize server with empty workspace
 	config := Config{
@@ -351,7 +361,13 @@ func TestPicoD_DefaultWorkspace(t *testing.T) {
 		Workspace: "", // Empty workspace to trigger default behavior
 	}
 
-	server := NewServer(config)
+	server := NewServer(context.Background(), config)
+
+	// Initialize server with session key to prevent 503 errors masking issues
+	_, sessionPubPEM, err := generateTestECDSAKeyPair()
+	require.NoError(t, err)
+	err = server.authManager.SetSessionPublicKey(sessionPubPEM)
+	require.NoError(t, err)
 
 	// Verify workspaceDir is set to current working directory
 	cwd, err := os.Getwd()

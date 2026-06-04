@@ -18,10 +18,13 @@ package router
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"testing"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -365,4 +368,104 @@ func TestGetPrivateKeyPEM_Consistency(t *testing.T) {
 
 	// Should be identical
 	assert.Equal(t, pem1, pem2)
+}
+
+func generateECPrivateKeyPEM(t *testing.T) (string, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate ecdsa key: %v", err)
+	}
+
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("failed to marshal ecdsa key: %v", err)
+	}
+
+	block := &pem.Block{
+		Type:  "EC PRIVATE KEY",
+		Bytes: der,
+	}
+	pemBytes := pem.EncodeToMemory(block)
+	return string(pemBytes), key
+}
+
+func TestJWTManager_LRUCache(t *testing.T) {
+	manager, err := NewJWTManager()
+	assert.NoError(t, err)
+
+	// 1. Test GenerateTokenWithKey behavior when privateKeyPEM is omitted vs provided
+	session1 := "session-1"
+	claims := map[string]interface{}{"foo": "bar"}
+
+	// When key is not cached and privateKeyPEM is omitted -> ErrKeyNotCached
+	_, err = manager.GenerateTokenWithKey(session1, claims, "")
+	assert.ErrorIs(t, err, ErrKeyNotCached)
+
+	// When key is not cached and privateKeyPEM is provided -> success & cached
+	pemStr, expectedKey := generateECPrivateKeyPEM(t)
+	tokenStr, err := manager.GenerateTokenWithKey(session1, claims, pemStr)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, tokenStr)
+
+	// Retrieve from cache to verify key is cached and matches
+	cachedKey, ok := manager.GetCachedKey(session1)
+	assert.True(t, ok)
+	assert.Equal(t, expectedKey, cachedKey)
+
+	// When key is cached and privateKeyPEM is omitted -> success
+	tokenStr2, err := manager.GenerateTokenWithKey(session1, claims, "")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, tokenStr2)
+
+	// 2. Test cache hit / move-to-front
+	session2 := "session-2"
+	pemStr2, _ := generateECPrivateKeyPEM(t)
+	_, err = manager.GenerateTokenWithKey(session2, claims, pemStr2)
+	assert.NoError(t, err)
+
+	// In keyCache, session2 is the most recently added, so it should be at the front
+	front := manager.evictList.Front()
+	assert.NotNil(t, front)
+	entry, ok := front.Value.(*cacheEntry)
+	assert.True(t, ok)
+	assert.Equal(t, session2, entry.sessionID)
+
+	// Accessing session1 should move it to the front
+	_, ok = manager.GetCachedKey(session1)
+	assert.True(t, ok)
+	front = manager.evictList.Front()
+	assert.NotNil(t, front)
+	entry, ok = front.Value.(*cacheEntry)
+	assert.True(t, ok)
+	assert.Equal(t, session1, entry.sessionID)
+
+	// 3. Test LRU eviction when size exceeds keyCacheMaxSize (1000)
+	manager2, err := NewJWTManager()
+	assert.NoError(t, err)
+
+	pems := make([]string, 1005)
+	for i := 0; i < 1005; i++ {
+		pems[i], _ = generateECPrivateKeyPEM(t)
+	}
+
+	for i := 0; i < 1005; i++ {
+		sessID := fmt.Sprintf("sess-%d", i)
+		_, err := manager2.GenerateTokenWithKey(sessID, claims, pems[i])
+		assert.NoError(t, err)
+	}
+
+	// The first 5 sessions ("sess-0" to "sess-4") should be evicted
+	for i := 0; i < 5; i++ {
+		sessID := fmt.Sprintf("sess-%d", i)
+		_, ok := manager2.GetCachedKey(sessID)
+		assert.False(t, ok, "session %s should have been evicted", sessID)
+	}
+
+	// The last 1000 sessions ("sess-5" to "sess-1004") should still be cached
+	for i := 5; i < 1005; i++ {
+		sessID := fmt.Sprintf("sess-%d", i)
+		_, ok := manager2.GetCachedKey(sessID)
+		assert.True(t, ok, "session %s should still be cached", sessID)
+	}
 }

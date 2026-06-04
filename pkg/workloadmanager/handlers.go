@@ -107,7 +107,7 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	case types.AgentRuntimeKind:
 		sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers)
 	case types.CodeInterpreterKind:
-		sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers)
+		sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers, s.GetBootstrapPublicKeyPEM())
 	}
 
 	if err != nil {
@@ -195,14 +195,21 @@ func (s *Server) createK8sResources(ctx context.Context, dynamicClient dynamic.I
 	return nil
 }
 
+// wrapInternalError returns err unchanged if it is a context error; otherwise
+// it wraps msg into an API internal error.  This collapses the repetitive
+// isContextError guard that appears in many call sites.
+func wrapInternalError(err error, msg string) error {
+	if isContextError(err) {
+		return err
+	}
+	return api.NewInternalError(fmt.Errorf("%s: %w", msg, err))
+}
+
 // createSandbox performs sandbox creation and returns the response payload or an error with an HTTP status code.
 func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
 	placeholder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
 	if err := s.storeClient.StoreSandbox(ctx, placeholder); err != nil {
-		if isContextError(err) {
-			return nil, err
-		}
-		return nil, api.NewInternalError(fmt.Errorf("store sandbox placeholder failed: %w", err))
+		return nil, wrapInternalError(err, "store sandbox placeholder failed")
 	}
 
 	// Register rollback right after the placeholder is stored so that a K8s
@@ -219,28 +226,90 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		return nil, err
 	}
 
+	createdSandbox, err := s.waitForSandboxReady(ctx, sandbox, resultChan)
+	if err != nil {
+		return nil, err
+	}
+
+	podIP, err := s.prepareSandbox(ctx, sandbox, createdSandbox, sandboxEntry)
+	if err != nil {
+		return nil, err
+	}
+
+	storeCacheInfo := buildSandboxInfo(createdSandbox, podIP, sandboxEntry)
+
+	if sandboxEntry.SessionPrivateKey != "" {
+		// Set TTL to the sandbox expiration + 1h grace period to ensure the key
+		// outlives the sandbox. If the sandbox is deleted early, DeleteSandboxBySessionID
+		// will explicitly remove this key.
+		ttl := time.Until(storeCacheInfo.ExpiresAt) + time.Hour
+		if ttl <= 0 {
+			klog.Warningf("createSandbox: computed session TTL %v is <= 0 for session %s (ExpiresAt: %v), defaulting to 30 days", ttl, sandboxEntry.SessionID, storeCacheInfo.ExpiresAt)
+			ttl = 30 * 24 * time.Hour
+		} else if ttl > 30*24*time.Hour {
+			ttl = 30 * 24 * time.Hour // Cap at 30 days
+		}
+		if err := s.storeClient.StoreSessionPrivateKey(ctx, sandboxEntry.SessionID, sandboxEntry.SessionPrivateKey, ttl); err != nil {
+			return nil, wrapInternalError(err, "failed to persist session private key")
+		}
+	}
+
+	response := &types.CreateSandboxResponse{
+		Kind:        storeCacheInfo.Kind,
+		SessionID:   sandboxEntry.SessionID,
+		SandboxID:   storeCacheInfo.SandboxID,
+		SandboxName: sandbox.Name,
+		EntryPoints: storeCacheInfo.EntryPoints,
+		AuthMode:    storeCacheInfo.AuthMode,
+	}
+
+	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {
+		return nil, wrapInternalError(err, "update store cache failed")
+	}
+
+	needRollbackSandbox = false
+	klog.V(2).Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
+		createdSandbox.Name, createdSandbox.Kind, sandboxEntry.SessionID)
+	return response, nil
+}
+
+// waitForSandboxReady blocks until the sandbox reports ready, the context is
+// canceled, or the creation timeout fires.
+func (s *Server) waitForSandboxReady(ctx context.Context, sandbox *sandboxv1alpha1.Sandbox, resultChan <-chan SandboxStatusUpdate) (*sandboxv1alpha1.Sandbox, error) {
 	// Use NewTimer so we can stop it explicitly when another branch wins,
 	// preventing the runtime from retaining the timer until it fires.
 	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
 
-	var createdSandbox *sandboxv1alpha1.Sandbox
 	select {
 	case result := <-resultChan:
-		timer.Stop()
-		createdSandbox = result.Sandbox
-		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", result.Sandbox.Namespace, result.Sandbox.Name)
+		return result.Sandbox, nil
 	case <-ctx.Done():
-		timer.Stop()
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
 		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
 		return nil, ctx.Err()
 	case <-timer.C:
 		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
 		return nil, errSandboxCreationTimeout
 	}
+}
 
-	// agent-sandbox create pod with same name as sandbox if no warmpool is used
-	// so here we try to get pod IP by sandbox name first
-	// if warmpool is used, the pod name is stored in sandbox's annotation `agents.x-k8s.io/sandbox-pod-name`
+// prepareSandbox resolves the pod IP, probes entrypoints, and initializes PicoD
+// for a sandbox that has been reported ready by the controller.
+func (s *Server) prepareSandbox(ctx context.Context, sandbox *sandboxv1alpha1.Sandbox, createdSandbox *sandboxv1alpha1.Sandbox, sandboxEntry *sandboxEntry) (string, error) {
+	// agent-sandbox creates pod with same name as sandbox if no warmpool is used.
+	// If warmpool is used, the pod name is stored in the sandbox's annotation.
 	// https://github.com/kubernetes-sigs/agent-sandbox/blob/3ab7fbcd85ad0d75c6e632ecd14bcaeda5e76e1e/controllers/sandbox_controller.go#L465
 	sandboxPodName := sandbox.Name
 	if podName, exists := createdSandbox.Annotations[controllers.SandboxPodNameAnnotation]; exists {
@@ -249,39 +318,16 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 
 	podIP, err := s.k8sClient.GetSandboxPodIP(ctx, sandbox.Namespace, sandbox.Name, sandboxPodName)
 	if err != nil {
-		if isContextError(err) {
-			return nil, err
-		}
-		return nil, api.NewInternalError(fmt.Errorf("failed to get sandbox %s/%s pod IP: %w", sandbox.Namespace, sandbox.Name, err))
+		return "", wrapInternalError(err, fmt.Sprintf("failed to get sandbox %s/%s pod IP", sandbox.Namespace, sandbox.Name))
 	}
 	if err := s.waitForSandboxEntryPointsReady(ctx, podIP, sandboxEntry); err != nil {
-		if isContextError(err) {
-			return nil, err
-		}
-		return nil, api.NewInternalError(fmt.Errorf("failed to verify sandbox %s/%s entrypoints: %w", sandbox.Namespace, sandbox.Name, err))
+		return "", wrapInternalError(err, fmt.Sprintf("failed to verify sandbox %s/%s entrypoints", sandbox.Namespace, sandbox.Name))
+	}
+	if err := s.initializePicoD(ctx, podIP, sandboxEntry); err != nil {
+		return "", wrapInternalError(err, fmt.Sprintf("failed to initialize PicoD on sandbox %s/%s", sandbox.Namespace, sandbox.Name))
 	}
 
-	storeCacheInfo := buildSandboxInfo(createdSandbox, podIP, sandboxEntry)
-
-	response := &types.CreateSandboxResponse{
-		Kind:        storeCacheInfo.Kind,
-		SessionID:   sandboxEntry.SessionID,
-		SandboxID:   storeCacheInfo.SandboxID,
-		SandboxName: sandbox.Name,
-		EntryPoints: storeCacheInfo.EntryPoints,
-	}
-
-	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {
-		if isContextError(err) {
-			return nil, err
-		}
-		return nil, api.NewInternalError(fmt.Errorf("update store cache failed: %w", err))
-	}
-
-	needRollbackSandbox = false
-	klog.V(2).Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
-		createdSandbox.Name, createdSandbox.Kind, sandboxEntry.SessionID)
-	return response, nil
+	return podIP, nil
 }
 
 // rollbackSandboxCreation deletes the sandbox (or sandbox claim) and its store

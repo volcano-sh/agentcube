@@ -47,18 +47,24 @@ import (
 //
 // POST /v1/sandboxes (CreateSandbox):
 //   - Any authenticated user can create sandboxes
-//   - The creator's service account name is stored in the sandbox metadata
+//   - The creator's service account name is stamped into SandboxInfo.CreatedBy
+//     and persisted in the store at creation time
 //
 // GET /v1/sandboxes (ListSandboxes):
-//   - Users can only list sandboxes they created
+//   - Users can only list sandboxes they created (CreatedBy == serviceAccountName)
+//   - For backward compatibility, sandboxes without a CreatedBy field are filtered
+//     by namespace only (entries created before this field was introduced)
 //
 // GET /v1/sandboxes/{sandboxId} (GetSandbox):
-//   - Users can only access sandboxes they created
-//   - Access is checked via checkSandboxAccess() function
+//   - Users can only access sandboxes they created (CreatedBy == serviceAccountName)
+//   - Access is first checked by namespace, then by CreatedBy
+//   - Returns 404 (not 403) for unauthorized or missing sessions to prevent
+//     session ID enumeration attacks
 //
 // DELETE /v1/sandboxes/{sandboxId} (DeleteSandbox):
 //   - Users can only delete sandboxes they created
-//   - Access is checked via checkSandboxAccess() function
+//   - Access is enforced by Kubernetes RBAC via the user's own dynamicClient;
+//     the Kubernetes API itself rejects cross-account deletes
 //
 // CONNECT /v1/sandboxes/{sandboxId} (Tunnel):
 //   - Users can only establish tunnels to sandboxes they created

@@ -46,6 +46,9 @@ func (nopStore) DeleteSandboxBySessionID(_ context.Context, _ string) error  { r
 func (nopStore) ListExpiredSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxInfo, error) {
 	return nil, nil
 }
+func (nopStore) ListSandboxesByKind(_ context.Context, _ string) ([]*types.SandboxInfo, error) {
+	return nil, nil
+}
 func (nopStore) ListInactiveSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxInfo, error) {
 	return nil, nil
 }

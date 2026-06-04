@@ -47,7 +47,7 @@ var sandboxEntrypointDial = func(ctx context.Context, endpoint string, timeout t
 	return conn.Close()
 }
 
-func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxEntry) *types.SandboxInfo {
+func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxEntry, createdBy string) *types.SandboxInfo {
 	var expiresAt time.Time
 	if sandboxCR.Spec.Lifecycle.ShutdownTime != nil {
 		expiresAt = sandboxCR.Spec.Lifecycle.ShutdownTime.Time
@@ -66,10 +66,11 @@ func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxE
 		ExpiresAt:        expiresAt,
 		Status:           "creating",
 		IdleTimeout:      metav1.Duration{Duration: idleTimeout},
+		CreatedBy:        createdBy,
 	}
 }
 
-func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *sandboxEntry) *types.SandboxInfo {
+func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *sandboxEntry, createdBy string) *types.SandboxInfo {
 	createdAt := sandbox.GetCreationTimestamp().Time
 	expiresAt := createdAt.Add(DefaultSandboxTTL)
 	if sandbox.Spec.Lifecycle.ShutdownTime != nil {
@@ -98,6 +99,7 @@ func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *san
 		ExpiresAt:        expiresAt,
 		Status:           getSandboxStatus(sandbox),
 		IdleTimeout:      metav1.Duration{Duration: idleTimeout},
+		CreatedBy:        createdBy,
 	}
 }
 

@@ -42,6 +42,10 @@ type SandboxInfo struct {
 	// during ListInactiveSandboxes. It is intentionally excluded from JSON serialization.
 	LastActivityAt time.Time `json:"-"`
 	Status         string    `json:"status"`
+	// CreatedBy holds the Kubernetes service account name (without the namespace prefix)
+	// that created this sandbox. It is used by the GET handlers to enforce per-service-account
+	// ownership: only the creating SA can retrieve its own session entrypoints.
+	CreatedBy string `json:"createdBy,omitempty"`
 }
 
 type SandboxEntryPoint struct {

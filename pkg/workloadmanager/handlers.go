@@ -125,6 +125,7 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	namespace := sandbox.Namespace
 
 	dynamicClient := s.k8sClient.dynamicClient
+	var createdBy string
 	if s.config.EnableAuth {
 		userDynamicClient, errExtractClient := s.extractUserK8sClient(c)
 		if errExtractClient != nil {
@@ -133,6 +134,7 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 			return
 		}
 		dynamicClient = userDynamicClient
+		_, _, _, createdBy = extractUserInfo(c)
 	}
 
 	// CRITICAL: Register watcher BEFORE creating sandbox
@@ -141,7 +143,7 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	// Ensure cleanup is called when function returns to prevent memory leak
 	defer s.sandboxController.UnWatchSandbox(namespace, sandboxName)
 
-	response, err := s.createSandbox(c.Request.Context(), dynamicClient, sandbox, sandboxClaim, sandboxEntry, resultChan)
+	response, err := s.createSandbox(c.Request.Context(), dynamicClient, sandbox, sandboxClaim, sandboxEntry, resultChan, createdBy)
 	if err != nil {
 		// Client disconnected — abort with 499 so logs/metrics reflect the cancellation.
 		if errors.Is(err, context.Canceled) {
@@ -196,8 +198,8 @@ func (s *Server) createK8sResources(ctx context.Context, dynamicClient dynamic.I
 }
 
 // createSandbox performs sandbox creation and returns the response payload or an error with an HTTP status code.
-func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
-	placeholder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
+func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate, createdBy string) (*types.CreateSandboxResponse, error) {
+	placeholder := buildSandboxPlaceHolder(sandbox, sandboxEntry, createdBy)
 	if err := s.storeClient.StoreSandbox(ctx, placeholder); err != nil {
 		if isContextError(err) {
 			return nil, err
@@ -261,7 +263,7 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		return nil, api.NewInternalError(fmt.Errorf("failed to verify sandbox %s/%s entrypoints: %w", sandbox.Namespace, sandbox.Name, err))
 	}
 
-	storeCacheInfo := buildSandboxInfo(createdSandbox, podIP, sandboxEntry)
+	storeCacheInfo := buildSandboxInfo(createdSandbox, podIP, sandboxEntry, createdBy)
 
 	response := &types.CreateSandboxResponse{
 		Kind:        storeCacheInfo.Kind,
@@ -306,6 +308,77 @@ func (s *Server) rollbackSandboxCreation(dynamicClient dynamic.Interface, sandbo
 	if delErr := s.storeClient.DeleteSandboxBySessionID(ctxTimeout, sessionID); delErr != nil {
 		klog.Infof("sandbox %s/%s store placeholder cleanup failed: %v", sandbox.Namespace, sandbox.Name, delErr)
 	}
+}
+
+// handleGetSandbox handles requests to retrieve sandbox details by session ID
+func (s *Server) handleGetSandbox(c *gin.Context, kind string) {
+	sessionID := c.Param("sessionId")
+	// Query sandbox from store
+	sandboxInfo, err := s.storeClient.GetSandboxBySessionID(c.Request.Context(), sessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			respondError(c, http.StatusNotFound, fmt.Sprintf("Session ID %s not found", sessionID))
+			return
+		}
+		klog.Errorf("get sandbox from store by sessionID %s failed: %v", sessionID, err)
+		respondError(c, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	if sandboxInfo.Kind != kind {
+		respondError(c, http.StatusNotFound, fmt.Sprintf("Session ID %s not found for kind %s", sessionID, kind))
+		return
+	}
+
+	if s.config.EnableAuth {
+		_, userNamespace, _, serviceAccountName := extractUserInfo(c)
+		if sandboxInfo.SandboxNamespace != userNamespace {
+			klog.Warningf("unauthorized GET attempt to session %s by user in namespace %s", sessionID, userNamespace)
+			respondError(c, http.StatusNotFound, fmt.Sprintf("Session ID %s not found", sessionID))
+			return
+		}
+		// Enforce per-service-account ownership: only the creating SA can retrieve its session.
+		// Returns 404 (not 403) to prevent session ID enumeration.
+		if sandboxInfo.CreatedBy != "" && sandboxInfo.CreatedBy != serviceAccountName {
+			klog.Warningf("unauthorized GET attempt to session %s by service account %s (owner: %s)", sessionID, serviceAccountName, sandboxInfo.CreatedBy)
+			respondError(c, http.StatusNotFound, fmt.Sprintf("Session ID %s not found", sessionID))
+			return
+		}
+	}
+
+	respondJSON(c, http.StatusOK, sandboxInfo)
+}
+
+// handleListSandboxes handles requests to list all active sandboxes by kind
+func (s *Server) handleListSandboxes(c *gin.Context, kind string) {
+	sandboxes, err := s.storeClient.ListSandboxesByKind(c.Request.Context(), kind)
+	if err != nil {
+		klog.Errorf("list sandboxes of kind %s failed: %v", kind, err)
+		respondError(c, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	if !s.config.EnableAuth {
+		respondJSON(c, http.StatusOK, sandboxes)
+		return
+	}
+
+	_, userNamespace, _, serviceAccountName := extractUserInfo(c)
+	// Filter in-place to avoid a new allocation.
+	// When CreatedBy is set, enforce per-SA ownership (documented intent in auth.go).
+	// When CreatedBy is empty (legacy entries created before this field was added),
+	// fall back to namespace-scoped filtering so existing sessions remain accessible.
+	filtered := sandboxes[:0]
+	for _, sb := range sandboxes {
+		if sb.SandboxNamespace != userNamespace {
+			continue
+		}
+		if sb.CreatedBy != "" && sb.CreatedBy != serviceAccountName {
+			continue
+		}
+		filtered = append(filtered, sb)
+	}
+	respondJSON(c, http.StatusOK, filtered)
 }
 
 // handleDeleteSandbox handles sandbox deletion requests

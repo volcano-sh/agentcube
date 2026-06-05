@@ -37,10 +37,10 @@ sequenceDiagram
     Note over Router: 3. Edge Authentication
     Router->>Router: Validate JWT signature (cached JWKS)
     Router->>Router: Check expiry, issuer, audience
-    Router->>Router: Extract roles from configured claim (default: realm_access.roles)
+    Router->>Router: Extract roles from configured claim (e.g. realm_access.roles)
 
     Note over Router: 4. RBAC Check
-    Router->>Router: Require "sandbox:invoke" role
+    Router->>Router: Require configured role
 
     Note over Router, WM: 5. Session Creation (if new)
     Router->>Router: Sign identity JWT (sub, iss, aud, exp)
@@ -157,7 +157,8 @@ Applied to the `/v1` route group:
 v1 := s.engine.Group("/v1")
 v1.Use(s.oidcAuthMiddleware())          // validate JWT
 if s.oidcValidator != nil {
-    v1.Use(requireRole("sandbox:invoke"))  // check role
+    // Require configured role
+    v1.Use(requireRole(s.config.OIDCRequiredRole))  
 }
 v1.Use(s.concurrencyLimitMiddleware())  // existing
 ```
@@ -290,7 +291,8 @@ helm install keycloak manifests/charts/addons/keycloak -n agentcube-system \
 # 2. Deploy AgentCube with OIDC pointed at the addon
 helm install agentcube manifests/charts/base -n agentcube-system \
   --set router.oidc.issuerUrl=http://keycloak.agentcube-system.svc:8080/realms/agentcube \
-  --set router.oidc.rolesClaim=realm_access.roles
+  --set router.oidc.rolesClaim=realm_access.roles \
+  --set router.oidc.requiredRole=sandbox:invoke
 ```
 
 Two new flags in `cmd/router/main.go`:
@@ -300,6 +302,7 @@ Two new flags in `cmd/router/main.go`:
 | `--oidc-issuer-url` | `""` | OIDC provider issuer URL |
 | `--oidc-audience` | `"agentcube-api"` | Expected JWT audience claim |
 | `--oidc-roles-claim` | `""` | REQUIRED if issuer is set. Dot-separated path to the roles array in the JWT (e.g. `realm_access.roles` for Keycloak, `groups` for Okta). |
+| `--oidc-required-role` | `""` | REQUIRED if issuer is set. The role required to access the API endpoints (e.g. `sandbox:invoke` - Note: this is just an example, though our Keycloak addon creates this role automatically). |
 
 External authentication is automatically enabled when `--oidc-issuer-url` is provided. The Router will validate tokens against this issuer.
 

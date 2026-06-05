@@ -2,6 +2,9 @@
 {{- if empty .Values.router.oidc.rolesClaim }}
   {{- fail "router.oidc.rolesClaim is required when router.oidc.issuerUrl is set" }}
 {{- end }}
+{{- if empty .Values.router.oidc.requiredRole }}
+  {{- fail "router.oidc.requiredRole is required when router.oidc.issuerUrl is set" }}
+{{- end }}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment
@@ -97,6 +100,7 @@ spec:
             - {{ printf "--oidc-issuer-url=%s" .Values.router.oidc.issuerUrl | quote }}
             - {{ printf "--oidc-audience=%s" .Values.router.oidc.audience | quote }}
             - {{ printf "--oidc-roles-claim=%s" .Values.router.oidc.rolesClaim | quote }}
+            - {{ printf "--oidc-required-role=%s" .Values.router.oidc.requiredRole | quote }}
             {{- end }}
           resources:
             {{- toYaml .Values.router.resources | nindent 12 }}

@@ -44,6 +44,7 @@ router:
     issuerUrl: ""              # e.g., "http://keycloak.agentcube-system.svc:8080/realms/agentcube"
     audience: "agentcube-api"  # Expected "aud" claim in access tokens
     rolesClaim: ""             # Required if issuerUrl is set. JSON path to the roles array in the JWT (e.g., "realm_access.roles" for Keycloak, "groups" for Okta).
+    requiredRole: ""           # Required if issuerUrl is set. The role required to access the API endpoints (e.g., "sandbox:invoke").
 
 # AgentCube Workload Manager
 workloadmanager:

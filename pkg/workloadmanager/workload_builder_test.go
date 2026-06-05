@@ -685,3 +685,105 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 	}
 	assertOwnerReference(t, claim.OwnerReferences[0])
 }
+
+func TestBuildSandboxObject_OwnershipLabels(t *testing.T) {
+	tests := []struct {
+		name      string
+		ownerID   string
+		wantLabel bool
+		wantAnnot bool
+	}{
+		{
+			name:      "ownerID set",
+			ownerID:   "user-123",
+			wantLabel: true,
+			wantAnnot: true,
+		},
+		{
+			name:      "ownerID empty",
+			ownerID:   "",
+			wantLabel: false,
+			wantAnnot: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := &buildSandboxParams{
+				namespace:   "default",
+				sandboxName: "sandbox-owner-test",
+				sessionID:   "session-owner",
+				ownerID:     tt.ownerID,
+				ttl:         time.Hour,
+				idleTimeout: 15 * time.Minute,
+			}
+			sandbox := buildSandboxObject(params)
+
+			_, hasAnnot := sandbox.ObjectMeta.Annotations["agentcube.io/owner"]
+			_, hasLabel := sandbox.ObjectMeta.Labels["agentcube.io/owner-hash"]
+
+			if hasAnnot != tt.wantAnnot {
+				t.Errorf("expected annotation present=%v, got %v", tt.wantAnnot, hasAnnot)
+			}
+			if hasLabel != tt.wantLabel {
+				t.Errorf("expected label present=%v, got %v", tt.wantLabel, hasLabel)
+			}
+
+			if tt.ownerID != "" {
+				if sandbox.ObjectMeta.Annotations["agentcube.io/owner"] != tt.ownerID {
+					t.Errorf("expected annotation value %q, got %q", tt.ownerID, sandbox.ObjectMeta.Annotations["agentcube.io/owner"])
+				}
+				hash := sandbox.ObjectMeta.Labels["agentcube.io/owner-hash"]
+				if len(hash) != 63 {
+					t.Errorf("expected owner-hash length 63, got %d", len(hash))
+				}
+			}
+		})
+	}
+}
+
+func TestBuildSandboxClaimObject_OwnershipLabels(t *testing.T) {
+	tests := []struct {
+		name      string
+		ownerID   string
+		wantLabel bool
+		wantAnnot bool
+	}{
+		{
+			name:      "ownerID set",
+			ownerID:   "user-456",
+			wantLabel: true,
+			wantAnnot: true,
+		},
+		{
+			name:      "ownerID empty",
+			ownerID:   "",
+			wantLabel: false,
+			wantAnnot: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := &buildSandboxClaimParams{
+				namespace:           "default",
+				name:                "claim-owner-test",
+				sandboxTemplateName: "my-ci",
+				sessionID:           "session-claim-owner",
+				ownerID:             tt.ownerID,
+				idleTimeout:         10 * time.Minute,
+			}
+			claim := buildSandboxClaimObject(params)
+
+			_, hasAnnot := claim.ObjectMeta.Annotations["agentcube.io/owner"]
+			_, hasLabel := claim.ObjectMeta.Labels["agentcube.io/owner-hash"]
+
+			if hasAnnot != tt.wantAnnot {
+				t.Errorf("expected annotation present=%v, got %v", tt.wantAnnot, hasAnnot)
+			}
+			if hasLabel != tt.wantLabel {
+				t.Errorf("expected label present=%v, got %v", tt.wantLabel, hasLabel)
+			}
+		})
+	}
+}

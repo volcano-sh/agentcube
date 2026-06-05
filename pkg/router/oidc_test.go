@@ -269,3 +269,25 @@ func TestExtractRolesFromClaims(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateToken_MissingSubject(t *testing.T) {
+	ts, privateKey := testOIDCServer(t)
+	defer ts.Close()
+
+	validator, err := NewOIDCValidator(context.Background(), OIDCConfig{
+		IssuerURL: ts.URL,
+		Audience:  "agentcube-api",
+	})
+	require.NoError(t, err)
+
+	// Mint a token with no "sub" claim
+	rawToken := mintTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": ts.URL,
+		"aud": "agentcube-api",
+		"exp": time.Now().Add(5 * time.Minute).Unix(),
+	})
+
+	_, err = validator.ValidateToken(context.Background(), rawToken)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "token missing required sub claim")
+}

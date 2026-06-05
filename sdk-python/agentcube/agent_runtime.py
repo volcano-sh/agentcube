@@ -31,6 +31,8 @@ class AgentRuntimeClient:
         session_id: Optional[str] = None,
         timeout: int = 120,
         connect_timeout: float = 5.0,
+        auth_token: Optional[str] = None,
+        auth: Optional["AuthProvider"] = None,
     ):
         self.agent_name = agent_name
         self.namespace = namespace
@@ -39,6 +41,11 @@ class AgentRuntimeClient:
 
         level = logging.DEBUG if verbose else logging.INFO
         self.logger = get_logger(__name__, level=level)
+
+        self._auth = auth
+        if not self._auth and auth_token:
+            from agentcube.auth import TokenAuth
+            self._auth = TokenAuth(auth_token)
 
         router_url = router_url or os.getenv("ROUTER_URL")
         if not router_url:
@@ -55,6 +62,7 @@ class AgentRuntimeClient:
             agent_name=self.agent_name,
             timeout=self.timeout,
             connect_timeout=self.connect_timeout,
+            auth=self._auth,
         )
         if verbose:
             self.dp_client.logger.setLevel(logging.DEBUG)
@@ -72,7 +80,7 @@ class AgentRuntimeClient:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-    def invoke(self, payload: Dict[str, Any], timeout: Optional[float] = None) -> Any:
+    def invoke(self, payload: Dict[str, Any], timeout: Optional[float] = None, path: str = "") -> Any:
         if not self.session_id:
             raise ValueError("AgentRuntime session_id is not initialized")
 
@@ -80,6 +88,7 @@ class AgentRuntimeClient:
             session_id=self.session_id,
             payload=payload,
             timeout=timeout,
+            path=path,
         )
         resp.raise_for_status()
 

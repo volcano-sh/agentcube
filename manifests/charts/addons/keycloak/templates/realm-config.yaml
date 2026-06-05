@@ -69,7 +69,7 @@ stringData:
           "enabled": true,
           "protocol": "openid-connect",
           "publicClient": false,
-          "secret": "${env.KC_CLIENT_SERVICE_SECRET}",
+          "secret": "${KC_CLIENT_SERVICE_SECRET}",
           "standardFlowEnabled": false,
           "directAccessGrantsEnabled": false,
           "serviceAccountsEnabled": true,
@@ -125,7 +125,7 @@ stringData:
           "enabled": true,
           "protocol": "openid-connect",
           "publicClient": false,
-          "secret": "${env.KC_CLIENT_ROUTER_SECRET}",
+          "secret": "${KC_CLIENT_ROUTER_SECRET}",
           "standardFlowEnabled": false,
           "directAccessGrantsEnabled": false,
           "serviceAccountsEnabled": true,
@@ -139,12 +139,25 @@ stringData:
           "enabled": true,
           "protocol": "openid-connect",
           "publicClient": false,
-          "secret": "${env.KC_CLIENT_ADMIN_SECRET}",
+          "secret": "${KC_CLIENT_ADMIN_SECRET}",
           "standardFlowEnabled": false,
           "directAccessGrantsEnabled": false,
           "serviceAccountsEnabled": true,
           "redirectUris": [],
-          "webOrigins": []
+          "webOrigins": [],
+          "protocolMappers": [
+            {
+              "name": "agentcube-api-audience",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.custom.audience": "agentcube-api",
+                "id.token.claim": "false",
+                "access.token.claim": "true"
+              }
+            }
+          ]
         }
       ],
 
@@ -156,6 +169,29 @@ stringData:
         {
           "client": "agentcube-sdk",
           "roles": ["sandbox:invoke"]
+        },
+        {
+          "client": "agentcube-admin",
+          "roles": ["sandbox:invoke", "admin"]
+        }
+      ],
+
+      "users": [
+        {
+          "username": "service-account-agentcube-admin",
+          "enabled": true,
+          "serviceAccountClientId": "agentcube-admin",
+          "realmRoles": [
+            "admin"
+          ]
+        },
+        {
+          "username": "service-account-agentcube-service",
+          "enabled": true,
+          "serviceAccountClientId": "agentcube-service",
+          "realmRoles": [
+            "sandbox:invoke"
+          ]
         }
       ]
     }

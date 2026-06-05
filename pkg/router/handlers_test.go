@@ -523,3 +523,97 @@ func TestConcurrencyLimitMiddleware_Overload(t *testing.T) {
 	// Wait for first request to complete
 	<-done
 }
+
+func TestCheckSandboxOwnership(t *testing.T) {
+	setupEnv()
+	defer teardownEnv()
+
+	// Minimal mock OIDC validator (non-nil means auth is enabled)
+	mockValidator := &OIDCValidator{}
+
+	tests := []struct {
+		name           string
+		oidcValidator  *OIDCValidator
+		claims         *Claims
+		sandboxOwnerID string
+		expectAllowed  bool
+		expectCode     int
+	}{
+		{
+			name:           "auth disabled",
+			oidcValidator:  nil,
+			sandboxOwnerID: "",
+			expectAllowed:  true,
+		},
+		{
+			name:           "no claims in context",
+			oidcValidator:  mockValidator,
+			claims:         nil,
+			sandboxOwnerID: "user-123",
+			expectAllowed:  true,
+		},
+		{
+			name:           "matching owner",
+			oidcValidator:  mockValidator,
+			claims:         &Claims{Subject: "user-123", Roles: []string{"sandbox:invoke"}},
+			sandboxOwnerID: "user-123",
+			expectAllowed:  true,
+		},
+		{
+			name:           "mismatched owner",
+			oidcValidator:  mockValidator,
+			claims:         &Claims{Subject: "user-456", Roles: []string{"sandbox:invoke"}},
+			sandboxOwnerID: "user-123",
+			expectAllowed:  false,
+			expectCode:     http.StatusForbidden,
+		},
+		{
+			name:           "empty owner fail-closed",
+			oidcValidator:  mockValidator,
+			claims:         &Claims{Subject: "user-123", Roles: []string{"sandbox:invoke"}},
+			sandboxOwnerID: "",
+			expectAllowed:  false,
+			expectCode:     http.StatusForbidden,
+		},
+		{
+			name:           "admin bypasses RLAC",
+			oidcValidator:  mockValidator,
+			claims:         &Claims{Subject: "admin-user", Roles: []string{"admin", "sandbox:invoke"}},
+			sandboxOwnerID: "user-123",
+			expectAllowed:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := &Server{
+				config:        &Config{Port: "8080"},
+				oidcValidator: tt.oidcValidator,
+			}
+
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request, _ = http.NewRequest("POST", "/test", nil)
+
+			// Set claims in context if provided
+			if tt.claims != nil {
+				c.Set(string(contextKeyOIDCClaims), tt.claims)
+			}
+
+			sandbox := &types.SandboxInfo{
+				Name:      "test-sandbox",
+				SessionID: "test-session",
+				OwnerID:   tt.sandboxOwnerID,
+			}
+
+			allowed := server.checkSandboxOwnership(c, sandbox)
+
+			if allowed != tt.expectAllowed {
+				t.Errorf("expected allowed=%v, got %v", tt.expectAllowed, allowed)
+			}
+			if !tt.expectAllowed && w.Code != tt.expectCode {
+				t.Errorf("expected status %d, got %d", tt.expectCode, w.Code)
+			}
+		})
+	}
+}

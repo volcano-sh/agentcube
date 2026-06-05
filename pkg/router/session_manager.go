@@ -232,6 +232,7 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 		SandboxID:        res.SandboxID,
 		Name:             res.SandboxName,
 		SessionID:        res.SessionID,
+		OwnerID:          res.OwnerID,
 		EntryPoints:      res.EntryPoints,
 	}
 

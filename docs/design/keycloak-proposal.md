@@ -224,6 +224,11 @@ The owner ID is returned in the create sandbox response so the Router can persis
 if s.oidcValidator != nil {
     claims := extractClaims(c)
     if claims != nil {
+        // Admin role bypasses RLAC ownership checks
+        if slices.Contains(claims.Roles, "admin") {
+		    return true
+	    }
+        
         if sandbox.OwnerID == "" {
             c.JSON(http.StatusForbidden, gin.H{"error": "sandbox has no owner record"})
             return

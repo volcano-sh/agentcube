@@ -13,6 +13,9 @@
 {{- end }}
 {{- end }}
 {{- if not .Values.devMode }}
+{{- if not (or (and .Values.proxy.httpEnabled .Values.proxy.headers) .Values.tls.existingSecret) }}
+  {{- fail "Production mode (devMode=false) requires either: (1) TLS-termination at proxy (set proxy.httpEnabled=true AND proxy.headers) OR (2) TLS-termination at Keycloak (set tls.existingSecret)" }}
+{{- end }}
 {{- if empty .Values.existingSecret }}
   {{- fail "existingSecret is required when devMode is false (production mode requires an external Secret for the admin password)" }}
 {{- end }}
@@ -122,6 +125,12 @@ spec:
             - name: KC_HOSTNAME
               value: {{ .Values.proxy.hostname | quote }}
             {{- end }}
+            {{- if .Values.tls.existingSecret }}
+            - name: KC_HTTPS_CERTIFICATE_FILE
+              value: "/opt/keycloak/conf/certs/tls.crt"
+            - name: KC_HTTPS_CERTIFICATE_KEY_FILE
+              value: "/opt/keycloak/conf/certs/tls.key"
+            {{- end }}
             - name: KC_CLIENT_SERVICE_SECRET
               valueFrom:
                 secretKeyRef:
@@ -141,6 +150,11 @@ spec:
             - name: realm-config
               mountPath: /opt/keycloak/data/import
               readOnly: true
+            {{- if .Values.tls.existingSecret }}
+            - name: certificates
+              mountPath: /opt/keycloak/conf/certs
+              readOnly: true
+            {{- end }}
           # Keycloak's JVM + realm import takes 60-90s. The startup probe gives a 300s
           # window before liveness checks begin, preventing premature pod restarts.
           startupProbe:
@@ -165,6 +179,16 @@ spec:
         - name: realm-config
           secret:
             secretName: keycloak-realm-config
+        {{- if .Values.tls.existingSecret }}
+        - name: certificates
+          secret:
+            secretName: {{ .Values.tls.existingSecret }}
+            items:
+              - key: {{ .Values.tls.secretCertificateKey | default "tls.crt" }}
+                path: tls.crt
+              - key: {{ .Values.tls.secretPrivateKeyKey | default "tls.key" }}
+                path: tls.key
+        {{- end }}
 
 ---
 apiVersion: v1

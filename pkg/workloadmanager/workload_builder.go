@@ -133,6 +133,7 @@ type buildSandboxParams struct {
 	workloadName   string
 	sandboxName    string
 	sessionID      string
+	ownerID        string
 	ttl            time.Duration
 	idleTimeout    time.Duration
 	podSpec        corev1.PodSpec
@@ -145,6 +146,7 @@ type buildSandboxClaimParams struct {
 	name                string
 	sandboxTemplateName string
 	sessionID           string
+	ownerID             string
 	idleTimeout         time.Duration
 	// ownerReference is the reference to the CodeInterpreter that creates this SandboxClaim
 	ownerReference *metav1.OwnerReference
@@ -203,6 +205,13 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 			Replicas: ptr.To[int32](1),
 		},
 	}
+
+	// Ownership metadata for RLAC
+	if params.ownerID != "" {
+		sandbox.ObjectMeta.Annotations["agentcube.io/owner"] = params.ownerID
+		sandbox.ObjectMeta.Labels["agentcube.io/owner-hash"] = sha256Short(params.ownerID)
+	}
+
 	return sandbox
 }
 
@@ -237,6 +246,13 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 	if params.ownerReference != nil {
 		sandboxClaim.ObjectMeta.OwnerReferences = []metav1.OwnerReference{*params.ownerReference}
 	}
+
+	// Ownership metadata for RLAC
+	if params.ownerID != "" {
+		sandboxClaim.ObjectMeta.Annotations["agentcube.io/owner"] = params.ownerID
+		sandboxClaim.ObjectMeta.Labels["agentcube.io/owner-hash"] = sha256Short(params.ownerID)
+	}
+
 	return sandboxClaim
 }
 

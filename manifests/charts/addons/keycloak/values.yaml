@@ -47,6 +47,11 @@ clients:
     secret: ""
   admin:
     secret: ""
+# TLS configuration for Keycloak terminating TLS directly (devMode=false only)
+tls:
+  existingSecret: ""              # Name of pre-existing Secret containing tls.crt and tls.key
+  secretCertificateKey: "tls.crt" # Key inside the secret holding the certificate
+  secretPrivateKeyKey: "tls.key"  # Key inside the secret holding the private key
 sdk:
   # WARNING: Wildcard URIs (e.g. 'http://localhost*') pose security risks (open redirect vulnerabilities) in production.
   # When devMode is false, the deployment will fail if these contain wildcards.

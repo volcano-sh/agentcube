@@ -123,6 +123,11 @@ func (v *OIDCValidator) ValidateToken(ctx context.Context, rawToken string) (*Cl
 		return nil, fmt.Errorf("invalid issuer: got %q, expected %q", issuer, v.issuer)
 	}
 
+	// Validate subject
+	if subject == "" {
+		return nil, fmt.Errorf("token missing required sub claim")
+	}
+
 	// Validate expiration
 	if expiry == 0 {
 		return nil, fmt.Errorf("token missing required exp claim")

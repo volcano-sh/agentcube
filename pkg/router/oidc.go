@@ -76,7 +76,7 @@ func NewOIDCValidator(ctx context.Context, cfg OIDCConfig) (*OIDCValidator, erro
 	}
 
 	// Create a RemoteKeySet for JWKS caching and automatic key rotation.
-	keySet := gooidc.NewRemoteKeySet(context.Background(), providerClaims.JWKSURL)
+	keySet := gooidc.NewRemoteKeySet(ctx, providerClaims.JWKSURL)
 
 	return &OIDCValidator{
 		keySet:     keySet,
@@ -84,33 +84,6 @@ func NewOIDCValidator(ctx context.Context, cfg OIDCConfig) (*OIDCValidator, erro
 		audience:   cfg.Audience,
 		rolesClaim: cfg.RolesClaim,
 	}, nil
-}
-
-// accessTokenClaims represents the standard and custom claims in an access token.
-type accessTokenClaims struct {
-	Issuer    string       `json:"iss"`
-	Subject   string       `json:"sub"`
-	Audience  claimStrings `json:"aud"`
-	Expiry    float64      `json:"exp"`
-	NotBefore float64      `json:"nbf"`
-	Email     string       `json:"email"`
-}
-
-// claimStrings handles the JWT "aud" claim which can be either a string or []string.
-type claimStrings []string
-
-func (cs *claimStrings) UnmarshalJSON(data []byte) error {
-	var single string
-	if err := json.Unmarshal(data, &single); err == nil {
-		*cs = []string{single}
-		return nil
-	}
-	var multi []string
-	if err := json.Unmarshal(data, &multi); err != nil {
-		return err
-	}
-	*cs = multi
-	return nil
 }
 
 // ValidateToken verifies the JWT signature, standard claims, and extracts roles.
@@ -130,47 +103,52 @@ func (v *OIDCValidator) ValidateToken(ctx context.Context, rawToken string) (*Cl
 		return nil, fmt.Errorf("token signature verification failed: %w", err)
 	}
 
-	// Parse the standard claims from the verified payload.
-	var tokenClaims accessTokenClaims
-	if err := json.Unmarshal(payload, &tokenClaims); err != nil {
+	// Parse all claims into a single map to avoid double-unmarshaling overhead.
+	var allClaims map[string]interface{}
+	if err := json.Unmarshal(payload, &allClaims); err != nil {
 		return nil, fmt.Errorf("failed to parse token claims: %w", err)
 	}
 
+	// Extract standard claims
+	issuer, _ := allClaims["iss"].(string)
+	subject, _ := allClaims["sub"].(string)
+	email, _ := allClaims["email"].(string)
+	expiry, _ := allClaims["exp"].(float64)
+	notBefore, _ := allClaims["nbf"].(float64)
+
+	audiences := parseAudienceClaim(allClaims["aud"])
+
 	// Validate issuer
-	if tokenClaims.Issuer != v.issuer {
-		return nil, fmt.Errorf("invalid issuer: got %q, expected %q", tokenClaims.Issuer, v.issuer)
+	if issuer != v.issuer {
+		return nil, fmt.Errorf("invalid issuer: got %q, expected %q", issuer, v.issuer)
 	}
 
 	// Validate expiration
-	if tokenClaims.Expiry == 0 {
+	if expiry == 0 {
 		return nil, fmt.Errorf("token missing required exp claim")
 	}
-	if time.Now().After(time.Unix(int64(tokenClaims.Expiry), 0)) {
+	if time.Now().After(time.Unix(int64(expiry), 0)) {
 		return nil, fmt.Errorf("token has expired")
 	}
 
 	// Validate not-before (if present)
-	if tokenClaims.NotBefore != 0 && time.Now().Before(time.Unix(int64(tokenClaims.NotBefore), 0)) {
+	if notBefore != 0 && time.Now().Before(time.Unix(int64(notBefore), 0)) {
 		return nil, fmt.Errorf("token is not yet valid")
 	}
 
 	// Validate audience
 	if v.audience != "" {
-		if !slices.Contains(tokenClaims.Audience, v.audience) {
-			return nil, fmt.Errorf("invalid audience: token audiences %v do not include %q", []string(tokenClaims.Audience), v.audience)
+		if !slices.Contains(audiences, v.audience) {
+			return nil, fmt.Errorf("invalid audience: token audiences %v do not include %q", audiences, v.audience)
 		}
 	}
 
-	// Extract roles from the full claims map using the configured path.
-	var allClaims map[string]interface{}
-	if err := json.Unmarshal(payload, &allClaims); err != nil {
-		return nil, fmt.Errorf("failed to parse token claims for role extraction: %w", err)
-	}
+	// Extract roles from the map using the configured path.
 	roles := extractRolesFromClaims(allClaims, v.rolesClaim)
 
 	return &Claims{
-		Subject: tokenClaims.Subject,
-		Email:   tokenClaims.Email,
+		Subject: subject,
+		Email:   email,
 		Roles:   roles,
 	}, nil
 }
@@ -210,6 +188,26 @@ func extractRolesFromClaims(claims map[string]interface{}, path string) []string
 	return roles
 }
 
+// parseAudienceClaim extracts the "aud" claim which can be either a string or []string.
+func parseAudienceClaim(audVal interface{}) []string {
+	if audVal == nil {
+		return nil
+	}
+	switch v := audVal.(type) {
+	case string:
+		return []string{v}
+	case []interface{}:
+		var audiences []string
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				audiences = append(audiences, s)
+			}
+		}
+		return audiences
+	}
+	return nil
+}
+
 // allowedSigningAlgs contains supported asymmetric algorithms for JWT signatures.
 var allowedSigningAlgs = map[string]bool{
 	"RS256": true,
@@ -227,7 +225,7 @@ var allowedSigningAlgs = map[string]bool{
 // checkTokenAlgorithm verifies the JWT signing algorithm is supported.
 func (v *OIDCValidator) checkTokenAlgorithm(rawToken string) error {
 	parts := strings.SplitN(rawToken, ".", 3)
-	if len(parts) < 2 {
+	if len(parts) != 3 {
 		return fmt.Errorf("malformed JWT: expected 3 parts, got %d", len(parts))
 	}
 

@@ -56,7 +56,7 @@ type manager struct {
 	workloadMgrAddr string
 	httpClient      *http.Client
 	closeMTLS       func()
-	jwtManager      *JWTManager 
+	jwtManager      *JWTManager
 }
 
 // NewSessionManager returns a SessionManager implementation.

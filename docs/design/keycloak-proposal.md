@@ -275,6 +275,7 @@ The core AgentCube chart has provider-agnostic OIDC configuration under `router.
 - {{ printf "--oidc-issuer-url=%s" .Values.router.oidc.issuerUrl | quote }}
 - {{ printf "--oidc-audience=%s" .Values.router.oidc.audience | quote }}
 - {{ printf "--oidc-roles-claim=%s" .Values.router.oidc.rolesClaim | quote }}
+- {{ printf "--oidc-required-role=%s" .Values.router.oidc.requiredRole | quote }}
 {{- end }}
 ```
 
@@ -295,7 +296,7 @@ helm install agentcube manifests/charts/base -n agentcube-system \
   --set router.oidc.requiredRole=sandbox:invoke
 ```
 
-Two new flags in `cmd/router/main.go`:
+Four new flags in `cmd/router/main.go`:
 
 | Flag | Default | Description |
 |------|---------|-------------|

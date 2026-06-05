@@ -247,7 +247,7 @@ func (s *Server) generateSandboxJWT(c *gin.Context, sandbox *types.SandboxInfo) 
 			claims["user_email"] = oidcClaims.Email
 		}
 	}
-	
+
 	token, err := s.jwtManager.GenerateToken(claims)
 	if err != nil {
 		klog.Errorf("Failed to generate JWT token (session: %s): %v", sandbox.SessionID, err)

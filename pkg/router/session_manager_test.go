@@ -674,3 +674,71 @@ func writePEMFile(t *testing.T, path, blockType string, data []byte) {
 		t.Fatalf("encode PEM %s: %v", path, err)
 	}
 }
+
+// ---- tests: setIdentityHeader ----
+
+func TestSetIdentityHeader_WithClaims(t *testing.T) {
+	jwtMgr, err := NewJWTManager()
+	if err != nil {
+		t.Fatalf("failed to create JWT manager: %v", err)
+	}
+
+	m := &manager{
+		jwtManager: jwtMgr,
+	}
+
+	req, _ := http.NewRequest("GET", "/", nil)
+	claims := &Claims{
+		Subject: "user-123",
+		Email:   "test@example.com",
+	}
+	ctx := context.WithValue(context.Background(), contextKeyOIDCClaims, claims)
+
+	m.setIdentityHeader(ctx, req)
+
+	token := req.Header.Get("X-AgentCube-User-Identity")
+	if token == "" {
+		t.Fatalf("expected X-AgentCube-User-Identity header to be set")
+	}
+}
+
+func TestSetIdentityHeader_NoClaimsOrNoManager(t *testing.T) {
+	jwtMgr, err := NewJWTManager()
+	if err != nil {
+		t.Fatalf("failed to create JWT manager: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		jwtManager *JWTManager
+		ctx        context.Context
+	}{
+		{
+			name:       "nil jwt manager",
+			jwtManager: nil,
+			ctx:        context.WithValue(context.Background(), contextKeyOIDCClaims, &Claims{Subject: "user"}),
+		},
+		{
+			name:       "no claims in context",
+			jwtManager: jwtMgr,
+			ctx:        context.Background(),
+		},
+		{
+			name:       "wrong type in context",
+			jwtManager: jwtMgr,
+			ctx:        context.WithValue(context.Background(), contextKeyOIDCClaims, "not-a-claims-object"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &manager{jwtManager: tt.jwtManager}
+			req, _ := http.NewRequest("GET", "/", nil)
+			m.setIdentityHeader(tt.ctx, req)
+
+			if token := req.Header.Get("X-AgentCube-User-Identity"); token != "" {
+				t.Errorf("expected no identity header, got %q", token)
+			}
+		})
+	}
+}

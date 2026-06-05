@@ -42,12 +42,8 @@ func testOIDCServer(t *testing.T) (*httptest.Server, *rsa.PrivateKey) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
+	var issuer string
 	mux := http.NewServeMux()
-
-	// We need the server URL for the discovery document, so create the server first
-	// with a temporary handler, then set the real handler.
-	ts := httptest.NewServer(nil)
-	issuer := ts.URL
 
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
 		discovery := map[string]interface{}{
@@ -75,7 +71,8 @@ func testOIDCServer(t *testing.T) (*httptest.Server, *rsa.PrivateKey) {
 		_ = json.NewEncoder(w).Encode(jwks)
 	})
 
-	ts.Config.Handler = mux
+	ts := httptest.NewServer(mux)
+	issuer = ts.URL
 	return ts, privateKey
 }
 

@@ -33,3 +33,23 @@ type CodeInterpreterListerExpansion interface{}
 // CodeInterpreterNamespaceListerExpansion allows custom methods to be added to
 // CodeInterpreterNamespaceLister.
 type CodeInterpreterNamespaceListerExpansion interface{}
+
+// SandboxSnapshotListerExpansion allows custom methods to be added to
+// SandboxSnapshotLister.
+type SandboxSnapshotListerExpansion interface{}
+
+// SandboxSnapshotNamespaceListerExpansion allows custom methods to be added to
+// SandboxSnapshotNamespaceLister.
+type SandboxSnapshotNamespaceListerExpansion interface{}
+
+// SandboxSnapshotTaskListerExpansion allows custom methods to be added to
+// SandboxSnapshotTaskLister.
+type SandboxSnapshotTaskListerExpansion interface{}
+
+// SandboxSnapshotTaskNamespaceListerExpansion allows custom methods to be added to
+// SandboxSnapshotTaskNamespaceLister.
+type SandboxSnapshotTaskNamespaceListerExpansion interface{}
+
+// SnapshotClassListerExpansion allows custom methods to be added to
+// SnapshotClassLister.
+type SnapshotClassListerExpansion interface{}

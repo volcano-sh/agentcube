@@ -21,3 +21,9 @@ package v1alpha1
 type AgentRuntimeExpansion interface{}
 
 type CodeInterpreterExpansion interface{}
+
+type SandboxSnapshotExpansion interface{}
+
+type SandboxSnapshotTaskExpansion interface{}
+
+type SnapshotClassExpansion interface{}

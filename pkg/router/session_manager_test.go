@@ -557,7 +557,7 @@ func TestNewSessionManager_MTLSEnabled_ValidCerts(t *testing.T) {
 	t.Setenv("WORKLOAD_MANAGER_URL", "https://localhost:8080")
 
 	cfg := &mtls.Config{CertFile: certFile, KeyFile: keyFile, CAFile: caFile}
-	sm, err := NewSessionManager(&fakeStoreClient{}, cfg)
+	sm, err := NewSessionManager(&fakeStoreClient{}, cfg, nil)
 	if err != nil {
 		t.Fatalf("NewSessionManager with mTLS failed: %v", err)
 	}
@@ -590,7 +590,7 @@ func TestNewSessionManager_MTLSDisabled(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sm, err := NewSessionManager(&fakeStoreClient{}, tt.cfg)
+			sm, err := NewSessionManager(&fakeStoreClient{}, tt.cfg, nil)
 			if err != nil {
 				t.Fatalf("NewSessionManager without mTLS failed: %v", err)
 			}

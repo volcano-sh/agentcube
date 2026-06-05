@@ -44,6 +44,13 @@ func main() {
 		mtlsCert = flag.String("mtls-cert", "", "Path to mTLS client certificate for upstream WorkloadManager connections")
 		mtlsKey  = flag.String("mtls-key", "", "Path to mTLS client key for upstream WorkloadManager connections")
 		mtlsCA   = flag.String("mtls-ca", "", "Path to mTLS CA bundle for verifying upstream WorkloadManager identity")
+
+		// OIDC configuration for external user authentication.
+		// External auth is automatically enabled when --oidc-issuer-url is provided.
+		oidcIssuerURL    = flag.String("oidc-issuer-url", "", "OIDC provider issuer URL, enables external auth when set")
+		oidcAudience     = flag.String("oidc-audience", "agentcube-api", "Expected audience (aud) claim in the access token")
+		oidcRolesClaim   = flag.String("oidc-roles-claim", "", "JSON path to roles array in the JWT (e.g., realm_access.roles)")
+		oidcRequiredRole = flag.String("oidc-required-role", "", "Role required to access the API (e.g., sandbox:invoke)")
 	)
 
 	// Initialize klog flags
@@ -76,6 +83,10 @@ func main() {
 		TLSKey:                *tlsKey,
 		MaxConcurrentRequests: *maxConcurrentRequests,
 		MTLSConfig:            tlsConfig,
+		OIDCIssuerURL:         *oidcIssuerURL,
+		OIDCAudience:          *oidcAudience,
+		OIDCRolesClaim:        *oidcRolesClaim,
+		OIDCRequiredRole:      *oidcRequiredRole,
 	}
 
 	// Create Router API server

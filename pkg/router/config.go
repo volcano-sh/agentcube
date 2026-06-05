@@ -56,4 +56,16 @@ type Config struct {
 	// When all paths are present, mutual TLS is used for
 	// Router-to-WorkloadManager connections.
 	MTLSConfig mtls.Config
+
+	// OIDCIssuerURL is the OIDC provider issuer URL.
+	OIDCIssuerURL string
+
+	// OIDCAudience is the expected audience claim in the JWT.
+	OIDCAudience string
+
+	// OIDCRolesClaim is the dot-separated JSON path to the roles array in the JWT
+	OIDCRolesClaim string
+
+	// OIDCRequiredRole is the role required to access the API.
+	OIDCRequiredRole string
 }

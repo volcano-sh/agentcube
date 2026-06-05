@@ -56,13 +56,15 @@ type manager struct {
 	workloadMgrAddr string
 	httpClient      *http.Client
 	closeMTLS       func()
+	jwtManager      *JWTManager 
 }
 
 // NewSessionManager returns a SessionManager implementation.
 // storeClient is used to query sandbox information from store
 // workloadMgrAddr is read from the environment variable WORKLOAD_MANAGER_URL.
 // When mtlsCfg includes cert, key, and CA paths, the HTTP client uses mTLS to connect to WorkloadManager.
-func NewSessionManager(storeClient store.Store, mtlsCfg *mtls.Config) (SessionManager, error) {
+// jwtMgr is used to sign identity JWTs forwarded to WorkloadManager (may be nil when auth is disabled).
+func NewSessionManager(storeClient store.Store, mtlsCfg *mtls.Config, jwtMgr *JWTManager) (SessionManager, error) {
 	workloadMgrAddr := os.Getenv("WORKLOAD_MANAGER_URL")
 	if workloadMgrAddr == "" {
 		return nil, fmt.Errorf("WORKLOAD_MANAGER_URL environment variable is not set")
@@ -113,6 +115,7 @@ func NewSessionManager(storeClient store.Store, mtlsCfg *mtls.Config) (SessionMa
 		storeClient:     storeClient,
 		workloadMgrAddr: workloadMgrAddr,
 		closeMTLS:       closeMTLS,
+		jwtManager:      jwtMgr,
 		httpClient: &http.Client{
 			Timeout:   2 * time.Minute, // consistent with manager setting
 			Transport: transport,
@@ -183,6 +186,8 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 	if token := loadWorkloadManagerAuthToken(); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+	// Forward external user identity for downstream tracking.
+	m.setIdentityHeader(ctx, req)
 
 	// Send the request
 	resp, err := m.httpClient.Do(req)
@@ -231,6 +236,30 @@ func (m *manager) createSandbox(ctx context.Context, namespace string, name stri
 	}
 
 	return sandbox, nil
+}
+
+// setIdentityHeader signs and attaches the caller's identity as a JWT.
+func (m *manager) setIdentityHeader(ctx context.Context, req *http.Request) {
+	if m.jwtManager == nil {
+		return
+	}
+	claims, ok := ctx.Value(contextKeyOIDCClaims).(*Claims)
+	if !ok || claims == nil {
+		return
+	}
+	identityClaims := map[string]interface{}{
+		"sub": claims.Subject,
+		"aud": "workloadmanager",
+	}
+	if claims.Email != "" {
+		identityClaims["email"] = claims.Email
+	}
+	identityToken, err := m.jwtManager.GenerateToken(identityClaims)
+	if err != nil {
+		klog.Warningf("Failed to sign identity JWT for WM: %v", err)
+		return
+	}
+	req.Header.Set("X-AgentCube-User-Identity", identityToken)
 }
 
 func loadWorkloadManagerAuthToken() string {

@@ -39,6 +39,7 @@ type Server struct {
 	storeClient    store.Store
 	httpTransport  *http.Transport // Reusable HTTP transport for connection pooling
 	jwtManager     *JWTManager     // JWT manager for signing requests to sandboxes
+	oidcValidator  *OIDCValidator  // nil when external auth is disabled
 }
 
 // NewServer creates a new Router API server instance
@@ -58,8 +59,20 @@ func NewServer(config *Config) (*Server, error) {
 		config.InitialConnectRetryInterval = 200 * time.Millisecond
 	}
 
-	// Create session manager with store client and mTLS config
-	sessionManager, err := NewSessionManager(store.Storage(), &config.MTLSConfig)
+	// Initialize JWT manager for signing requests to sandboxes.
+	jwtManager, err := NewJWTManager()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create JWT manager: %w", err)
+	}
+
+	// Try to load existing keys from secret or store new ones
+	if err := jwtManager.TryStoreOrLoadJWTKeySecret(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to store/load JWT key secret: %w", err)
+	}
+	klog.Info("JWT manager initialized successfully")
+
+	// Create session manager with store client, mTLS config, and JWT manager
+	sessionManager, err := NewSessionManager(store.Storage(), &config.MTLSConfig, jwtManager)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session manager: %w", err)
 	}
@@ -82,21 +95,30 @@ func NewServer(config *Config) (*Server, error) {
 		sessionManager: sessionManager,
 		storeClient:    store.Storage(),
 		httpTransport:  httpTransport,
+		jwtManager:     jwtManager,
 	}
 
-	// Initialize JWT manager for signing requests to sandboxes
-	jwtManager, err := NewJWTManager()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create JWT manager: %w", err)
+	// Initialize OIDC validator when issuer URL is configured.
+	if config.OIDCIssuerURL != "" {
+		if config.OIDCRolesClaim == "" {
+			return nil, fmt.Errorf("--oidc-roles-claim is required when --oidc-issuer-url is set")
+		}
+		if config.OIDCRequiredRole == "" {
+			return nil, fmt.Errorf("--oidc-required-role is required when --oidc-issuer-url is set")
+		}
+		oidcCfg := OIDCConfig{
+			IssuerURL:  config.OIDCIssuerURL,
+			Audience:   config.OIDCAudience,
+			RolesClaim: config.OIDCRolesClaim,
+		}
+		validator, err := NewOIDCValidator(context.Background(), oidcCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize OIDC validator: %w", err)
+		}
+		server.oidcValidator = validator
+		klog.Infof("External authentication enabled: issuer=%s, audience=%s, rolesClaim=%s, requiredRole=%s",
+			config.OIDCIssuerURL, config.OIDCAudience, config.OIDCRolesClaim, config.OIDCRequiredRole)
 	}
-
-	// Try to load existing keys from secret or store new ones
-	if err := jwtManager.TryStoreOrLoadJWTKeySecret(context.Background()); err != nil {
-		return nil, fmt.Errorf("failed to store/load JWT key secret: %w", err)
-	}
-
-	server.jwtManager = jwtManager
-	klog.Info("JWT manager initialized successfully")
 
 	// Setup routes
 	server.setupRoutes()
@@ -141,7 +163,12 @@ func (s *Server) setupRoutes() {
 	// Add middleware
 	v1.Use(gin.Logger())
 	v1.Use(gin.Recovery())
-
+	// External auth: validate OIDC JWT (no-op when oidcValidator is nil)
+	v1.Use(s.oidcAuthMiddleware())
+	// RBAC: require the configured role (only when auth is enabled)
+	if s.oidcValidator != nil {
+		v1.Use(requireRole(s.config.OIDCRequiredRole))
+	}
 	v1.Use(s.concurrencyLimitMiddleware()) // Apply concurrency limit to API routes
 
 	// Agent invoke requests (support GET/POST, since downstream uses these methods)

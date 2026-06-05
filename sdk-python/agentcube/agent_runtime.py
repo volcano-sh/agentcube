@@ -17,6 +17,7 @@ import os
 from typing import Any, Dict, Optional
 
 from requests.exceptions import JSONDecodeError
+from agentcube.auth import AuthProvider
 from agentcube.clients.agent_runtime_data_plane import AgentRuntimeDataPlaneClient
 from agentcube.utils.log import get_logger
 
@@ -32,7 +33,7 @@ class AgentRuntimeClient:
         timeout: int = 120,
         connect_timeout: float = 5.0,
         auth_token: Optional[str] = None,
-        auth: Optional["AuthProvider"] = None,
+        auth: Optional[AuthProvider] = None,
     ):
         self.agent_name = agent_name
         self.namespace = namespace

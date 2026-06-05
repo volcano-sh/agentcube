@@ -51,7 +51,7 @@ func verifyIdentityJWT(publicKeyPEM string, rawToken string) (string, error) {
 
 	token, err := jwt.Parse(rawToken, func(_ *jwt.Token) (interface{}, error) {
 		return rsaPub, nil
-	}, jwt.WithValidMethods([]string{"RS256"}))
+	}, jwt.WithValidMethods([]string{"RS256"}), jwt.WithExpirationRequired())
 	if err != nil {
 		return "", fmt.Errorf("token verification failed: %w", err)
 	}

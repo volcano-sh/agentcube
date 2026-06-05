@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import Mock, patch

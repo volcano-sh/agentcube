@@ -27,6 +27,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/volcano-sh/agentcube/pkg/mtls"
 	"github.com/volcano-sh/agentcube/pkg/store"
@@ -44,8 +45,14 @@ type Server struct {
 	tokenCache        *TokenCache
 	informers         *Informers
 	storeClient       store.Store
-	wg                sync.WaitGroup
-	certWatcher       *mtls.CertWatcher // mTLS cert watcher for graceful cleanup
+	// snapshotClient is a controller-runtime client used for snapshot lookups.
+	// It may be nil when no snapshot controller is configured.
+	snapshotClient client.Client
+	// artifactStore holds SnapshotArtifactManifest records for restore intent lookup.
+	// It may be nil when no snapshot controller is configured.
+	artifactStore store.ArtifactStore
+	wg            sync.WaitGroup
+	certWatcher   *mtls.CertWatcher // mTLS cert watcher for graceful cleanup
 }
 
 type Config struct {
@@ -72,8 +79,9 @@ type Config struct {
 	MTLSConfig mtls.Config
 }
 
-// NewServer creates a new API server instance
-func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, error) {
+// NewServer creates a new API server instance.
+// snapshotClient and artifactStore are optional; pass nil to disable snapshot restore intent.
+func NewServer(config *Config, sandboxController *SandboxReconciler, snapshotClient client.Client, artifactStore store.ArtifactStore) (*Server, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
 	}
@@ -104,6 +112,8 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 		tokenCache:        tokenCache,
 		informers:         NewInformers(k8sClient),
 		storeClient:       store.Storage(),
+		snapshotClient:    snapshotClient,
+		artifactStore:     artifactStore,
 	}
 
 	// Setup routes

@@ -68,13 +68,13 @@ kube::codegen::gen_client \
 # This is a workaround for https://github.com/kubernetes/code-generator/issues/XXX
 echo "Fixing lister-gen GroupResource issue..."
 find "${SCRIPT_ROOT}/client-go/listers" -name "*.go" -type f | while read -r file; do
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    sed -i '' 's/runtimev1alpha1\.Resource("codeinterpreter")/runtimev1alpha1.Resource("codeinterpreter").GroupResource()/g' "$file"
-    sed -i '' 's/runtimev1alpha1\.Resource("agentruntime")/runtimev1alpha1.Resource("agentruntime").GroupResource()/g' "$file"
-  else
-    sed -i 's/runtimev1alpha1\.Resource("codeinterpreter")/runtimev1alpha1.Resource("codeinterpreter").GroupResource()/g' "$file"
-    sed -i 's/runtimev1alpha1\.Resource("agentruntime")/runtimev1alpha1.Resource("agentruntime").GroupResource()/g' "$file"
-  fi
+  for resource in codeinterpreter agentruntime sandboxsnapshot sandboxsnapshottask snapshotclass; do
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      sed -i '' "s/runtimev1alpha1\\.Resource(\"${resource}\")/runtimev1alpha1.Resource(\"${resource}\").GroupResource()/g" "$file"
+    else
+      sed -i "s/runtimev1alpha1\\.Resource(\"${resource}\")/runtimev1alpha1.Resource(\"${resource}\").GroupResource()/g" "$file"
+    fi
+  done
 done
 
 echo "Client-go code generation completed!"

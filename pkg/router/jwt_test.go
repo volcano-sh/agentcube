@@ -183,7 +183,7 @@ func TestGetPrivateKeyPEM(t *testing.T) {
 	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 	assert.NoError(t, err)
 	assert.NotNil(t, privateKey)
-	assert.Equal(t, manager.privateKey, privateKey)
+	assert.True(t, manager.privateKey.Equal(privateKey))
 }
 
 func TestLoadPrivateKeyPEM(t *testing.T) {

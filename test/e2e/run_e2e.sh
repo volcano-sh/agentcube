@@ -425,7 +425,7 @@ run_setup() {
 
         helm upgrade --install keycloak manifests/charts/addons/keycloak \
             --namespace "${AGENTCUBE_NAMESPACE}" \
-            --set adminUser=admin --set adminPassword=admin \
+            --set admin.username=admin --set admin.password=admin \
             --set clients.service.secret=e2e-service-secret \
             --set clients.router.secret=e2e-router-secret \
             --set clients.admin.secret=e2e-admin-secret \
@@ -436,9 +436,9 @@ run_setup() {
 
         # Configure OIDC Helm args for Router
         OIDC_HELM_ARGS=(
-            --set "router.oidc.issuerUrl=http://keycloak.${AGENTCUBE_NAMESPACE}.svc.cluster.local:8080/realms/agentcube"
-            --set "router.oidc.rolesClaim=realm_access.roles"
-            --set "router.oidc.requiredRole=sandbox:invoke"
+            --set "router.jwt.issuerUrl=http://keycloak.${AGENTCUBE_NAMESPACE}.svc.cluster.local:8080/realms/agentcube"
+            --set "router.jwt.roleClaim=realm_access.roles"
+            --set "router.jwt.requiredRole=sandbox:invoke"
         )
 
         # Reconfigure Router with OIDC flags

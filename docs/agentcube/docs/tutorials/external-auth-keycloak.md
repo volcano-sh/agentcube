@@ -23,17 +23,15 @@ resource ownership (RLAC).
 3. Confirm AgentCube is running without external auth:
 
    ```bash
-   kubectl get pods -n agentcube-system
+   kubectl get pods -n agentcube
    ```
 
    You should see the Router and WorkloadManager pods in `Running` state:
 
 ```
-    NAME                                READY   STATUS    RESTARTS      AGE
-    agentcube-router-699fb7784d-6plc9   2/2     Running   0             15s
-    spire-agent-jg7mm                   1/1     Running   3 (31m ago)   31m
-    spire-server-0                      2/2     Running   0             31m
-    workloadmanager-57c547f945-zqwf6    2/2     Running   3 (30m ago)   31m
+    NAME                                READY   STATUS    RESTARTS   AGE
+    agentcube-router-7d5dccf588-br86j   1/1     Running   0          11s
+    workloadmanager-5d55d76645-xqdcl    1/1     Running   0          11s
 ```
 
 4. Confirm the Router is currently reachable **without** a token.
@@ -41,7 +39,7 @@ resource ownership (RLAC).
    Open a **new terminal** and port-forward the Router:
 
    ```bash
-   kubectl port-forward svc/agentcube-router -n agentcube-system 8081:8080
+   kubectl port-forward svc/agentcube-router -n agentcube 8081:8080
    ```
 
    In your **original terminal**, check the health endpoint:
@@ -76,7 +74,7 @@ realm:
 
 | Item | Details |
 |---|---|
-| **Roles** | `sandbox:invoke` (default for all users), `sandbox:manage` (inherits invoke), `admin` (inherits manage) |
+| **Roles** | `sandbox:invoke` lets callers invoke agent runtimes and code interpreters, and is assigned by default. `sandbox:manage` inherits invoke and is intended for creating/deleting AgentRuntime and CodeInterpreter resources. `admin` inherits manage and can bypass ownership checks for administrative access. |
 | **Clients** | `agentcube-service` (confidential, for SDKs), `agentcube-sdk` (public, for browsers/CLI), `agentcube-admin` (confidential, for admin ops) |
 | **Audience** | All tokens include `agentcube-api` in the `aud` claim via a protocol mapper |
 
@@ -93,9 +91,9 @@ are for demonstration only.
 
 ```bash
 helm upgrade --install keycloak manifests/charts/addons/keycloak \
-  --namespace agentcube-system \
-  --set adminUser=admin \
-  --set adminPassword=admin \
+  --namespace agentcube \
+  --set admin.username=admin \
+  --set admin.password=admin \
   --set clients.service.secret=my-service-secret \
   --set clients.router.secret=my-router-secret \
   --set clients.admin.secret=my-admin-secret
@@ -107,7 +105,7 @@ Expected output:
   Release "keycloak" does not exist. Installing it now.
   NAME: keycloak
   LAST DEPLOYED: Sat Jun  6 03:03:47 2026
-  NAMESPACE: agentcube-system
+  NAMESPACE: agentcube
   STATUS: deployed
   REVISION: 1
   DESCRIPTION: Install complete
@@ -125,7 +123,7 @@ Wait for Keycloak to be ready. The JVM startup plus realm import typically
 takes 60–90 seconds:
 
 ```bash
-kubectl rollout status deployment/keycloak -n agentcube-system --timeout=300s
+kubectl rollout status deployment/keycloak -n agentcube --timeout=300s
 ```
 
 Expected output:
@@ -138,7 +136,7 @@ deployment "keycloak" successfully rolled out
 Verify the Keycloak pod is running:
 
 ```bash
-kubectl get pods -n agentcube-system -l app=keycloak
+kubectl get pods -n agentcube -l app=keycloak
 ```
 
 Expected output:
@@ -157,11 +155,11 @@ preserved.
 
 ```bash
 helm upgrade agentcube manifests/charts/base \
-  -n agentcube-system \
+  -n agentcube \
   --reuse-values \
-  --set router.oidc.issuerUrl=http://keycloak.agentcube-system.svc.cluster.local:8080/realms/agentcube \
-  --set router.oidc.rolesClaim=realm_access.roles \
-  --set router.oidc.requiredRole=sandbox:invoke
+  --set router.jwt.issuerUrl=http://keycloak.agentcube.svc.cluster.local:8080/realms/agentcube \
+  --set router.jwt.roleClaim=realm_access.roles \
+  --set router.jwt.requiredRole=sandbox:invoke
 ```
 
 Expected output:
@@ -170,7 +168,7 @@ Expected output:
 Release "agentcube" has been upgraded. Happy Helming!
 NAME: agentcube
 LAST DEPLOYED: Sat Jun  6 03:07:07 2026
-NAMESPACE: agentcube-system
+NAMESPACE: agentcube
 STATUS: deployed
 REVISION: 4
 DESCRIPTION: Upgrade complete
@@ -181,7 +179,7 @@ This tells the Router:
 
 - **`issuerUrl`** - where to discover OIDC configuration and signing keys
   (JWKS). The Router fetches these once at startup and caches them.
-- **`rolesClaim`** - the dot-separated path inside the JWT where roles are
+- **`roleClaim`** - the dot-separated path inside the JWT where roles are
   stored. For Keycloak this is `realm_access.roles`.
 - **`requiredRole`** - the minimum role required to access the API. Users
   without `sandbox:invoke` will receive a `403 Forbidden`.
@@ -189,7 +187,7 @@ This tells the Router:
 Wait for the Router to restart with the new configuration:
 
 ```bash
-kubectl rollout status deployment/agentcube-router -n agentcube-system --timeout=120s
+kubectl rollout status deployment/agentcube-router -n agentcube --timeout=120s
 ```
 
 ## Step 3 - Verify that unauthenticated requests are rejected
@@ -197,7 +195,7 @@ kubectl rollout status deployment/agentcube-router -n agentcube-system --timeout
 Open a **new terminal** and port-forward the Router:
 
 ```bash
-kubectl port-forward svc/agentcube-router -n agentcube-system 8081:8080
+kubectl port-forward svc/agentcube-router -n agentcube 8081:8080
 ```
 
 In your **original terminal**, try making a request to the `sample-agent` (which you deployed in the Getting Started guide) **without** a token:
@@ -219,7 +217,7 @@ Open **another new terminal** and port-forward Keycloak so you can reach it
 from your local machine:
 
 ```bash
-kubectl port-forward svc/keycloak -n agentcube-system 8082:8080
+kubectl port-forward svc/keycloak -n agentcube 8082:8080
 ```
 
 Back in your **original terminal**, proceed with the token requests below.
@@ -233,7 +231,7 @@ connecting through a port-forward:
 
 ```bash
 KEYCLOAK_TOKEN=$(curl -s -X POST \
-  -H "Host: keycloak.agentcube-system.svc.cluster.local:8080" \
+  -H "Host: keycloak.agentcube.svc.cluster.local:8080" \
   "http://localhost:8082/realms/agentcube/protocol/openid-connect/token" \
   -d "grant_type=client_credentials" \
   -d "client_id=agentcube-service" \
@@ -260,7 +258,7 @@ Expected output - you should see `realm_access.roles` containing
   "exp": 1780695969,
   "iat": 1780695669,
   "jti": "31ef712f-f62a-4a4e-8714-7ccf710ab476",
-  "iss": "http://keycloak.agentcube-system.svc.cluster.local:8080/realms/agentcube",
+  "iss": "http://keycloak.agentcube.svc.cluster.local:8080/realms/agentcube",
   "aud": "agentcube-api",
   "sub": "bb0f4c04-e1d2-4bdb-b7bb-56d5c1cefe50",
   "typ": "Bearer",
@@ -287,7 +285,7 @@ including the ability to bypass resource ownership checks (RLAC):
 
 ```bash
 ADMIN_TOKEN=$(curl -s -X POST \
-  -H "Host: keycloak.agentcube-system.svc.cluster.local:8080" \
+  -H "Host: keycloak.agentcube.svc.cluster.local:8080" \
   "http://localhost:8082/realms/agentcube/protocol/openid-connect/token" \
   -d "grant_type=client_credentials" \
   -d "client_id=agentcube-admin" \
@@ -301,13 +299,12 @@ echo $ADMIN_TOKEN
 Now use the token to make an authenticated request through the Router:
 
 ```bash
-curl -s -w "\nHTTP Status: %{http_code}\n" \
+curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" \
   -H "Authorization: Bearer $KEYCLOAK_TOKEN" \
   http://localhost:8081/v1/namespaces/default/agent-runtimes/sample-agent/invocations/
 ```
 
-Expected output - the request should now succeed (the exact response depends on
-what agent runtimes you have deployed):
+Expected output (the response body is discarded to show only the status code):
 
 ```
 HTTP Status: 200
@@ -355,7 +352,7 @@ auth = ServiceAccountAuth(
     token_url="http://localhost:8082/realms/agentcube/protocol/openid-connect/token",
     client_id="agentcube-service",
     client_secret="my-service-secret",
-    headers={"Host": "keycloak.agentcube-system.svc.cluster.local:8080"},
+    headers={"Host": "keycloak.agentcube.svc.cluster.local:8080"},
 )
 
 # Create the client - it will automatically attach Bearer tokens to requests
@@ -382,8 +379,8 @@ The `ServiceAccountAuth` class handles the full token lifecycle:
 
 ## Understanding what changed
 
-The Helm chart passes four `--oidc-*` flags to the Router when
-`router.oidc.issuerUrl` is set. The Router discovers Keycloak's signing keys
+The Helm chart passes four `--jwt-*` flags to the Router when
+`router.jwt.issuerUrl` is set. The Router discovers Keycloak's signing keys
 once at startup (via OIDC discovery), caches them, and validates every incoming
 JWT locally — no per-request calls to Keycloak.
 
@@ -418,23 +415,23 @@ remove the OIDC configuration from the Router:
 
 ```bash
 helm upgrade agentcube manifests/charts/base \
-  -n agentcube-system \
+  -n agentcube \
   --reuse-values \
-  --set router.oidc.issuerUrl="" \
-  --set router.oidc.rolesClaim="" \
-  --set router.oidc.requiredRole=""
+  --set router.jwt.issuerUrl="" \
+  --set router.jwt.roleClaim="" \
+  --set router.jwt.requiredRole=""
 ```
 
 Wait for the Router to restart:
 
 ```bash
-kubectl rollout status deployment/agentcube-router -n agentcube-system --timeout=120s
+kubectl rollout status deployment/agentcube-router -n agentcube --timeout=120s
 ```
 
 To also remove the Keycloak addon entirely:
 
 ```bash
-helm uninstall keycloak -n agentcube-system
+helm uninstall keycloak -n agentcube
 ```
 
 This removes the Keycloak Deployment, Service, and associated Secrets from the

@@ -99,25 +99,25 @@ func NewServer(config *Config) (*Server, error) {
 	}
 
 	// Initialize OIDC validator when issuer URL is configured.
-	if config.OIDCIssuerURL != "" {
-		if config.OIDCRolesClaim == "" {
-			return nil, fmt.Errorf("--oidc-roles-claim is required when --oidc-issuer-url is set")
+	if config.JWTIssuerURL != "" {
+		if config.JWTRoleClaim == "" {
+			return nil, fmt.Errorf("--jwt-role-claim is required when --jwt-issuer-url is set")
 		}
-		if config.OIDCRequiredRole == "" {
-			return nil, fmt.Errorf("--oidc-required-role is required when --oidc-issuer-url is set")
+		if config.JWTRequiredRole == "" {
+			return nil, fmt.Errorf("--jwt-required-role is required when --jwt-issuer-url is set")
 		}
 		oidcCfg := OIDCConfig{
-			IssuerURL:  config.OIDCIssuerURL,
-			Audience:   config.OIDCAudience,
-			RolesClaim: config.OIDCRolesClaim,
+			IssuerURL:  config.JWTIssuerURL,
+			Audience:   config.JWTAudience,
+			RolesClaim: config.JWTRoleClaim,
 		}
 		validator, err := NewOIDCValidator(context.Background(), oidcCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize OIDC validator: %w", err)
 		}
 		server.oidcValidator = validator
-		klog.Infof("External authentication enabled: issuer=%s, audience=%s, rolesClaim=%s, requiredRole=%s",
-			config.OIDCIssuerURL, config.OIDCAudience, config.OIDCRolesClaim, config.OIDCRequiredRole)
+		klog.Infof("External authentication enabled: issuer=%s, audience=%s, roleClaim=%s, requiredRole=%s",
+			config.JWTIssuerURL, config.JWTAudience, config.JWTRoleClaim, config.JWTRequiredRole)
 	}
 
 	// Setup routes
@@ -167,7 +167,7 @@ func (s *Server) setupRoutes() {
 	v1.Use(s.oidcAuthMiddleware())
 	// RBAC: require the configured role (only when auth is enabled)
 	if s.oidcValidator != nil {
-		v1.Use(requireRole(s.config.OIDCRequiredRole))
+		v1.Use(requireRole(s.config.JWTRequiredRole))
 	}
 	v1.Use(s.concurrencyLimitMiddleware()) // Apply concurrency limit to API routes
 

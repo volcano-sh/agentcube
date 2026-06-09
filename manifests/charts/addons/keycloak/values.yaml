@@ -11,10 +11,12 @@ image:
   repository: quay.io/keycloak/keycloak
   tag: "26.0.8"
   pullPolicy: IfNotPresent
-adminUser: ""           # Required.
-adminPassword: ""       # Dev only. Production must use existingSecret.
-existingSecret: ""       # Name of a pre-existing Secret containing admin credentials
-existingSecretKey: "admin-password"  # Key within the Secret holding the password
+# Keycloak bootstrap admin credentials.
+admin:
+  username: ""                    # Required.
+  password: ""                    # Dev only. Production must use admin.existingSecret.
+  existingSecret: ""              # Name of a pre-existing Secret containing the admin password.
+  existingSecretKey: "admin-password" # Key inside admin.existingSecret holding the password.
 # External database configuration (required when devMode is false)
 database:
   vendor: ""             # Database type: "postgres", "mysql", "mariadb". Empty = embedded H2 (dev only).
@@ -31,22 +33,26 @@ proxy:
 service:
   type: ClusterIP
   port: 8080
+  httpsPort: 8443
 realm: "agentcube"
-# Client secrets for confidential OAuth2 clients.
+# OAuth2 client secrets for confidential Keycloak clients.
+# These are used when callers request tokens via the client_credentials grant.
 # The agentcube-sdk client is public (PKCE) and does not require a secret.
 clients:
-  existingSecret: ""       # Name of a pre-existing Secret containing client secrets
-  # The keys below are only used if existingSecret is SET.
-  # They define which keys inside your external Secret hold the actual passwords.
+  # Optional pre-existing Kubernetes Secret containing all client secrets.
+  # If unset, this chart creates keycloak-credentials from clients.*.secret.
+  existingSecret: ""
+  # Keys to read from clients.existingSecret. These are ignored when existingSecret is empty.
   existingSecretServiceKey: "client-service-secret"
   existingSecretRouterKey: "client-router-secret"
   existingSecretAdminKey: "client-admin-secret"
+  # Chart-managed client secrets. Used only when clients.existingSecret is empty.
   service:
-    secret: ""
+    secret: "" # Secret for agentcube-service, used by SDK/server-side clients.
   router:
-    secret: ""
+    secret: "" # Secret for agentcube-router, reserved for Router service-to-service flows.
   admin:
-    secret: ""
+    secret: "" # Secret for agentcube-admin, used for administrative client_credentials tokens.
 # TLS configuration for Keycloak terminating TLS directly (devMode=false only)
 tls:
   existingSecret: ""              # Name of pre-existing Secret containing tls.crt and tls.key

@@ -57,15 +57,15 @@ type Config struct {
 	// Router-to-WorkloadManager connections.
 	MTLSConfig mtls.Config
 
-	// OIDCIssuerURL is the OIDC provider issuer URL.
-	OIDCIssuerURL string
+	// JWTIssuerURL is the OIDC provider issuer URL.
+	JWTIssuerURL string
 
-	// OIDCAudience is the expected audience claim in the JWT.
-	OIDCAudience string
+	// JWTAudience is the expected audience claim in the JWT.
+	JWTAudience string
 
-	// OIDCRolesClaim is the dot-separated JSON path to the roles array in the JWT
-	OIDCRolesClaim string
+	// JWTRoleClaim is the dot-separated JSON path to the roles array in the JWT
+	JWTRoleClaim string
 
-	// OIDCRequiredRole is the role required to access the API.
-	OIDCRequiredRole string
+	// JWTRequiredRole is the role required to access the API.
+	JWTRequiredRole string
 }

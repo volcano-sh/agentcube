@@ -4,7 +4,7 @@ Author: Mahil Patel
 
 ## Motivation
 
-AgentCube currently has no mechanism to authenticate external callers, anyone who can reach the Router endpoint can invoke agent runtimes and code interpreters without proving their identity. This proposal adds external authentication and authorization using Keycloak as the identity provider, covering OIDC token validation at the Router, role-based access control (RBAC), resource-level access control (RLAC), identity forwarding to downstream services, and Python SDK auth support. Keycloak is deployed as a separate addon chart, and the core chart enables auth when `router.oidc.issuerUrl` is set, so existing deployments are unaffected.
+AgentCube currently has no mechanism to authenticate external callers, anyone who can reach the Router endpoint can invoke agent runtimes and code interpreters without proving their identity. This proposal adds external authentication and authorization using Keycloak as the identity provider, covering OIDC token validation at the Router, role-based access control (RBAC), resource-level access control (RLAC), identity forwarding to downstream services, and Python SDK auth support. Keycloak is deployed as a separate addon chart, and the core chart enables auth when `router.jwt.issuerUrl` is set, so existing deployments are unaffected.
 
 ## Architecture
 
@@ -98,14 +98,14 @@ admin
 
 **OAuth2 Clients:**
 
-| Client ID | Type | Purpose |
-|-----------|------|---------|
-| `agentcube-service` | Confidential (`client_credentials`) | External backend applications and automated scripts using the Python SDK (Machine-to-Machine / M2M) |
-| `agentcube-sdk` | Public (`authorization_code` + PKCE) | Human end users interacting via the CLI or browser (Interactive) |
-| `agentcube-router` | Confidential (`client_credentials`) | Internal Router service identity |
-| `agentcube-admin` | Confidential (`client_credentials`) | Administrative operations |
+| Client ID | Type | Who uses it | Purpose |
+|-----------|------|-------------|---------|
+| `agentcube-service` | Confidential (`client_credentials`) | External backend services, CI jobs, automation scripts, and SDK users that can safely store a client secret | Main machine-to-machine client for calling AgentCube APIs. Tokens from this client receive `sandbox:invoke` and are used by `ServiceAccountAuth` in the Python SDK. |
+| `agentcube-sdk` | Public (`authorization_code` + PKCE) | Human users authenticating from a CLI, browser, or other installed app where a client secret cannot be safely stored | Interactive login client. It uses PKCE(Proof Key for Code Exchange) instead of a client secret and is intended for future browser/device/CLI login flows. |
+| `agentcube-router` | Confidential (`client_credentials`) | The AgentCube Router service itself | Internal service identity reserved for Router-to-control-plane or token-exchange flows. It is separate from user-facing clients so Router credentials can be rotated and scoped independently. |
+| `agentcube-admin` | Confidential (`client_credentials`) | Trusted operators or automation that performs administrative tasks | Administrative machine-to-machine client. Tokens receive the `admin` role, which inherits lower roles and can bypass ownership checks for admin workflows. |
 
-Confidential client secrets can be provided securely via an existing Kubernetes Secret (`keycloak.clients.existingSecret`) to prevent leaking them in Helm values. They are injected into the Keycloak pod as environment variables and securely substituted into the realm JSON during import. The `agentcube-sdk` client is a **public client** (no secret) that uses authorization code with PKCE for interactive flows, following RFC 8252 (OAuth 2.0 for Native Apps). The `agentcube-service` client is confidential and used for server-side `client_credentials` flows where a secret can be stored securely. Both clients have `sandbox:invoke` mapped via `scopeMappings`.
+Confidential client secrets can be provided securely via an existing Kubernetes Secret (`keycloak.clients.existingSecret`) to prevent leaking them in Helm values. They are injected into the Keycloak pod as environment variables and securely substituted into the realm JSON during import. The `agentcube-sdk` client is a **public client** (no secret) that uses authorization code with PKCE for interactive flows, following RFC 8252 (OAuth 2.0 for Native Apps). The confidential clients are used only where a secret can be stored securely, and each client ID is separated by trust boundary so service, internal Router, and admin credentials can be scoped and rotated independently.
 
 Both clients include a **hardcoded audience protocol mapper** (`oidc-audience-mapper`) that injects `agentcube-api` into the access token's `aud` claim. The Router validates `aud = "agentcube-api"`. This follows OAuth2 convention — the audience identifies the resource server (the Router API), not the client that requested the token.
 
@@ -133,7 +133,7 @@ type Claims struct {
 
 Roles are extracted dynamically from the JWT using the configured `RolesClaim` path. For example, `realm_access.roles` means: parse the JWT payload as JSON, navigate into the `realm_access` object, then read the `roles` array. This makes the middleware work with any OIDC provider:
 
-| Provider | `--oidc-roles-claim` value |
+| Provider | `--jwt-role-claim` value |
 |----------|---------------------------|
 | Keycloak | `realm_access.roles` (default) |
 | Auth0 | `https://myapp.com/roles` |
@@ -158,7 +158,7 @@ v1 := s.engine.Group("/v1")
 v1.Use(s.oidcAuthMiddleware())          // validate JWT
 if s.oidcValidator != nil {
     // Require configured role
-    v1.Use(requireRole(s.config.OIDCRequiredRole))  
+    v1.Use(requireRole(s.config.JWTRequiredRole))  
 }
 v1.Use(s.concurrencyLimitMiddleware())  // existing
 ```
@@ -273,14 +273,14 @@ The existing clients (`ControlPlaneClient`, Data Plane clients, high-level clien
 
 ### 7. Helm Wiring and CLI Flags
 
-The core AgentCube chart has provider-agnostic OIDC configuration under `router.oidc`. When `router.oidc.issuerUrl` is set, the Router Deployment template passes additional args:
+The core AgentCube chart has provider-agnostic OIDC configuration under `router.jwt`. When `router.jwt.issuerUrl` is set, the Router Deployment template passes additional args:
 
 ```yaml
-{{- if .Values.router.oidc.issuerUrl }}
-- {{ printf "--oidc-issuer-url=%s" .Values.router.oidc.issuerUrl | quote }}
-- {{ printf "--oidc-audience=%s" .Values.router.oidc.audience | quote }}
-- {{ printf "--oidc-roles-claim=%s" .Values.router.oidc.rolesClaim | quote }}
-- {{ printf "--oidc-required-role=%s" .Values.router.oidc.requiredRole | quote }}
+{{- if .Values.router.jwt.issuerUrl }}
+- {{ printf "--jwt-issuer-url=%s" .Values.router.jwt.issuerUrl | quote }}
+- {{ printf "--jwt-audience=%s" .Values.router.jwt.audience | quote }}
+- {{ printf "--jwt-role-claim=%s" .Values.router.jwt.roleClaim | quote }}
+- {{ printf "--jwt-required-role=%s" .Values.router.jwt.requiredRole | quote }}
 {{- end }}
 ```
 
@@ -289,28 +289,28 @@ When using the Keycloak addon chart, the user sets the issuer URL to point at th
 ```bash
 # 1. Deploy the Keycloak addon
 helm install keycloak manifests/charts/addons/keycloak -n agentcube-system \
-  --set adminUser=admin --set adminPassword=admin \
+  --set admin.username=admin --set admin.password=admin \
   --set clients.service.secret=my-svc-secret \
   --set clients.router.secret=my-router-secret \
   --set clients.admin.secret=my-admin-secret
 
 # 2. Deploy AgentCube with OIDC pointed at the addon
 helm install agentcube manifests/charts/base -n agentcube-system \
-  --set router.oidc.issuerUrl=http://keycloak.agentcube-system.svc:8080/realms/agentcube \
-  --set router.oidc.rolesClaim=realm_access.roles \
-  --set router.oidc.requiredRole=sandbox:invoke
+  --set router.jwt.issuerUrl=http://keycloak.agentcube-system.svc:8080/realms/agentcube \
+  --set router.jwt.roleClaim=realm_access.roles \
+  --set router.jwt.requiredRole=sandbox:invoke
 ```
 
 Four new flags in `cmd/router/main.go`:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--oidc-issuer-url` | `""` | OIDC provider issuer URL |
-| `--oidc-audience` | `"agentcube-api"` | Expected JWT audience claim |
-| `--oidc-roles-claim` | `""` | REQUIRED if issuer is set. Dot-separated path to the roles array in the JWT (e.g. `realm_access.roles` for Keycloak, `groups` for Okta). |
-| `--oidc-required-role` | `""` | REQUIRED if issuer is set. The role required to access the API endpoints (e.g. `sandbox:invoke` - Note: this is just an example, though our Keycloak addon creates this role automatically). |
+| `--jwt-issuer-url` | `""` | OIDC provider issuer URL |
+| `--jwt-audience` | `"agentcube-api"` | Expected JWT audience claim |
+| `--jwt-role-claim` | `""` | REQUIRED if issuer is set. Dot-separated path to the roles array in the JWT (e.g. `realm_access.roles` for Keycloak, `groups` for Okta). |
+| `--jwt-required-role` | `""` | REQUIRED if issuer is set. The role required to access the API endpoints (e.g. `sandbox:invoke` - Note: this is just an example, though our Keycloak addon creates this role automatically). |
 
-External authentication is automatically enabled when `--oidc-issuer-url` is provided. The Router will validate tokens against this issuer.
+External authentication is automatically enabled when `--jwt-issuer-url` is provided. The Router will validate tokens against this issuer.
 
 ## Testing
 
@@ -325,6 +325,6 @@ External authentication is automatically enabled when `--oidc-issuer-url` is pro
 The E2E suite (`test/e2e/`) will be extended to deploy Keycloak in the Kind cluster:
 
 1. Preload the Keycloak image into Kind
-2. Deploy with the Keycloak addon and set `router.oidc.issuerUrl` in the base chart
+2. Deploy with the Keycloak addon and set `router.jwt.issuerUrl` in the base chart
 3. Obtain a real token via `client_credentials` grant
 4. Test cases: no token → 401, invalid token → 401, valid token → success, RLAC ownership → 403

@@ -1,9 +1,9 @@
-{{- if .Values.router.oidc.issuerUrl }}
-{{- if empty .Values.router.oidc.rolesClaim }}
-  {{- fail "router.oidc.rolesClaim is required when router.oidc.issuerUrl is set" }}
+{{- if .Values.router.jwt.issuerUrl }}
+{{- if empty .Values.router.jwt.roleClaim }}
+  {{- fail "router.jwt.roleClaim is required when router.jwt.issuerUrl is set" }}
 {{- end }}
-{{- if empty .Values.router.oidc.requiredRole }}
-  {{- fail "router.oidc.requiredRole is required when router.oidc.issuerUrl is set" }}
+{{- if empty .Values.router.jwt.requiredRole }}
+  {{- fail "router.jwt.requiredRole is required when router.jwt.issuerUrl is set" }}
 {{- end }}
 {{- end }}
 apiVersion: apps/v1
@@ -96,11 +96,11 @@ spec:
             - --mtls-key={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.keyFileName }}
             - --mtls-ca={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.bundleFileName }}
             {{- end }}
-            {{- if .Values.router.oidc.issuerUrl }}
-            - {{ printf "--oidc-issuer-url=%s" .Values.router.oidc.issuerUrl | quote }}
-            - {{ printf "--oidc-audience=%s" .Values.router.oidc.audience | quote }}
-            - {{ printf "--oidc-roles-claim=%s" .Values.router.oidc.rolesClaim | quote }}
-            - {{ printf "--oidc-required-role=%s" .Values.router.oidc.requiredRole | quote }}
+            {{- if .Values.router.jwt.issuerUrl }}
+            - {{ printf "--jwt-issuer-url=%s" .Values.router.jwt.issuerUrl | quote }}
+            - {{ printf "--jwt-audience=%s" .Values.router.jwt.audience | quote }}
+            - {{ printf "--jwt-role-claim=%s" .Values.router.jwt.roleClaim | quote }}
+            - {{ printf "--jwt-required-role=%s" .Values.router.jwt.requiredRole | quote }}
             {{- end }}
           resources:
             {{- toYaml .Values.router.resources | nindent 12 }}

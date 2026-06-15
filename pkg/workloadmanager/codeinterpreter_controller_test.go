@@ -18,6 +18,7 @@ package workloadmanager
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,6 +30,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
@@ -36,6 +38,10 @@ import (
 )
 
 func setupTestReconciler() *CodeInterpreterReconciler {
+	return setupTestReconcilerWithInterceptors(interceptor.Funcs{})
+}
+
+func setupTestReconcilerWithInterceptors(interceptors interceptor.Funcs) *CodeInterpreterReconciler {
 	scheme := runtime.NewScheme()
 	_ = runtimev1alpha1.AddToScheme(scheme)
 	_ = sandboxv1alpha1.AddToScheme(scheme)
@@ -46,6 +52,7 @@ func setupTestReconciler() *CodeInterpreterReconciler {
 		WithScheme(scheme).
 		WithStatusSubresource(&runtimev1alpha1.CodeInterpreter{}).
 		WithStatusSubresource(&extensionsv1alpha1.SandboxWarmPool{}).
+		WithInterceptorFuncs(interceptors).
 		Build()
 
 	return &CodeInterpreterReconciler{
@@ -289,6 +296,31 @@ func TestWarmPoolAvailableCondition(t *testing.T) {
 	}
 }
 
+func TestWarmPoolAvailableConditionReturnsGetError(t *testing.T) {
+	reconciler := setupTestReconcilerWithInterceptors(interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*extensionsv1alpha1.SandboxWarmPool); ok {
+				return fmt.Errorf("temporary client error")
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	})
+
+	ci := &runtimev1alpha1.CodeInterpreter{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ci",
+			Namespace: "default",
+		},
+		Spec: runtimev1alpha1.CodeInterpreterSpec{
+			WarmPoolSize: int32Ptr(2),
+		},
+	}
+
+	_, err := reconciler.warmPoolAvailableCondition(context.Background(), ci)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get SandboxWarmPool for status")
+}
+
 func TestShouldRecordWarmPoolWarningEvent(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -351,6 +383,15 @@ func TestShouldRecordWarmPoolWarningEvent(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name: "does not record unrelated false reason",
+			current: metav1.Condition{
+				Type:   codeInterpreterWarmPoolCondition,
+				Status: metav1.ConditionFalse,
+				Reason: "OtherReason",
+			},
+			want: false,
+		},
 	}
 
 	reconciler := setupTestReconciler()
@@ -393,6 +434,76 @@ func TestUpdateStatusSetsWarmPoolAvailableCondition(t *testing.T) {
 		assert.Equal(t, codeInterpreterWarmPoolReady, warmPool.Reason)
 		assert.Equal(t, ci.Generation, warmPool.ObservedGeneration)
 	}
+}
+
+func TestUpdateStatusSkipsUnchangedStatus(t *testing.T) {
+	ctx := context.Background()
+	reconciler := setupTestReconciler()
+	ci := &runtimev1alpha1.CodeInterpreter{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-ci",
+			Namespace:  "default",
+			Generation: 3,
+		},
+		Spec: runtimev1alpha1.CodeInterpreterSpec{
+			WarmPoolSize: int32Ptr(2),
+		},
+		Status: runtimev1alpha1.CodeInterpreterStatus{
+			Ready: true,
+			Conditions: []metav1.Condition{
+				{
+					Type:               codeInterpreterReadyCondition,
+					Status:             metav1.ConditionTrue,
+					Reason:             codeInterpreterReadyReason,
+					Message:            "CodeInterpreter is ready",
+					ObservedGeneration: 3,
+				},
+				{
+					Type:               codeInterpreterWarmPoolCondition,
+					Status:             metav1.ConditionTrue,
+					Reason:             codeInterpreterWarmPoolReady,
+					Message:            "SandboxWarmPool has 2 ready replicas out of 2 desired",
+					ObservedGeneration: 3,
+				},
+			},
+		},
+	}
+	assert.NoError(t, reconciler.Create(ctx, ci))
+	assert.NoError(t, reconciler.Create(ctx, testSandboxWarmPool(2, 2)))
+
+	assert.NoError(t, reconciler.updateStatus(ctx, ci))
+}
+
+func TestRecordEventSkipsNilRecorder(t *testing.T) {
+	reconciler := setupTestReconciler()
+	ci := testCodeInterpreterWithWarmPool(1)
+
+	assert.NotPanics(t, func() {
+		reconciler.recordEvent(ci, corev1.EventTypeWarning, codeInterpreterWarmPoolEmpty, "warm pool empty")
+	})
+}
+
+func TestUpdateStatusReturnsStatusUpdateError(t *testing.T) {
+	ctx := context.Background()
+	reconciler := setupTestReconcilerWithInterceptors(interceptor.Funcs{
+		SubResourceUpdate: func(ctx context.Context, c client.Client, subResourceName string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+			if subResourceName == "status" {
+				return fmt.Errorf("status update failed")
+			}
+			return c.SubResource(subResourceName).Update(ctx, obj, opts...)
+		},
+	})
+	ci := &runtimev1alpha1.CodeInterpreter{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ci",
+			Namespace: "default",
+		},
+	}
+	assert.NoError(t, reconciler.Create(ctx, ci))
+
+	err := reconciler.updateStatus(ctx, ci)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "status update failed")
 }
 
 func TestReconcileReportsWarmPoolEmptyInsteadOfOnlyReady(t *testing.T) {
@@ -474,6 +585,29 @@ func TestReconcileUpdatesWarmPoolAvailableWhenPoolRecovers(t *testing.T) {
 		assert.Contains(t, condition.Message, "2 ready replicas out of 2 desired")
 	}
 	assertNoEvent(t, recorder)
+}
+
+func TestReconcileDeletesWarmPoolWhenDisabled(t *testing.T) {
+	ctx := context.Background()
+	reconciler := setupTestReconciler()
+	ci := testCodeInterpreterWithWarmPool(2)
+	assert.NoError(t, reconciler.Create(ctx, ci))
+
+	request := ctrl.Request{NamespacedName: clientObjectKey(ci.Namespace, ci.Name)}
+	_, err := reconciler.Reconcile(ctx, request)
+	assert.NoError(t, err)
+
+	warmPool := &extensionsv1alpha1.SandboxWarmPool{}
+	assert.NoError(t, reconciler.Get(ctx, clientObjectKey(ci.Namespace, ci.Name), warmPool))
+
+	updated := &runtimev1alpha1.CodeInterpreter{}
+	assert.NoError(t, reconciler.Get(ctx, clientObjectKey(ci.Namespace, ci.Name), updated))
+	updated.Spec.WarmPoolSize = nil
+	assert.NoError(t, reconciler.Update(ctx, updated))
+
+	_, err = reconciler.Reconcile(ctx, request)
+	assert.NoError(t, err)
+	assert.Error(t, reconciler.Get(ctx, clientObjectKey(ci.Namespace, ci.Name), warmPool))
 }
 
 func testCodeInterpreterWithWarmPool(size int32) *runtimev1alpha1.CodeInterpreter {

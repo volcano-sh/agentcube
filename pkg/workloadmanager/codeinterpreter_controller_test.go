@@ -384,6 +384,15 @@ func TestShouldRecordWarmPoolWarningEvent(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "does not record transient not found condition",
+			current: metav1.Condition{
+				Type:   codeInterpreterWarmPoolCondition,
+				Status: metav1.ConditionFalse,
+				Reason: codeInterpreterWarmPoolNotFound,
+			},
+			want: false,
+		},
+		{
 			name: "does not record unrelated false reason",
 			current: metav1.Condition{
 				Type:   codeInterpreterWarmPoolCondition,

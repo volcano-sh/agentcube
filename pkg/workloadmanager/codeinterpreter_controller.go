@@ -214,8 +214,7 @@ func (r *CodeInterpreterReconciler) shouldRecordWarmPoolWarningEvent(previous *m
 		return false
 	}
 	if current.Reason != codeInterpreterWarmPoolEmpty &&
-		current.Reason != codeInterpreterWarmPoolBelowWatermark &&
-		current.Reason != codeInterpreterWarmPoolNotFound {
+		current.Reason != codeInterpreterWarmPoolBelowWatermark {
 		return false
 	}
 	return previous == nil || previous.Status != current.Status || previous.Reason != current.Reason

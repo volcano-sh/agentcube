@@ -107,10 +107,16 @@ func (s *Server) handleGetSandboxError(c *gin.Context, err error) {
 
 func determineUpstreamURL(sandbox *types.SandboxInfo, path string) (*url.URL, error) {
 	// prefer matched entrypoint by path
+	var matched types.SandboxEntryPoint
+	found := false
 	for _, ep := range sandbox.EntryPoints {
-		if strings.HasPrefix(path, ep.Path) {
-			return buildURL(ep.Protocol, ep.Endpoint)
+		if entryPointPathMatches(path, ep.Path) && (!found || len(ep.Path) > len(matched.Path)) {
+			matched = ep
+			found = true
 		}
+	}
+	if found {
+		return buildURL(matched.Protocol, matched.Endpoint)
 	}
 	// fallback to first entrypoint
 	if len(sandbox.EntryPoints) == 0 {
@@ -118,6 +124,17 @@ func determineUpstreamURL(sandbox *types.SandboxInfo, path string) (*url.URL, er
 	}
 	ep := sandbox.EntryPoints[0]
 	return buildURL(ep.Protocol, ep.Endpoint)
+}
+
+func entryPointPathMatches(path, prefix string) bool {
+	if path != "" && !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	prefix = strings.TrimSuffix(prefix, "/")
+	if prefix == "" {
+		return true
+	}
+	return path == prefix || strings.HasPrefix(path, prefix+"/")
 }
 
 func buildURL(protocol, endpoint string) (*url.URL, error) {

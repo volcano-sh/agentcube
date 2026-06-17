@@ -28,7 +28,6 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/klog/v2"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
-	"sigs.k8s.io/agent-sandbox/controllers"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 
 	"github.com/volcano-sh/agentcube/pkg/api"
@@ -120,7 +119,7 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 		return
 	}
 
-	// Calculate sandbox name and namespace before creating
+	// Calculate sandbox name and namespace before creating.
 	sandboxName := sandbox.Name
 	namespace := sandbox.Namespace
 
@@ -135,11 +134,14 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 		dynamicClient = userDynamicClient
 	}
 
-	// CRITICAL: Register watcher BEFORE creating sandbox
-	// This ensures we don't miss the Running state notification
-	resultChan := s.sandboxController.WatchSandboxOnce(c.Request.Context(), namespace, sandboxName)
-	// Ensure cleanup is called when function returns to prevent memory leak
-	defer s.sandboxController.UnWatchSandbox(namespace, sandboxName)
+	var resultChan <-chan SandboxStatusUpdate
+	if sandboxClaim == nil {
+		// CRITICAL: Register watcher BEFORE creating sandbox.
+		// This ensures we don't miss the Ready state notification for directly created sandboxes.
+		resultChan = s.sandboxController.WatchSandboxOnce(c.Request.Context(), namespace, sandboxName)
+		// Ensure cleanup is called when function returns to prevent memory leak.
+		defer s.sandboxController.UnWatchSandbox(namespace, sandboxName)
+	}
 
 	response, err := s.createSandbox(c.Request.Context(), dynamicClient, sandbox, sandboxClaim, sandboxEntry, resultChan)
 	if err != nil {
@@ -195,6 +197,71 @@ func (s *Server) createK8sResources(ctx context.Context, dynamicClient dynamic.I
 	return nil
 }
 
+func (s *Server) waitForDirectSandboxReady(ctx context.Context, sandbox *sandboxv1alpha1.Sandbox, resultChan <-chan SandboxStatusUpdate) (*sandboxv1alpha1.Sandbox, error) {
+	// Use NewTimer so we can stop it explicitly when another branch wins,
+	// preventing the runtime from retaining the timer until it fires.
+	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
+	defer timer.Stop()
+
+	select {
+	case result := <-resultChan:
+		createdSandbox := result.Sandbox
+		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
+		return createdSandbox, nil
+	case <-ctx.Done():
+		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
+		return nil, ctx.Err()
+	case <-timer.C:
+		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
+		return nil, errSandboxCreationTimeout
+	}
+}
+
+func (s *Server) waitForClaimSandboxReady(ctx context.Context, dynamicClient dynamic.Interface, sandboxClaim *extensionsv1alpha1.SandboxClaim) (*sandboxv1alpha1.Sandbox, error) {
+	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
+	defer timer.Stop()
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		claim, err := getSandboxClaim(ctx, dynamicClient, sandboxClaim.Namespace, sandboxClaim.Name)
+		if err != nil && !isContextError(err) {
+			klog.V(2).Infof("waiting for sandbox claim %s/%s status: %v", sandboxClaim.Namespace, sandboxClaim.Name, err)
+		}
+		if err == nil {
+			if sandboxName := claim.Status.SandboxStatus.Name; sandboxName != "" {
+				createdSandbox, err := getSandbox(ctx, dynamicClient, sandboxClaim.Namespace, sandboxName)
+				if err != nil {
+					if isContextError(err) {
+						return nil, err
+					}
+					klog.V(2).Infof("waiting for adopted sandbox %s/%s: %v", sandboxClaim.Namespace, sandboxName, err)
+				} else if getSandboxStatus(createdSandbox) == sandboxStatusReady {
+					klog.V(2).Infof("sandbox claim %s/%s adopted ready sandbox %s/%s", sandboxClaim.Namespace, sandboxClaim.Name, createdSandbox.Namespace, createdSandbox.Name)
+					return createdSandbox, nil
+				}
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			klog.Warningf("sandbox claim %s/%s wait canceled: %v", sandboxClaim.Namespace, sandboxClaim.Name, ctx.Err())
+			return nil, ctx.Err()
+		case <-timer.C:
+			klog.Warningf("sandbox claim %s/%s create timed out", sandboxClaim.Namespace, sandboxClaim.Name)
+			return nil, errSandboxCreationTimeout
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Server) waitForCreatedSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, resultChan <-chan SandboxStatusUpdate) (*sandboxv1alpha1.Sandbox, error) {
+	if sandboxClaim != nil {
+		return s.waitForClaimSandboxReady(ctx, dynamicClient, sandboxClaim)
+	}
+	return s.waitForDirectSandboxReady(ctx, sandbox, resultChan)
+}
+
 // createSandbox performs sandbox creation and returns the response payload or an error with an HTTP status code.
 func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
 	placeholder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
@@ -219,55 +286,47 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		return nil, err
 	}
 
-	// Use NewTimer so we can stop it explicitly when another branch wins,
-	// preventing the runtime from retaining the timer until it fires.
-	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
-
-	var createdSandbox *sandboxv1alpha1.Sandbox
-	select {
-	case result := <-resultChan:
-		timer.Stop()
-		createdSandbox = result.Sandbox
-		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
-	case <-ctx.Done():
-		timer.Stop()
-		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
-		return nil, ctx.Err()
-	case <-timer.C:
-		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
-		return nil, errSandboxCreationTimeout
+	createdSandbox, err := s.waitForCreatedSandbox(ctx, dynamicClient, sandbox, sandboxClaim, resultChan)
+	if err != nil {
+		return nil, err
 	}
 
 	// agent-sandbox create pod with same name as sandbox if no warmpool is used
 	// so here we try to get pod IP by sandbox name first
-	// if warmpool is used, the pod name is stored in sandbox's annotation `agents.x-k8s.io/sandbox-pod-name`
-	// https://github.com/kubernetes-sigs/agent-sandbox/blob/3ab7fbcd85ad0d75c6e632ecd14bcaeda5e76e1e/controllers/sandbox_controller.go#L465
-	sandboxPodName := sandbox.Name
-	if podName, exists := createdSandbox.Annotations[controllers.SandboxPodNameAnnotation]; exists {
+	// if warmpool is used, the pod name is stored in sandbox's annotation `agents.x-k8s.io/pod-name`
+	sandboxNameForPod := createdSandbox.Name
+	sandboxPodName := createdSandbox.Name
+	if podName, exists := createdSandbox.Annotations[sandboxv1alpha1.SandboxPodNameAnnotation]; exists {
 		sandboxPodName = podName
 	}
 
-	podIP, err := s.k8sClient.GetSandboxPodIP(ctx, sandbox.Namespace, sandbox.Name, sandboxPodName)
+	podIP, err := s.k8sClient.GetSandboxPodIP(ctx, createdSandbox.Namespace, sandboxNameForPod, sandboxPodName)
 	if err != nil {
 		if isContextError(err) {
 			return nil, err
 		}
-		return nil, api.NewInternalError(fmt.Errorf("failed to get sandbox %s/%s pod IP: %w", sandbox.Namespace, sandbox.Name, err))
+		return nil, api.NewInternalError(fmt.Errorf("failed to get sandbox %s/%s pod IP: %w", createdSandbox.Namespace, sandboxNameForPod, err))
 	}
 	if err := s.waitForSandboxEntryPointsReady(ctx, podIP, sandboxEntry); err != nil {
 		if isContextError(err) {
 			return nil, err
 		}
-		return nil, api.NewInternalError(fmt.Errorf("failed to verify sandbox %s/%s entrypoints: %w", sandbox.Namespace, sandbox.Name, err))
+		return nil, api.NewInternalError(fmt.Errorf("failed to verify sandbox %s/%s entrypoints: %w", createdSandbox.Namespace, sandboxNameForPod, err))
 	}
 
 	storeCacheInfo := buildSandboxInfo(createdSandbox, podIP, sandboxEntry)
+	if sandboxClaim != nil {
+		storeCacheInfo.Name = sandboxClaim.Name
+		storeCacheInfo.SandboxNamespace = sandboxClaim.Namespace
+		storeCacheInfo.ExpiresAt = placeholder.ExpiresAt
+		storeCacheInfo.CreatedAt = placeholder.CreatedAt
+	}
 
 	response := &types.CreateSandboxResponse{
 		Kind:        storeCacheInfo.Kind,
 		SessionID:   sandboxEntry.SessionID,
 		SandboxID:   storeCacheInfo.SandboxID,
-		SandboxName: sandbox.Name,
+		SandboxName: storeCacheInfo.Name,
 		EntryPoints: storeCacheInfo.EntryPoints,
 	}
 

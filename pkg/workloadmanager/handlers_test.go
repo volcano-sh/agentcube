@@ -36,9 +36,12 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/store"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
-	"sigs.k8s.io/agent-sandbox/controllers"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 )
 
@@ -80,7 +83,7 @@ func readySandbox() *sandboxv1alpha1.Sandbox {
 			Name:              "sandbox-1",
 			Namespace:         "ns-1",
 			UID:               "uid-123",
-			Annotations:       map[string]string{controllers.SandboxPodNameAnnotation: "pod-1"},
+			Annotations:       map[string]string{sandboxv1alpha1.SandboxPodNameAnnotation: "pod-1"},
 			CreationTimestamp: metav1.Now(),
 		},
 		Status: sandboxv1alpha1.SandboxStatus{Conditions: []metav1.Condition{{
@@ -98,6 +101,21 @@ func makeEntry() *sandboxEntry {
 			{Port: 8080, Protocol: runtimev1alpha1.ProtocolTypeHTTP, PathPrefix: "/api"},
 		},
 	}
+}
+
+type recordingStore struct {
+	fakeStore
+	lastUpdated *types.SandboxInfo
+}
+
+func (f *recordingStore) UpdateSandbox(ctx context.Context, sandbox *types.SandboxInfo) error {
+	f.fakeStore.UpdateSandbox(ctx, sandbox)
+	if f.updateErr != nil {
+		return f.updateErr
+	}
+	copied := *sandbox
+	f.lastUpdated = &copied
+	return nil
 }
 
 func TestServerCreateSandbox(t *testing.T) {
@@ -219,6 +237,17 @@ func TestServerCreateSandbox(t *testing.T) {
 	patches.ApplyPrivateMethod(reflect.TypeOf(server), "waitForSandboxEntryPointsReady", func(_ *Server, _ context.Context, _ string, _ *sandboxEntry) error {
 		return cur.readyErr
 	})
+	patches.ApplyPrivateMethod(reflect.TypeOf(server), "waitForCreatedSandbox", func(_ *Server, _ context.Context, _ dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, _ *extensionsv1alpha1.SandboxClaim, resultChan <-chan SandboxStatusUpdate) (*sandboxv1alpha1.Sandbox, error) {
+		if resultChan == nil {
+			return readySandbox(), nil
+		}
+		select {
+		case result := <-resultChan:
+			return result.Sandbox, nil
+		default:
+			return sandbox, nil
+		}
+	})
 
 	for i := range tests {
 		tt := &tests[i]
@@ -268,6 +297,115 @@ func TestServerCreateSandbox(t *testing.T) {
 			require.Equal(t, "10.0.0.9:8080", resp.EntryPoints[0].Endpoint)
 		})
 	}
+}
+
+func TestServerCreateSandboxClaimUsesAdoptedSandboxButStoresClaimName(t *testing.T) {
+	claim := &extensionsv1alpha1.SandboxClaim{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "extensions.agents.x-k8s.io/v1alpha1",
+			Kind:       types.SandboxClaimsKind,
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ci-claim",
+			Namespace: "ns-1",
+		},
+		Status: extensionsv1alpha1.SandboxClaimStatus{
+			SandboxStatus: extensionsv1alpha1.SandboxStatus{
+				Name: "warm-pool-sandbox-abc",
+			},
+		},
+	}
+	claimObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(claim)
+	require.NoError(t, err)
+	claimUnstructured := &unstructured.Unstructured{Object: claimObj}
+
+	adoptedSandboxUnstructured := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       types.SandboxKind,
+			"metadata": map[string]interface{}{
+				"name":              "warm-pool-sandbox-abc",
+				"namespace":         "ns-1",
+				"uid":               "adopted-uid",
+				"creationTimestamp": metav1.Now().Format(time.RFC3339),
+				"annotations": map[string]interface{}{
+					sandboxv1alpha1.SandboxPodNameAnnotation: "warm-pool-pod-abc",
+				},
+			},
+			"status": map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{
+						"type":   string(sandboxv1alpha1.SandboxConditionReady),
+						"status": string(metav1.ConditionTrue),
+					},
+				},
+			},
+		},
+	}
+
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	dynamicClient.PrependReactor("get", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		getAction := action.(k8stesting.GetAction)
+		switch {
+		case action.GetResource() == SandboxClaimGVR && getAction.GetName() == "ci-claim":
+			return true, claimUnstructured.DeepCopy(), nil
+		case action.GetResource() == SandboxGVR && getAction.GetName() == "warm-pool-sandbox-abc":
+			return true, adoptedSandboxUnstructured.DeepCopy(), nil
+		default:
+			return false, nil, nil
+		}
+	})
+
+	storeInst := &recordingStore{}
+	server := &Server{k8sClient: &K8sClient{}, storeClient: storeInst}
+
+	var gotNamespace, gotSandboxName, gotPodName string
+	patches := gomonkey.NewPatches()
+	defer patches.Reset()
+
+	patches.ApplyFunc(createSandboxClaim, func(_ context.Context, _ dynamic.Interface, _ *extensionsv1alpha1.SandboxClaim) error {
+		return nil
+	})
+	patches.ApplyFunc(deleteSandboxClaim, func(_ context.Context, _ dynamic.Interface, _, _ string) error {
+		return nil
+	})
+	patches.ApplyMethod(reflect.TypeOf((*K8sClient)(nil)), "GetSandboxPodIP", func(_ *K8sClient, _ context.Context, namespace, sandboxName, podName string) (string, error) {
+		gotNamespace = namespace
+		gotSandboxName = sandboxName
+		gotPodName = podName
+		return "10.0.0.10", nil
+	})
+	patches.ApplyPrivateMethod(reflect.TypeOf(server), "waitForSandboxEntryPointsReady", func(_ *Server, _ context.Context, _ string, _ *sandboxEntry) error {
+		return nil
+	})
+
+	templateSandbox := &sandboxv1alpha1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      claim.Name,
+			Namespace: claim.Namespace,
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	entry := makeEntry()
+	entry.Kind = types.SandboxClaimsKind
+	resp, err := server.createSandbox(ctx, dynamicClient, templateSandbox, claim, entry, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, "ci-claim", resp.SandboxName)
+	require.Equal(t, "adopted-uid", resp.SandboxID)
+	require.Equal(t, "ns-1", gotNamespace)
+	require.Equal(t, "warm-pool-sandbox-abc", gotSandboxName)
+	require.Equal(t, "warm-pool-pod-abc", gotPodName)
+
+	require.NotNil(t, storeInst.lastUpdated)
+	require.Equal(t, types.SandboxClaimsKind, storeInst.lastUpdated.Kind)
+	require.Equal(t, "ci-claim", storeInst.lastUpdated.Name)
+	require.Equal(t, "ns-1", storeInst.lastUpdated.SandboxNamespace)
+	require.Equal(t, "adopted-uid", storeInst.lastUpdated.SandboxID)
+	require.Equal(t, "10.0.0.10:8080", storeInst.lastUpdated.EntryPoints[0].Endpoint)
 }
 
 func newFakeServer() *Server {

@@ -48,6 +48,10 @@ var sandboxEntrypointDial = func(ctx context.Context, endpoint string, timeout t
 }
 
 func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxEntry) *types.SandboxInfo {
+	createdAt := sandboxCR.GetCreationTimestamp().Time
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
 	var expiresAt time.Time
 	if sandboxCR.Spec.Lifecycle.ShutdownTime != nil {
 		expiresAt = sandboxCR.Spec.Lifecycle.ShutdownTime.Time
@@ -63,6 +67,7 @@ func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxE
 		SessionID:        entry.SessionID,
 		SandboxNamespace: sandboxCR.GetNamespace(),
 		Name:             sandboxCR.GetName(),
+		CreatedAt:        createdAt,
 		ExpiresAt:        expiresAt,
 		Status:           "creating",
 		IdleTimeout:      metav1.Duration{Duration: idleTimeout},

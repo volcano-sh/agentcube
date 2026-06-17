@@ -238,6 +238,20 @@ func createSandbox(ctx context.Context, client dynamic.Interface, sandbox *sandb
 	}, nil
 }
 
+// getSandbox gets a Sandbox using the provided dynamic client.
+func getSandbox(ctx context.Context, client dynamic.Interface, namespace, sandboxName string) (*sandboxv1alpha1.Sandbox, error) {
+	obj, err := client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sandbox %s/%s: %w", namespace, sandboxName, err)
+	}
+
+	sandbox := &sandboxv1alpha1.Sandbox{}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, sandbox); err != nil {
+		return nil, fmt.Errorf("failed to convert sandbox %s/%s: %w", namespace, sandboxName, err)
+	}
+	return sandbox, nil
+}
+
 // createSandboxClaim creates a SandboxClaim using the provided dynamic client
 func createSandboxClaim(ctx context.Context, client dynamic.Interface, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
 	// Convert to unstructured for dynamic client
@@ -259,6 +273,20 @@ func createSandboxClaim(ctx context.Context, client dynamic.Interface, sandboxCl
 	}
 
 	return nil
+}
+
+// getSandboxClaim gets a SandboxClaim using the provided dynamic client.
+func getSandboxClaim(ctx context.Context, client dynamic.Interface, namespace, sandboxClaimName string) (*extensionsv1alpha1.SandboxClaim, error) {
+	obj, err := client.Resource(SandboxClaimGVR).Namespace(namespace).Get(ctx, sandboxClaimName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sandbox claim %s/%s: %w", namespace, sandboxClaimName, err)
+	}
+
+	sandboxClaim := &extensionsv1alpha1.SandboxClaim{}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, sandboxClaim); err != nil {
+		return nil, fmt.Errorf("failed to convert sandbox claim %s/%s: %w", namespace, sandboxClaimName, err)
+	}
+	return sandboxClaim, nil
 }
 
 // deleteSandbox deletes a Sandbox using the provided dynamic client

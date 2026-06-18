@@ -18,6 +18,7 @@ package picod
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/time/rate"
 	"k8s.io/klog/v2"
 )
 
@@ -49,11 +51,11 @@ type Server struct {
 }
 
 // NewServer creates a new PicoD server instance
-func NewServer(config Config) *Server {
+func NewServer(ctx context.Context, config Config) *Server {
 	s := &Server{
 		config:      config,
 		startTime:   time.Now(),
-		authManager: NewAuthManager(),
+		authManager: NewAuthManager(ctx),
 	}
 
 	// Initialize workspace directory
@@ -83,9 +85,9 @@ func NewServer(config Config) *Server {
 	engine.MaxMultipartMemory = MaxBodySize
 	engine.Use(gzip.Gzip(gzip.BestSpeed, gzip.WithExcludedPaths([]string{"/health"}))) // Response compression
 
-	// Load public key from environment variable (required for JWT auth)
-	if err := s.authManager.LoadPublicKeyFromEnv(); err != nil {
-		klog.Fatalf("Failed to load public key from environment: %v", err)
+	// Load bootstrap public key from environment variable (required)
+	if err := s.authManager.LoadBootstrapPublicKey(); err != nil {
+		klog.Fatalf("Failed to load bootstrap public key from environment: %v", err)
 	}
 
 	// API route group with JWT authentication
@@ -97,6 +99,17 @@ func NewServer(config Config) *Server {
 		api.GET("/files", s.ListFilesHandler)
 		api.GET("/files/*path", s.DownloadFileHandler)
 	}
+
+	// Initialization endpoint (requires JWT signed by bootstrap key)
+	// We apply a rate limiter (2 req/s, burst 5) to mitigate spam/race conditions during the startup window.
+	initLimiter := rate.NewLimiter(rate.Limit(2), 5)
+	engine.POST("/init", func(c *gin.Context) {
+		if !initLimiter.Allow() {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many initialization requests"})
+			c.Abort()
+			return
+		}
+	}, s.InitHandler)
 
 	// Health check (no authentication required)
 	engine.GET("/health", s.HealthCheckHandler)
@@ -156,4 +169,34 @@ func (s *Server) HealthCheckHandler(c *gin.Context) {
 		"version": "0.0.1",
 		"uptime":  time.Since(s.startTime).String(),
 	})
+}
+
+// InitHandler processes the initial POST /init request to set the session public key
+func (s *Server) InitHandler(c *gin.Context) {
+	var req struct {
+		Token string `json:"token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request format"})
+		return
+	}
+
+	sessionPubKey, err := s.authManager.VerifyBootstrapJWT(req.Token)
+	if err != nil {
+		klog.Errorf("bootstrap token verification failed for /init: %v", err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "bootstrap token verification failed"})
+		return
+	}
+
+	if err := s.authManager.SetSessionPublicKey(sessionPubKey); err != nil {
+		if errors.Is(err, ErrAlreadyInitialized) {
+			c.JSON(http.StatusConflict, gin.H{"error": "session already initialized"})
+			return
+		}
+		klog.Errorf("failed to set session public key: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to initialize session key"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "initialized successfully"})
 }

@@ -78,10 +78,16 @@ type K8sClient struct {
 }
 
 type sandboxEntry struct {
-	Kind        string
-	SessionID   string
-	Ports       []runtimev1alpha1.TargetPort
-	IdleTimeout time.Duration
+	Kind              string
+	SessionID         string
+	Ports             []runtimev1alpha1.TargetPort
+	IdleTimeout       time.Duration
+	AuthMode          runtimev1alpha1.AuthModeType
+	SessionPrivateKey string
+}
+
+func (s sandboxEntry) String() string {
+	return fmt.Sprintf("sandboxEntry{Kind:%s, SessionID:%s, Ports:%+v, IdleTimeout:%v, AuthMode:%s, SessionPrivateKey:***REDACTED***}", s.Kind, s.SessionID, s.Ports, s.IdleTimeout, s.AuthMode)
 }
 
 // NewK8sClient creates a new Kubernetes client

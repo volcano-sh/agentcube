@@ -17,6 +17,10 @@ limitations under the License.
 package picod
 
 import (
+	"bytes"
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -33,6 +37,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -56,10 +61,25 @@ func generateTestPublicKeyPEM(t *testing.T) string {
 	return string(pubKeyPEM)
 }
 
+func generateTestSessionPublicKeyPEM(t *testing.T) string {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	require.NoError(t, err)
+
+	pubKeyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: pubKeyBytes,
+	})
+
+	return string(pubKeyPEM)
+}
+
 func TestNewServer_WorkspaceConfiguration(t *testing.T) {
 	pubKeyPEM := generateTestPublicKeyPEM(t)
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	os.Setenv(BootstrapPublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	tests := []struct {
 		name         string
@@ -153,7 +173,7 @@ func TestNewServer_WorkspaceConfiguration(t *testing.T) {
 				Workspace: workspaceConfig,
 			}
 
-			server := NewServer(config)
+			server := NewServer(context.Background(), config)
 
 			tt.verifyResult(t, server)
 			assert.NotNil(t, server.engine)
@@ -169,15 +189,15 @@ func TestNewServer_RoutesRegistered(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	pubKeyPEM := generateTestPublicKeyPEM(t)
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	os.Setenv(BootstrapPublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	config := Config{
 		Port:      8080,
 		Workspace: tmpDir,
 	}
 
-	server := NewServer(config)
+	server := NewServer(context.Background(), config)
 
 	// Test that routes are registered by making requests
 	ts := httptest.NewServer(server.engine)
@@ -189,7 +209,12 @@ func TestNewServer_RoutesRegistered(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	resp.Body.Close()
 
-	// API routes should require auth (will return 401)
+	// Initialize server with session key so it's fully ready
+	sessionPubPEM := generateTestSessionPublicKeyPEM(t)
+	err = server.authManager.SetSessionPublicKey(sessionPubPEM)
+	require.NoError(t, err)
+
+	// API routes should require auth (will return 401 instead of 503 since initialized)
 	resp, err = http.Post(ts.URL+"/api/execute", "application/json", nil)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
@@ -202,15 +227,17 @@ func TestNewServer_PublicKeyRequired(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Don't set public key environment variable
-	os.Unsetenv(PublicKeyEnvVar)
+	os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	// NewServer should fail (calls klog.Fatalf which will panic in tests)
 	// We can't easily test klog.Fatalf without mocking, but we can verify
-	// that LoadPublicKeyFromEnv would fail
-	authManager := NewAuthManager()
-	err = authManager.LoadPublicKeyFromEnv()
+	// that LoadBootstrapPublicKey would fail
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	authManager := NewAuthManager(ctx)
+	err = authManager.LoadBootstrapPublicKey()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), PublicKeyEnvVar)
+	assert.Contains(t, err.Error(), BootstrapPublicKeyEnvVar)
 }
 
 func TestHealthCheckHandler(t *testing.T) {
@@ -219,15 +246,15 @@ func TestHealthCheckHandler(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	pubKeyPEM := generateTestPublicKeyPEM(t)
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	os.Setenv(BootstrapPublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	config := Config{
 		Port:      8080,
 		Workspace: tmpDir,
 	}
 
-	server := NewServer(config)
+	server := NewServer(context.Background(), config)
 
 	// Record start time for comparison
 	startTime := server.startTime
@@ -268,15 +295,15 @@ func TestHealthCheckHandler_MultipleCalls(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	pubKeyPEM := generateTestPublicKeyPEM(t)
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	os.Setenv(BootstrapPublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	config := Config{
 		Port:      8080,
 		Workspace: tmpDir,
 	}
 
-	server := NewServer(config)
+	server := NewServer(context.Background(), config)
 
 	// Call health check multiple times
 	for i := 0; i < 5; i++ {
@@ -306,15 +333,15 @@ func TestNewServer_EngineConfiguration(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	pubKeyPEM := generateTestPublicKeyPEM(t)
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	os.Setenv(BootstrapPublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	config := Config{
 		Port:      8080,
 		Workspace: tmpDir,
 	}
 
-	server := NewServer(config)
+	server := NewServer(context.Background(), config)
 
 	assert.NotNil(t, server.engine)
 	// Verify Gin is in release mode (set by NewServer)
@@ -328,15 +355,15 @@ func TestNewServer_AuthManagerInitialized(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	pubKeyPEM := generateTestPublicKeyPEM(t)
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	os.Setenv(BootstrapPublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	config := Config{
 		Port:      8080,
 		Workspace: tmpDir,
 	}
 
-	server := NewServer(config)
+	server := NewServer(context.Background(), config)
 
 	assert.NotNil(t, server.authManager)
 	// Verify public key is loaded
@@ -351,8 +378,8 @@ func TestNewServer_DifferentPorts(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	pubKeyPEM := generateTestPublicKeyPEM(t)
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	os.Setenv(BootstrapPublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	ports := []int{8080, 9090, 3000, 0}
 
@@ -363,7 +390,7 @@ func TestNewServer_DifferentPorts(t *testing.T) {
 				Workspace: tmpDir,
 			}
 
-			server := NewServer(config)
+			server := NewServer(context.Background(), config)
 
 			assert.NotNil(t, server)
 			assert.Equal(t, port, server.config.Port)
@@ -377,10 +404,10 @@ func TestServer_GzipMiddleware_CompressesResponse(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	pubKeyPEM := generateTestPublicKeyPEM(t)
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	os.Setenv(BootstrapPublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
-	server := NewServer(Config{
+	server := NewServer(context.Background(), Config{
 		Port:      8080,
 		Workspace: tmpDir,
 	})
@@ -417,10 +444,10 @@ func TestServer_GzipMiddleware_ExcludesHealthEndpoint(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	pubKeyPEM := generateTestPublicKeyPEM(t)
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	os.Setenv(BootstrapPublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
-	server := NewServer(Config{
+	server := NewServer(context.Background(), Config{
 		Port:      8080,
 		Workspace: tmpDir,
 	})
@@ -454,20 +481,31 @@ func TestNewServer_JWTMode_RequiresAuth(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	pubKeyPEM := generateTestPublicKeyPEM(t)
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	os.Setenv(BootstrapPublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
 	config := Config{
 		Port:      8080,
 		Workspace: tmpDir,
 	}
 
-	server := NewServer(config)
+	server := NewServer(context.Background(), config)
 	ts := httptest.NewServer(server.engine)
 	defer ts.Close()
 
-	// API endpoint should return 401 when JWT mode is active
+	// API endpoint should return 503 when daemon is not initialized
 	resp, err := http.Post(ts.URL+"/api/execute", "application/json", nil)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode, "should require initialization first")
+	resp.Body.Close()
+
+	// Initialize session key
+	sessionPubPEM := generateTestSessionPublicKeyPEM(t)
+	err = server.authManager.SetSessionPublicKey(sessionPubPEM)
+	require.NoError(t, err)
+
+	// API endpoint should return 401 when authorization header is missing after init
+	resp, err = http.Post(ts.URL+"/api/execute", "application/json", nil)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "JWT mode should require auth")
 	resp.Body.Close()
@@ -479,10 +517,10 @@ func TestServer_MaxBodySizeMiddleware(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	pubKeyPEM := generateTestPublicKeyPEM(t)
-	os.Setenv(PublicKeyEnvVar, pubKeyPEM)
-	defer os.Unsetenv(PublicKeyEnvVar)
+	os.Setenv(BootstrapPublicKeyEnvVar, pubKeyPEM)
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
 
-	server := NewServer(Config{
+	server := NewServer(context.Background(), Config{
 		Port:      8080,
 		Workspace: tmpDir,
 	})
@@ -503,4 +541,152 @@ func TestServer_MaxBodySizeMiddleware(t *testing.T) {
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	assert.Contains(t, string(body), "request body too large")
+}
+
+func TestInitHandler(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "picod-server-test-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	// Generate bootstrap keys
+	bootstrapPrivKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&bootstrapPrivKey.PublicKey)
+	require.NoError(t, err)
+
+	pubKeyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: pubKeyBytes,
+	})
+
+	os.Setenv(BootstrapPublicKeyEnvVar, string(pubKeyPEM))
+	defer os.Unsetenv(BootstrapPublicKeyEnvVar)
+
+	os.Setenv(SessionIDEnvVar, "test-session")
+	defer os.Unsetenv(SessionIDEnvVar)
+
+	config := Config{
+		Port:      8080,
+		Workspace: tmpDir,
+	}
+
+	// Helper to generate a token signed by bootstrap private key
+	generateToken := func(claims jwt.MapClaims) string {
+		token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		tokenStr, err := token.SignedString(bootstrapPrivKey)
+		require.NoError(t, err)
+		return tokenStr
+	}
+
+	sessionPubPEM := generateTestSessionPublicKeyPEM(t)
+
+	t.Run("invalid request format", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest("POST", "/init", bytes.NewBufferString("{invalid-json}"))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		freshServer := NewServer(context.Background(), config)
+		freshServer.InitHandler(c)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		var resp map[string]string
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Contains(t, resp["error"], "invalid request format")
+	})
+
+	t.Run("invalid token", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		body, _ := json.Marshal(map[string]string{"token": "invalid.token.here"})
+		c.Request, _ = http.NewRequest("POST", "/init", bytes.NewBuffer(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		freshServer := NewServer(context.Background(), config)
+		freshServer.InitHandler(c)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		var resp map[string]string
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Contains(t, resp["error"], "bootstrap token verification failed")
+	})
+
+	t.Run("successful initialization", func(t *testing.T) {
+		claims := jwt.MapClaims{
+			"iss":                "agentcube-workload-manager",
+			"sub":                "test-session",
+			"exp":                time.Now().Add(time.Minute).Unix(),
+			"iat":                time.Now().Unix(),
+			"session_public_key": sessionPubPEM,
+			"jti":                "test-jti-1",
+		}
+		token := generateToken(claims)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		body, _ := json.Marshal(map[string]string{"token": token})
+		c.Request, _ = http.NewRequest("POST", "/init", bytes.NewBuffer(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		freshServer := NewServer(context.Background(), config)
+		freshServer.InitHandler(c)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]string
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Equal(t, "initialized successfully", resp["status"])
+	})
+
+	t.Run("already initialized", func(t *testing.T) {
+		// Create a fresh server for this sub-test to avoid state leak
+		freshServer := NewServer(context.Background(), config)
+
+		claims := jwt.MapClaims{
+			"iss":                "agentcube-workload-manager",
+			"sub":                "test-session",
+			"exp":                time.Now().Add(time.Minute).Unix(),
+			"iat":                time.Now().Unix(),
+			"session_public_key": sessionPubPEM,
+			"jti":                "test-jti-2",
+		}
+		token := generateToken(claims)
+
+		// First initialization should succeed
+		w1 := httptest.NewRecorder()
+		c1, _ := gin.CreateTestContext(w1)
+		body1, _ := json.Marshal(map[string]string{"token": token})
+		c1.Request, _ = http.NewRequest("POST", "/init", bytes.NewBuffer(body1))
+		c1.Request.Header.Set("Content-Type", "application/json")
+		freshServer.InitHandler(c1)
+		require.Equal(t, http.StatusOK, w1.Code)
+
+		// Second initialization should fail
+		claims2 := jwt.MapClaims{
+			"iss":                "agentcube-workload-manager",
+			"sub":                "test-session",
+			"exp":                time.Now().Add(time.Minute).Unix(),
+			"iat":                time.Now().Unix(),
+			"session_public_key": sessionPubPEM,
+			"jti":                "test-jti-3",
+		}
+		token2 := generateToken(claims2)
+
+		w2 := httptest.NewRecorder()
+		c2, _ := gin.CreateTestContext(w2)
+		body2, _ := json.Marshal(map[string]string{"token": token2})
+		c2.Request, _ = http.NewRequest("POST", "/init", bytes.NewBuffer(body2))
+		c2.Request.Header.Set("Content-Type", "application/json")
+
+		freshServer.InitHandler(c2)
+
+		assert.Equal(t, http.StatusConflict, w2.Code)
+		var resp map[string]string
+		err := json.Unmarshal(w2.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Contains(t, resp["error"], "session already initialized")
+	})
 }

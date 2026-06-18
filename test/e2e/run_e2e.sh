@@ -383,6 +383,10 @@ run_setup() {
     kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status statefulset/spire-server --timeout=300s
     kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status daemonset/spire-agent --timeout=300s
 
+    echo "Rollout restarting deployments to pick up new images..."
+    kubectl rollout restart deployment/workloadmanager -n "${AGENTCUBE_NAMESPACE}"
+    kubectl rollout restart deployment/agentcube-router -n "${AGENTCUBE_NAMESPACE}"
+
     step "Waiting for deployments..."
     kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/workloadmanager --timeout=300s
     kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/agentcube-router --timeout=300s

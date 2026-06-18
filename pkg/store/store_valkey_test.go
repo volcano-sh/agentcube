@@ -360,3 +360,41 @@ func TestValkeyStore_UpdateSandboxLastActivity(t *testing.T) {
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotFound))
 }
+
+func TestValkeyStore_SessionPrivateKey(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newValkeyTestClient(t)
+
+	sessionID := "sess-pwd-test"
+	privateKeyVal := "my-private-key-data"
+
+	// 1. Plaintext storage (no encryption)
+	err := c.StoreSessionPrivateKey(ctx, sessionID, privateKeyVal, time.Minute)
+	assert.NoError(t, err)
+
+	retrieved, err := c.GetSessionPrivateKey(ctx, sessionID)
+	assert.NoError(t, err)
+	assert.Equal(t, privateKeyVal, retrieved)
+
+	// 2. Encrypted storage
+	encKey := []byte("01234567890123456789012345678912") // 32 bytes AES-256 key
+	err = c.SetEncryptionKey(encKey)
+	assert.NoError(t, err)
+
+	err = c.StoreSessionPrivateKey(ctx, sessionID, privateKeyVal, time.Minute)
+	assert.NoError(t, err)
+
+	retrieved, err = c.GetSessionPrivateKey(ctx, sessionID)
+	assert.NoError(t, err)
+	assert.Equal(t, privateKeyVal, retrieved)
+
+	// 3. Encrypted in store but unconfigured crypto on retrieval
+	cDec := &valkeyStore{
+		cli:            c.cli,
+		sessionPrefix:  c.sessionPrefix,
+		expiryIndexKey: c.expiryIndexKey,
+	}
+	_, err = cDec.GetSessionPrivateKey(ctx, sessionID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "decryption key is required but not configured")
+}

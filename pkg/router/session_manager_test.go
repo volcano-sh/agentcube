@@ -107,6 +107,18 @@ func (f *fakeStoreClient) Close() error {
 	return nil
 }
 
+func (f *fakeStoreClient) StoreSessionPrivateKey(_ context.Context, _ string, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (f *fakeStoreClient) GetSessionPrivateKey(_ context.Context, _ string) (string, error) {
+	return "", store.ErrNotFound
+}
+
+func (f *fakeStoreClient) SetEncryptionKey(_ []byte) error {
+	return nil
+}
+
 // ---- tests: GetSandboxBySession ----
 
 func TestGetSandboxBySession_Success(t *testing.T) {

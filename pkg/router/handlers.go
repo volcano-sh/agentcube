@@ -18,6 +18,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -31,6 +32,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
+	"github.com/volcano-sh/agentcube/pkg/store"
 )
 
 // handleHealthLive handles liveness probe
@@ -236,11 +238,50 @@ func (s *Server) generateSandboxJWT(c *gin.Context, sandbox *types.SandboxInfo) 
 	if s.jwtManager == nil {
 		return "", true
 	}
+	authMode := sandbox.AuthMode
+	if authMode == "" {
+		authMode = "none"
+	}
+	if authMode != "picod" && authMode != "none" {
+		klog.Warningf("generateSandboxJWT: invalid AuthMode %q for session %s. Defaulting to block.", authMode, sandbox.SessionID)
+		return "", false
+	}
+	if authMode != "picod" {
+		return "", true
+	}
 
 	claims := map[string]interface{}{
 		"session_id": sandbox.SessionID,
 	}
-	token, err := s.jwtManager.GenerateToken(claims)
+	var token string
+	var err error
+
+	token, err = s.jwtManager.GenerateTokenWithKey(sandbox.SessionID, claims, "")
+	if errors.Is(err, ErrKeyNotCached) {
+		privKeyPEM, getErr := s.storeClient.GetSessionPrivateKey(c.Request.Context(), sandbox.SessionID)
+		if getErr == nil {
+			token, err = s.jwtManager.GenerateTokenWithKey(sandbox.SessionID, claims, privKeyPEM)
+		} else if errors.Is(getErr, store.ErrNotFound) {
+			// The per-session ECDSA key is missing from the store, which means this sandbox
+			// was never initialized via /init (or the store entry expired). Falling back to
+			// the legacy RSA GenerateToken would produce an RS256 token that PicoD rejects
+			// after a successful /init handshake, causing confusing downstream auth failures.
+			// Return a clear 503 so the caller can retry or re-initialize.
+			klog.Errorf("Session private key not found in store (session: %s): sandbox may not have been initialized via /init", sandbox.SessionID)
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error": "session not ready",
+				"code":  "SESSION_PRIVATE_KEY_NOT_FOUND",
+			})
+			return "", false
+		} else {
+			klog.Errorf("Failed to retrieve session private key from store (session: %s): %v", sandbox.SessionID, getErr)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "failed to sign request",
+				"code":  "SESSION_KEY_RETRIEVAL_FAILED",
+			})
+			return "", false
+		}
+	}
 	if err != nil {
 		klog.Errorf("Failed to generate JWT token (session: %s): %v", sandbox.SessionID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{

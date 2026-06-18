@@ -39,6 +39,9 @@ func setupTestReconciler() *CodeInterpreterReconciler {
 	return &CodeInterpreterReconciler{
 		Client: client,
 		Scheme: scheme,
+		BootstrapPublicKeyFunc: func() string {
+			return "test-public-key"
+		},
 	}
 }
 
@@ -164,16 +167,16 @@ func TestConvertToPodTemplate_AuthMode(t *testing.T) {
 
 			foundPublicKey := false
 			for _, env := range envVars {
-				if env.Name == "PICOD_AUTH_PUBLIC_KEY" {
+				if env.Name == "PICOD_BOOTSTRAP_PUBLIC_KEY" {
 					foundPublicKey = true
 					break
 				}
 			}
 
 			if tt.expectPublicKeyVar {
-				assert.True(t, foundPublicKey, "PICOD_AUTH_PUBLIC_KEY should be injected")
+				assert.True(t, foundPublicKey, "PICOD_BOOTSTRAP_PUBLIC_KEY should be injected")
 			} else {
-				assert.False(t, foundPublicKey, "PICOD_AUTH_PUBLIC_KEY should not be injected")
+				assert.False(t, foundPublicKey, "PICOD_BOOTSTRAP_PUBLIC_KEY should not be injected")
 			}
 		})
 	}

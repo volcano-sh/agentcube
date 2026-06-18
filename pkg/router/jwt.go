@@ -17,13 +17,18 @@ limitations under the License.
 package router
 
 import (
+	"container/list"
 	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -41,11 +46,11 @@ const (
 	// JWT token expiration time
 	jwtExpiration = 5 * time.Minute
 	// IdentitySecretName is the name of the secret storing Router's keys
-	IdentitySecretName = "picod-router-identity" //nolint:gosec // This is a name reference, not a credential
+	IdentitySecretName = "agentcube-bootstrap-identity" //nolint:gosec // This is a name reference, not a credential
 	// PrivateKeyDataKey is the key in the secret data map for private key
-	PrivateKeyDataKey = "private.pem"
+	PrivateKeyDataKey = "bootstrap-private.pem"
 	// PublicKeyDataKey is the key in the secret data map for public key
-	PublicKeyDataKey = "public.pem"
+	PublicKeyDataKey = "bootstrap-public.pem"
 )
 
 // IdentityNamespace is the namespace for the identity secret
@@ -57,11 +62,19 @@ func init() {
 	}
 }
 
+type cacheEntry struct {
+	sessionID string
+	privKey   *ecdsa.PrivateKey
+}
+
 // JWTManager handles JWT token generation and key management for Router
 type JWTManager struct {
 	privateKey *rsa.PrivateKey
 	publicKey  *rsa.PublicKey
 	clientset  kubernetes.Interface
+	keyCache   map[string]*list.Element
+	evictList  *list.List
+	cacheMu    sync.RWMutex
 }
 
 // NewJWTManager creates a new JWT manager with a fresh RSA key pair
@@ -74,6 +87,8 @@ func NewJWTManager() (*JWTManager, error) {
 	return &JWTManager{
 		privateKey: privateKey,
 		publicKey:  &privateKey.PublicKey,
+		keyCache:   make(map[string]*list.Element),
+		evictList:  list.New(),
 	}, nil
 }
 
@@ -96,6 +111,112 @@ func (jm *JWTManager) GenerateToken(claims map[string]interface{}) (string, erro
 
 	// Sign token with private key
 	tokenString, err := token.SignedString(jm.privateKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to sign JWT token: %w", err)
+	}
+
+	return tokenString, nil
+}
+
+const keyCacheMaxSize = 1000
+
+// GetCachedKey retrieves the parsed ECDSA private key from the LRU cache.
+// It returns the key and true if found, moving the entry to the front of the LRU list.
+func (jm *JWTManager) GetCachedKey(sessionID string) (*ecdsa.PrivateKey, bool) {
+	jm.cacheMu.RLock()
+	elem, ok := jm.keyCache[sessionID]
+	var privKey *ecdsa.PrivateKey
+	if ok {
+		if entry, ok := elem.Value.(*cacheEntry); ok {
+			privKey = entry.privKey
+		}
+	}
+	isFront := ok && jm.evictList.Front() == elem
+	jm.cacheMu.RUnlock()
+
+	if !ok {
+		return nil, false
+	}
+
+	// If the element is already at the front, we don't need to acquire the write lock to move it
+	if isFront {
+		return privKey, privKey != nil
+	}
+
+	jm.cacheMu.Lock()
+	defer jm.cacheMu.Unlock()
+
+	// Double check after acquiring write lock
+	elem, ok = jm.keyCache[sessionID]
+	if !ok {
+		return nil, false
+	}
+
+	// Only move to front if it's not already at the front
+	if jm.evictList.Front() != elem {
+		jm.evictList.MoveToFront(elem)
+	}
+
+	if entry, ok := elem.Value.(*cacheEntry); ok {
+		privKey = entry.privKey
+	}
+	return privKey, privKey != nil
+}
+
+var ErrKeyNotCached = errors.New("private key PEM is required when key is not cached")
+
+// GenerateTokenWithKey generates a JWT token signed with a specific PEM-encoded
+// private key (used for per-session PicoD auth). It caches the parsed *ecdsa.PrivateKey
+// to avoid expensive PEM decoding and parsing on every request.
+func (jm *JWTManager) GenerateTokenWithKey(sessionID string, claims map[string]interface{}, privateKeyPEM string) (string, error) {
+	privKey, ok := jm.GetCachedKey(sessionID)
+
+	if !ok {
+		if privateKeyPEM == "" {
+			return "", ErrKeyNotCached
+		}
+		parsedKey, err := jwt.ParseECPrivateKeyFromPEM([]byte(privateKeyPEM))
+		if err != nil {
+			return "", fmt.Errorf("failed to parse private key: %w", err)
+		}
+		privKey = parsedKey
+
+		// Store in cache
+		jm.cacheMu.Lock()
+		// Double-check after acquiring write lock
+		if cachedElem, ok := jm.keyCache[sessionID]; ok {
+			if entry, ok := cachedElem.Value.(*cacheEntry); ok {
+				privKey = entry.privKey
+			}
+			jm.evictList.MoveToFront(cachedElem)
+		} else {
+			if len(jm.keyCache) >= keyCacheMaxSize {
+				oldest := jm.evictList.Back()
+				if oldest != nil {
+					jm.evictList.Remove(oldest)
+					if entry, ok := oldest.Value.(*cacheEntry); ok {
+						delete(jm.keyCache, entry.sessionID)
+					}
+				}
+			}
+			newElem := jm.evictList.PushFront(&cacheEntry{sessionID: sessionID, privKey: privKey})
+			jm.keyCache[sessionID] = newElem
+		}
+		jm.cacheMu.Unlock()
+	}
+
+	jwtClaims := jwt.MapClaims{
+		"exp": jwt.NewNumericDate(time.Now().Add(jwtExpiration)),
+		"iat": jwt.NewNumericDate(time.Now()),
+		"iss": "agentcube-router",
+	}
+	for k, v := range claims {
+		jwtClaims[k] = v
+	}
+
+	// Generate Token with ECDSA private key
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, jwtClaims)
+	tokenString, err := token.SignedString(privKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to sign JWT token: %w", err)
 	}
@@ -130,10 +251,10 @@ func (jm *JWTManager) GetPrivateKeyPEM() []byte {
 	return privateKeyPem
 }
 
-// TryStoreOrLoadJWTKeySecret tries to create identity resources or loads existing ones.
-// It stores private key in Secret and public key in ConfigMap.
+// WaitForAndLoadBootstrapSecret tries to load the bootstrap identity resources.
+// It waits for Workload Manager to create it if it doesn't exist.
 // If not running in K8s cluster, it will just use the generated keys without persistence.
-func (jm *JWTManager) TryStoreOrLoadJWTKeySecret(ctx context.Context) error {
+func (jm *JWTManager) WaitForAndLoadBootstrapSecret(ctx context.Context, storeClient interface{ SetEncryptionKey([]byte) error }) error {
 	// Initialize K8s client if not set
 	if jm.clientset == nil {
 		config, err := rest.InClusterConfig()
@@ -150,57 +271,55 @@ func (jm *JWTManager) TryStoreOrLoadJWTKeySecret(ctx context.Context) error {
 		jm.clientset = clientset
 	}
 
-	// Get public and private key PEM
-	publicKeyPEM, err := jm.GetPublicKeyPEM()
-	if err != nil {
-		return fmt.Errorf("failed to get public key: %w", err)
-	}
-	privateKeyPEM := jm.GetPrivateKeyPEM()
-
-	// Try to create or load the identity Secret (both keys)
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      IdentitySecretName,
-			Namespace: IdentityNamespace,
-			Labels: map[string]string{
-				"app":       "agentcube",
-				"component": "router",
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			PrivateKeyDataKey: privateKeyPEM,
-			PublicKeyDataKey:  publicKeyPEM,
-		},
-	}
-
-	_, err = jm.clientset.CoreV1().Secrets(IdentityNamespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		if !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create identity secret: %w", err)
+	// Try to load the identity Secret
+	var existingSecret *corev1.Secret
+	var err error
+	for i := 0; i < 30; i++ {
+		existingSecret, err = jm.clientset.CoreV1().Secrets(IdentityNamespace).Get(ctx, IdentitySecretName, metav1.GetOptions{})
+		if err == nil {
+			break
 		}
-
-		// Secret already exists, load private key from it
-		existingSecret, err := jm.clientset.CoreV1().Secrets(IdentityNamespace).Get(ctx, IdentitySecretName, metav1.GetOptions{})
-		if err != nil {
+		if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("failed to get identity secret: %w", err)
 		}
-
-		privateKeyPEMInSecret, ok := existingSecret.Data[PrivateKeyDataKey]
-		if !ok {
-			return fmt.Errorf("private key data not found in identity secret")
+		klog.Infof("Waiting for %s/%s secret to be created...", IdentityNamespace, IdentitySecretName)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
 		}
-
-		// Parse and load the existing keys
-		if err := jm.loadPrivateKeyPEM(privateKeyPEMInSecret); err != nil {
-			return fmt.Errorf("failed to load private key from secret: %w", err)
-		}
-
-		klog.Infof("Loaded identity from existing secret %s/%s", IdentityNamespace, IdentitySecretName)
-	} else {
-		klog.Infof("Created identity secret %s/%s", IdentityNamespace, IdentitySecretName)
 	}
 
+	if existingSecret == nil {
+		return fmt.Errorf("timed out waiting for identity secret")
+	}
+
+	privateKeyPEMInSecret, ok := existingSecret.Data[PrivateKeyDataKey]
+	if !ok {
+		return fmt.Errorf("private key data not found in identity secret")
+	}
+
+	// Parse and load the existing keys
+	if err := jm.loadPrivateKeyPEM(privateKeyPEMInSecret); err != nil {
+		return fmt.Errorf("failed to load private key from secret: %w", err)
+	}
+
+	if storeClient != nil {
+		// Hash the raw DER bytes (not the PEM string) so the encryption key is
+		// stable even if the PEM is re-encoded with minor formatting differences
+		// (e.g. by ArgoCD or kubectl). This must match GetEncryptionKey() in the
+		// WorkloadManager's BootstrapAuthManager.
+		block, _ := pem.Decode(privateKeyPEMInSecret)
+		if block == nil {
+			return fmt.Errorf("failed to decode private key PEM for encryption key derivation")
+		}
+		hash := sha256.Sum256(block.Bytes)
+		if err := storeClient.SetEncryptionKey(hash[:]); err != nil {
+			return fmt.Errorf("failed to set store encryption key: %w", err)
+		}
+	}
+
+	klog.Infof("Loaded identity from existing secret %s/%s", IdentityNamespace, IdentitySecretName)
 	return nil
 }
 

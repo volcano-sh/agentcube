@@ -43,7 +43,8 @@ import (
 // CodeInterpreterReconciler reconciles a CodeInterpreter object
 type CodeInterpreterReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme                 *runtime.Scheme
+	BootstrapPublicKeyFunc func() string
 }
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -128,10 +129,10 @@ func (r *CodeInterpreterReconciler) updateStatus(ctx context.Context, ci *runtim
 func (r *CodeInterpreterReconciler) ensureSandboxTemplate(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Check if public key is cached before creating SandboxTemplate that requires it
-	// Skip this check if authMode is "none" (custom images that don't use PicoD auth)
-	if ci.Spec.AuthMode != runtimev1alpha1.AuthModeNone && !IsPublicKeyCached() {
-		logger.Info("waiting for public key to be cached from Router Secret; ensure Router has started and created the identity Secret")
+	// Wait until the bootstrap public key is available before creating a
+	// SandboxTemplate that requires it for PicoD initialization.
+	if ci.Spec.AuthMode == runtimev1alpha1.AuthModePicoD && (r.BootstrapPublicKeyFunc == nil || r.BootstrapPublicKeyFunc() == "") {
+		logger.Info("waiting for bootstrap public key; ensure Workload Manager has loaded the bootstrap secret")
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
@@ -297,12 +298,17 @@ func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alph
 	// Build environment variables - create a copy to avoid mutating the cached object
 	envVars := make([]corev1.EnvVar, len(template.Environment))
 	copy(envVars, template.Environment)
-	// Only inject public key for picod auth mode (default behavior)
-	if ci.Spec.AuthMode != runtimev1alpha1.AuthModeNone {
-		envVars = append(envVars, corev1.EnvVar{
-			Name:  "PICOD_AUTH_PUBLIC_KEY",
-			Value: GetCachedPublicKey(),
-		})
+	// Only inject the bootstrap public key for PicoD auth mode.
+	// Guard against an empty return value: injecting PICOD_BOOTSTRAP_PUBLIC_KEY="" would
+	// cause PicoD to klog.Fatalf at startup. ensureSandboxTemplate already requeues when
+	// the key is empty, but this guard makes convertToPodTemplate safe in isolation.
+	if ci.Spec.AuthMode == runtimev1alpha1.AuthModePicoD && r.BootstrapPublicKeyFunc != nil {
+		if keyVal := r.BootstrapPublicKeyFunc(); keyVal != "" {
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  "PICOD_BOOTSTRAP_PUBLIC_KEY",
+				Value: keyVal,
+			})
+		}
 	}
 
 	// Build pod spec

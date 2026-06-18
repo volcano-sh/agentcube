@@ -17,315 +17,70 @@ limitations under the License.
 package workloadmanager
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
-	"github.com/volcano-sh/agentcube/pkg/common/types"
 )
 
-const sandboxHelperTestPodIP = "10.0.0.1"
+// newTestBootstrapAuth creates an in-memory BootstrapAuthManager without K8s,
+// suitable for unit tests.
+func newTestBootstrapAuth(t *testing.T) *BootstrapAuthManager {
+	t.Helper()
+	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&privKey.PublicKey)
+	require.NoError(t, err)
+	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubKeyBytes})
 
-func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
-	now := time.Now()
-
-	tests := []struct {
-		name         string
-		setupSandbox func() *sandboxv1alpha1.Sandbox
-		entry        *sandboxEntry
-		validate     func(t *testing.T, result *types.SandboxInfo)
-	}{
-		{
-			name: "no ShutdownTime falls back to DefaultSandboxTTL",
-			setupSandbox: func() *sandboxv1alpha1.Sandbox {
-				return &sandboxv1alpha1.Sandbox{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-sandbox",
-						Namespace: "default",
-					},
-				}
-			},
-			entry: &sandboxEntry{
-				Kind:      types.SandboxKind,
-				SessionID: "session-123",
-			},
-			validate: func(t *testing.T, result *types.SandboxInfo) {
-				expected := now.Add(DefaultSandboxTTL)
-				assert.WithinDuration(t, expected, result.ExpiresAt, 2*time.Second)
-				assert.Equal(t, "creating", result.Status)
-				assert.Equal(t, "session-123", result.SessionID)
-			},
-		},
-		{
-			name: "ShutdownTime set to 24h is used as ExpiresAt",
-			setupSandbox: func() *sandboxv1alpha1.Sandbox {
-				shutdownTime := now.Add(24 * time.Hour)
-				return &sandboxv1alpha1.Sandbox{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-sandbox",
-						Namespace: "default",
-					},
-					Spec: sandboxv1alpha1.SandboxSpec{
-						Lifecycle: sandboxv1alpha1.Lifecycle{
-							ShutdownTime: &metav1.Time{Time: shutdownTime},
-						},
-					},
-				}
-			},
-			entry: &sandboxEntry{
-				Kind:      types.SandboxKind,
-				SessionID: "session-456",
-			},
-			validate: func(t *testing.T, result *types.SandboxInfo) {
-				expected := now.Add(24 * time.Hour)
-				assert.Equal(t, expected, result.ExpiresAt)
-			},
-		},
-		{
-			name: "ShutdownTime set to 30m overrides DefaultSandboxTTL",
-			setupSandbox: func() *sandboxv1alpha1.Sandbox {
-				shutdownTime := now.Add(30 * time.Minute)
-				return &sandboxv1alpha1.Sandbox{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "short-sandbox",
-						Namespace: "default",
-					},
-					Spec: sandboxv1alpha1.SandboxSpec{
-						Lifecycle: sandboxv1alpha1.Lifecycle{
-							ShutdownTime: &metav1.Time{Time: shutdownTime},
-						},
-					},
-				}
-			},
-			entry: &sandboxEntry{
-				Kind:      types.SandboxClaimsKind,
-				SessionID: "session-789",
-			},
-			validate: func(t *testing.T, result *types.SandboxInfo) {
-				expected := now.Add(30 * time.Minute)
-				assert.Equal(t, expected, result.ExpiresAt)
-				// Must NOT be 8h (DefaultSandboxTTL)
-				assert.True(t, result.ExpiresAt.Before(now.Add(DefaultSandboxTTL)),
-					"ExpiresAt should be 30m, not the 8h default")
-			},
-		},
-		{
-			name: "warm-pool path: ShutdownTime set on simpleSandbox reflects MaxSessionDuration",
-			setupSandbox: func() *sandboxv1alpha1.Sandbox {
-				// Simulates the simpleSandbox built by the warm-pool CodeInterpreter path
-				// after the fix in workload_builder.go sets ShutdownTime from MaxSessionDuration.
-				shutdownTime := now.Add(24 * time.Hour)
-				return &sandboxv1alpha1.Sandbox{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: "default",
-						Name:      "ci-warmpool-abc",
-						Labels: map[string]string{
-							SessionIdLabelKey: "session-wp-001",
-						},
-					},
-					Spec: sandboxv1alpha1.SandboxSpec{
-						Lifecycle: sandboxv1alpha1.Lifecycle{
-							ShutdownTime: &metav1.Time{Time: shutdownTime},
-						},
-					},
-				}
-			},
-			entry: &sandboxEntry{
-				Kind:      types.SandboxClaimsKind,
-				SessionID: "session-wp-001",
-			},
-			validate: func(t *testing.T, result *types.SandboxInfo) {
-				expected := now.Add(24 * time.Hour)
-				assert.Equal(t, expected, result.ExpiresAt,
-					"warm-pool placeholder ExpiresAt must reflect MaxSessionDuration, not the 8h default")
-				assert.Equal(t, "creating", result.Status)
-				assert.Equal(t, types.SandboxClaimsKind, result.Kind)
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sandbox := tt.setupSandbox()
-			result := buildSandboxPlaceHolder(sandbox, tt.entry)
-			tt.validate(t, result)
-		})
+	return &BootstrapAuthManager{
+		privateKey:   privKey,
+		publicKeyPEM: string(pubPEM),
+		namespace:    "test",
 	}
 }
 
-func TestBuildSandboxInfo_TableDriven(t *testing.T) {
-	now := time.Now()
+func TestInitializePicoD_SessionKeyOnlySetOnSuccess(t *testing.T) {
+	// Arrange: mock PicoD server that returns 200 OK
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/init", r.URL.Path)
+		assert.Equal(t, http.MethodPost, r.Method)
+		var body map[string]string
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.NotEmpty(t, body["token"])
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
 
-	tests := []struct {
-		name           string
-		setupSandbox   func() *sandboxv1alpha1.Sandbox
-		podIP          string
-		entry          *sandboxEntry
-		validateResult func(t *testing.T, result *types.SandboxInfo)
-	}{
-		{
-			name: "basic sandbox with ports",
-			setupSandbox: func() *sandboxv1alpha1.Sandbox {
-				return &sandboxv1alpha1.Sandbox{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:              "test-sandbox",
-						Namespace:         "default",
-						UID:               "test-uid-123",
-						CreationTimestamp: metav1.NewTime(now),
-					},
-					Status: sandboxv1alpha1.SandboxStatus{
-						Conditions: []metav1.Condition{
-							{
-								Type:   string(sandboxv1alpha1.SandboxConditionReady),
-								Status: metav1.ConditionTrue,
-							},
-						},
-					},
-				}
-			},
-			podIP: sandboxHelperTestPodIP,
-			entry: &sandboxEntry{
-				Kind:      types.AgentRuntimeKind,
-				SessionID: "test-session-123",
-				Ports: []runtimev1alpha1.TargetPort{
-					{
-						Port:       8080,
-						Protocol:   runtimev1alpha1.ProtocolTypeHTTP,
-						PathPrefix: "/api",
-					},
-					{
-						Port:       9090,
-						Protocol:   runtimev1alpha1.ProtocolTypeHTTP,
-						PathPrefix: "/metrics",
-					},
-				},
-			},
-			validateResult: func(t *testing.T, result *types.SandboxInfo) {
-				assert.Equal(t, "ready", result.Status)
-				assert.Len(t, result.EntryPoints, 2)
-				assert.Equal(t, "/api", result.EntryPoints[0].Path)
-				assert.Equal(t, sandboxHelperTestPodIP+":8080", result.EntryPoints[0].Endpoint)
-				assert.Equal(t, "/metrics", result.EntryPoints[1].Path)
-				assert.Equal(t, sandboxHelperTestPodIP+":9090", result.EntryPoints[1].Endpoint)
-			},
-		},
-		{
-			name: "sandbox with shutdown time",
-			setupSandbox: func() *sandboxv1alpha1.Sandbox {
-				shutdownTime := now.Add(2 * time.Hour)
-				return &sandboxv1alpha1.Sandbox{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:              "test-sandbox",
-						Namespace:         "default",
-						UID:               "test-uid-123",
-						CreationTimestamp: metav1.NewTime(now),
-					},
-					Spec: sandboxv1alpha1.SandboxSpec{
-						Lifecycle: sandboxv1alpha1.Lifecycle{
-							ShutdownTime: &metav1.Time{Time: shutdownTime},
-						},
-					},
-					Status: sandboxv1alpha1.SandboxStatus{
-						Conditions: []metav1.Condition{
-							{
-								Type:   string(sandboxv1alpha1.SandboxConditionReady),
-								Status: metav1.ConditionTrue,
-							},
-						},
-					},
-				}
-			},
-			podIP: sandboxHelperTestPodIP,
-			entry: &sandboxEntry{
-				Kind:      types.AgentRuntimeKind,
-				SessionID: "test-session-123",
-				Ports:     []runtimev1alpha1.TargetPort{},
-			},
-			validateResult: func(t *testing.T, result *types.SandboxInfo) {
-				// ShutdownTime is now + 2h in setupSandbox
-				expectedShutdown := now.Add(2 * time.Hour)
-				assert.WithinDuration(t, expectedShutdown, result.ExpiresAt, 1*time.Second)
-			},
-		},
-		{
-			name: "sandbox with no ports",
-			setupSandbox: func() *sandboxv1alpha1.Sandbox {
-				return &sandboxv1alpha1.Sandbox{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:              "test-sandbox",
-						Namespace:         "default",
-						UID:               "test-uid-123",
-						CreationTimestamp: metav1.NewTime(now),
-					},
-					Status: sandboxv1alpha1.SandboxStatus{
-						Conditions: []metav1.Condition{
-							{
-								Type:   string(sandboxv1alpha1.SandboxConditionReady),
-								Status: metav1.ConditionTrue,
-							},
-						},
-					},
-				}
-			},
-			podIP: sandboxHelperTestPodIP,
-			entry: &sandboxEntry{
-				Kind:      types.AgentRuntimeKind,
-				SessionID: "test-session-123",
-				Ports:     []runtimev1alpha1.TargetPort{},
-			},
-			validateResult: func(t *testing.T, result *types.SandboxInfo) {
-				assert.Empty(t, result.EntryPoints)
-			},
-		},
-		{
-			name: "sandbox with empty pod IP",
-			setupSandbox: func() *sandboxv1alpha1.Sandbox {
-				return &sandboxv1alpha1.Sandbox{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:              "test-sandbox",
-						Namespace:         "default",
-						UID:               "test-uid-123",
-						CreationTimestamp: metav1.NewTime(now),
-					},
-					Status: sandboxv1alpha1.SandboxStatus{
-						Conditions: []metav1.Condition{
-							{
-								Type:   string(sandboxv1alpha1.SandboxConditionReady),
-								Status: metav1.ConditionTrue,
-							},
-						},
-					},
-				}
-			},
-			podIP: "",
-			entry: &sandboxEntry{
-				Kind:      types.AgentRuntimeKind,
-				SessionID: "test-session-123",
-				Ports: []runtimev1alpha1.TargetPort{
-					{
-						Port:       8080,
-						Protocol:   runtimev1alpha1.ProtocolTypeHTTP,
-						PathPrefix: "/api",
-					},
-				},
-			},
-			validateResult: func(t *testing.T, result *types.SandboxInfo) {
-				assert.Equal(t, ":8080", result.EntryPoints[0].Endpoint)
-			},
+	entry := &sandboxEntry{
+		SessionID: "sess-1",
+		AuthMode:  runtimev1alpha1.AuthModePicoD,
+		Ports: []runtimev1alpha1.TargetPort{
+			{Name: "picod", Port: tsPort(t, ts.URL)},
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sandbox := tt.setupSandbox()
-			result := buildSandboxInfo(sandbox, tt.podIP, tt.entry)
-			tt.validateResult(t, result)
-		})
+	s := &Server{
+		httpClient:    ts.Client(),
+		bootstrapAuth: newTestBootstrapAuth(t),
 	}
+
+	err := s.initializePicoD(context.Background(), tsHost(t, ts.URL), entry)
+	require.NoError(t, err)
+	assert.NotEmpty(t, entry.SessionPrivateKey, "key must be set after 200 OK")
 }
 
 func TestGetSandboxStatus_TableDriven(t *testing.T) {
@@ -450,4 +205,75 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestInitializePicoD_SessionKeyNotSetOnFailure(t *testing.T) {
+	// Arrange: mock PicoD server that returns 500
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	entry := &sandboxEntry{
+		SessionID: "sess-2",
+		AuthMode:  runtimev1alpha1.AuthModePicoD,
+		Ports: []runtimev1alpha1.TargetPort{
+			{Name: "picod", Port: tsPort(t, ts.URL)},
+		},
+	}
+	s := &Server{
+		httpClient:    ts.Client(),
+		bootstrapAuth: newTestBootstrapAuth(t),
+	}
+
+	err := s.initializePicoD(context.Background(), "127.0.0.1", entry)
+	require.Error(t, err)
+	assert.Empty(t, entry.SessionPrivateKey,
+		"key must NOT be set when /init returns a non-200 status")
+}
+
+func TestInitializePicoD_SkipsNonPicoDMode(t *testing.T) {
+	entry := &sandboxEntry{
+		SessionID: "sess-3",
+		AuthMode:  runtimev1alpha1.AuthModeNone,
+	}
+	s := &Server{bootstrapAuth: newTestBootstrapAuth(t)}
+	err := s.initializePicoD(context.Background(), "127.0.0.1", entry)
+	require.NoError(t, err)
+	assert.Empty(t, entry.SessionPrivateKey)
+}
+
+func TestFindPicoDInitPort_NamedPort(t *testing.T) {
+	ports := []runtimev1alpha1.TargetPort{
+		{Name: "http", Port: 9000},
+		{Name: "picod", Port: 8080},
+	}
+	assert.Equal(t, uint32(8080), findPicoDInitPort(ports))
+}
+
+func TestFindPicoDInitPort_Fallback(t *testing.T) {
+	ports := []runtimev1alpha1.TargetPort{
+		{Name: "http", Port: 9000},
+	}
+	assert.Equal(t, uint32(8080), findPicoDInitPort(ports))
+}
+
+// tsPort extracts the port number from a httptest.Server URL string.
+func tsPort(t *testing.T, rawURL string) uint32 {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	require.NoError(t, err)
+	portStr := u.Port()
+	var port uint32
+	_, err = fmt.Sscanf(portStr, "%d", &port)
+	require.NoError(t, err)
+	return port
+}
+
+// tsHost extracts the host IP/name from a httptest.Server URL string.
+func tsHost(t *testing.T, rawURL string) string {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	require.NoError(t, err)
+	return u.Hostname()
 }

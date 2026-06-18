@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -44,6 +45,8 @@ type Server struct {
 	tokenCache        *TokenCache
 	informers         *Informers
 	storeClient       store.Store
+	httpClient        *http.Client
+	bootstrapAuth     *BootstrapAuthManager
 	wg                sync.WaitGroup
 	certWatcher       *mtls.CertWatcher // mTLS cert watcher for graceful cleanup
 }
@@ -66,6 +69,9 @@ type Config struct {
 	SandboxReadyProbeTimeout time.Duration
 	// SandboxReadyProbeInterval is the retry interval for sandbox entrypoint probes.
 	SandboxReadyProbeInterval time.Duration
+	// PicoInitTimeout is the timeout for the POST /init call to PicoD during
+	// two-stage session initialization.
+	PicoInitTimeout time.Duration
 
 	// MTLSConfig holds the mutual TLS certificate paths (cert, key, CA bundle).
 	// When all paths are present, mutual TLS is used on the WorkloadManager listener.
@@ -83,6 +89,9 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 	if config.SandboxReadyProbeInterval <= 0 {
 		config.SandboxReadyProbeInterval = defaultSandboxReadyProbeInterval
 	}
+	if config.PicoInitTimeout <= 0 {
+		config.PicoInitTimeout = defaultPicoInitTimeout
+	}
 
 	// Create Kubernetes client
 	k8sClient, err := NewK8sClient()
@@ -90,9 +99,17 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
-	// Initialize public key cache from Router's Secret in background
-	// This will retry until successful (handles case where Router isn't ready yet)
-	InitPublicKeyCache(k8sClient.clientset)
+	// Determine namespace
+	ns := "default"
+	if v := os.Getenv("AGENTCUBE_NAMESPACE"); v != "" {
+		ns = v
+	}
+
+	// Persist-or-load the bootstrap keypair; survives WM restarts.
+	bootstrapAuth, err := NewBootstrapAuthManager(context.Background(), k8sClient.clientset, ns)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize bootstrap auth manager: %w", err)
+	}
 
 	// Create token cache (cache up to 1000 tokens, 5min TTL)
 	tokenCache := NewTokenCache(1000, 5*time.Minute)
@@ -104,6 +121,12 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 		tokenCache:        tokenCache,
 		informers:         NewInformers(k8sClient),
 		storeClient:       store.Storage(),
+		httpClient:        &http.Client{Timeout: config.PicoInitTimeout},
+		bootstrapAuth:     bootstrapAuth,
+	}
+
+	if err := server.storeClient.SetEncryptionKey(bootstrapAuth.GetEncryptionKey()); err != nil {
+		return nil, fmt.Errorf("failed to set store encryption key: %w", err)
 	}
 
 	// Setup routes
@@ -260,6 +283,14 @@ func (s *Server) CloseStore() error {
 	}
 	klog.Info("Store connections closed")
 	return nil
+}
+
+// GetBootstrapPublicKeyPEM returns the bootstrap public key in PEM format.
+func (s *Server) GetBootstrapPublicKeyPEM() string {
+	if s.bootstrapAuth == nil {
+		return ""
+	}
+	return s.bootstrapAuth.PublicKeyPEM()
 }
 
 // loggingMiddleware logs each request (except /health)

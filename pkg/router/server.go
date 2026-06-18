@@ -73,8 +73,9 @@ func NewServer(config *Config) (*Server, error) {
 
 	// Create a reusable HTTP transport for connection pooling
 	httpTransport := &http.Transport{
-		IdleConnTimeout:    0,
-		DisableCompression: false,
+		IdleConnTimeout:     85 * time.Second, // Aligned with typical LB timeouts (e.g. AWS ALB is 60s) to prevent race conditions on idle connections
+		MaxIdleConnsPerHost: 100,
+		DisableCompression:  false,
 	}
 
 	server := &Server{
@@ -91,8 +92,8 @@ func NewServer(config *Config) (*Server, error) {
 	}
 
 	// Try to load existing keys from secret or store new ones
-	if err := jwtManager.TryStoreOrLoadJWTKeySecret(context.Background()); err != nil {
-		return nil, fmt.Errorf("failed to store/load JWT key secret: %w", err)
+	if err := jwtManager.WaitForAndLoadBootstrapSecret(context.Background(), server.storeClient); err != nil {
+		return nil, fmt.Errorf("failed to load bootstrap Secret: %w", err)
 	}
 
 	server.jwtManager = jwtManager

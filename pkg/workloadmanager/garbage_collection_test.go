@@ -52,7 +52,14 @@ func (nopStore) ListInactiveSandboxes(_ context.Context, _ time.Time, _ int64) (
 func (nopStore) UpdateSessionLastActivity(_ context.Context, _ string, _ time.Time) error {
 	return nil
 }
-func (nopStore) Close() error { return nil }
+func (nopStore) StoreSessionPrivateKey(_ context.Context, _ string, _ string, _ time.Duration) error {
+	return nil
+}
+func (nopStore) GetSessionPrivateKey(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+func (nopStore) Close() error                    { return nil }
+func (nopStore) SetEncryptionKey(_ []byte) error { return nil }
 
 // gcFakeStore is a controllable store for GC tests.
 type gcFakeStore struct {

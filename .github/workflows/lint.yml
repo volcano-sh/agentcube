@@ -12,15 +12,16 @@ permissions:
   pull-requests: read
 
 jobs:
-  golangci:
-    name: golangci-lint
-    runs-on: ubuntu-24.04
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      lint: ${{ steps.filter.outputs.lint }}
+      gofmt: ${{ steps.filter.outputs.gofmt }}
+      helm: ${{ steps.filter.outputs.helm }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Filter paths
-        id: changes
+        id: filter
         uses: dorny/paths-filter@v3
         with:
           filters: |
@@ -30,69 +31,62 @@ jobs:
               - 'go.sum'
               - '.golangci.yml'
               - '.github/workflows/lint.yml'
-
-      - name: Set up Go
-        if: steps.changes.outputs.lint == 'true'
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.24"
-
-      - name: Run golangci-lint
-        if: steps.changes.outputs.lint == 'true'
-        run: make lint
-
-  gofmt:
-    name: gofmt
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Filter paths
-        id: changes
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
             gofmt:
               - '**/*.go'
               - 'Makefile'
               - '.github/workflows/lint.yml'
-
-      - name: Set up Go
-        if: steps.changes.outputs.gofmt == 'true'
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.24"
-
-      - name: Check Go formatting
-        if: steps.changes.outputs.gofmt == 'true'
-        run: make fmt-check
-
-  helm:
-    name: helm-lint
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Filter paths
-        id: changes
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
             helm:
               - 'manifests/charts/base/**'
               - 'Makefile'
               - '.github/workflows/lint.yml'
 
+  golangci:
+    name: golangci-lint
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Run golangci-lint
+        run: make lint
+
+  gofmt:
+    name: gofmt
+    needs: changes
+    if: needs.changes.outputs.gofmt == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Check Go formatting
+        run: make fmt-check
+
+  helm:
+    name: helm-lint
+    needs: changes
+    if: needs.changes.outputs.helm == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Set up Helm
-        if: steps.changes.outputs.helm == 'true'
         uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
 
-      - name: Lint Helm chart
-        if: steps.changes.outputs.helm == 'true'
-        run: make helm-lint
-
-      - name: Render Helm chart
-        if: steps.changes.outputs.helm == 'true'
-        run: make helm-template > /tmp/agentcube-rendered.yaml
+      - name: Check Helm chart
+        run: make helm-check

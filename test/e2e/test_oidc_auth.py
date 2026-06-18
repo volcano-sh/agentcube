@@ -43,7 +43,7 @@ class TestOIDCSDKAuth(unittest.TestCase):
         system_namespace = os.getenv("AGENTCUBE_SYSTEM_NAMESPACE", "agentcube-system")
         auth = ServiceAccountAuth(
             token_url=keycloak_url,
-            client_id="agentcube-service",
+            client_id="agentcube-app",
             client_secret="e2e-service-secret",
             headers={"Host": f"keycloak.{system_namespace}.svc.cluster.local:8080"}
         )

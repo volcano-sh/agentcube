@@ -84,13 +84,13 @@ func extractOwnerID(r *http.Request) string {
 
 	publicKey := GetCachedPublicKey()
 	if publicKey == "" {
-		klog.V(2).Info("Identity JWT present but public key not cached, skipping owner extraction")
+		klog.Warning("Identity JWT present but public key not cached, skipping owner extraction")
 		return ""
 	}
 
 	sub, err := verifyIdentityJWT(publicKey, rawToken)
 	if err != nil {
-		klog.V(2).Infof("Identity JWT verification failed: %v", err)
+		klog.Warningf("Identity JWT verification failed: %v", err)
 		return ""
 	}
 

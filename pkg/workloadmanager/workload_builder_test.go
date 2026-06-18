@@ -361,7 +361,7 @@ func TestBuildSandboxByAgentRuntime_NotFound(t *testing.T) {
 		cubeInformerFactory:  factory,
 	}
 
-	_, _, err := buildSandboxByAgentRuntime(testNamespace, "missing", ifm)
+	_, _, err := buildSandboxByAgentRuntime(testNamespace, "missing", "", ifm)
 	if !errors.Is(err, api.ErrAgentRuntimeNotFound) {
 		t.Fatalf("expected error %v, got %v", api.ErrAgentRuntimeNotFound, err)
 	}
@@ -403,7 +403,7 @@ func TestBuildSandboxByAgentRuntime_Success(t *testing.T) {
 		cubeInformerFactory:  factory,
 	}
 
-	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, ifm)
+	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", ifm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestBuildSandboxByAgentRuntime_DefaultTimeouts(t *testing.T) {
 		cubeInformerFactory:  factory,
 	}
 
-	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, ifm)
+	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", ifm)
 	assert.NoError(t, err)
 	assert.NotNil(t, sandbox)
 	assert.NotNil(t, entry)
@@ -509,7 +509,7 @@ func TestBuildSandboxByAgentRuntime_CustomTimeouts(t *testing.T) {
 		cubeInformerFactory:  factory,
 	}
 
-	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, ifm)
+	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", ifm)
 	assert.NoError(t, err)
 	assert.NotNil(t, sandbox)
 	assert.NotNil(t, entry)
@@ -530,7 +530,7 @@ func TestBuildSandboxByCodeInterpreter_NotFound(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	_, _, _, err := buildSandboxByCodeInterpreter(testNamespace, "missing", ifm)
+	_, _, _, err := buildSandboxByCodeInterpreter(testNamespace, "missing", "", ifm)
 	if !errors.Is(err, api.ErrCodeInterpreterNotFound) {
 		t.Fatalf("expected error %v, got %v", api.ErrCodeInterpreterNotFound, err)
 	}
@@ -565,7 +565,7 @@ func TestBuildSandboxByCodeInterpreter_PicodAuthFailsWithoutKey(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	_, _, _, err = buildSandboxByCodeInterpreter(testNamespace, "ci-picod-no-key", ifm)
+	_, _, _, err = buildSandboxByCodeInterpreter(testNamespace, "ci-picod-no-key", "", ifm)
 	if !errors.Is(err, api.ErrPublicKeyMissing) {
 		t.Fatalf("expected error %v, got %v", api.ErrPublicKeyMissing, err)
 	}
@@ -600,7 +600,7 @@ func TestBuildSandboxByCodeInterpreter_SuccessNoWarmPool(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, "ci-no-wp", ifm)
+	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, "ci-no-wp", "", ifm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -658,7 +658,7 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, testCodeInterpreterWarmPool, ifm)
+	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, testCodeInterpreterWarmPool, "", ifm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

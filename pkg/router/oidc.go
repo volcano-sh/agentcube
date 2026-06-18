@@ -28,6 +28,8 @@ import (
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
 )
 
+const clockSkewLeeway = 30 * time.Second
+
 // OIDCConfig holds provider-agnostic OIDC configuration.
 type OIDCConfig struct {
 	// IssuerURL is the OIDC provider issuer URL.
@@ -128,16 +130,16 @@ func (v *OIDCValidator) ValidateToken(ctx context.Context, rawToken string) (*Cl
 		return nil, fmt.Errorf("token missing required sub claim")
 	}
 
-	// Validate expiration
+	// Validate expiration (with clock-skew leeway)
 	if expiry == 0 {
 		return nil, fmt.Errorf("token missing required exp claim")
 	}
-	if time.Now().After(time.Unix(int64(expiry), 0)) {
+	if time.Now().After(time.Unix(int64(expiry), 0).Add(clockSkewLeeway)) {
 		return nil, fmt.Errorf("token has expired")
 	}
 
-	// Validate not-before (if present)
-	if notBefore != 0 && time.Now().Before(time.Unix(int64(notBefore), 0)) {
+	// Validate not-before (with clock-skew leeway, if present)
+	if notBefore != 0 && time.Now().Before(time.Unix(int64(notBefore), 0).Add(-clockSkewLeeway)) {
 		return nil, fmt.Errorf("token is not yet valid")
 	}
 

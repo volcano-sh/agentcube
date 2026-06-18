@@ -421,7 +421,7 @@ func TestHandleSandboxCreate(t *testing.T) {
 			patches := gomonkey.NewPatches()
 			defer patches.Reset()
 
-			patches.ApplyFunc(buildSandboxByAgentRuntime, func(_, _ string, _ *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
+			patches.ApplyFunc(buildSandboxByAgentRuntime, func(_, _, _ string, _ *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
 				if tc.kind != types.AgentRuntimeKind {
 					return nil, nil, errors.New("unexpected kind")
 				}
@@ -431,7 +431,7 @@ func TestHandleSandboxCreate(t *testing.T) {
 				return sb, entry, nil
 			})
 
-			patches.ApplyFunc(buildSandboxByCodeInterpreter, func(_, _ string, _ *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+			patches.ApplyFunc(buildSandboxByCodeInterpreter, func(_, _, _ string, _ *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
 				if tc.kind != types.CodeInterpreterKind {
 					return nil, nil, nil, errors.New("unexpected kind")
 				}

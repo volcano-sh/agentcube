@@ -63,7 +63,7 @@ stringData:
 
       "clients": [
         {
-          "clientId": "agentcube-service",
+          "clientId": "agentcube-app",
           "name": "AgentCube Service",
           "description": "Confidential client for server-side authentication using client_credentials grant.",
           "enabled": true,
@@ -90,7 +90,7 @@ stringData:
           ]
         },
         {
-          "clientId": "agentcube-sdk",
+          "clientId": "agentcube-cli",
           "name": "AgentCube SDK",
           "description": "Public client for interactive SDK and CLI authentication using authorization code with PKCE.",
           "enabled": true,
@@ -163,11 +163,11 @@ stringData:
 
       "scopeMappings": [
         {
-          "client": "agentcube-service",
+          "client": "agentcube-app",
           "roles": ["sandbox:invoke"]
         },
         {
-          "client": "agentcube-sdk",
+          "client": "agentcube-cli",
           "roles": ["sandbox:invoke"]
         },
         {
@@ -186,9 +186,9 @@ stringData:
           ]
         },
         {
-          "username": "service-account-agentcube-service",
+          "username": "service-account-agentcube-app",
           "enabled": true,
-          "serviceAccountClientId": "agentcube-service",
+          "serviceAccountClientId": "agentcube-app",
           "realmRoles": [
             "sandbox:invoke"
           ]

@@ -37,7 +37,7 @@ service:
 realm: "agentcube"
 # OAuth2 client secrets for confidential Keycloak clients.
 # These are used when callers request tokens via the client_credentials grant.
-# The agentcube-sdk client is public (PKCE) and does not require a secret.
+# The agentcube-cli client is public (PKCE) and does not require a secret.
 clients:
   # Optional pre-existing Kubernetes Secret containing all client secrets.
   # If unset, this chart creates keycloak-credentials from clients.*.secret.
@@ -48,7 +48,7 @@ clients:
   existingSecretAdminKey: "client-admin-secret"
   # Chart-managed client secrets. Used only when clients.existingSecret is empty.
   service:
-    secret: "" # Secret for agentcube-service, used by SDK/server-side clients.
+    secret: "" # Secret for agentcube-app, used by SDK/server-side clients.
   router:
     secret: "" # Secret for agentcube-router, reserved for Router service-to-service flows.
   admin:

@@ -75,7 +75,7 @@ realm:
 | Item | Details |
 |---|---|
 | **Roles** | `sandbox:invoke` lets callers invoke agent runtimes and code interpreters, and is assigned by default. `sandbox:manage` inherits invoke and is intended for creating/deleting AgentRuntime and CodeInterpreter resources. `admin` inherits manage and can bypass ownership checks for administrative access. |
-| **Clients** | `agentcube-service` (confidential, for SDKs), `agentcube-sdk` (public, for browsers/CLI), `agentcube-admin` (confidential, for admin ops) |
+| **Clients** | `agentcube-app` (confidential, for SDKs), `agentcube-cli` (public, for browsers/CLI), `agentcube-admin` (confidential, for admin ops) |
 | **Audience** | All tokens include `agentcube-api` in the `aud` claim via a protocol mapper |
 
 After enabling OIDC on the Router, **all** requests to `/v1/...` endpoints
@@ -86,8 +86,20 @@ remain unauthenticated for Kubernetes probes.
 
 Install Keycloak into your AgentCube namespace using the addon Helm chart. You
 must provide an admin username, admin password, and client secrets for the three
-confidential clients. Choose strong secrets for production - the values below
-are for demonstration only.
+confidential OAuth2 clients. These client secrets are **plain-text shared
+secrets** (similar to API keys). Keycloak uses them to authenticate the caller during
+the OAuth2 `client_credentials` grant, the same way any standard OAuth2
+provider works.
+
+For this tutorial, we use simple demo values. **For production**, generate
+strong random secrets:
+
+```bash
+# Generate a strong random secret (repeat for each client)
+openssl rand -base64 32
+```
+
+Install the Keycloak addon with the client secrets:
 
 ```bash
 helm upgrade --install keycloak manifests/charts/addons/keycloak \
@@ -225,7 +237,7 @@ Back in your **original terminal**, proceed with the token requests below.
 ### Get a service account token
 
 Use the `client_credentials` grant to obtain a token for the
-`agentcube-service` client. Note the `Host` header - this is needed because
+`agentcube-app` client. Note the `Host` header - this is needed because
 Keycloak validates the issuer against the original hostname, and we're
 connecting through a port-forward:
 
@@ -234,7 +246,7 @@ KEYCLOAK_TOKEN=$(curl -s -X POST \
   -H "Host: keycloak.agentcube.svc.cluster.local:8080" \
   "http://localhost:8082/realms/agentcube/protocol/openid-connect/token" \
   -d "grant_type=client_credentials" \
-  -d "client_id=agentcube-service" \
+  -d "client_id=agentcube-app" \
   -d "client_secret=my-service-secret" | jq -r '.access_token')
 
 echo $KEYCLOAK_TOKEN
@@ -262,7 +274,7 @@ Expected output - you should see `realm_access.roles` containing
   "aud": "agentcube-api",
   "sub": "bb0f4c04-e1d2-4bdb-b7bb-56d5c1cefe50",
   "typ": "Bearer",
-  "azp": "agentcube-service",
+  "azp": "agentcube-app",
   "acr": "1",
   "realm_access": {
     "roles": [
@@ -272,9 +284,9 @@ Expected output - you should see `realm_access.roles` containing
   "scope": "profile email",
   "email_verified": false,
   "clientHost": "127.0.0.1",
-  "preferred_username": "service-account-agentcube-service",
+  "preferred_username": "service-account-agentcube-app",
   "clientAddress": "127.0.0.1",
-  "client_id": "agentcube-service"
+  "client_id": "agentcube-app"
 }
 ```
 
@@ -350,7 +362,7 @@ from agentcube import AgentRuntimeClient
 # Initialize authentication with Keycloak
 auth = ServiceAccountAuth(
     token_url="http://localhost:8082/realms/agentcube/protocol/openid-connect/token",
-    client_id="agentcube-service",
+    client_id="agentcube-app",
     client_secret="my-service-secret",
     headers={"Host": "keycloak.agentcube.svc.cluster.local:8080"},
 )
@@ -401,8 +413,8 @@ JWT locally — no per-request calls to Keycloak.
 
 | Client ID | Type | Grant | Purpose |
 |-----------|------|-------|---------|
-| `agentcube-service` | Confidential | `client_credentials` | Python SDK, external services (M2M) |
-| `agentcube-sdk` | Public | Authorization code + PKCE | CLI, browser-based apps (interactive) |
+| `agentcube-app` | Confidential | `client_credentials` | Python SDK, external services (M2M) |
+| `agentcube-cli` | Public | Authorization code + PKCE | CLI, browser-based apps (interactive) |
 | `agentcube-admin` | Confidential | `client_credentials` | Administrative operations |
 
 ## Cleanup

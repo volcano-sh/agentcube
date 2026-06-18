@@ -90,5 +90,6 @@ class ServiceAccountAuth:
         body = resp.json()
         self._token = body["access_token"]
         expires_in = int(body.get("expires_in", 3600))
-        self._expires_at = time.monotonic() + expires_in - _REFRESH_BUFFER_SECONDS
+        effective = max(expires_in - _REFRESH_BUFFER_SECONDS, expires_in // 2)
+        self._expires_at = time.monotonic() + effective
         return self._token or ""

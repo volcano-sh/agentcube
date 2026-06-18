@@ -103,11 +103,14 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	var sandboxClaim *extensionsv1alpha1.SandboxClaim
 	var sandboxEntry *sandboxEntry
 	var err error
+
+	ownerID := extractOwnerID(c.Request)
+
 	switch sandboxReq.Kind {
 	case types.AgentRuntimeKind:
-		sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers)
+		sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, ownerID, s.informers)
 	case types.CodeInterpreterKind:
-		sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers)
+		sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, ownerID, s.informers)
 	}
 
 	if err != nil {
@@ -120,8 +123,8 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 		return
 	}
 
-	// Set ownership from the Router-signed identity JWT
-	if ownerID := extractOwnerID(c.Request); ownerID != "" {
+	// Set ownership on the store entry as well
+	if ownerID != "" {
 		sandboxEntry.OwnerID = ownerID
 	}
 

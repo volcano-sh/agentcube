@@ -28,7 +28,7 @@ sequenceDiagram
     participant PicoD as PicoD (Sandbox)
 
     Note over SDK, KC: 1. Token Acquisition
-    SDK->>KC: POST /realms/agentcube/protocol/openid-connect/token<br/>(client_credentials: agentcube-service + client_secret)
+    SDK->>KC: POST /realms/agentcube/protocol/openid-connect/token<br/>(client_credentials: agentcube-app + client_secret)
     KC-->>SDK: Access Token (JWT)
 
     Note over SDK, PicoD: 2. Authenticated Invocation
@@ -100,14 +100,14 @@ admin
 
 | Client ID | Type | Who uses it | Purpose |
 |-----------|------|-------------|---------|
-| `agentcube-service` | Confidential (`client_credentials`) | External backend services, CI jobs, automation scripts, and SDK users that can safely store a client secret | Main machine-to-machine client for calling AgentCube APIs. Tokens from this client receive `sandbox:invoke` and are used by `ServiceAccountAuth` in the Python SDK. |
-| `agentcube-sdk` | Public (`authorization_code` + PKCE) | Human users authenticating from a CLI, browser, or other installed app where a client secret cannot be safely stored | Interactive login client. It uses PKCE(Proof Key for Code Exchange) instead of a client secret and is intended for future browser/device/CLI login flows. |
+| `agentcube-app` | Confidential (`client_credentials`) | External backend services, CI jobs, automation scripts, and SDK users that can safely store a client secret | Main machine-to-machine client for calling AgentCube APIs. Tokens from this client receive `sandbox:invoke` and are used by `ServiceAccountAuth` in the Python SDK. |
+| `agentcube-cli` | Public (`authorization_code` + PKCE) | Human users authenticating from a CLI, browser, or other installed app where a client secret cannot be safely stored | Interactive login client. It uses PKCE(Proof Key for Code Exchange) instead of a client secret and is intended for future browser/device/CLI login flows. |
 | `agentcube-router` | Confidential (`client_credentials`) | The AgentCube Router service itself | Internal service identity reserved for Router-to-control-plane or token-exchange flows. It is separate from user-facing clients so Router credentials can be rotated and scoped independently. |
 | `agentcube-admin` | Confidential (`client_credentials`) | Trusted operators or automation that performs administrative tasks | Administrative machine-to-machine client. Tokens receive the `admin` role, which inherits lower roles and can bypass ownership checks for admin workflows. |
 
-Confidential client secrets can be provided securely via an existing Kubernetes Secret (`keycloak.clients.existingSecret`) to prevent leaking them in Helm values. They are injected into the Keycloak pod as environment variables and securely substituted into the realm JSON during import. The `agentcube-sdk` client is a **public client** (no secret) that uses authorization code with PKCE for interactive flows, following RFC 8252 (OAuth 2.0 for Native Apps). The confidential clients are used only where a secret can be stored securely, and each client ID is separated by trust boundary so service, internal Router, and admin credentials can be scoped and rotated independently.
+Confidential client secrets can be provided securely via an existing Kubernetes Secret (`keycloak.clients.existingSecret`) to prevent leaking them in Helm values. They are injected into the Keycloak pod as environment variables and securely substituted into the realm JSON during import. The `agentcube-cli` client is a **public client** (no secret) that uses authorization code with PKCE for interactive flows, following RFC 8252 (OAuth 2.0 for Native Apps). The confidential clients are used only where a secret can be stored securely, and each client ID is separated by trust boundary so service, internal Router, and admin credentials can be scoped and rotated independently.
 
-Both clients include a **hardcoded audience protocol mapper** (`oidc-audience-mapper`) that injects `agentcube-api` into the access token's `aud` claim. The Router validates `aud = "agentcube-api"`. This follows OAuth2 convention — the audience identifies the resource server (the Router API), not the client that requested the token.
+All clients include a **hardcoded audience protocol mapper** (`oidc-audience-mapper`) that injects `agentcube-api` into the access token's `aud` claim. The Router validates `aud = "agentcube-api"`. This follows OAuth2 convention — the audience identifies the resource server (the Router API), not the client that requested the token.
 
 For production mode, the chart includes validation guards that fail the render if required values like `existingSecret`, `database.vendor`, or `proxy.hostname` are missing.
 
@@ -269,7 +269,7 @@ class TokenAuth:
     def get_token(self) -> str: ...
 ```
 
-The existing clients (`ControlPlaneClient`, Data Plane clients, high-level clients) are updated to accept an `auth` parameter. The `auth_token` string parameter is kept for backward compatibility. Each request calls `self._auth.get_token()` to get a fresh token. `ServiceAccountAuth` is used with the `agentcube-service` client (confidential, `client_credentials`). For interactive CLI flows, a separate `DeviceCodeAuth` or browser-based flow using the public `agentcube-sdk` client can be added later.
+The existing clients (`ControlPlaneClient`, Data Plane clients, high-level clients) are updated to accept an `auth` parameter. The `auth_token` string parameter is kept for backward compatibility. Each request calls `self._auth.get_token()` to get a fresh token. `ServiceAccountAuth` is used with the `agentcube-app` client (confidential, `client_credentials`). For interactive CLI flows, a separate `DeviceCodeAuth` or browser-based flow using the public `agentcube-cli` client can be added later.
 
 ### 7. Helm Wiring and CLI Flags
 

@@ -493,7 +493,7 @@ if [ "${KEYCLOAK_ENABLED}" = "true" ]; then
         -H "Host: keycloak.${AGENTCUBE_NAMESPACE}.svc.cluster.local:8080" \
         "http://localhost:8082/realms/agentcube/protocol/openid-connect/token" \
         -d "grant_type=client_credentials" \
-        -d "client_id=agentcube-service" \
+        -d "client_id=agentcube-app" \
         -d "client_secret=e2e-service-secret" | jq -r '.access_token')
 
     ADMIN_TOKEN=$(curl -s -X POST \

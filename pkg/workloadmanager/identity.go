@@ -77,7 +77,7 @@ func verifyIdentityJWT(publicKeyPEM string, rawToken string) (string, error) {
 }
 
 var (
-	ErrNoIdentityHeader = errors.New("identity header absent")
+	ErrNoIdentityHeader   = errors.New("identity header absent")
 	ErrPublicKeyNotCached = errors.New("identity verifier public key not cached")
 	ErrVerificationFailed = errors.New("identity token verification failed")
 )

@@ -40,3 +40,59 @@ jobs:
       - name: Run golangci-lint
         if: steps.changes.outputs.lint == 'true'
         run: make lint
+
+  gofmt:
+    name: gofmt
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Filter paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            gofmt:
+              - '**/*.go'
+              - 'Makefile'
+              - '.github/workflows/lint.yml'
+
+      - name: Set up Go
+        if: steps.changes.outputs.gofmt == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Check Go formatting
+        if: steps.changes.outputs.gofmt == 'true'
+        run: make fmt-check
+
+  helm:
+    name: helm-lint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Filter paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            helm:
+              - 'manifests/charts/base/**'
+              - 'Makefile'
+              - '.github/workflows/lint.yml'
+
+      - name: Set up Helm
+        if: steps.changes.outputs.helm == 'true'
+        uses: azure/setup-helm@v4
+
+      - name: Lint Helm chart
+        if: steps.changes.outputs.helm == 'true'
+        run: make helm-lint
+
+      - name: Render Helm chart
+        if: steps.changes.outputs.helm == 'true'
+        run: make helm-template > /tmp/agentcube-rendered.yaml

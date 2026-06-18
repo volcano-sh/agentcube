@@ -529,3 +529,54 @@ func TestHandleDeleteSandbox_DetachedContext(t *testing.T) {
 	require.True(t, storeDeleteCalled, "DeleteSandboxBySessionID should be called even if the request context is canceled")
 	require.Equal(t, http.StatusOK, w.Code)
 }
+
+func TestHandleSandboxCreate_IdentityErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name          string
+		extractErr    error
+		expectStatus  int
+		expectMessage string
+	}{
+		{
+			name:          "public key not cached returns 503",
+			extractErr:    ErrPublicKeyNotCached,
+			expectStatus:  http.StatusServiceUnavailable,
+			expectMessage: "identity verifier not ready",
+		},
+		{
+			name:          "invalid identity token returns 401",
+			extractErr:    ErrVerificationFailed,
+			expectStatus:  http.StatusUnauthorized,
+			expectMessage: "invalid identity token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeServer := newFakeServer()
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"name":"workload","namespace":"ns"}`))
+			req.Header.Set("Content-Type", "application/json")
+			c.Request = req
+
+			patches := gomonkey.NewPatches()
+			defer patches.Reset()
+
+			patches.ApplyFunc(extractOwnerID, func(_ *http.Request) (string, error) {
+				return "", tt.extractErr
+			})
+
+			fakeServer.handleSandboxCreate(c, types.AgentRuntimeKind)
+
+			require.Equal(t, tt.expectStatus, w.Code)
+			var errResp ErrorResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+			require.Equal(t, tt.expectMessage, errResp.Message)
+		})
+	}
+}
+

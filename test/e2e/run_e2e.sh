@@ -426,7 +426,7 @@ run_setup() {
         helm upgrade --install keycloak manifests/charts/addons/keycloak \
             --namespace "${AGENTCUBE_NAMESPACE}" \
             --set admin.username=admin --set admin.password=admin \
-            --set clients.service.secret=e2e-service-secret \
+            --set clients.app.secret=e2e-app-secret \
             --set clients.router.secret=e2e-router-secret \
             --set clients.admin.secret=e2e-admin-secret \
             --wait --timeout=5m
@@ -494,7 +494,7 @@ if [ "${KEYCLOAK_ENABLED}" = "true" ]; then
         "http://localhost:8082/realms/agentcube/protocol/openid-connect/token" \
         -d "grant_type=client_credentials" \
         -d "client_id=agentcube-app" \
-        -d "client_secret=e2e-service-secret" | jq -r '.access_token')
+        -d "client_secret=e2e-app-secret" | jq -r '.access_token')
 
     ADMIN_TOKEN=$(curl -s -X POST \
         -H "Host: keycloak.${AGENTCUBE_NAMESPACE}.svc.cluster.local:8080" \

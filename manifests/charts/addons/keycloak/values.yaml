@@ -43,11 +43,11 @@ clients:
   # If unset, this chart creates keycloak-credentials from clients.*.secret.
   existingSecret: ""
   # Keys to read from clients.existingSecret. These are ignored when existingSecret is empty.
-  existingSecretServiceKey: "client-service-secret"
+  existingSecretAppKey: "client-app-secret"
   existingSecretRouterKey: "client-router-secret"
   existingSecretAdminKey: "client-admin-secret"
   # Chart-managed client secrets. Used only when clients.existingSecret is empty.
-  service:
+  app:
     secret: "" # Secret for agentcube-app, used by SDK/server-side clients.
   router:
     secret: "" # Secret for agentcube-router, reserved for Router service-to-service flows.
@@ -58,7 +58,7 @@ tls:
   existingSecret: ""              # Name of pre-existing Secret containing tls.crt and tls.key
   secretCertificateKey: "tls.crt" # Key inside the secret holding the certificate
   secretPrivateKeyKey: "tls.key"  # Key inside the secret holding the private key
-sdk:
+cli:
   # WARNING: Wildcard URIs (e.g. 'http://localhost*') pose security risks (open redirect vulnerabilities) in production.
   # When devMode is false, the deployment will fail if these contain wildcards.
   # You must override these with explicit, fully-qualified URIs for production.

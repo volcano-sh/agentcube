@@ -167,6 +167,9 @@ func extractRolesFromClaims(claims map[string]interface{}, path string) []string
 	}
 
 	parts := strings.Split(path, ".")
+	if _, ok := claims[path]; ok {
+		parts = []string{path}
+	}
 	var current interface{} = claims
 
 	for _, part := range parts {

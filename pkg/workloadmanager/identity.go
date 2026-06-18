@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -75,26 +76,31 @@ func verifyIdentityJWT(publicKeyPEM string, rawToken string) (string, error) {
 	return sub, nil
 }
 
-// extractOwnerID reads the identity JWT from the request header and returns the verified subject, or empty string if the header is absent or invalid.
-func extractOwnerID(r *http.Request) string {
+var (
+	ErrNoIdentityHeader = errors.New("identity header absent")
+	ErrPublicKeyNotCached = errors.New("identity verifier public key not cached")
+	ErrVerificationFailed = errors.New("identity token verification failed")
+)
+
+func extractOwnerID(r *http.Request) (string, error) {
 	rawToken := r.Header.Get(identityJWTHeader)
 	if rawToken == "" {
-		return ""
+		return "", ErrNoIdentityHeader
 	}
 
 	publicKey := GetCachedPublicKey()
 	if publicKey == "" {
-		klog.Warning("Identity JWT present but public key not cached, skipping owner extraction")
-		return ""
+		klog.Warning("Identity JWT present but public key not cached")
+		return "", ErrPublicKeyNotCached
 	}
 
 	sub, err := verifyIdentityJWT(publicKey, rawToken)
 	if err != nil {
 		klog.Warningf("Identity JWT verification failed: %v", err)
-		return ""
+		return "", fmt.Errorf("%w: %w", ErrVerificationFailed, err)
 	}
 
-	return sub
+	return sub, nil
 }
 
 // sha256Short returns the first 63 characters of the hex-encoded SHA-256 hash.

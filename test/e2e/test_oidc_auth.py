@@ -44,7 +44,7 @@ class TestOIDCSDKAuth(unittest.TestCase):
         auth = ServiceAccountAuth(
             token_url=keycloak_url,
             client_id="agentcube-app",
-            client_secret="e2e-service-secret",
+            client_secret="e2e-app-secret",
             headers={"Host": f"keycloak.{system_namespace}.svc.cluster.local:8080"}
         )
 

@@ -290,7 +290,7 @@ When using the Keycloak addon chart, the user sets the issuer URL to point at th
 # 1. Deploy the Keycloak addon
 helm install keycloak manifests/charts/addons/keycloak -n agentcube-system \
   --set admin.username=admin --set admin.password=admin \
-  --set clients.service.secret=my-svc-secret \
+  --set clients.app.secret=my-app-secret \
   --set clients.router.secret=my-router-secret \
   --set clients.admin.secret=my-admin-secret
 

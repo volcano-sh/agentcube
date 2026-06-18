@@ -30,7 +30,7 @@ type SandboxInfo struct {
 	Name             string              `json:"name"`
 	EntryPoints      []SandboxEntryPoint `json:"entryPoints"`
 	SessionID        string              `json:"sessionId"`
-	OwnerID          string              `json:"ownerID,omitempty"`
+	OwnerID          string              `json:"ownerId,omitempty"`
 	CreatedAt        time.Time           `json:"createdAt"`
 	ExpiresAt        time.Time           `json:"expiresAt"`
 	// IdleTimeout is the per-sandbox idle timeout configured via SessionTimeout on the
@@ -63,7 +63,7 @@ type CreateSandboxResponse struct {
 	SandboxID   string              `json:"sandboxId"`
 	SandboxName string              `json:"sandboxName"`
 	EntryPoints []SandboxEntryPoint `json:"entryPoints"`
-	OwnerID     string              `json:"ownerID,omitempty"`
+	OwnerID     string              `json:"ownerId,omitempty"`
 }
 
 func (car *CreateSandboxRequest) Validate() error {

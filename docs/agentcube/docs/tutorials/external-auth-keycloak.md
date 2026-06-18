@@ -106,7 +106,7 @@ helm upgrade --install keycloak manifests/charts/addons/keycloak \
   --namespace agentcube \
   --set admin.username=admin \
   --set admin.password=admin \
-  --set clients.service.secret=my-service-secret \
+  --set clients.app.secret=my-app-secret \
   --set clients.router.secret=my-router-secret \
   --set clients.admin.secret=my-admin-secret
 ```
@@ -247,7 +247,7 @@ KEYCLOAK_TOKEN=$(curl -s -X POST \
   "http://localhost:8082/realms/agentcube/protocol/openid-connect/token" \
   -d "grant_type=client_credentials" \
   -d "client_id=agentcube-app" \
-  -d "client_secret=my-service-secret" | jq -r '.access_token')
+  -d "client_secret=my-app-secret" | jq -r '.access_token')
 
 echo $KEYCLOAK_TOKEN
 ```
@@ -363,7 +363,7 @@ from agentcube import AgentRuntimeClient
 auth = ServiceAccountAuth(
     token_url="http://localhost:8082/realms/agentcube/protocol/openid-connect/token",
     client_id="agentcube-app",
-    client_secret="my-service-secret",
+    client_secret="my-app-secret",
     headers={"Host": "keycloak.agentcube.svc.cluster.local:8080"},
 )
 

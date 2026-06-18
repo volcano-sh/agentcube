@@ -29,14 +29,14 @@
 {{- if empty .Values.proxy.hostname }}
   {{- fail "proxy.hostname is required when devMode is false (production mode requires a strict hostname)" }}
 {{- end }}
-{{- range .Values.sdk.redirectUris }}
+{{- range .Values.cli.redirectUris }}
   {{- if contains "*" . }}
-    {{- fail "Wildcard redirect URIs (e.g. '*') are not allowed in production mode (devMode=false) due to open redirect risks. Please provide explicit, fully-qualified URIs for sdk.redirectUris." }}
+    {{- fail "Wildcard redirect URIs (e.g. '*') are not allowed in production mode (devMode=false) due to open redirect risks. Please provide explicit, fully-qualified URIs for cli.redirectUris." }}
   {{- end }}
 {{- end }}
-{{- range .Values.sdk.webOrigins }}
+{{- range .Values.cli.webOrigins }}
   {{- if contains "*" . }}
-    {{- fail "Wildcard web origins (e.g. '*') are not allowed in production mode (devMode=false). Please provide explicit, fully-qualified URIs for sdk.webOrigins." }}
+    {{- fail "Wildcard web origins (e.g. '*') are not allowed in production mode (devMode=false). Please provide explicit, fully-qualified URIs for cli.webOrigins." }}
   {{- end }}
 {{- end }}
 {{- end }}
@@ -143,11 +143,11 @@ spec:
             - name: KC_HTTPS_CERTIFICATE_KEY_FILE
               value: "/opt/keycloak/conf/certs/tls.key"
             {{- end }}
-            - name: KC_CLIENT_SERVICE_SECRET
+            - name: KC_CLIENT_APP_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.clients.existingSecret | default "keycloak-credentials" }}
-                  key: {{ if .Values.clients.existingSecret }}{{ .Values.clients.existingSecretServiceKey | default "client-service-secret" }}{{ else }}client-service-secret{{ end }}
+                  key: {{ if .Values.clients.existingSecret }}{{ .Values.clients.existingSecretAppKey | default "client-app-secret" }}{{ else }}client-app-secret{{ end }}
             - name: KC_CLIENT_ROUTER_SECRET
               valueFrom:
                 secretKeyRef:

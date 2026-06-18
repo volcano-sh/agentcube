@@ -21,6 +21,9 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -167,5 +170,66 @@ func TestSha256Short(t *testing.T) {
 	// Verify different inputs produce different outputs
 	if sha256Short("other-user-id") == result {
 		t.Error("different inputs should produce different hashes")
+	}
+}
+
+func TestExtractOwnerID(t *testing.T) {
+	// Backup original cached public key and restore after test
+	publicKeyCacheMutex.Lock()
+	origKey := cachedPublicKey
+	publicKeyCacheMutex.Unlock()
+	defer func() {
+		publicKeyCacheMutex.Lock()
+		cachedPublicKey = origKey
+		publicKeyCacheMutex.Unlock()
+	}()
+
+	req := httptest.NewRequest(http.MethodPost, "/sandbox", nil)
+	owner, err := extractOwnerID(req)
+	if owner != "" || !errors.Is(err, ErrNoIdentityHeader) {
+		t.Errorf("expected ErrNoIdentityHeader, got owner=%q, err=%v", owner, err)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/sandbox", nil)
+	req.Header.Set(identityJWTHeader, "some-token")
+	publicKeyCacheMutex.Lock()
+	cachedPublicKey = ""
+	publicKeyCacheMutex.Unlock()
+	owner, err = extractOwnerID(req)
+	if owner != "" || !errors.Is(err, ErrPublicKeyNotCached) {
+		t.Errorf("expected ErrPublicKeyNotCached, got owner=%q, err=%v", owner, err)
+	}
+
+	// Setup valid key for remaining cases
+	privKey, pubPEM := generateTestKeyPair(t)
+	publicKeyCacheMutex.Lock()
+	cachedPublicKey = pubPEM
+	publicKeyCacheMutex.Unlock()
+
+	expiredToken := signTestToken(t, privKey, jwt.MapClaims{
+		"sub": "user-123",
+		"aud": "workloadmanager",
+		"exp": time.Now().Add(-5 * time.Minute).Unix(),
+	})
+	req = httptest.NewRequest(http.MethodPost, "/sandbox", nil)
+	req.Header.Set(identityJWTHeader, expiredToken)
+	owner, err = extractOwnerID(req)
+	if owner != "" || !errors.Is(err, ErrVerificationFailed) {
+		t.Errorf("expected ErrVerificationFailed, got owner=%q, err=%v", owner, err)
+	}
+
+	validToken := signTestToken(t, privKey, jwt.MapClaims{
+		"sub": "user-123",
+		"aud": "workloadmanager",
+		"exp": time.Now().Add(5 * time.Minute).Unix(),
+	})
+	req = httptest.NewRequest(http.MethodPost, "/sandbox", nil)
+	req.Header.Set(identityJWTHeader, validToken)
+	owner, err = extractOwnerID(req)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if owner != "user-123" {
+		t.Errorf("expected owner 'user-123', got %q", owner)
 	}
 }

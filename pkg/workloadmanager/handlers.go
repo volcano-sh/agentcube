@@ -104,7 +104,20 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	var sandboxEntry *sandboxEntry
 	var err error
 
-	ownerID := extractOwnerID(c.Request)
+	ownerID, err := extractOwnerID(c.Request)
+	if err != nil {
+		if errors.Is(err, ErrNoIdentityHeader) {
+			ownerID = ""
+		} else if errors.Is(err, ErrPublicKeyNotCached) {
+			klog.Errorf("Failed to extract owner ID: %v", err)
+			respondError(c, http.StatusServiceUnavailable, "identity verifier not ready")
+			return
+		} else {
+			klog.Errorf("Failed to extract owner ID: %v", err)
+			respondError(c, http.StatusUnauthorized, "invalid identity token")
+			return
+		}
+	}
 
 	switch sandboxReq.Kind {
 	case types.AgentRuntimeKind:

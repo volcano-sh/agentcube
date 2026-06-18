@@ -1638,12 +1638,6 @@ func TestRLACOwnershipEnforcement(t *testing.T) {
 	status, body, err := rawInvoke(env.routerURL, agentcubeNamespace, "echo-agent", sessionID, adminToken)
 	require.NoError(t, err)
 
-	// Admin role should bypass RLAC; if the admin client has admin role, expect 200.
-	// If the admin client does NOT have admin role, expect 403.
-	if status == http.StatusForbidden {
-		require.Contains(t, body, "you do not own this sandbox")
-	} else {
-		// Admin bypass succeeded, which is also valid
-		require.Equal(t, http.StatusOK, status)
-	}
+	// Admin role should bypass RLAC ownership checks and succeed with 200 OK.
+	require.Equal(t, http.StatusOK, status, "admin bypass failed: %s", body)
 }

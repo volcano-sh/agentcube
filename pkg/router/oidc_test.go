@@ -260,6 +260,25 @@ func TestExtractRolesFromClaims(t *testing.T) {
 			path:     "realm_access.roles",
 			expected: nil,
 		},
+		{
+			name: "Auth0/namespaced claim key with dots/slashes",
+			claims: map[string]interface{}{
+				"https://agentcube.io/roles": []interface{}{"sandbox:invoke"},
+			},
+			path:     "https://agentcube.io/roles",
+			expected: []string{"sandbox:invoke"},
+		},
+		{
+			name: "flat dot claim key overrides nested split",
+			claims: map[string]interface{}{
+				"a.b": []interface{}{"role1"},
+				"a": map[string]interface{}{
+					"b": []interface{}{"role2"},
+				},
+			},
+			path:     "a.b",
+			expected: []string{"role1"},
+		},
 	}
 
 	for _, tt := range tests {

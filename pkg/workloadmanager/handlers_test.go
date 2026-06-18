@@ -109,11 +109,11 @@ type recordingStore struct {
 }
 
 func (f *recordingStore) UpdateSandbox(ctx context.Context, sandbox *types.SandboxInfo) error {
-	f.fakeStore.UpdateSandbox(ctx, sandbox)
-	if f.updateErr != nil {
-		return f.updateErr
+	if err := f.fakeStore.UpdateSandbox(ctx, sandbox); err != nil {
+		return err
 	}
 	copied := *sandbox
+	copied.EntryPoints = append([]types.SandboxEntryPoint(nil), sandbox.EntryPoints...)
 	f.lastUpdated = &copied
 	return nil
 }
@@ -345,7 +345,8 @@ func TestServerCreateSandboxClaimUsesAdoptedSandboxButStoresClaimName(t *testing
 
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	dynamicClient.PrependReactor("get", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		getAction := action.(k8stesting.GetAction)
+		getAction, ok := action.(k8stesting.GetAction)
+		require.True(t, ok)
 		switch {
 		case action.GetResource() == SandboxClaimGVR && getAction.GetName() == "ci-claim":
 			return true, claimUnstructured.DeepCopy(), nil
@@ -406,6 +407,16 @@ func TestServerCreateSandboxClaimUsesAdoptedSandboxButStoresClaimName(t *testing
 	require.Equal(t, "ns-1", storeInst.lastUpdated.SandboxNamespace)
 	require.Equal(t, "adopted-uid", storeInst.lastUpdated.SandboxID)
 	require.Equal(t, "10.0.0.10:8080", storeInst.lastUpdated.EntryPoints[0].Endpoint)
+}
+
+func TestWaitForDirectSandboxReadyNilResultChannel(t *testing.T) {
+	server := &Server{}
+	sandbox := readySandbox()
+
+	createdSandbox, err := server.waitForDirectSandboxReady(context.Background(), sandbox, nil)
+
+	require.Nil(t, createdSandbox)
+	require.ErrorIs(t, err, errSandboxReadyWatcherNotRegistered)
 }
 
 func newFakeServer() *Server {

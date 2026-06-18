@@ -56,6 +56,7 @@ const (
 
 	// ownerKindSandboxWarmPool is the owner reference kind for SandboxWarmPool resources
 	ownerKindSandboxWarmPool = "SandboxWarmPool"
+	ownerKindSandbox         = "Sandbox"
 
 	e2eCodeInterpreterName = "e2e-code-interpreter"
 )
@@ -1217,16 +1218,10 @@ func (ctx *e2eTestContext) listWarmPoolPods(namespace, codeInterpreterName strin
 		return nil, fmt.Errorf("failed to list sandboxes: %w", err)
 	}
 
-	warmPoolSandboxes := make(map[string]struct{}, len(sandboxList.Items))
+	warmPoolSandboxUIDs := make(map[string]struct{}, len(sandboxList.Items))
 	for _, sandbox := range sandboxList.Items {
-		if sandbox.DeletionTimestamp != nil {
-			continue
-		}
-		for _, owner := range sandbox.OwnerReferences {
-			if owner.Kind == ownerKindSandboxWarmPool && owner.Name == codeInterpreterName {
-				warmPoolSandboxes[sandbox.Name] = struct{}{}
-				break
-			}
+		if isWarmPoolSandbox(sandbox, codeInterpreterName) {
+			warmPoolSandboxUIDs[string(sandbox.UID)] = struct{}{}
 		}
 	}
 
@@ -1242,9 +1237,7 @@ func (ctx *e2eTestContext) listWarmPoolPods(namespace, codeInterpreterName strin
 			continue
 		}
 		for _, owner := range pod.OwnerReferences {
-			_, ownedByWarmPoolSandbox := warmPoolSandboxes[owner.Name]
-			if (owner.Kind == ownerKindSandboxWarmPool && owner.Name == codeInterpreterName) ||
-				(owner.Kind == "Sandbox" && ownedByWarmPoolSandbox) {
+			if isWarmPoolPodOwner(owner, codeInterpreterName, warmPoolSandboxUIDs) {
 				if _, ok := seen[pod.Name]; !ok {
 					pods = append(pods, pod)
 					seen[pod.Name] = struct{}{}
@@ -1255,6 +1248,29 @@ func (ctx *e2eTestContext) listWarmPoolPods(namespace, codeInterpreterName strin
 	}
 
 	return pods, nil
+}
+
+func isWarmPoolSandbox(sandbox sandboxv1alpha1.Sandbox, codeInterpreterName string) bool {
+	if sandbox.DeletionTimestamp != nil || sandbox.UID == "" {
+		return false
+	}
+	for _, owner := range sandbox.OwnerReferences {
+		if owner.Kind == ownerKindSandboxWarmPool && owner.Name == codeInterpreterName {
+			return true
+		}
+	}
+	return false
+}
+
+func isWarmPoolPodOwner(owner metav1.OwnerReference, codeInterpreterName string, sandboxUIDs map[string]struct{}) bool {
+	if owner.Kind == ownerKindSandboxWarmPool && owner.Name == codeInterpreterName {
+		return true
+	}
+	if owner.Kind != ownerKindSandbox {
+		return false
+	}
+	_, ok := sandboxUIDs[string(owner.UID)]
+	return ok
 }
 
 // waitForWarmPoolReady waits for the warmpool to have the expected number of ready pods

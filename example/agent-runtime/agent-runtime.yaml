@@ -19,4 +19,7 @@ spec:
           image: busybox
           command: ["/bin/sh", "-c", "sleep 36000"]
   sessionTimeout: "15m"
-  maxSessionDuration: "8h"
+  # maxSessionDuration is optional. When omitted, the sandbox runs indefinitely
+  # and is only cleaned up by the idle timeout (sessionTimeout) above.
+  # Uncomment the line below to set a hard upper limit on session lifetime.
+  # maxSessionDuration: "24h"

@@ -155,16 +155,16 @@ func (rs *redisStore) StoreSandbox(ctx context.Context, sandboxRedis *types.Sand
 		return fmt.Errorf("StoreSandbox: marshal sandbox failed: %w", err)
 	}
 
-	if sandboxRedis.ExpiresAt.IsZero() {
-		return fmt.Errorf("StoreSandbox: sandbox expired at is zero")
-	}
-
 	pipe := rs.cli.Pipeline()
 	pipe.SetNX(ctx, sessionKey, b, 0)
-	pipe.ZAdd(ctx, rs.expiryIndexKey, redisv9.Z{
-		Score:  float64(sandboxRedis.ExpiresAt.Unix()),
-		Member: sandboxRedis.SessionID,
-	})
+	// Only add to expiry index when ExpiresAt is set.
+	// Zero ExpiresAt means the sandbox has no maximum lifetime.
+	if !sandboxRedis.ExpiresAt.IsZero() {
+		pipe.ZAdd(ctx, rs.expiryIndexKey, redisv9.Z{
+			Score:  float64(sandboxRedis.ExpiresAt.Unix()),
+			Member: sandboxRedis.SessionID,
+		})
+	}
 	pipe.ZAdd(ctx, rs.lastActivityIndexKey, redisv9.Z{
 		Score:  float64(time.Now().Unix()),
 		Member: sandboxRedis.SessionID,

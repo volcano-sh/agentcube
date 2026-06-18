@@ -53,8 +53,9 @@ type AgentRuntimeSpec struct {
 
 	// MaxSessionDuration describes the maximum duration for a session.
 	// After this duration, the session will be terminated no matter active or inactive.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:default="8h"
+	// When omitted, sessions have no maximum duration and will only be cleaned up
+	// by idle timeout (SessionTimeout).
+	// +optional
 	MaxSessionDuration *metav1.Duration `json:"maxSessionDuration,omitempty" protobuf:"bytes,3,opt,name=maxSessionDuration"`
 }
 

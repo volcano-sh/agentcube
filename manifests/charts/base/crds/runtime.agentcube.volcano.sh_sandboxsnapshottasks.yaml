@@ -1,0 +1,157 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.2
+  name: sandboxsnapshottasks.runtime.agentcube.volcano.sh
+spec:
+  group: runtime.agentcube.volcano.sh
+  names:
+    kind: SandboxSnapshotTask
+    listKind: SandboxSnapshotTaskList
+    plural: sandboxsnapshottasks
+    singular: sandboxsnapshottask
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.targetNodeName
+      name: Node
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          SandboxSnapshotTask is the internal node-facing task object for snapshot builds.
+          It is created by SandboxSnapshotController and watched by the node agent.
+          Users do not create this resource.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: SandboxSnapshotTaskSpec describes the node-local snapshot
+              build to perform.
+            properties:
+              providerName:
+                description: ProviderName identifies the SnapshotDriver to use on
+                  the target node.
+                type: string
+              snapshotHash:
+                description: SnapshotHash is the hash of the snapshot inputs that
+                  affect artifact contents.
+                type: string
+              snapshotKey:
+                description: SnapshotKey is the logical restore reference generated
+                  by SandboxSnapshotController.
+                type: string
+              snapshotMode:
+                description: SnapshotMode is the mode of this snapshot task.
+                enum:
+                - Fork
+                type: string
+              snapshotRef:
+                description: SnapshotRef is the owning SandboxSnapshot for this task.
+                properties:
+                  apiGroup:
+                    description: |-
+                      APIGroup is the group for the resource being referenced.
+                      If APIGroup is not specified, the specified Kind must be in the core API group.
+                      For any other third-party types, APIGroup is required.
+                    type: string
+                  kind:
+                    description: Kind is the type of resource being referenced
+                    type: string
+                  name:
+                    description: Name is the name of resource being referenced
+                    type: string
+                required:
+                - kind
+                - name
+                type: object
+                x-kubernetes-map-type: atomic
+              snapshotUID:
+                description: |-
+                  SnapshotUID is the UID of the owning SandboxSnapshot.
+                  Used to reject stale tasks after the snapshot is deleted and recreated.
+                type: string
+              targetNodeName:
+                description: TargetNodeName is the node where the snapshot build must
+                  run.
+                type: string
+              targetSandboxRef:
+                description: TargetSandboxRef is the temporary build Sandbox created
+                  by SandboxSnapshotController.
+                properties:
+                  apiGroup:
+                    description: |-
+                      APIGroup is the group for the resource being referenced.
+                      If APIGroup is not specified, the specified Kind must be in the core API group.
+                      For any other third-party types, APIGroup is required.
+                    type: string
+                  kind:
+                    description: Kind is the type of resource being referenced
+                    type: string
+                  name:
+                    description: Name is the name of resource being referenced
+                    type: string
+                required:
+                - kind
+                - name
+                type: object
+                x-kubernetes-map-type: atomic
+            required:
+            - providerName
+            - snapshotHash
+            - snapshotKey
+            - snapshotMode
+            - snapshotRef
+            - snapshotUID
+            - targetNodeName
+            - targetSandboxRef
+            type: object
+          status:
+            description: SandboxSnapshotTaskStatus is written by the node agent after
+              the snapshot driver reports.
+            properties:
+              message:
+                description: Message is a human-readable description of the current
+                  phase.
+                type: string
+              observedAt:
+                description: ObservedAt is the time the node agent last wrote this
+                  status.
+                format: date-time
+                type: string
+              phase:
+                description: Phase is the current artifact phase as reported by the
+                  node agent.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

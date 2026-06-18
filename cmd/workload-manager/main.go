@@ -107,7 +107,13 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}
 
-	if err := setupControllers(mgr, sandboxReconciler, codeInterpreterReconciler); err != nil {
+	snapshotReconciler := &workloadmanager.SandboxSnapshotReconciler{
+		Client:        mgr.GetClient(),
+		ArtifactStore: workloadmanager.NewArtifactStoreFromEnv(),
+	}
+	defer closeArtifactStore(snapshotReconciler.ArtifactStore)
+
+	if err := setupControllers(mgr, sandboxReconciler, codeInterpreterReconciler, snapshotReconciler); err != nil {
 		fmt.Fprintf(os.Stderr, "unable to setup controllers: %v\n", err)
 		os.Exit(1)
 	}
@@ -124,7 +130,7 @@ func main() {
 	}
 
 	// Create and initialize API server
-	server, err := workloadmanager.NewServer(config, sandboxReconciler)
+	server, err := workloadmanager.NewServer(config, sandboxReconciler, mgr.GetClient(), snapshotReconciler.ArtifactStore)
 	if err != nil {
 		klog.Fatalf("Failed to create API server: %v", err)
 	}
@@ -184,7 +190,7 @@ func main() {
 	klog.Info("Server stopped")
 }
 
-func setupControllers(mgr ctrl.Manager, sandboxReconciler *workloadmanager.SandboxReconciler, codeInterpreterReconciler *workloadmanager.CodeInterpreterReconciler) error {
+func setupControllers(mgr ctrl.Manager, sandboxReconciler *workloadmanager.SandboxReconciler, codeInterpreterReconciler *workloadmanager.CodeInterpreterReconciler, snapshotReconciler *workloadmanager.SandboxSnapshotReconciler) error {
 	// Setup Sandbox controller
 	if err := ctrl.NewControllerManagedBy(mgr).
 		For(&sandboxv1alpha1.Sandbox{}).
@@ -197,7 +203,18 @@ func setupControllers(mgr ctrl.Manager, sandboxReconciler *workloadmanager.Sandb
 		return fmt.Errorf("unable to create codeinterpreter controller: %w", err)
 	}
 
+	// Setup SandboxSnapshot controller.
+	if err := snapshotReconciler.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("unable to create snapshot controller: %w", err)
+	}
+
 	return nil
+}
+
+func closeArtifactStore(store interface{ Close() error }) {
+	if err := store.Close(); err != nil {
+		klog.Errorf("artifact store close error: %v", err)
+	}
 }
 
 func validateTLSFlags(enableTLS bool, cfg mtls.Config) error {

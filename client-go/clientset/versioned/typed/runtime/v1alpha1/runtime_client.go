@@ -30,6 +30,9 @@ type RuntimeV1alpha1Interface interface {
 	RESTClient() rest.Interface
 	AgentRuntimesGetter
 	CodeInterpretersGetter
+	SandboxSnapshotsGetter
+	SandboxSnapshotTasksGetter
+	SnapshotClassesGetter
 }
 
 // RuntimeV1alpha1Client is used to interact with features provided by the runtime group.
@@ -43,6 +46,18 @@ func (c *RuntimeV1alpha1Client) AgentRuntimes(namespace string) AgentRuntimeInte
 
 func (c *RuntimeV1alpha1Client) CodeInterpreters(namespace string) CodeInterpreterInterface {
 	return newCodeInterpreters(c, namespace)
+}
+
+func (c *RuntimeV1alpha1Client) SandboxSnapshots(namespace string) SandboxSnapshotInterface {
+	return newSandboxSnapshots(c, namespace)
+}
+
+func (c *RuntimeV1alpha1Client) SandboxSnapshotTasks(namespace string) SandboxSnapshotTaskInterface {
+	return newSandboxSnapshotTasks(c, namespace)
+}
+
+func (c *RuntimeV1alpha1Client) SnapshotClasses() SnapshotClassInterface {
+	return newSnapshotClasses(c)
 }
 
 // NewForConfig creates a new RuntimeV1alpha1Client for the given config.

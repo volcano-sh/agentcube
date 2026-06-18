@@ -32,6 +32,7 @@ import (
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 
 	"github.com/volcano-sh/agentcube/pkg/api"
+	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	"github.com/volcano-sh/agentcube/pkg/store"
 )
@@ -99,17 +100,7 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 		return
 	}
 
-	var sandbox *sandboxv1alpha1.Sandbox
-	var sandboxClaim *extensionsv1alpha1.SandboxClaim
-	var sandboxEntry *sandboxEntry
-	var err error
-	switch sandboxReq.Kind {
-	case types.AgentRuntimeKind:
-		sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers)
-	case types.CodeInterpreterKind:
-		sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers)
-	}
-
+	sandbox, sandboxClaim, sandboxEntry, err := s.buildSandboxForRequest(c.Request.Context(), sandboxReq)
 	if err != nil {
 		klog.Errorf("build sandbox failed %s/%s: %v", sandboxReq.Namespace, sandboxReq.Name, err)
 		if errors.Is(err, api.ErrAgentRuntimeNotFound) || errors.Is(err, api.ErrCodeInterpreterNotFound) {
@@ -173,6 +164,37 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	}
 
 	respondJSON(c, http.StatusOK, response)
+}
+
+func (s *Server) buildSandboxForRequest(ctx context.Context, sandboxReq *types.CreateSandboxRequest) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+	switch sandboxReq.Kind {
+	case types.AgentRuntimeKind:
+		sandbox, sandboxEntry, err := buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, s.informers)
+		return sandbox, nil, sandboxEntry, err
+	case types.CodeInterpreterKind:
+		sandbox, sandboxClaim, sandboxEntry, err := buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, s.informers)
+		if err == nil {
+			s.injectSnapshotRestoreIntent(ctx, sandboxReq, sandbox, sandboxClaim)
+		}
+		return sandbox, sandboxClaim, sandboxEntry, err
+	default:
+		return nil, nil, nil, fmt.Errorf("unsupported sandbox kind %q", sandboxReq.Kind)
+	}
+}
+
+func (s *Server) injectSnapshotRestoreIntent(ctx context.Context, sandboxReq *types.CreateSandboxRequest, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim) {
+	if sandboxClaim != nil || s.snapshotClient == nil || s.artifactStore == nil {
+		return
+	}
+	snapshotKey := lookupActiveForkSnapshotKey(ctx, s.snapshotClient, s.artifactStore, sandboxReq.Namespace, sandboxReq.Name)
+	if snapshotKey == "" {
+		return
+	}
+	if sandbox.Spec.PodTemplate.ObjectMeta.Annotations == nil {
+		sandbox.Spec.PodTemplate.ObjectMeta.Annotations = make(map[string]string)
+	}
+	sandbox.Spec.PodTemplate.ObjectMeta.Annotations[runtimev1alpha1.SnapshotKeyAnnotation] = snapshotKey
+	klog.V(4).InfoS("injecting snapshot restore intent", "sandbox", sandbox.Name, "snapshotKey", snapshotKey)
 }
 
 // createK8sResources creates the K8s sandbox or sandbox claim resource.

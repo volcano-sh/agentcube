@@ -1,0 +1,74 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.2
+  name: snapshotclasses.runtime.agentcube.volcano.sh
+spec:
+  group: runtime.agentcube.volcano.sh
+  names:
+    kind: SnapshotClass
+    listKind: SnapshotClassList
+    plural: snapshotclasses
+    singular: snapshotclass
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          SnapshotClass describes an infrastructure snapshot capability.
+          It is cluster-scoped and managed by cluster administrators.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: SnapshotClassSpec defines the snapshot provider and artifact
+              placement strategy.
+            properties:
+              nodeSelector:
+                additionalProperties:
+                  type: string
+                description: NodeSelector selects which nodes are eligible for snapshot
+                  builds.
+                type: object
+              providerName:
+                description: |-
+                  ProviderName is the stable identifier for the snapshot provider.
+                  It maps to a SnapshotDriver registered in the node agent.
+                type: string
+              supportedSnapshotModes:
+                description: SupportedSnapshotModes lists the snapshot modes this
+                  class supports.
+                items:
+                  description: SandboxSnapshotMode selects the snapshot usage mode.
+                  enum:
+                  - Fork
+                  type: string
+                minItems: 1
+                type: array
+            required:
+            - providerName
+            - supportedSnapshotModes
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true

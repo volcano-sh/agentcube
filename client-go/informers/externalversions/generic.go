@@ -57,6 +57,12 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Runtime().V1alpha1().AgentRuntimes().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("codeinterpreters"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Runtime().V1alpha1().CodeInterpreters().Informer()}, nil
+	case v1alpha1.SchemeGroupVersion.WithResource("sandboxsnapshots"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Runtime().V1alpha1().SandboxSnapshots().Informer()}, nil
+	case v1alpha1.SchemeGroupVersion.WithResource("sandboxsnapshottasks"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Runtime().V1alpha1().SandboxSnapshotTasks().Informer()}, nil
+	case v1alpha1.SchemeGroupVersion.WithResource("snapshotclasses"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Runtime().V1alpha1().SnapshotClasses().Informer()}, nil
 
 	}
 

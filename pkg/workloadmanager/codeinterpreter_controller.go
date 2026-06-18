@@ -59,31 +59,25 @@ func (r *CodeInterpreterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	// Manage SandboxTemplate and SandboxWarmPool if configured
+	// Always reconcile SandboxTemplate so SandboxSnapshotController can use it as a Fork source.
+	result, err := r.ensureSandboxTemplate(ctx, codeInterpreter)
+	if err != nil {
+		logger.Error(err, "failed to ensure SandboxTemplate")
+		return ctrl.Result{}, err
+	}
+	if result.RequeueAfter > 0 {
+		return result, nil
+	}
+
+	// Manage SandboxWarmPool only when WarmPoolSize is configured.
 	if codeInterpreter.Spec.WarmPoolSize != nil && *codeInterpreter.Spec.WarmPoolSize > 0 {
-		// Ensure SandboxTemplate exists (required for SandboxWarmPool)
-		result, err := r.ensureSandboxTemplate(ctx, codeInterpreter)
-		if err != nil {
-			logger.Error(err, "failed to ensure SandboxTemplate")
-			return ctrl.Result{}, err
-		}
-		if result.RequeueAfter > 0 {
-			return result, nil
-		}
-		// Ensure SandboxWarmPool exists
 		if err := r.ensureSandboxWarmPool(ctx, codeInterpreter); err != nil {
 			logger.Error(err, "failed to ensure SandboxWarmPool")
 			return ctrl.Result{}, err
 		}
 	} else {
-		// Delete SandboxWarmPool if WarmPoolSize is 0 or nil
 		if err := r.deleteSandboxWarmPool(ctx, codeInterpreter); err != nil {
 			logger.Error(err, "failed to delete SandboxWarmPool")
-			return ctrl.Result{}, err
-		}
-		// Delete SandboxTemplate if WarmPoolSize is 0 or nil
-		if err := r.deleteSandboxTemplate(ctx, codeInterpreter); err != nil {
-			logger.Error(err, "failed to delete SandboxTemplate")
 			return ctrl.Result{}, err
 		}
 	}
@@ -260,26 +254,6 @@ func (r *CodeInterpreterReconciler) deleteSandboxWarmPool(ctx context.Context, c
 	if err := r.Delete(ctx, warmPool); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete SandboxWarmPool: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// deleteSandboxTemplate deletes the SandboxTemplate if it exists
-func (r *CodeInterpreterReconciler) deleteSandboxTemplate(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) error {
-	templateName := ci.Name
-	sandboxTemplate := &extensionsv1alpha1.SandboxTemplate{}
-	err := r.Get(ctx, types.NamespacedName{Name: templateName, Namespace: ci.Namespace}, sandboxTemplate)
-	if errors.IsNotFound(err) {
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("failed to get SandboxTemplate: %w", err)
-	}
-
-	if err := r.Delete(ctx, sandboxTemplate); err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete SandboxTemplate: %w", err)
 		}
 	}
 

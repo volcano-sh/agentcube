@@ -36,6 +36,18 @@ func (c *FakeRuntimeV1alpha1) CodeInterpreters(namespace string) v1alpha1.CodeIn
 	return newFakeCodeInterpreters(c, namespace)
 }
 
+func (c *FakeRuntimeV1alpha1) SandboxSnapshots(namespace string) v1alpha1.SandboxSnapshotInterface {
+	return newFakeSandboxSnapshots(c, namespace)
+}
+
+func (c *FakeRuntimeV1alpha1) SandboxSnapshotTasks(namespace string) v1alpha1.SandboxSnapshotTaskInterface {
+	return newFakeSandboxSnapshotTasks(c, namespace)
+}
+
+func (c *FakeRuntimeV1alpha1) SnapshotClasses() v1alpha1.SnapshotClassInterface {
+	return newFakeSnapshotClasses(c)
+}
+
 // RESTClient returns a RESTClient that is used to communicate
 // with API server by this client implementation.
 func (c *FakeRuntimeV1alpha1) RESTClient() rest.Interface {

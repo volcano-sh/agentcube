@@ -28,6 +28,12 @@ type Interface interface {
 	AgentRuntimes() AgentRuntimeInformer
 	// CodeInterpreters returns a CodeInterpreterInformer.
 	CodeInterpreters() CodeInterpreterInformer
+	// SandboxSnapshots returns a SandboxSnapshotInformer.
+	SandboxSnapshots() SandboxSnapshotInformer
+	// SandboxSnapshotTasks returns a SandboxSnapshotTaskInformer.
+	SandboxSnapshotTasks() SandboxSnapshotTaskInformer
+	// SnapshotClasses returns a SnapshotClassInformer.
+	SnapshotClasses() SnapshotClassInformer
 }
 
 type version struct {
@@ -49,4 +55,19 @@ func (v *version) AgentRuntimes() AgentRuntimeInformer {
 // CodeInterpreters returns a CodeInterpreterInformer.
 func (v *version) CodeInterpreters() CodeInterpreterInformer {
 	return &codeInterpreterInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// SandboxSnapshots returns a SandboxSnapshotInformer.
+func (v *version) SandboxSnapshots() SandboxSnapshotInformer {
+	return &sandboxSnapshotInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// SandboxSnapshotTasks returns a SandboxSnapshotTaskInformer.
+func (v *version) SandboxSnapshotTasks() SandboxSnapshotTaskInformer {
+	return &sandboxSnapshotTaskInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// SnapshotClasses returns a SnapshotClassInformer.
+func (v *version) SnapshotClasses() SnapshotClassInformer {
+	return &snapshotClassInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
 }

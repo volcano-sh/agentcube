@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -69,6 +70,11 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 		return
 	}
 
+	// RLAC: verify the caller owns this sandbox (only for existing sessions)
+	if sessionID != "" && !s.checkSandboxOwnership(c, sandbox) {
+		return
+	}
+
 	// Update session activity in store when receiving request
 	if err := s.storeClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
 		klog.Warningf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
@@ -81,6 +87,45 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 	if err := s.storeClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
 		klog.Warningf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
 	}
+}
+
+// checkSandboxOwnership verifies the caller owns the sandbox or not.
+func (s *Server) checkSandboxOwnership(c *gin.Context, sandbox *types.SandboxInfo) bool {
+	if s.oidcValidator == nil {
+		return true
+	}
+	claims := extractClaims(c)
+	if claims == nil {
+		return true
+	}
+
+	// Admin role bypasses RLAC ownership checks
+	if slices.Contains(claims.Roles, "admin") {
+		return true
+	}
+
+	// Fail-closed: deny access to sandboxes without an owner record
+	if sandbox.OwnerID == "" {
+		klog.V(2).Infof("RLAC denied: sandbox %s has no owner record (session: %s, caller: %s)",
+			sandbox.Name, sandbox.SessionID, claims.Subject)
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "sandbox has no owner record",
+			"code":  "FORBIDDEN",
+		})
+		c.Abort()
+		return false
+	}
+	if sandbox.OwnerID != claims.Subject {
+		klog.V(2).Infof("RLAC denied: sandbox %s owned by %s, caller is %s",
+			sandbox.Name, sandbox.OwnerID, claims.Subject)
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "you do not own this sandbox",
+			"code":  "FORBIDDEN",
+		})
+		c.Abort()
+		return false
+	}
+	return true
 }
 
 func (s *Server) handleGetSandboxError(c *gin.Context, err error) {
@@ -240,6 +285,14 @@ func (s *Server) generateSandboxJWT(c *gin.Context, sandbox *types.SandboxInfo) 
 	claims := map[string]interface{}{
 		"session_id": sandbox.SessionID,
 	}
+
+	if oidcClaims := extractClaims(c); oidcClaims != nil {
+		claims["user_sub"] = oidcClaims.Subject
+		if oidcClaims.Email != "" {
+			claims["user_email"] = oidcClaims.Email
+		}
+	}
+
 	token, err := s.jwtManager.GenerateToken(claims)
 	if err != nil {
 		klog.Errorf("Failed to generate JWT token (session: %s): %v", sandbox.SessionID, err)

@@ -22,6 +22,8 @@ AGENTCUBE_NAMESPACE=${AGENTCUBE_NAMESPACE:-agentcube}
 WORKLOAD_NAMESPACE=${WORKLOAD_NAMESPACE:-agentcube}
 E2E_VENV_DIR=${E2E_VENV_DIR:-/tmp/agentcube-e2e-venv}
 MCP_K8S_LOCAL_PORT=${MCP_K8S_LOCAL_PORT:-19446}
+KEYCLOAK_ENABLED=${KEYCLOAK_ENABLED:-false}
+KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.0}
 
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "$_SCRIPT_DIR/../.." && pwd)"
@@ -57,6 +59,10 @@ cleanup() {
     if [ -n "${MCP_K8S_PF_PID:-}" ]; then
         echo "Stopping MCP in-cluster port forward (PID: $MCP_K8S_PF_PID)..."
         kill "$MCP_K8S_PF_PID" 2>/dev/null || true
+    fi
+    if [ -n "${KEYCLOAK_PID:-}" ]; then
+        echo "Stopping Keycloak port forward (PID: $KEYCLOAK_PID)..."
+        kill "$KEYCLOAK_PID" 2>/dev/null || true
     fi
 
     # Best-effort: remove MCP Deployment so the next run starts clean
@@ -410,6 +416,41 @@ run_setup() {
     kubectl get agentruntime echo-agent-short-ttl -n "${WORKLOAD_NAMESPACE}" -o jsonpath='{.metadata.name}{"\n"}' || echo "echo-agent-short-ttl may still be starting..."
     echo "AgentRuntimes created, waiting for pods to be ready..."
     sleep 10
+
+    # Deploy Keycloak when enabled
+    if [ "${KEYCLOAK_ENABLED}" = "true" ]; then
+        step "Deploying Keycloak addon..."
+        docker_pull_if_missing "${KEYCLOAK_IMAGE}"
+        kind_load_image "${KEYCLOAK_IMAGE}"
+
+        helm upgrade --install keycloak manifests/charts/addons/keycloak \
+            --namespace "${AGENTCUBE_NAMESPACE}" \
+            --set admin.username=admin --set admin.password=admin \
+            --set clients.app.secret=e2e-app-secret \
+            --set clients.router.secret=e2e-router-secret \
+            --set clients.admin.secret=e2e-admin-secret \
+            --wait --timeout=5m
+
+        step "Waiting for Keycloak to be ready..."
+        kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/keycloak --timeout=300s
+
+        # Configure OIDC Helm args for Router
+        OIDC_HELM_ARGS=(
+            --set "router.jwt.issuerUrl=http://keycloak.${AGENTCUBE_NAMESPACE}.svc.cluster.local:8080/realms/agentcube"
+            --set "router.jwt.roleClaim=realm_access.roles"
+            --set "router.jwt.requiredRole=sandbox:invoke"
+        )
+
+        # Reconfigure Router with OIDC flags
+        step "Reconfiguring Router with OIDC flags..."
+        helm upgrade agentcube manifests/charts/base \
+            --namespace "${AGENTCUBE_NAMESPACE}" \
+            --reuse-values \
+            "${OIDC_HELM_ARGS[@]}" \
+            --wait --timeout=5m
+
+        kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/agentcube-router --timeout=300s
+    fi
 }
 
 echo "Starting E2E tests..."
@@ -440,6 +481,35 @@ step "Running tests..."
 # Create token
 API_TOKEN=$(kubectl create token e2e-test -n "${AGENTCUBE_NAMESPACE}" --duration=24h)
 echo "Token created"
+
+# Obtain Keycloak tokens when OIDC is enabled
+if [ "${KEYCLOAK_ENABLED}" = "true" ]; then
+    step "Obtaining Keycloak access tokens..."
+    kubectl port-forward svc/keycloak -n "${AGENTCUBE_NAMESPACE}" 8082:8080 > /tmp/keycloak_port_forward.log 2>&1 &
+    KEYCLOAK_PID=$!
+    sleep 3
+
+    KEYCLOAK_TOKEN=$(curl -s -X POST \
+        -H "Host: keycloak.${AGENTCUBE_NAMESPACE}.svc.cluster.local:8080" \
+        "http://localhost:8082/realms/agentcube/protocol/openid-connect/token" \
+        -d "grant_type=client_credentials" \
+        -d "client_id=agentcube-app" \
+        -d "client_secret=e2e-app-secret" | jq -r '.access_token')
+
+    ADMIN_TOKEN=$(curl -s -X POST \
+        -H "Host: keycloak.${AGENTCUBE_NAMESPACE}.svc.cluster.local:8080" \
+        "http://localhost:8082/realms/agentcube/protocol/openid-connect/token" \
+        -d "grant_type=client_credentials" \
+        -d "client_id=agentcube-admin" \
+        -d "client_secret=e2e-admin-secret" | jq -r '.access_token')
+
+    # Override the K8s SA token with the Keycloak token
+    export API_TOKEN="${KEYCLOAK_TOKEN}"
+    export ADMIN_TOKEN="${ADMIN_TOKEN}"
+    export OIDC_ENABLED="true"
+    export KEYCLOAK_TOKEN_URL="http://localhost:8082/realms/agentcube/protocol/openid-connect/token"
+    echo "Keycloak tokens acquired"
+fi
 
 # Port forward workload manager in background
 echo "Starting workload manager port-forward..."
@@ -519,6 +589,8 @@ if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" \
    ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" \
    MTLS_ENABLED="${MTLS_ENABLED}" \
    WORKLOAD_NAMESPACE="${WORKLOAD_NAMESPACE}" \
+   OIDC_ENABLED="${OIDC_ENABLED:-false}" \
+   ADMIN_TOKEN="${ADMIN_TOKEN:-}" \
    API_TOKEN=$API_TOKEN \
    go test -v ./test/e2e/...; then
     TEST_FAILED=1
@@ -530,10 +602,26 @@ cd "$(dirname "$0")"
 if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" \
    ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" \
    MTLS_ENABLED="${MTLS_ENABLED}" \
+   OIDC_ENABLED="${OIDC_ENABLED:-false}" \
+   KEYCLOAK_TOKEN_URL="${KEYCLOAK_TOKEN_URL:-}" \
    API_TOKEN=$API_TOKEN \
    AGENTCUBE_NAMESPACE="${WORKLOAD_NAMESPACE}" \
    "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py; then
     TEST_FAILED=1
+fi
+
+if [ "${KEYCLOAK_ENABLED}" = "true" ]; then
+    echo "Running Python OIDC auth tests..."
+    if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" \
+       ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" \
+       OIDC_ENABLED="true" \
+       KEYCLOAK_TOKEN_URL="${KEYCLOAK_TOKEN_URL}" \
+       AGENTCUBE_SYSTEM_NAMESPACE="${AGENTCUBE_NAMESPACE}" \
+       API_TOKEN=$API_TOKEN \
+       AGENTCUBE_NAMESPACE="${WORKLOAD_NAMESPACE}" \
+       "$E2E_VENV_DIR/bin/python" test_oidc_auth.py; then
+        TEST_FAILED=1
+    fi
 fi
 
 echo "Running LangChain AgentcubeSandbox E2E..."

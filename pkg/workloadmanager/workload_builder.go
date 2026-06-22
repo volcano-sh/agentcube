@@ -133,6 +133,7 @@ type buildSandboxParams struct {
 	workloadName   string
 	sandboxName    string
 	sessionID      string
+	ownerID        string
 	ttl            time.Duration
 	idleTimeout    time.Duration
 	podSpec        corev1.PodSpec
@@ -145,6 +146,7 @@ type buildSandboxClaimParams struct {
 	name                string
 	sandboxTemplateName string
 	sessionID           string
+	ownerID             string
 	idleTimeout         time.Duration
 	// ownerReference is the reference to the CodeInterpreter that creates this SandboxClaim
 	ownerReference *metav1.OwnerReference
@@ -203,6 +205,13 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 			Replicas: ptr.To[int32](1),
 		},
 	}
+
+	// Ownership metadata for RLAC
+	if params.ownerID != "" {
+		sandbox.ObjectMeta.Annotations["agentcube.io/owner"] = params.ownerID
+		sandbox.ObjectMeta.Labels["agentcube.io/owner-hash"] = sha256Short(params.ownerID)
+	}
+
 	return sandbox
 }
 
@@ -237,10 +246,17 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 	if params.ownerReference != nil {
 		sandboxClaim.ObjectMeta.OwnerReferences = []metav1.OwnerReference{*params.ownerReference}
 	}
+
+	// Ownership metadata for RLAC
+	if params.ownerID != "" {
+		sandboxClaim.ObjectMeta.Annotations["agentcube.io/owner"] = params.ownerID
+		sandboxClaim.ObjectMeta.Labels["agentcube.io/owner-hash"] = sha256Short(params.ownerID)
+	}
+
 	return sandboxClaim
 }
 
-func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
+func buildSandboxByAgentRuntime(namespace string, name string, ownerID string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
 	agentRuntimeObj, err := ifm.AgentRuntimeLister.AgentRuntimes(namespace).Get(name)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -263,6 +279,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ifm *Informers) (
 		workloadName: name,
 		sandboxName:  sandboxName,
 		sessionID:    sessionID,
+		ownerID:      ownerID,
 		podSpec:      *podSpec,
 	}
 	// Apply labels and annotations from AgentRuntime template
@@ -305,7 +322,7 @@ func buildCodeInterpreterEnvVars(templateEnv []corev1.EnvVar, authMode runtimev1
 	return envVars
 }
 
-func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, ownerID string, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
 	codeInterpreterObj, err := informer.CodeInterpreterLister.CodeInterpreters(namespace).Get(codeInterpreterName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -351,6 +368,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 			name:                sandboxName,
 			sandboxTemplateName: codeInterpreterName,
 			sessionID:           sessionID,
+			ownerID:             ownerID,
 			idleTimeout:         idleTimeout,
 			ownerReference: &metav1.OwnerReference{
 				APIVersion: runtimev1alpha1.CodeInterpreterGroupVersionKind.GroupVersion().String(),
@@ -405,6 +423,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		namespace:      namespace,
 		workloadName:   codeInterpreterName,
 		sessionID:      sessionID,
+		ownerID:        ownerID,
 		podSpec:        podSpec,
 		podLabels:      codeInterpreterObj.Spec.Template.Labels,
 		podAnnotations: codeInterpreterObj.Spec.Template.Annotations,

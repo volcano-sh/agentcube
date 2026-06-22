@@ -12,13 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import os
 import logging
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from agentcube.clients.control_plane import ControlPlaneClient
 from agentcube.clients.code_interpreter_data_plane import CodeInterpreterDataPlaneClient
 from agentcube.utils.log import get_logger
+
+if TYPE_CHECKING:
+    from agentcube.auth import AuthProvider
 
 
 class CodeInterpreterClient:
@@ -58,6 +63,7 @@ class CodeInterpreterClient:
         auth_token: Optional[str] = None,
         verbose: bool = False,
         session_id: Optional[str] = None,
+        auth: Optional["AuthProvider"] = None,
     ):
         """
         Initialize the Code Interpreter Client.
@@ -84,8 +90,17 @@ class CodeInterpreterClient:
         level = logging.DEBUG if verbose else logging.INFO
         self.logger = get_logger(__name__, level=level)
 
+        # Resolve auth: auth param > auth_token > None
+        if auth:
+            self._auth = auth
+        elif auth_token:
+            from agentcube.auth import TokenAuth
+            self._auth = TokenAuth(auth_token)
+        else:
+            self._auth = None
+
         # Initialize Control Plane client
-        self.cp_client = ControlPlaneClient(workload_manager_url, auth_token)
+        self.cp_client = ControlPlaneClient(workload_manager_url, auth=self._auth)
         if verbose:
             self.cp_client.logger.setLevel(logging.DEBUG)
 
@@ -133,6 +148,7 @@ class CodeInterpreterClient:
             router_url=self.router_url,
             namespace=self.namespace,
             session_id=self.session_id,
+            auth=self._auth,
         )
         if self.verbose:
             self.dp_client.logger.setLevel(logging.DEBUG)

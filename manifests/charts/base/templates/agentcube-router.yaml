@@ -1,3 +1,11 @@
+{{- if .Values.router.jwt.issuerUrl }}
+{{- if empty .Values.router.jwt.roleClaim }}
+  {{- fail "router.jwt.roleClaim is required when router.jwt.issuerUrl is set" }}
+{{- end }}
+{{- if empty .Values.router.jwt.requiredRole }}
+  {{- fail "router.jwt.requiredRole is required when router.jwt.issuerUrl is set" }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -87,6 +95,12 @@ spec:
             - --mtls-cert={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.certFileName }}
             - --mtls-key={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.keyFileName }}
             - --mtls-ca={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.bundleFileName }}
+            {{- end }}
+            {{- if .Values.router.jwt.issuerUrl }}
+            - {{ printf "--jwt-issuer-url=%s" .Values.router.jwt.issuerUrl | quote }}
+            - {{ printf "--jwt-audience=%s" .Values.router.jwt.audience | quote }}
+            - {{ printf "--jwt-role-claim=%s" .Values.router.jwt.roleClaim | quote }}
+            - {{ printf "--jwt-required-role=%s" .Values.router.jwt.requiredRole | quote }}
             {{- end }}
           resources:
             {{- toYaml .Values.router.resources | nindent 12 }}

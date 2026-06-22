@@ -1,0 +1,228 @@
+{{- $directTLS := and (not .Values.devMode) .Values.tls.existingSecret (not .Values.proxy.httpEnabled) }}
+{{- if empty .Values.admin.username }}
+  {{- fail "admin.username is required" }}
+{{- end }}
+{{- if and .Values.devMode (gt (int (default 1 .Values.replicas)) 1) }}
+  {{- fail "replicas cannot be greater than 1 when devMode is true. Keycloak dev mode uses an embedded H2 database which does not support clustering." }}
+{{- end }}
+{{- if .Values.database.vendor }}
+{{- if empty .Values.database.url }}
+  {{- fail "database.url is required when database.vendor is set" }}
+{{- end }}
+{{- if empty .Values.database.username }}
+  {{- fail "database.username is required when database.vendor is set" }}
+{{- end }}
+{{- end }}
+{{- if not .Values.devMode }}
+{{- if not (or (and .Values.proxy.httpEnabled .Values.proxy.headers) .Values.tls.existingSecret) }}
+  {{- fail "Production mode (devMode=false) requires either: (1) TLS-termination at proxy (set proxy.httpEnabled=true AND proxy.headers) OR (2) TLS-termination at Keycloak (set tls.existingSecret)" }}
+{{- end }}
+{{- if empty .Values.admin.existingSecret }}
+  {{- fail "admin.existingSecret is required when devMode is false (production mode requires an external Secret for the admin password)" }}
+{{- end }}
+{{- if empty .Values.database.vendor }}
+  {{- fail "database.vendor is required when devMode is false (production mode requires an external database)" }}
+{{- end }}
+{{- if empty .Values.database.existingSecret }}
+  {{- fail "database.existingSecret is required when devMode is false (production mode requires an external Secret for the database password)" }}
+{{- end }}
+{{- if empty .Values.proxy.hostname }}
+  {{- fail "proxy.hostname is required when devMode is false (production mode requires a strict hostname)" }}
+{{- end }}
+{{- range .Values.cli.redirectUris }}
+  {{- if contains "*" . }}
+    {{- fail "Wildcard redirect URIs (e.g. '*') are not allowed in production mode (devMode=false) due to open redirect risks. Please provide explicit, fully-qualified URIs for cli.redirectUris." }}
+  {{- end }}
+{{- end }}
+{{- range .Values.cli.webOrigins }}
+  {{- if contains "*" . }}
+    {{- fail "Wildcard web origins (e.g. '*') are not allowed in production mode (devMode=false). Please provide explicit, fully-qualified URIs for cli.webOrigins." }}
+  {{- end }}
+{{- end }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: keycloak
+spec:
+  replicas: {{ .Values.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: keycloak
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Note: --import-realm only applies on an empty database/first start.
+          # Realm Secret updates will not be re-applied on subsequent pod restarts.
+          {{- if .Values.devMode }}
+          args: ["start-dev", "--import-realm"]
+          {{- else }}
+          args: ["start", "--import-realm"]
+          {{- end }}
+          ports:
+            {{- if $directTLS }}
+            - name: https
+              containerPort: {{ .Values.service.httpsPort }}
+              protocol: TCP
+            {{- else }}
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+            {{- end }}
+            - name: management
+              containerPort: 9000
+              protocol: TCP
+          env:
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: {{ .Values.admin.username | quote }}
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.admin.existingSecret | default "keycloak-credentials" }}
+                  key: {{ if .Values.admin.existingSecret }}{{ .Values.admin.existingSecretKey | default "admin-password" }}{{ else }}admin-password{{ end }}
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            {{- if $directTLS }}
+            - name: KC_HTTPS_PORT
+              value: {{ .Values.service.httpsPort | quote }}
+            {{- else }}
+            - name: KC_HTTP_PORT
+              value: {{ .Values.service.port | quote }}
+            {{- end }}
+            {{- if .Values.database.vendor }}
+            - name: KC_DB
+              value: {{ .Values.database.vendor | quote }}
+            - name: KC_DB_URL
+              value: {{ .Values.database.url | quote }}
+            - name: KC_DB_USERNAME
+              value: {{ .Values.database.username | quote }}
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.existingSecret | default "keycloak-credentials" }}
+                  key: {{ if .Values.database.existingSecret }}{{ .Values.database.existingSecretKey | default "db-password" }}{{ else }}db-password{{ end }}
+            {{- end }}
+            {{- if .Values.proxy.headers }}
+            - name: KC_PROXY_HEADERS
+              value: {{ .Values.proxy.headers | quote }}
+            {{- end }}
+            {{- if .Values.proxy.httpEnabled }}
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            {{- end }}
+            {{- if .Values.proxy.hostname }}
+            - name: KC_HOSTNAME
+              value: {{ .Values.proxy.hostname | quote }}
+            {{- end }}
+            {{- if .Values.tls.existingSecret }}
+            - name: KC_HTTPS_CERTIFICATE_FILE
+              value: "/opt/keycloak/conf/certs/tls.crt"
+            - name: KC_HTTPS_CERTIFICATE_KEY_FILE
+              value: "/opt/keycloak/conf/certs/tls.key"
+            {{- end }}
+            - name: KC_CLIENT_APP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clients.existingSecret | default "keycloak-credentials" }}
+                  key: {{ if .Values.clients.existingSecret }}{{ .Values.clients.existingSecretAppKey | default "client-app-secret" }}{{ else }}client-app-secret{{ end }}
+            - name: KC_CLIENT_ROUTER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clients.existingSecret | default "keycloak-credentials" }}
+                  key: {{ if .Values.clients.existingSecret }}{{ .Values.clients.existingSecretRouterKey | default "client-router-secret" }}{{ else }}client-router-secret{{ end }}
+            - name: KC_CLIENT_ADMIN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clients.existingSecret | default "keycloak-credentials" }}
+                  key: {{ if .Values.clients.existingSecret }}{{ .Values.clients.existingSecretAdminKey | default "client-admin-secret" }}{{ else }}client-admin-secret{{ end }}
+          volumeMounts:
+            - name: realm-config
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+            {{- if .Values.tls.existingSecret }}
+            - name: certificates
+              mountPath: /opt/keycloak/conf/certs
+              readOnly: true
+            {{- end }}
+          # Keycloak's JVM + realm import takes 60-90s. The startup probe gives a 300s
+          # window before liveness checks begin, preventing premature pod restarts.
+          startupProbe:
+            httpGet:
+              path: /health/started
+              port: management
+            failureThreshold: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: management
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: management
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: realm-config
+          secret:
+            secretName: keycloak-realm-config
+        {{- if .Values.tls.existingSecret }}
+        - name: certificates
+          secret:
+            secretName: {{ .Values.tls.existingSecret }}
+            items:
+              - key: {{ .Values.tls.secretCertificateKey | default "tls.crt" }}
+                path: tls.crt
+              - key: {{ .Values.tls.secretPrivateKeyKey | default "tls.key" }}
+                path: tls.key
+        {{- end }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: keycloak
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    {{- if $directTLS }}
+    - port: {{ .Values.service.httpsPort }}
+      targetPort: https
+      protocol: TCP
+      name: https
+    {{- else }}
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    {{- end }}
+  selector:
+    app: keycloak

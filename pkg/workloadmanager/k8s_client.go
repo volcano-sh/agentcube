@@ -80,6 +80,7 @@ type K8sClient struct {
 type sandboxEntry struct {
 	Kind        string
 	SessionID   string
+	OwnerID     string
 	Ports       []runtimev1alpha1.TargetPort
 	IdleTimeout time.Duration
 }

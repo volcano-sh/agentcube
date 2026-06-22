@@ -44,6 +44,13 @@ func main() {
 		mtlsCert = flag.String("mtls-cert", "", "Path to mTLS client certificate for upstream WorkloadManager connections")
 		mtlsKey  = flag.String("mtls-key", "", "Path to mTLS client key for upstream WorkloadManager connections")
 		mtlsCA   = flag.String("mtls-ca", "", "Path to mTLS CA bundle for verifying upstream WorkloadManager identity")
+
+		// JWT configuration for external user authentication.
+		// External auth is automatically enabled when --jwt-issuer-url is provided.
+		jwtIssuerURL    = flag.String("jwt-issuer-url", "", "JWT issuer URL, enables external auth when set")
+		jwtAudience     = flag.String("jwt-audience", "agentcube-api", "Expected audience (aud) claim in the JWT")
+		jwtRoleClaim    = flag.String("jwt-role-claim", "", "JSON path to roles array in the JWT (e.g., realm_access.roles)")
+		jwtRequiredRole = flag.String("jwt-required-role", "", "Role required to access the API (e.g., sandbox:invoke)")
 	)
 
 	// Initialize klog flags
@@ -76,6 +83,10 @@ func main() {
 		TLSKey:                *tlsKey,
 		MaxConcurrentRequests: *maxConcurrentRequests,
 		MTLSConfig:            tlsConfig,
+		JWTIssuerURL:          *jwtIssuerURL,
+		JWTAudience:           *jwtAudience,
+		JWTRoleClaim:          *jwtRoleClaim,
+		JWTRequiredRole:       *jwtRequiredRole,
 	}
 
 	// Create Router API server

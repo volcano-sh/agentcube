@@ -1560,3 +1560,84 @@ func TestCodeInterpreterBasicInvocationLoad(t *testing.T) {
 	runCodeInterpreterLoadTest(t, env, namespace, name, requestsPerSecond, testDuration,
 		"Load test request %d!")
 }
+
+// skipIfNoOIDC skips the test when OIDC is not enabled in the E2E environment.
+func skipIfNoOIDC(t *testing.T) {
+	t.Helper()
+	if os.Getenv("OIDC_ENABLED") != "true" {
+		t.Skip("skipping OIDC test: OIDC_ENABLED not set (Keycloak not deployed)")
+	}
+}
+
+// rawInvoke sends an HTTP request to the Router and returns the raw status code and body.
+func rawInvoke(routerURL, namespace, name, sessionID, token string) (int, string, error) {
+	reqURL := fmt.Sprintf("%s/v1/namespaces/%s/agent-runtimes/%s/invocations/echo",
+		routerURL, namespace, name)
+
+	body := `{"input":"oidc-test"}`
+	httpReq, err := http.NewRequest("POST", reqURL, strings.NewReader(body))
+	if err != nil {
+		return 0, "", err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+token)
+	}
+	if sessionID != "" {
+		httpReq.Header.Set("x-agentcube-session-id", sessionID)
+	}
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return 0, "", err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, "", err
+	}
+	return resp.StatusCode, string(respBody), nil
+}
+
+func TestOIDCAuthNoToken(t *testing.T) {
+	skipIfNoOIDC(t)
+	env := newTestEnv(t)
+
+	status, _, err := rawInvoke(env.routerURL, agentcubeNamespace, "echo-agent", "", "")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusUnauthorized, status)
+}
+
+func TestOIDCAuthInvalidToken(t *testing.T) {
+	skipIfNoOIDC(t)
+	env := newTestEnv(t)
+
+	status, _, err := rawInvoke(env.routerURL, agentcubeNamespace, "echo-agent", "", "invalid.garbage.token")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusUnauthorized, status)
+}
+
+func TestRLACOwnershipEnforcement(t *testing.T) {
+	skipIfNoOIDC(t)
+	env := newTestEnv(t)
+
+	// Step 1: Create a sandbox with the valid OIDC token (User A)
+	req := &AgentInvokeRequest{Input: "RLAC ownership test"}
+	_, sessionID, err := env.invokeAgentRuntime(agentcubeNamespace, "echo-agent", "", req)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessionID)
+
+	// Step 2: Try to access the same sandbox with a different identity (admin client)
+	adminToken := os.Getenv("ADMIN_TOKEN")
+	if adminToken == "" {
+		t.Skip("skipping RLAC cross-user test: ADMIN_TOKEN not set")
+	}
+
+	status, body, err := rawInvoke(env.routerURL, agentcubeNamespace, "echo-agent", sessionID, adminToken)
+	require.NoError(t, err)
+
+	// Admin role should bypass RLAC ownership checks and succeed with 200 OK.
+	require.Equal(t, http.StatusOK, status, "admin bypass failed: %s", body)
+}

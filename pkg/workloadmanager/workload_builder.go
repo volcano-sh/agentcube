@@ -309,11 +309,11 @@ func buildSandboxByAgentRuntime(namespace string, name string, ownerID string, i
 }
 
 // buildCodeInterpreterEnvVars copies the template env vars and injects the
-// public key when authMode is picod.
+// public key unless authMode is none.
 func buildCodeInterpreterEnvVars(templateEnv []corev1.EnvVar, authMode runtimev1alpha1.AuthModeType) []corev1.EnvVar {
 	envVars := make([]corev1.EnvVar, len(templateEnv))
 	copy(envVars, templateEnv)
-	if authMode == runtimev1alpha1.AuthModePicoD {
+	if authMode != runtimev1alpha1.AuthModeNone {
 		envVars = append(envVars, corev1.EnvVar{
 			Name:  "PICOD_AUTH_PUBLIC_KEY",
 			Value: GetCachedPublicKey(),
@@ -331,8 +331,8 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		return nil, nil, nil, fmt.Errorf("failed to get code interpreter %s/%s: %w", namespace, codeInterpreterName, err)
 	}
 
-	// Check public key available if authMode is picod
-	if codeInterpreterObj.Spec.AuthMode == runtimev1alpha1.AuthModePicoD && !IsPublicKeyCached() {
+	// Check public key available unless authMode is none
+	if codeInterpreterObj.Spec.AuthMode != runtimev1alpha1.AuthModeNone && !IsPublicKeyCached() {
 		return nil, nil, nil, api.ErrPublicKeyMissing
 	}
 

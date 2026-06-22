@@ -46,6 +46,7 @@ type Server struct {
 	authManager  *AuthManager
 	startTime    time.Time
 	workspaceDir string
+	metrics      *Metrics
 }
 
 // NewServer creates a new PicoD server instance
@@ -54,6 +55,7 @@ func NewServer(config Config) *Server {
 		config:      config,
 		startTime:   time.Now(),
 		authManager: NewAuthManager(),
+		metrics:     NewMetrics(),
 	}
 
 	// Initialize workspace directory
@@ -80,8 +82,9 @@ func NewServer(config Config) *Server {
 	engine.Use(gin.Logger())   // Request logging
 	engine.Use(gin.Recovery()) // Crash recovery
 	engine.Use(maxBodySizeMiddleware())
+	engine.Use(s.metrics.Middleware())
 	engine.MaxMultipartMemory = MaxBodySize
-	engine.Use(gzip.Gzip(gzip.BestSpeed, gzip.WithExcludedPaths([]string{"/health"}))) // Response compression
+	engine.Use(gzip.Gzip(gzip.BestSpeed, gzip.WithExcludedPaths([]string{"/health", "/metrics"}))) // Response compression
 
 	// Load public key from environment variable (required for JWT auth)
 	if err := s.authManager.LoadPublicKeyFromEnv(); err != nil {
@@ -100,6 +103,9 @@ func NewServer(config Config) *Server {
 
 	// Health check (no authentication required)
 	engine.GET("/health", s.HealthCheckHandler)
+
+	// Metrics endpoint (no authentication required)
+	engine.GET("/metrics", s.metrics.Handler())
 
 	s.engine = engine
 	return s

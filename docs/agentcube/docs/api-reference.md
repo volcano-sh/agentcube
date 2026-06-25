@@ -4,7 +4,7 @@ sidebar_position: 5
 
 # API Reference
 
-This page documents all REST APIs exposed by AgentCube components. Unless otherwise noted, all request and response bodies use JSON (`Content-Type: application/json`).
+REST APIs for all AgentCube components. All bodies are JSON (`Content-Type: application/json`) unless noted.
 
 ---
 
@@ -26,26 +26,27 @@ POST /v1/namespaces/{namespace}/agent-runtimes/{name}/invocations/*path
 
 **Path Parameters**
 
-| Parameter | Description |
-|-----------|-------------|
+| Parameter   | Description                                                   |
+| ----------- | ------------------------------------------------------------- |
 | `namespace` | Kubernetes namespace where the `AgentRuntime` resource exists |
-| `name` | Name of the `AgentRuntime` resource |
-| `*path` | Any sub-path forwarded to the agent container |
+| `name`      | Name of the `AgentRuntime` resource                           |
+| `*path`     | Any sub-path forwarded to the agent container                 |
 
 **Request Headers**
 
-| Header | Required | Description |
-|--------|----------|-------------|
-| `x-agentcube-session-id` | No | Session ID from a previous invocation. Omit to start a new session. |
-| `Authorization` | Conditional | Bearer JWT if external OIDC auth is configured on the Router. |
+| Header                   | Required    | Description                                                         |
+| ------------------------ | ----------- | ------------------------------------------------------------------- |
+| `x-agentcube-session-id` | No          | Session ID from a previous invocation. Omit to start a new session. |
+| `Authorization`          | Conditional | Bearer JWT if external OIDC auth is configured on the Router.       |
 
 **Response Headers**
 
-| Header | Description |
-|--------|-------------|
+| Header                   | Description                                                            |
+| ------------------------ | ---------------------------------------------------------------------- |
 | `x-agentcube-session-id` | Always present. The session ID for this interaction (new or existing). |
 
 **Example — New Session:**
+
 ```bash
 curl -X POST \
   http://agentcube-router:8080/v1/namespaces/default/agent-runtimes/my-agent/invocations/ \
@@ -55,6 +56,7 @@ curl -X POST \
 ```
 
 **Example — Resume Session:**
+
 ```bash
 curl -X POST \
   http://agentcube-router:8080/v1/namespaces/default/agent-runtimes/my-agent/invocations/ \
@@ -75,11 +77,11 @@ POST /v1/namespaces/{namespace}/code-interpreters/{name}/invocations/*path
 
 **Path Parameters**
 
-| Parameter | Description |
-|-----------|-------------|
-| `namespace` | Kubernetes namespace where the `CodeInterpreter` resource exists |
-| `name` | Name of the `CodeInterpreter` resource |
-| `*path` | Sub-path forwarded to the PicoD daemon (e.g., `/api/execute`, `/api/files`) |
+| Parameter   | Description                                                                 |
+| ----------- | --------------------------------------------------------------------------- |
+| `namespace` | Kubernetes namespace where the `CodeInterpreter` resource exists            |
+| `name`      | Name of the `CodeInterpreter` resource                                      |
+| `*path`     | Sub-path forwarded to the PicoD daemon (e.g., `/api/execute`, `/api/files`) |
 
 **Request / Response Headers**: Same as AgentRuntime invocation above.
 
@@ -102,6 +104,7 @@ POST /v1/agent-runtime
 ```
 
 **Request Body:**
+
 ```json
 {
   "namespace": "default",
@@ -109,12 +112,13 @@ POST /v1/agent-runtime
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `namespace` | `string` | Yes | Namespace of the `AgentRuntime` CR |
-| `name` | `string` | Yes | Name of the `AgentRuntime` CR |
+| Field       | Type     | Required | Description                        |
+| ----------- | -------- | -------- | ---------------------------------- |
+| `namespace` | `string` | Yes      | Namespace of the `AgentRuntime` CR |
+| `name`      | `string` | Yes      | Name of the `AgentRuntime` CR      |
 
 **Response Body (200 OK):**
+
 ```json
 {
   "sessionId": "7f8b9c0d1e2f3g4h5i6j7k8l9m0n",
@@ -142,8 +146,8 @@ DELETE /v1/agent-runtime/sessions/{sessionId}
 
 **Path Parameters**
 
-| Parameter | Description |
-|-----------|-------------|
+| Parameter   | Description                 |
+| ----------- | --------------------------- |
 | `sessionId` | The session ID to terminate |
 
 **Response**: `200 OK` on success.
@@ -159,6 +163,7 @@ POST /v1/code-interpreter
 ```
 
 **Request Body:**
+
 ```json
 {
   "namespace": "default",
@@ -167,6 +172,7 @@ POST /v1/code-interpreter
 ```
 
 **Response Body (200 OK):**
+
 ```json
 {
   "sessionId": "7f8b9c0d1e2f3g4h5i6j7k8l9m0n",
@@ -215,6 +221,7 @@ POST /init
 ```
 
 **Request Headers:**
+
 ```http
 Authorization: Bearer <init_jwt>
 ```
@@ -230,6 +237,7 @@ The `<init_jwt>` is a JWT signed by the Workload Manager's bootstrap private key
 ```
 
 **Response (200 OK):**
+
 ```json
 {
   "message": "Server initialized successfully. This PicoD instance is now locked to your public key."
@@ -237,6 +245,7 @@ The `<init_jwt>` is a JWT signed by the Workload Manager's bootstrap private key
 ```
 
 **Errors:**
+
 - `401 Unauthorized` — Invalid or expired init JWT.
 - `409 Conflict` — Sandbox is already initialized.
 
@@ -251,12 +260,14 @@ POST /api/execute
 ```
 
 **Request Headers:**
+
 ```http
 Authorization: Bearer <session_jwt>
 Content-Type: application/json
 ```
 
 **Request Body:**
+
 ```json
 {
   "command": ["python3", "-c", "print('Hello World')"],
@@ -268,14 +279,15 @@ Content-Type: application/json
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `command` | `[]string` | Yes | Command and arguments as an array |
-| `timeout` | `string` | No | Execution timeout (e.g., `"30s"`, `"5m"`). Default: `"30s"`. |
-| `working_dir` | `string` | No | Working directory for the command. Default: `/` |
-| `env` | `map[string]string` | No | Additional environment variables for the process |
+| Field         | Type                | Required | Description                                                  |
+| ------------- | ------------------- | -------- | ------------------------------------------------------------ |
+| `command`     | `[]string`          | Yes      | Command and arguments as an array                            |
+| `timeout`     | `string`            | No       | Execution timeout (e.g., `"30s"`, `"5m"`). Default: `"30s"`. |
+| `working_dir` | `string`            | No       | Working directory for the command. Default: `/`              |
+| `env`         | `map[string]string` | No       | Additional environment variables for the process             |
 
 **Response (200 OK):**
+
 ```json
 {
   "stdout": "Hello World\n",
@@ -288,6 +300,7 @@ Content-Type: application/json
 ```
 
 **Error Response (RFC 7807):**
+
 ```json
 {
   "type": "https://example.com/errors/unauthorized",
@@ -308,11 +321,13 @@ POST /api/files
 ```
 
 **Request Headers:**
+
 ```http
 Authorization: Bearer <session_jwt>
 ```
 
 **Option 1: Multipart Form Data** (recommended for binary files)
+
 ```http
 Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
 
@@ -331,6 +346,7 @@ Content-Disposition: form-data; name="mode"
 ```
 
 **Option 2: JSON with Base64** (for text files or API convenience)
+
 ```json
 {
   "path": "/workspace/script.py",
@@ -339,13 +355,14 @@ Content-Disposition: form-data; name="mode"
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `path` | `string` | Absolute path inside the sandbox where the file should be saved |
-| `content` | `string` | Base64-encoded file content (JSON mode only) |
-| `mode` | `string` | Unix file permissions (e.g., `"0644"`) |
+| Field     | Type     | Description                                                     |
+| --------- | -------- | --------------------------------------------------------------- |
+| `path`    | `string` | Absolute path inside the sandbox where the file should be saved |
+| `content` | `string` | Base64-encoded file content (JSON mode only)                    |
+| `mode`    | `string` | Unix file permissions (e.g., `"0644"`)                          |
 
 **Response (200 OK):**
+
 ```json
 {
   "path": "/workspace/script.py",
@@ -367,16 +384,18 @@ GET /api/files/{path}
 
 **Path Parameters:**
 
-| Parameter | Description |
-|-----------|-------------|
-| `path` | Absolute path inside the sandbox (e.g., `workspace/result.json`) |
+| Parameter | Description                                                      |
+| --------- | ---------------------------------------------------------------- |
+| `path`    | Absolute path inside the sandbox (e.g., `workspace/result.json`) |
 
 **Request Headers:**
+
 ```http
 Authorization: Bearer <session_jwt>
 ```
 
 **Response:**
+
 ```http
 HTTP/1.1 200 OK
 Content-Type: text/plain
@@ -400,16 +419,18 @@ GET /api/files?path={directory}
 
 **Query Parameters:**
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `path` | No | Directory path to list (default: `/`) |
+| Parameter | Required | Description                           |
+| --------- | -------- | ------------------------------------- |
+| `path`    | No       | Directory path to list (default: `/`) |
 
 **Request Headers:**
+
 ```http
 Authorization: Bearer <session_jwt>
 ```
 
 **Response (200 OK):**
+
 ```json
 [
   {
@@ -440,6 +461,7 @@ GET /health
 ```
 
 **Response (200 OK):**
+
 ```json
 {
   "status": "ok",
@@ -457,30 +479,31 @@ The AgentCube Python SDK provides a high-level wrapper over the Workload Manager
 
 **Constructor Parameters:**
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `name` | `str` | `"simple-codeinterpreter"` | Name of the `CodeInterpreter` CRD |
-| `namespace` | `str` | `"default"` | Kubernetes namespace |
-| `ttl` | `int` | `3600` | Session time-to-live in seconds |
-| `workload_manager_url` | `str` | `None` | Workload Manager URL (or set `WORKLOAD_MANAGER_URL`) |
-| `router_url` | `str` | `None` | Router URL (or set `ROUTER_URL`) |
-| `auth_token` | `str` | `None` | Auth token (falls back to K8s ServiceAccount token) |
-| `session_id` | `str` | `None` | Resume an existing session |
-| `verbose` | `bool` | `False` | Enable debug logging |
+| Parameter              | Type   | Default                    | Description                                          |
+| ---------------------- | ------ | -------------------------- | ---------------------------------------------------- |
+| `name`                 | `str`  | `"simple-codeinterpreter"` | Name of the `CodeInterpreter` CRD                    |
+| `namespace`            | `str`  | `"default"`                | Kubernetes namespace                                 |
+| `ttl`                  | `int`  | `3600`                     | Session time-to-live in seconds                      |
+| `workload_manager_url` | `str`  | `None`                     | Workload Manager URL (or set `WORKLOAD_MANAGER_URL`) |
+| `router_url`           | `str`  | `None`                     | Router URL (or set `ROUTER_URL`)                     |
+| `auth_token`           | `str`  | `None`                     | Auth token (falls back to K8s ServiceAccount token)  |
+| `session_id`           | `str`  | `None`                     | Resume an existing session                           |
+| `verbose`              | `bool` | `False`                    | Enable debug logging                                 |
 
 **Methods:**
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `execute_command` | `(command: str) -> str` | Run a shell command and return stdout |
-| `run_code` | `(language: str, code: str, timeout: int = 30) -> str` | Execute a code block. Supported: `"python"`, `"bash"` |
-| `upload_file` | `(local_path: str, remote_path: str) -> None` | Upload a local file to the sandbox |
-| `download_file` | `(remote_path: str, local_path: str) -> str` | Download a file from the sandbox |
-| `write_file` | `(content: str, remote_path: str) -> None` | Write string content directly to a remote path |
-| `list_files` | `(path: str = "/") -> list` | List files in a sandbox directory |
-| `stop` | `() -> None` | Terminate the session and free the sandbox |
+| Method            | Signature                                              | Description                                           |
+| ----------------- | ------------------------------------------------------ | ----------------------------------------------------- |
+| `execute_command` | `(command: str) -> str`                                | Run a shell command and return stdout                 |
+| `run_code`        | `(language: str, code: str, timeout: int = 30) -> str` | Execute a code block. Supported: `"python"`, `"bash"` |
+| `upload_file`     | `(local_path: str, remote_path: str) -> None`          | Upload a local file to the sandbox                    |
+| `download_file`   | `(remote_path: str, local_path: str) -> str`           | Download a file from the sandbox                      |
+| `write_file`      | `(content: str, remote_path: str) -> None`             | Write string content directly to a remote path        |
+| `list_files`      | `(path: str = "/") -> list`                            | List files in a sandbox directory                     |
+| `stop`            | `() -> None`                                           | Terminate the session and free the sandbox            |
 
 **Context Manager (recommended):**
+
 ```python
 from agentcube import CodeInterpreterClient
 

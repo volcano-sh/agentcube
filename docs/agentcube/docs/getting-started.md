@@ -4,7 +4,7 @@ sidebar_position: 2
 
 # Getting Started
 
-This guide walks you through deploying AgentCube on a Kubernetes cluster and running your first code interpreter session.
+By the end of this guide you'll have AgentCube running on a Kubernetes cluster and a Python sandbox session executing code.
 
 ## Prerequisites
 
@@ -19,12 +19,12 @@ Before you begin, ensure you have the following tools installed:
 
 AgentCube consists of the following components:
 
-| Component | Description |
-|-----------|-------------|
-| **Workload Manager** | Control plane - manages sandbox lifecycle, session registry |
-| **AgentCube Router** | Data plane - handles request routing, authentication |
-| **Redis** | Session store - synchronizes state across components |
-| **agent-sandbox** | Third-party controller providing Sandbox CRDs ([kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox)) |
+| Component            | Description                                                                                                                       |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| **Workload Manager** | Control plane - manages sandbox lifecycle, session registry                                                                       |
+| **AgentCube Router** | Data plane - handles request routing, authentication                                                                              |
+| **Redis**            | Session store - synchronizes state across components                                                                              |
+| **agent-sandbox**    | Third-party controller providing Sandbox CRDs ([kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox)) |
 
 ## Step 1: Install agent-sandbox
 
@@ -100,15 +100,15 @@ This will install:
 
 Key Helm values you can customize:
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `redis.addr` | `""` | Redis address (required) |
-| `redis.password` | `""` | Redis password for chart-managed Secret; use `secretName` instead for production |
-| `redis.secretName` | `""` | Name of a Secret with the Redis password (recommended for production) |
-| `redis.secretKey` | `password` | Key in the Redis Secret |
-| `router.replicas` | `1` | Router replica count |
-| `router.service.type` | `ClusterIP` | Router service type |
-| `workloadmanager.replicas` | `1` | Workload Manager replica count |
+| Parameter                  | Default     | Description                                                                      |
+| -------------------------- | ----------- | -------------------------------------------------------------------------------- |
+| `redis.addr`               | `""`        | Redis address (required)                                                         |
+| `redis.password`           | `""`        | Redis password for chart-managed Secret; use `secretName` instead for production |
+| `redis.secretName`         | `""`        | Name of a Secret with the Redis password (recommended for production)            |
+| `redis.secretKey`          | `password`  | Key in the Redis Secret                                                          |
+| `router.replicas`          | `1`         | Router replica count                                                             |
+| `router.service.type`      | `ClusterIP` | Router service type                                                              |
+| `workloadmanager.replicas` | `1`         | Workload Manager replica count                                                   |
 
 For a complete list of options, see the [Configuration Guide](./configuration.md).
 

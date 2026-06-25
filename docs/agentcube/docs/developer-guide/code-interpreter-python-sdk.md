@@ -4,7 +4,7 @@ sidebar_position: 7
 
 # Python SDK Guide
 
-The AgentCube Python SDK (`agentcube`) provides a high-level interface for interacting with `CodeInterpreter` sandboxes. It handles session lifecycle management, authentication, and secure communication using RSA encryption — allowing you to focus on executing code and managing files.
+The `agentcube` Python SDK wraps the Workload Manager and PicoD APIs into a simple client. It manages session lifecycle, RSA key generation, and JWT signing automatically.
 
 ## Prerequisites
 
@@ -47,23 +47,23 @@ The `CodeInterpreterClient` is the main entry point. Use it as a context manager
 
 ### Configuration Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `name` | `str` | `"simple-codeinterpreter"` | Name of the `CodeInterpreter` CRD template |
-| `namespace` | `str` | `"default"` | Kubernetes namespace where the CRD exists |
-| `ttl` | `int` | `3600` | Session time-to-live in seconds |
-| `workload_manager_url` | `str` | `None` | Control Plane URL (falls back to `WORKLOAD_MANAGER_URL` env var) |
-| `router_url` | `str` | `None` | Data Plane Router URL (falls back to `ROUTER_URL` env var) |
-| `auth_token` | `str` | `None` | Auth token (falls back to Kubernetes ServiceAccount token) |
-| `session_id` | `str` | `None` | Resume an existing session instead of creating a new one |
-| `verbose` | `bool` | `False` | Enable debug logging |
+| Parameter              | Type   | Default                    | Description                                                      |
+| ---------------------- | ------ | -------------------------- | ---------------------------------------------------------------- |
+| `name`                 | `str`  | `"simple-codeinterpreter"` | Name of the `CodeInterpreter` CRD template                       |
+| `namespace`            | `str`  | `"default"`                | Kubernetes namespace where the CRD exists                        |
+| `ttl`                  | `int`  | `3600`                     | Session time-to-live in seconds                                  |
+| `workload_manager_url` | `str`  | `None`                     | Control Plane URL (falls back to `WORKLOAD_MANAGER_URL` env var) |
+| `router_url`           | `str`  | `None`                     | Data Plane Router URL (falls back to `ROUTER_URL` env var)       |
+| `auth_token`           | `str`  | `None`                     | Auth token (falls back to Kubernetes ServiceAccount token)       |
+| `session_id`           | `str`  | `None`                     | Resume an existing session instead of creating a new one         |
+| `verbose`              | `bool` | `False`                    | Enable debug logging                                             |
 
 ### Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `WORKLOAD_MANAGER_URL` | Control Plane URL (required if not passed as argument) |
-| `ROUTER_URL` | Data Plane Router URL (required if not passed as argument) |
+| Variable               | Description                                                |
+| ---------------------- | ---------------------------------------------------------- |
+| `WORKLOAD_MANAGER_URL` | Control Plane URL (required if not passed as argument)     |
+| `ROUTER_URL`           | Data Plane Router URL (required if not passed as argument) |
 
 ### Example: Basic Initialization
 

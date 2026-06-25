@@ -4,7 +4,7 @@ sidebar_position: 7
 
 # FAQ
 
-Frequently asked questions about AgentCube.
+Answers to the questions that come up most often.
 
 ---
 
@@ -48,13 +48,13 @@ AgentCube is a **subproject of Volcano**. It extends Volcano's strengths in mana
 
 ### What's the difference between `AgentRuntime` and `CodeInterpreter`?
 
-| | AgentRuntime | CodeInterpreter |
-|-|--------------|-----------------|
-| **Use case** | Long-running, conversational agents | Short-lived code execution sessions |
-| **Security** | Standard Kubernetes Pod spec | Stricter defaults (no hostPath, restricted capabilities) |
-| **Warm pool** | Not supported | Supported (`warmPoolSize`) |
-| **Authentication** | Configurable | PicoD asymmetric RSA by default |
-| **Typical user** | Multi-turn chat agents, tool-using agents | REPL sessions, "run this code" actions |
+|                    | AgentRuntime                              | CodeInterpreter                                          |
+| ------------------ | ----------------------------------------- | -------------------------------------------------------- |
+| **Use case**       | Long-running, conversational agents       | Short-lived code execution sessions                      |
+| **Security**       | Standard Kubernetes Pod spec              | Stricter defaults (no hostPath, restricted capabilities) |
+| **Warm pool**      | Not supported                             | Supported (`warmPoolSize`)                               |
+| **Authentication** | Configurable                              | PicoD asymmetric RSA by default                          |
+| **Typical user**   | Multi-turn chat agents, tool-using agents | REPL sessions, "run this code" actions                   |
 
 Both share the same sandbox infrastructure and session lifecycle model.
 
@@ -76,6 +76,7 @@ PicoD is what the AgentCube Python SDK communicates with — you don't interact 
 ### Is there a 1:1 mapping between sessions and sandboxes?
 
 **Yes.** AgentCube maintains a strict **1:1 mapping between a session and a sandbox**. This ensures:
+
 - Complete isolation — one user's code cannot access another user's data.
 - Consistent context — state is preserved across multiple turns within a session.
 - Clean cleanup — when a session ends, the entire sandbox (filesystem, memory, network identity) is deleted.
@@ -100,12 +101,13 @@ result = client.run_code("python", "print(open('/tmp/result.txt').read())")
 
 ### What happens to my sandbox when I disconnect?
 
-The sandbox continues running until `sessionTimeout` expires (default: 15 minutes of inactivity). After that, it is **paused** (hibernated) to free resources. If no new traffic arrives within an additional 10 minutes, it is permanently **deleted**.
+The sandbox continues running until `sessionTimeout` expires (default: `15m` of inactivity). After that, it is **paused** (hibernated) to free resources. If no new traffic arrives within an additional 10 minutes, it is permanently **deleted**.
 
 You can configure these durations per-resource:
+
 ```yaml
 spec:
-  sessionTimeout: "60m"     # hibernate after 1 hour idle
+  sessionTimeout: "60m" # hibernate after 1 hour idle
   maxSessionDuration: "24h" # always delete after 24 hours
 ```
 
@@ -142,11 +144,11 @@ This requires the corresponding RuntimeClass to be installed and configured on y
 
 AgentCube supports three authentication approaches:
 
-| Mode | Description | Configure Via |
-|------|-------------|---------------|
-| **PicoD (default)** | RSA-2048 asymmetric key signing (client-side key pair) | `CodeInterpreter.spec.authMode: "picod"` |
-| **External JWT/OIDC** | Validates Bearer tokens from Keycloak, Okta, Auth0, etc. | `router.jwt.*` Helm values |
-| **Internal mTLS (SPIRE)** | Automatic workload identity and mTLS between all components | `spire.enabled: true` Helm value |
+| Mode                      | Description                                                 | Configure Via                            |
+| ------------------------- | ----------------------------------------------------------- | ---------------------------------------- |
+| **PicoD (default)**       | RSA-2048 asymmetric key signing (client-side key pair)      | `CodeInterpreter.spec.authMode: "picod"` |
+| **External JWT/OIDC**     | Validates Bearer tokens from Keycloak, Okta, Auth0, etc.    | `router.jwt.*` Helm values               |
+| **Internal mTLS (SPIRE)** | Automatic workload identity and mTLS between all components | `spire.enabled: true` Helm value         |
 
 These modes are complementary — you can run external JWT validation at the Router level and PicoD auth at the sandbox level simultaneously.
 

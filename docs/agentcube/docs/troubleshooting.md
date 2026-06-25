@@ -4,7 +4,7 @@ sidebar_position: 6
 
 # Troubleshooting
 
-This guide covers common issues encountered when installing, configuring, or operating AgentCube, along with diagnostic steps and solutions.
+Common problems and how to fix them. If something is broken, start here.
 
 ---
 
@@ -15,17 +15,18 @@ This guide covers common issues encountered when installing, configuring, or ope
 **Symptom:** `kubectl get pods -n agentcube` shows Workload Manager or Router pods with status `Pending`.
 
 **Diagnose:**
+
 ```bash
 kubectl describe pod <pod-name> -n agentcube
 ```
 
 **Common causes and solutions:**
 
-| Cause | Solution |
-|-------|----------|
-| Insufficient cluster resources (CPU/memory) | Scale up your cluster or reduce resource requests in Helm values |
-| Missing `agent-sandbox` CRDs | Run `kubectl get crd \| grep sandbox` to confirm. Re-install agent-sandbox if missing. |
-| Image pull error (private registry) | Set `imagePullSecrets` in Helm values or ensure the cluster has access to `ghcr.io` |
+| Cause                                       | Solution                                                                               |
+| ------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Insufficient cluster resources (CPU/memory) | Scale up your cluster or reduce resource requests in Helm values                       |
+| Missing `agent-sandbox` CRDs                | Run `kubectl get crd \| grep sandbox` to confirm. Re-install agent-sandbox if missing. |
+| Image pull error (private registry)         | Set `imagePullSecrets` in Helm values or ensure the cluster has access to `ghcr.io`    |
 
 ---
 
@@ -34,6 +35,7 @@ kubectl describe pod <pod-name> -n agentcube
 **Cause:** The Helm chart installation failed silently, or the CRDs were not applied.
 
 **Solution:**
+
 ```bash
 # Check Helm release status
 helm status agentcube -n agentcube
@@ -51,6 +53,7 @@ kubectl apply -f manifests/crd/
 **Cause:** The Redis deployment isn't running before AgentCube is installed, or the address is wrong.
 
 **Solution:**
+
 ```bash
 # Check Redis is running
 kubectl get pods -n agentcube | grep redis
@@ -60,6 +63,7 @@ kubectl -n agentcube rollout status deployment/redis
 ```
 
 Verify you've set the correct Redis address in `redis.addr`:
+
 ```bash
 helm install agentcube ./manifests/charts/base \
   --set redis.addr="redis.agentcube.svc.cluster.local:6379"
@@ -74,12 +78,14 @@ helm install agentcube ./manifests/charts/base \
 **Symptom:** The Router returns a `400 Bad Request` when attempting a new invocation.
 
 **Diagnose:**
+
 ```bash
 kubectl logs -n agentcube deployment/agentcube-router
 kubectl logs -n agentcube deployment/workloadmanager
 ```
 
 **Common causes:**
+
 - The `AgentRuntime` or `CodeInterpreter` resource does not exist in the specified namespace.
 - The resource name in the URL does not match.
 - The `agent-sandbox` CRDs or controller are not running.
@@ -99,6 +105,7 @@ kubectl get codeinterpreter my-interpreter -n default
 **Cause:** Default `sessionTimeout` is `15m`. If your agent is idle for 15 minutes, the sandbox is paused. After another 10 minutes of being paused, it is permanently deleted.
 
 **Solution:** Increase the timeout in your CRD spec:
+
 ```yaml
 spec:
   sessionTimeout: "60m"
@@ -112,12 +119,14 @@ spec:
 **Symptom:** New `CodeInterpreter` sessions take 30+ seconds to become ready.
 
 **Solution:** Enable warm pooling:
+
 ```yaml
 spec:
-  warmPoolSize: 3  # Keep 3 pre-warmed sandboxes
+  warmPoolSize: 3 # Keep 3 pre-warmed sandboxes
 ```
 
 After updating, verify the warm pool pods are running:
+
 ```bash
 kubectl get pods -n default -l agentcube.volcano.sh/warmpool=true
 ```
@@ -139,6 +148,7 @@ kubectl get pods -n default -l agentcube.volcano.sh/warmpool=true
 3. **Sandbox not initialized**: If you bypassed the Workload Manager and called PicoD directly without `/init`, it will reject all requests.
 
 **Debug:**
+
 ```bash
 # Decode a JWT to inspect claims (don't send private keys to external services)
 echo "<your_jwt>" | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool
@@ -151,11 +161,13 @@ echo "<your_jwt>" | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool
 **Symptom:** Router returns `401 Unauthorized` even with a valid token.
 
 **Diagnose:**
+
 ```bash
 kubectl logs -n agentcube deployment/agentcube-router | grep jwt
 ```
 
 **Checklist:**
+
 - Is `router.jwt.issuerUrl` pointing to the correct OIDC discovery URL?
 - Does the token's `aud` claim match `router.jwt.audience`?
 - Does the user have the role specified in `router.jwt.requiredRole`?
@@ -178,6 +190,7 @@ kubectl -n agentcube exec deployment/agentcube-router -- \
 **Cause:** The Workload Manager or Router isn't accessible from your local machine.
 
 **Solution:** Set up port-forwarding in separate terminal windows:
+
 ```bash
 # Terminal 1
 kubectl port-forward -n agentcube svc/workloadmanager 8080:8080
@@ -187,6 +200,7 @@ kubectl port-forward -n agentcube svc/agentcube-router 8081:8080
 ```
 
 Then set environment variables:
+
 ```bash
 export WORKLOAD_MANAGER_URL="http://localhost:8080"
 export ROUTER_URL="http://localhost:8081"
@@ -199,6 +213,7 @@ export ROUTER_URL="http://localhost:8081"
 **Symptom:** SDK raises `ValueError: WORKLOAD_MANAGER_URL is not set`.
 
 **Solution:** Set the environment variable or pass the URL directly:
+
 ```python
 from agentcube import CodeInterpreterClient
 
@@ -217,6 +232,7 @@ client = CodeInterpreterClient(
 **Cause:** The default execution timeout is 30 seconds. Long-running computations will exceed this.
 
 **Solution:** Pass a longer timeout:
+
 ```python
 result = client.run_code("python", long_script, timeout=300)  # 5 minutes
 ```
@@ -232,6 +248,7 @@ result = client.run_code("python", long_script, timeout=300)  # 5 minutes
 **Cause:** For local development clusters (Kind/Minikube), the SPIRE agent cannot verify the kubelet certificate by default.
 
 **Solution:**
+
 ```bash
 helm upgrade agentcube ./manifests/charts/base \
   --set spire.agent.insecureBootstrap=true \

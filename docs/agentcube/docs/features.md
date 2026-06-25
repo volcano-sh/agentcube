@@ -4,7 +4,7 @@ sidebar_position: 3
 
 # Features
 
-AgentCube provides a comprehensive set of features designed to run AI Agent and code interpreter workloads efficiently and securely on Kubernetes. This page details each major capability.
+This page covers what AgentCube actually does under the hood — from how it keeps sandboxes warm to how it signs code execution requests.
 
 ---
 
@@ -22,7 +22,7 @@ kind: CodeInterpreter
 metadata:
   name: my-interpreter
 spec:
-  warmPoolSize: 3  # Always keep 3 hot sandboxes ready
+  warmPoolSize: 3 # Always keep 3 hot sandboxes ready
   template:
     image: ghcr.io/volcano-sh/picod:latest
 ```
@@ -49,27 +49,27 @@ stateDiagram-v2
     Nonexistent --> Pending: first invocation
     Pending --> Running: scheduled
     Running --> Ready: readiness check
-    Ready --> Paused: idle 5 min
+    Ready --> Paused: idle (sessionTimeout)
     Paused --> Ready: new invocation
-    Paused --> Deleted: no traffic 10 min
-    Ready --> Deleted: max TTL reached
-    Paused --> Deleted: max TTL reached
+    Paused --> Deleted: no traffic (10 min)
+    Ready --> Deleted: maxSessionDuration reached
+    Paused --> Deleted: maxSessionDuration reached
     Deleted --> [*]
 ```
 
-- **Lazy Creation**: Sandboxes are created on the first request for a session (`Nonexistent → Pending`).
-- **Hibernation**: After 5 minutes of inactivity, a sandbox transitions to `Paused` to free CPU/memory while preserving its filesystem and network identity.
-- **Fast Resume**: A new request within the pause window immediately restores the sandbox to `Ready` — the agent picks up right where it left off.
-- **Auto-Cleanup**: Sandboxes are permanently deleted after 10 minutes of being paused, or when their `maxSessionDuration` TTL is reached.
+- **Lazy creation**: Sandboxes are provisioned on the first request for a session (`Nonexistent → Pending`).
+- **Hibernation**: After `sessionTimeout` (default: `15m`) of inactivity, a sandbox moves to `Paused`, freeing CPU and memory while keeping the filesystem and network identity intact.
+- **Fast resume**: The next request within the pause window restores the sandbox to `Ready` immediately — the session picks up exactly where it left off.
+- **Auto-cleanup**: Sandboxes are permanently deleted after 10 minutes in `Paused`, or when `maxSessionDuration` is reached.
 
 ### Configurable Timeouts
 
 Both `AgentRuntime` and `CodeInterpreter` resources allow you to control the idle and maximum lifetime:
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `sessionTimeout` | `15m` | Duration of inactivity before a sandbox is paused |
-| `maxSessionDuration` | `8h` | Maximum total lifetime of a sandbox, regardless of activity |
+| Field                | Default | Description                                                 |
+| -------------------- | ------- | ----------------------------------------------------------- |
+| `sessionTimeout`     | `15m`   | Duration of inactivity before a sandbox is paused           |
+| `maxSessionDuration` | `8h`    | Maximum total lifetime of a sandbox, regardless of activity |
 
 ---
 
@@ -96,13 +96,14 @@ spec:
 ### Isolation Levels
 
 AgentCube supports two isolation models:
+
 - **Hardened Containers**: Standard Kubernetes pods with restrictive security contexts (no root, no privilege escalation, read-only root filesystem).
 - **MicroVM isolation**: Using Kubernetes RuntimeClass (e.g., Kata Containers, Kuasar) for hardware-level isolation. Configure via `runtimeClassName` in the `CodeInterpreterSandboxTemplate`.
 
 ```yaml
 spec:
   template:
-    runtimeClassName: kata-qemu  # hardware-level VM isolation
+    runtimeClassName: kata-qemu # hardware-level VM isolation
 ```
 
 ---
@@ -114,6 +115,7 @@ AgentCube provides two distinct Custom Resource Definitions (CRDs) to cover diff
 ### AgentRuntime
 
 Optimized for **long-running, conversational AI agents** that:
+
 - Engage in multi-turn conversations.
 - May need complex volume mounts or external service credentials.
 - Handle diverse, custom protocol traffic on configurable port paths.
@@ -140,6 +142,7 @@ spec:
 ### CodeInterpreter
 
 Optimized for **short-lived, purely computational tasks** — think "Python Code Interpreter" — with:
+
 - Stricter security defaults (no hostPath, restricted capabilities).
 - Aggressive warm-pooling for near-instant execution.
 - Built-in asymmetric authentication via PicoD.

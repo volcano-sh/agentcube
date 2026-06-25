@@ -188,6 +188,7 @@ if __name__ == "__main__":
 ```
 
 **Usage:**
+
 ```bash
 # Start the service
 python app.py

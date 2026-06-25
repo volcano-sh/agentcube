@@ -63,6 +63,7 @@ git checkout -b feat/<short-description>
 ```
 
 Branch naming conventions:
+
 - `feat/<description>` — New features
 - `fix/<description>` — Bug fixes
 - `docs/<description>` — Documentation changes
@@ -180,22 +181,22 @@ See the [Testing Guide](./testing.md) for detailed instructions.
 
 ## Tooling Reference
 
-| Command | Description |
-|---------|-------------|
-| `make lint` | Runs `golangci-lint` |
-| `make test` | Runs all unit tests |
-| `make e2e` | Runs the full E2E test suite |
-| `make build` | Builds the Workload Manager binary |
-| `make build-agentd` | Builds the AgentD binary |
-| `make build-router` | Builds the Router binary |
-| `make build-all` | Builds all component binaries to `bin/` |
-| `make docker-build` | Builds the Workload Manager Docker image |
-| `make docker-build-router` | Builds the Router Docker image |
-| `make docker-build-picod` | Builds the PicoD Docker image |
-| `make generate` | Regenerates CRDs and DeepCopy methods |
-| `make gen-client` | Regenerates client-go code |
-| `make gen-all` | Regenerates all codegen artifacts |
-| `make fmt` | Formats Go code with `gofmt` |
+| Command                    | Description                              |
+| -------------------------- | ---------------------------------------- |
+| `make lint`                | Runs `golangci-lint`                     |
+| `make test`                | Runs all unit tests                      |
+| `make e2e`                 | Runs the full E2E test suite             |
+| `make build`               | Builds the Workload Manager binary       |
+| `make build-agentd`        | Builds the AgentD binary                 |
+| `make build-router`        | Builds the Router binary                 |
+| `make build-all`           | Builds all component binaries to `bin/`  |
+| `make docker-build`        | Builds the Workload Manager Docker image |
+| `make docker-build-router` | Builds the Router Docker image           |
+| `make docker-build-picod`  | Builds the PicoD Docker image            |
+| `make generate`            | Regenerates CRDs and DeepCopy methods    |
+| `make gen-client`          | Regenerates client-go code               |
+| `make gen-all`             | Regenerates all codegen artifacts        |
+| `make fmt`                 | Formats Go code with `gofmt`             |
 
 ---
 
@@ -218,6 +219,7 @@ Reviewers may ask questions about your AI-assisted code, and if you cannot expla
 ## Security Reporting
 
 For sensitive security issues, email `volcano-security@googlegroups.com` **instead of** filing a public GitHub issue. Provide:
+
 - Steps to reproduce
 - Affected components and versions
 - Impact assessment

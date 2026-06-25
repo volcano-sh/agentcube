@@ -2,36 +2,33 @@
 
 AgentCube allows you to run custom agent runtimes by providing your own container images. To ensure your image works correctly with AgentCube's control plane and router, it must follow a few simple requirements.
 
-## 1. The Agent Daemon (PicoD/AgentD)
+## 1. The Code Interpreter Daemon (PicoD)
 
-Every AgentCube sandbox needs a daemon running inside it to handle command execution and file management. You have two options:
+CodeInterpreter sandboxes use PicoD to handle command execution and file management. You have two options:
 
 ### Option A: Use the AgentCube Base Image (Recommended)
 
-You can build your custom agent on top of our pre-built images which already include `agentd`:
+You can build your custom code-interpreter image on top of the PicoD image:
 
 ```dockerfile
-FROM ghcr.io/volcano-sh/agentd:latest
+FROM ghcr.io/volcano-sh/picod:latest
 
 # Install your dependencies
 RUN apt-get update && apt-get install -y python3-pip
-RUN pip install langchain
+RUN pip install numpy pandas
 
-# Copy your agent code
-COPY ./my_agent.py /app/my_agent.py
-
-# The base image already sets up the ENTRYPOINT for agentd
+# The base image already sets up the ENTRYPOINT for picod
 ```
 
-### Option B: Manually Include AgentD
+### Option B: Manually Include PicoD
 
-If you prefer a different base image, you must copy the `agentd` binary into your image and set it as the entrypoint.
+If you prefer a different base image, copy the `picod` binary into your image and set it as the entrypoint.
 
 ```dockerfile
 # ... build your image ...
-COPY --from=ghcr.io/volcano-sh/agentd:latest /usr/local/bin/agentd /usr/local/bin/agentd
+COPY --from=ghcr.io/volcano-sh/picod:latest /usr/local/bin/picod /usr/local/bin/picod
 
-ENTRYPOINT ["/usr/local/bin/agentd"]
+ENTRYPOINT ["/usr/local/bin/picod"]
 ```
 
 ## 2. Configuration via AgentRuntime

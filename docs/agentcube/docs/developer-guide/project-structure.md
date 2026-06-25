@@ -6,12 +6,12 @@ This page provides an overview of the AgentCube repository layout to help you fi
 
 | Directory | Description |
 | :--- | :--- |
-| `cmd/` | Main entry points for all AgentCube binaries (`workload-manager`, `router`, `agentd`). |
+| `cmd/` | Main entry points for AgentCube binaries (`workload-manager`, `router`, `picod`). |
 | `pkg/` | Core logic and libraries used across the project. |
 | `pkg/apis/` | Kubernetes Custom Resource Definitions (CRDs) and API types. |
 | `pkg/workloadmanager/` | Implementation of the Control Plane (Workload Manager). |
 | `pkg/router/` | Implementation of the Data Plane (AgentCube Router). |
-| `pkg/agentd/` | Implementation of the agent daemon that runs inside sandboxes. |
+| `pkg/picod/` | Implementation of the code execution daemon that runs inside CodeInterpreter sandboxes. |
 | `manifests/` | Helm charts and base Kubernetes manifests for deployment. |
 | `sdk-python/` | The official Python SDK for interacting with AgentCube. |
 | `client-go/` | Generated Go client for AgentCube CRDs. |
@@ -32,4 +32,4 @@ Located in `pkg/router/`, the router is a high-performance proxy that handles re
 
 ### Runtime
 
-Located in `pkg/agentd/`, this is the client-facing daemon that runs inside the job container. It provides the execution environment for user scripts and commands.
+Located in `pkg/picod/`, PicoD is the client-facing daemon used by CodeInterpreter sandboxes. It provides the execution environment for user scripts and file operations.

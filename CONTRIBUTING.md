@@ -124,7 +124,7 @@ Using AI tools to help write your PR is acceptable, but as the author, you are r
 * `make lint` runs linters (`golangci-lint`)
 * `make test` runs unit tests
 * `make e2e` runs the full E2E test suite
-* `make build-all` produces all component binaries (`workloadmanager`, `agentd`, `agentcube-router`) under `bin/`
+* `make build-all` produces component binaries (`workloadmanager`, `agentcube-router`) under `bin/`
 * `make generate` regenerates codegen artifacts (CRDs, DeepCopy methods)
 * `make gen-client` regenerates client-go code
 * `make gen-all` regenerates all codegen artifacts

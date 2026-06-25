@@ -80,15 +80,11 @@ build: generate ## Build workloadmanager binary
 	@echo "Building workloadmanager..."
 	go build -o bin/workloadmanager ./cmd/workload-manager
 
-build-agentd: generate ## Build agentd binary
-	@echo "Building agentd..."
-	go build -o bin/agentd ./cmd/agentd
-
 build-router: generate ## Build agentcube-router binary
 	@echo "Building agentcube-router..."
 	go build -o bin/agentcube-router ./cmd/router
 
-build-all: build build-agentd build-router ## Build all binaries
+build-all: build build-router ## Build all binaries
 
 # Run server (development mode)
 run:
@@ -113,7 +109,7 @@ run-router:
 clean:
 	@echo "Cleaning..."
 	rm -rf bin/
-	rm -f workloadmanager agentd agentcube-router
+	rm -f workloadmanager agentcube-router
 
 # Install dependencies
 deps:

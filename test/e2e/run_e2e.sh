@@ -180,8 +180,8 @@ collect_component_logs() {
     # 2b. MCP server (in-cluster E2E)
     collect_pod_logs "app=agentcube-code-interpreter-mcp" "code-interpreter-mcp" "${artifacts_dir}"
     
-    # 3. Collect Sandbox Pods logs (per-container: agentd, picod, etc.)
-    echo "Collecting sandbox pods logs (agentd/picod per container)..."
+    # 3. Collect Sandbox Pods logs (per-container: picod, user agent containers, etc.)
+    echo "Collecting sandbox pods logs (picod/user containers per container)..."
     local sandbox_pods=$(kubectl -n "${AGENTCUBE_NAMESPACE}" get pods \
         -l runtime.agentcube.io/sandbox-name \
         -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")

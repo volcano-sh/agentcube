@@ -32,6 +32,6 @@ RUN apt-get update && apt-get install -y python3
 # and to ensure sufficient permissions for arbitrary code execution within the sandbox.
 WORKDIR /root/
 
-COPY --from=builder /app/picod .
+COPY --from=builder /app/picod /usr/local/bin/picod
 
-ENTRYPOINT ["./picod"]
+ENTRYPOINT ["/usr/local/bin/picod"]

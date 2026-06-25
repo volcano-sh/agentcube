@@ -10,7 +10,7 @@ You can integrate the AgentCube Code Interpreter with [LangChain](https://www.la
 
 Before you begin, ensure you have the following installed:
 
-- **Python 3.9+**
+- **Python 3.10+**
 - **LangChain & LangGraph**: `pip install langchain langchain-core langgraph`
 - **AgentCube SDK**: `pip install agentcube-sdk`
 - **An LLM provider SDK** (e.g., OpenAI): `pip install langchain-openai`

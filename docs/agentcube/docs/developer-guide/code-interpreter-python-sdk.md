@@ -10,7 +10,7 @@ The AgentCube Python SDK (`agentcube`) provides a high-level interface for inter
 
 Before you begin, ensure your environment meets the following requirements:
 
-- **Python**: Version 3.8 or later
+- **Python**: Version 3.10 or later
 - **Network Access**: Access to the Workload Manager (Control Plane) and Router (Data Plane)
 - **AgentCube deployed**: Follow the [Getting Started Guide](../getting-started.md) to set up AgentCube on your cluster
 

@@ -69,12 +69,11 @@ helm install agentcube ./manifests/charts/base \
     --namespace agentcube \
     --create-namespace \
     --set redis.addr="redis.agentcube.svc.cluster.local:6379" \
-    --set redis.password="''" \
     --set router.serviceAccountName="agentcube-router"
 ```
 
 :::note
-The Redis password is not stored directly in Deployment manifests. It is injected via `secretKeyRef` from a Kubernetes Secret. For production, use `redis.secretName` to avoid passing the password through Helm values.
+Do **not** pass `--set redis.password=...` on the command line. The Redis password is injected at runtime via a Kubernetes Secret (using `secretKeyRef`). For a passwordless dev Redis, omit the flag entirely. For production, create your own Secret and reference it with `redis.secretName`.
 :::
 
 For production, create your own Secret and reference it:

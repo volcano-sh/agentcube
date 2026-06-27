@@ -3,17 +3,36 @@
  * and scoped locally.
  */
 
-.heroBanner {
-  padding: 5rem 0;
+.heroSection {
+  background-color: var(--hero-bg);
+  padding: 6.5rem 0 5.5rem;
   text-align: center;
   position: relative;
   overflow: hidden;
+  border-bottom: 1px solid var(--nav-border-color);
+  transition:
+    background-color 0.25s ease,
+    border-color 0.25s ease;
 }
 
-@media screen and (max-width: 996px) {
-  .heroBanner {
-    padding: 3rem 1.5rem;
-  }
+.heroTitle {
+  font-size: 3.5rem;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--hero-title-color);
+  margin-bottom: 1.25rem;
+  font-family: var(--ifm-font-family-base);
+}
+
+.heroSubtitle {
+  font-size: 1.35rem;
+  font-weight: 400;
+  line-height: 1.6;
+  max-width: 720px;
+  margin: 0 auto 2.5rem;
+  color: var(--hero-subtitle-color);
+  font-family: var(--ifm-font-family-base);
 }
 
 .buttons {
@@ -21,6 +40,18 @@
   align-items: center;
   justify-content: center;
   flex-wrap: wrap;
-  gap: 1rem;
-  margin-top: 2rem;
+  gap: 1.25rem;
+}
+
+@media screen and (max-width: 996px) {
+  .heroSection {
+    padding: 4.5rem 1.5rem 4rem;
+  }
+  .heroTitle {
+    font-size: 2.5rem;
+  }
+  .heroSubtitle {
+    font-size: 1.15rem;
+    margin-bottom: 2rem;
+  }
 }

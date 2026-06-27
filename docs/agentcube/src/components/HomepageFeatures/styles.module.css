@@ -56,14 +56,14 @@
   font-size: 1.25rem;
   font-weight: 700;
   margin-bottom: 1rem;
-  color: var(--card-title-color);
+  color: var(--card-title-color, var(--ifm-font-color-base));
   line-height: 1.4;
 }
 
 .featureCardDescription {
   font-size: 0.95rem;
   line-height: 1.6;
-  color: var(--card-text-color);
+  color: var(--card-text-color, var(--ifm-color-emphasis-700));
   margin: 0;
 }
 

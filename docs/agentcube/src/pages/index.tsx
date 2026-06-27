@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import clsx from "clsx";
 import Link from "@docusaurus/Link";
 import useDocusaurusContext from "@docusaurus/useDocusaurusContext";
 import Layout from "@theme/Layout";
@@ -40,7 +39,7 @@ export default function Home(): ReactNode {
   const { siteConfig } = useDocusaurusContext();
   return (
     <Layout
-      title={siteConfig.title}
+      title="Native AI Agent Workload Management"
       description="Native AI Agent Workload Management for Kubernetes. Fast scheduling, stateful lifecycle, and efficient resource utilization for AI agents."
     >
       <HomepageHeader />

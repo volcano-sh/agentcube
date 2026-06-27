@@ -122,7 +122,7 @@ const config: Config = {
             },
             {
               label: "Discussions",
-              href: "https://github.com/volcano-sh/agentcube",
+              href: "https://github.com/volcano-sh/agentcube/discussions",
             },
             {
               label: "Volcano",

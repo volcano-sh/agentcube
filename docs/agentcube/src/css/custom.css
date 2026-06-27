@@ -75,8 +75,8 @@
   --ifm-color-primary-darker: #2563eb;
   --ifm-color-primary-darkest: #1d4ed8;
   --ifm-color-primary-light: #93c5fd;
-  --ifm-color-primary-lighter: #c084fc;
-  --ifm-color-primary-lightest: #e9d5ff;
+  --ifm-color-primary-lighter: #bfdbfe;
+  --ifm-color-primary-lightest: #dbeafe;
 
   --agentcube-accent: var(--brand-red);
 
@@ -90,6 +90,12 @@
 
 html {
   scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
 }
 
 /* Keyboard focus ring — visible only for keyboard navigation */

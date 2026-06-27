@@ -18,7 +18,8 @@ const LowLatencyIcon = () => (
     strokeWidth="1.5"
     strokeLinecap="round"
     strokeLinejoin="round"
-    aria-hidden="true"
+    role="img"
+    aria-label="Low-latency agent scheduling icon"
   >
     <path d="M12 2a10 10 0 0 1 10 10" strokeDasharray="2 2" />
     <path d="M22 12a10 10 0 0 1-18 6" />
@@ -40,7 +41,8 @@ const StatefulLifecycleIcon = () => (
     strokeWidth="1.5"
     strokeLinecap="round"
     strokeLinejoin="round"
-    aria-hidden="true"
+    role="img"
+    aria-label="Stateful agent lifecycle icon"
   >
     <polygon points="12 2 22 7 12 12 2 7" />
     <polygon points="2 7 12 12 12 22 2 17" />
@@ -62,7 +64,8 @@ const ResourceUtilizationIcon = () => (
     strokeWidth="1.5"
     strokeLinecap="round"
     strokeLinejoin="round"
-    aria-hidden="true"
+    role="img"
+    aria-label="Efficient resource utilization icon"
   >
     <circle cx="12" cy="12" r="3" fill="currentColor" fillOpacity="0.1" />
     <circle cx="12" cy="4" r="2" />

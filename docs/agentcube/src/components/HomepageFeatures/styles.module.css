@@ -1,11 +1,29 @@
 .features {
   display: flex;
   align-items: center;
-  padding: 2rem 0;
+  padding: 4rem 0;
   width: 100%;
 }
 
+.featureCard {
+  height: 100%;
+  padding: 1.5rem 1rem 2rem;
+  border-radius: 8px;
+  transition:
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.featureCard:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+[data-theme="dark"] .featureCard:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
 .featureSvg {
-  height: 200px;
-  width: 200px;
+  height: 160px;
+  width: 160px;
 }

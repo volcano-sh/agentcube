@@ -40,7 +40,7 @@ func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 		validate     func(t *testing.T, result *types.SandboxInfo)
 	}{
 		{
-			name: "no ShutdownTime falls back to DefaultSandboxTTL",
+			name: "no ShutdownTime sets ExpiresAt to noExpiryDeadline (AgentRuntime without maxSessionDuration)",
 			setupSandbox: func() *sandboxv1alpha1.Sandbox {
 				return &sandboxv1alpha1.Sandbox{
 					ObjectMeta: metav1.ObjectMeta{
@@ -54,8 +54,9 @@ func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 				SessionID: "session-123",
 			},
 			validate: func(t *testing.T, result *types.SandboxInfo) {
-				expected := now.Add(DefaultSandboxTTL)
-				assert.WithinDuration(t, expected, result.ExpiresAt, 2*time.Second)
+				// When ShutdownTime is nil (AgentRuntime without maxSessionDuration),
+				// ExpiresAt should be set to noExpiryDeadline to indicate no hard expiry.
+				assert.Equal(t, noExpiryDeadline, result.ExpiresAt)
 				assert.Equal(t, "creating", result.Status)
 				assert.Equal(t, "session-123", result.SessionID)
 			},
@@ -315,6 +316,37 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 			},
 			validateResult: func(t *testing.T, result *types.SandboxInfo) {
 				assert.Equal(t, ":8080", result.EntryPoints[0].Endpoint)
+			},
+		},
+		{
+			name: "sandbox with nil ShutdownTime defaults to noExpiryDeadline",
+			setupSandbox: func() *sandboxv1alpha1.Sandbox {
+				return &sandboxv1alpha1.Sandbox{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "test-sandbox-no-ttl",
+						Namespace:         "default",
+						UID:               "test-uid-456",
+						CreationTimestamp: metav1.NewTime(now),
+					},
+					Status: sandboxv1alpha1.SandboxStatus{
+						Conditions: []metav1.Condition{
+							{
+								Type:   string(sandboxv1alpha1.SandboxConditionReady),
+								Status: metav1.ConditionTrue,
+							},
+						},
+					},
+				}
+			},
+			podIP: sandboxHelperTestPodIP,
+			entry: &sandboxEntry{
+				Kind:      types.AgentRuntimeKind,
+				SessionID: "test-session-no-ttl",
+				Ports:     []runtimev1alpha1.TargetPort{},
+			},
+			validateResult: func(t *testing.T, result *types.SandboxInfo) {
+				// When ShutdownTime is nil, ExpiresAt should default to noExpiryDeadline
+				assert.Equal(t, noExpiryDeadline, result.ExpiresAt)
 			},
 		},
 	}

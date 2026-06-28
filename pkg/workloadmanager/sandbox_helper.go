@@ -38,6 +38,11 @@ const (
 	sandboxStatusNotReady = "not-ready"
 )
 
+// noExpiryDeadline represents a sandbox with no hard expiry deadline
+// (used for AgentRuntime without maxSessionDuration).
+// Setting ExpiresAt to this value ensures the sandbox won't be selected by ListExpiredSandboxes queries.
+var noExpiryDeadline = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+
 var sandboxEntrypointDial = func(ctx context.Context, endpoint string, timeout time.Duration) error {
 	dialer := &net.Dialer{Timeout: timeout}
 	conn, err := dialer.DialContext(ctx, "tcp", endpoint)
@@ -52,7 +57,9 @@ func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxE
 	if sandboxCR.Spec.Lifecycle.ShutdownTime != nil {
 		expiresAt = sandboxCR.Spec.Lifecycle.ShutdownTime.Time
 	} else {
-		expiresAt = time.Now().Add(DefaultSandboxTTL)
+		// If no ShutdownTime is set (AgentRuntime without maxSessionDuration),
+		// use noExpiryDeadline to indicate no hard expiry deadline.
+		expiresAt = noExpiryDeadline
 	}
 	idleTimeout := entry.IdleTimeout
 	if idleTimeout == 0 {
@@ -72,7 +79,7 @@ func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxE
 
 func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *sandboxEntry) *types.SandboxInfo {
 	createdAt := sandbox.GetCreationTimestamp().Time
-	expiresAt := createdAt.Add(DefaultSandboxTTL)
+	expiresAt := noExpiryDeadline
 	if sandbox.Spec.Lifecycle.ShutdownTime != nil {
 		expiresAt = sandbox.Spec.Lifecycle.ShutdownTime.Time
 	}

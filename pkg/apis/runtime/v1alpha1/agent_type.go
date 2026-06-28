@@ -53,8 +53,8 @@ type AgentRuntimeSpec struct {
 
 	// MaxSessionDuration describes the maximum duration for a session.
 	// After this duration, the session will be terminated no matter active or inactive.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:default="8h"
+	// This field is optional for AgentRuntime; if omitted, sessions are not capped by a hard lifetime.
+	// Non-positive values (e.g., 0s, -1h) are also treated as omitted and will not apply a hard lifetime cap.
 	MaxSessionDuration *metav1.Duration `json:"maxSessionDuration,omitempty" protobuf:"bytes,3,opt,name=maxSessionDuration"`
 }
 

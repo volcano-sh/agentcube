@@ -30,7 +30,7 @@ The `CodeInterpreterClient` from the `agentcube` package manages the connection 
 ```python
 from agentcube import CodeInterpreterClient
 
-# Initialize for the session
+# Reads WORKLOAD_MANAGER_URL and ROUTER_URL from environment (see Prerequisites)
 ci_client = CodeInterpreterClient(name="my-interpreter")
 ```
 
@@ -57,6 +57,7 @@ def run_python_code(code: str) -> str:
     global ci_client
     try:
         if ci_client is None:
+            # Reads WORKLOAD_MANAGER_URL and ROUTER_URL from environment (see Prerequisites)
             ci_client = CodeInterpreterClient(name="my-interpreter")
         return ci_client.run_code("python", code)
     except Exception as e:
@@ -150,6 +151,7 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize the Code Interpreter session
     global ci_client
     print("Initializing Code Interpreter session...")
+    # Reads WORKLOAD_MANAGER_URL and ROUTER_URL from environment (see Prerequisites)
     ci_client = CodeInterpreterClient(name="my-interpreter", ttl=86400)
     yield
     # Shutdown: Properly clean up the session

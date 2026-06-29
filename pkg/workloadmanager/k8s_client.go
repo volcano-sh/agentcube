@@ -21,8 +21,6 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/klog/v2"
-
 	cubeversioned "github.com/volcano-sh/agentcube/client-go/clientset/versioned"
 	cubeinformers "github.com/volcano-sh/agentcube/client-go/informers/externalversions"
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
@@ -30,7 +28,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
@@ -40,7 +37,9 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog/v2"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+	"sigs.k8s.io/agent-sandbox/controllers"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 )
 
@@ -69,7 +68,7 @@ type K8sClient struct {
 	dynamicClient       dynamic.Interface
 	scheme              *runtime.Scheme
 	baseConfig          *rest.Config // Store base config for creating user clients
-	clientCache         *ClientCache // LRU cache for user clients
+	clientCache         *ClientCache // Thread-safe cache for user clients
 	dynamicInformer     dynamicinformer.DynamicSharedInformerFactory
 	informerFactory     informers.SharedInformerFactory
 	cubeInformerFactory cubeinformers.SharedInformerFactory
@@ -311,28 +310,37 @@ func (u *UserK8sClient) DeleteSandboxClaim(ctx context.Context, namespace, sandb
 }
 
 // GetSandboxPodIP gets the IP address of the pod corresponding to the Sandbox
-func (c *K8sClient) GetSandboxPodIP(_ context.Context, namespace, sandboxName, podName string) (string, error) {
+// It prefers an explicit podName (from annotation or caller) and avoids
+// label/ownerReference fallback now that agent-sandbox provides the
+// backing pod name via annotation.
+func (c *K8sClient) GetSandboxPodIP(ctx context.Context, namespace, sandboxName, podName string) (string, error) {
 	// If podName is provided, try to get it directly from cache first
 	if podName != "" {
 		pod, err := c.podLister.Pods(namespace).Get(podName)
 		if err == nil && pod != nil {
 			return validateAndGetPodIP(pod)
 		}
-		klog.Infof("failed to get sandbox pod %s/%s: %v, try get pod by sandbox-name label", namespace, podName, err)
+		klog.Infof("failed to get sandbox pod %s/%s: %v", namespace, podName, err)
 	}
-	// Find pod through label selector (sandbox-name label we set)
-	pods, err := c.podLister.Pods(namespace).List(labels.SelectorFromSet(map[string]string{SandboxNameLabelKey: sandboxName}))
-	if err != nil {
-		return "", fmt.Errorf("failed to list pods from cache: %w", err)
-	}
-	// Find the pod that belongs to this sandbox by checking ownerReferences
-	for _, pod := range pods {
-		for _, ownerRef := range pod.OwnerReferences {
-			if ownerRef.Kind == "Sandbox" && ownerRef.Name == sandboxName {
-				if ownerRef.Controller == nil || *ownerRef.Controller {
-					return validateAndGetPodIP(pod)
-				}
+
+	// If podName is not provided, try to read the annotation on the Sandbox
+	// resource which is the authoritative source after agent-sandbox v0.3.10.
+	if podName == "" {
+		if c.dynamicClient == nil {
+			return "", fmt.Errorf("no pod found for sandbox %s: dynamic client not configured", sandboxName)
+		}
+		sb, err := c.dynamicClient.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+		if err != nil {
+			klog.Infof("failed to get sandbox %s/%s: %v", namespace, sandboxName, err)
+			return "", fmt.Errorf("no pod found for sandbox %s: %w", sandboxName, err)
+		}
+		if ann := sb.GetAnnotations()[controllers.SandboxPodNameAnnotation]; ann != "" {
+			podName = ann
+			pod, err := c.podLister.Pods(namespace).Get(podName)
+			if err == nil && pod != nil {
+				return validateAndGetPodIP(pod)
 			}
+			klog.Infof("failed to get sandbox pod %s/%s from annotation: %v", namespace, podName, err)
 		}
 	}
 
@@ -377,13 +385,8 @@ func (c *K8sClient) WaitForSandboxReady(ctx context.Context, namespace, sandboxN
 				continue
 			}
 
-			// Check status.phase or status.ready
-			status, found, err := unstructured.NestedMap(sandbox.Object, "status")
-			if err != nil || !found {
-				continue
-			}
-
-			phase, found, err := unstructured.NestedString(status, "phase")
+			// OPTIMIZATION: Flatten nested loop parameters using unstructured fields path syntax directly
+			phase, found, err := unstructured.NestedString(sandbox.Object, "status", "phase")
 			if err != nil || !found {
 				continue
 			}

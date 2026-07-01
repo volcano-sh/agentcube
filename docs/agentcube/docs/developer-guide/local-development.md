@@ -25,7 +25,7 @@ AgentCube uses a `Makefile` to simplify common tasks.
 
 ### Build All Binaries
 
-To build the `workloadmanager`, `agentd`, and `agentcube-router` binaries:
+To build the `workloadmanager` and `agentcube-router` binaries:
 
 ```bash
 make build-all
@@ -36,7 +36,6 @@ Binaries will be placed in the `bin/` directory.
 ### Build Specific Components
 
 - **Workload Manager**: `make build`
-- **AgentD**: `make build-agentd`
 - **Router**: `make build-router`
 
 ## 3. Running Locally
@@ -65,7 +64,7 @@ make run-router
 ```bash
 make docker-build        # Workload Manager
 make docker-build-router # Router
-make docker-build-picod  # Picod (Agent Daemon)
+make docker-build-picod  # PicoD (Code Interpreter daemon)
 ```
 
 ### Loading to Kind

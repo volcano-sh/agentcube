@@ -19,24 +19,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Filter paths
-        id: changes
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            codegen:
-              - 'pkg/apis/**'
-              - 'hack/**'
-              - '.github/workflows/**'
-              - 'Makefile'
-
       - name: Set up Go
-        if: steps.changes.outputs.codegen == 'true'
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
       - name: Verify Generated Code
-        if: steps.changes.outputs.codegen == 'true'
         run: |
           make gen-check

@@ -81,8 +81,8 @@ func NewServer(config Config) *Server {
 	// Global middleware
 	engine.Use(gin.Logger())   // Request logging
 	engine.Use(gin.Recovery()) // Crash recovery
-	engine.Use(maxBodySizeMiddleware())
 	engine.Use(s.metrics.Middleware())
+	engine.Use(maxBodySizeMiddleware())
 	engine.MaxMultipartMemory = MaxBodySize
 	engine.Use(gzip.Gzip(gzip.BestSpeed, gzip.WithExcludedPaths([]string{"/health", "/metrics"}))) // Response compression
 

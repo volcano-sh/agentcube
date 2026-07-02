@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -28,6 +29,13 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+)
+
+const (
+	metricHTTPRequestsTotal = "picod_http_requests_total"
+	labelPath               = "path"
+	labelMethod             = "method"
+	executeAPIPath          = "/api/execute"
 )
 
 func TestMetrics_Exposition(t *testing.T) {
@@ -58,7 +66,7 @@ func TestMetrics_Exposition(t *testing.T) {
 	}
 	token := createToken(t, routerPriv, claims)
 
-	req, err := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(bodyBytes))
+	req, err := http.NewRequest(http.MethodPost, ts.URL+executeAPIPath, bytes.NewBuffer(bodyBytes))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -84,7 +92,7 @@ func TestMetrics_Exposition(t *testing.T) {
 			foundExecuteRequests = true
 			verifyExecuteRequests(t, mf)
 
-		case "picod_http_requests_total":
+		case metricHTTPRequestsTotal:
 			foundHTTPRequests = true
 			verifyHTTPRequests(t, mf)
 
@@ -119,15 +127,15 @@ func verifyHTTPRequests(t *testing.T, mf *dto.MetricFamily) {
 		var path, method, status string
 		for _, label := range m.Label {
 			switch *label.Name {
-			case "path":
+			case labelPath:
 				path = *label.Value
-			case "method":
+			case labelMethod:
 				method = *label.Value
 			case "status_code":
 				status = *label.Value
 			}
 		}
-		if path == "/api/execute" && method == "POST" && status == "200" {
+		if path == executeAPIPath && method == http.MethodPost && status == "200" {
 			foundExecute = true
 			assert.Equal(t, 1.0, *m.Counter.Value)
 		}
@@ -141,17 +149,94 @@ func verifyHTTPRequestDuration(t *testing.T, mf *dto.MetricFamily) {
 		var path, method string
 		for _, label := range m.Label {
 			switch *label.Name {
-			case "path":
+			case labelPath:
 				path = *label.Value
-			case "method":
+			case labelMethod:
 				method = *label.Value
 			}
 		}
-		if path == "/api/execute" && method == "POST" {
+		if path == executeAPIPath && method == http.MethodPost {
 			foundExecute = true
 			assert.Greater(t, *m.Histogram.SampleCount, uint64(0))
 			assert.Greater(t, *m.Histogram.SampleSum, 0.0)
 		}
 	}
 	assert.True(t, foundExecute, "should record duration for POST /api/execute")
+}
+
+func TestMetrics_OversizedRequest(t *testing.T) {
+	_, routerPubStr := generateRSAKeys(t)
+	server, ts, tmpDir := setupTestServer(t, routerPubStr)
+	defer os.RemoveAll(tmpDir)
+	defer ts.Close()
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	// Use ServeHTTP directly to set ContentLength without HTTP client validation.
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, executeAPIPath, nil)
+	r.ContentLength = int64(MaxBodySize) + 1
+	r.Header.Set("Content-Type", "application/json")
+	server.engine.ServeHTTP(w, r)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+
+	metricFamilies, err := server.metrics.Registry.Gather()
+	require.NoError(t, err)
+
+	var found413 bool
+	for _, mf := range metricFamilies {
+		if *mf.Name != metricHTTPRequestsTotal {
+			continue
+		}
+		for _, m := range mf.Metric {
+			var path, method, status string
+			for _, label := range m.Label {
+				switch *label.Name {
+				case labelPath:
+					path = *label.Value
+				case labelMethod:
+					method = *label.Value
+				case "status_code":
+					status = *label.Value
+				}
+			}
+			if path == executeAPIPath && method == http.MethodPost && status == "413" {
+				found413 = true
+				assert.Equal(t, 1.0, *m.Counter.Value)
+			}
+		}
+	}
+	assert.True(t, found413, "oversized request should be recorded with POST /api/execute status_code=413")
+}
+
+func TestMetrics_UnmatchedRoute(t *testing.T) {
+	_, routerPubStr := generateRSAKeys(t)
+	server, ts, tmpDir := setupTestServer(t, routerPubStr)
+	defer os.RemoveAll(tmpDir)
+	defer ts.Close()
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	client := ts.Client()
+
+	resp, err := client.Get(ts.URL + "/does-not-exist")
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	resp.Body.Close()
+
+	metricFamilies, err := server.metrics.Registry.Gather()
+	require.NoError(t, err)
+
+	var foundUnmatched bool
+	for _, mf := range metricFamilies {
+		if *mf.Name != metricHTTPRequestsTotal {
+			continue
+		}
+		for _, m := range mf.Metric {
+			for _, label := range m.Label {
+				if *label.Name == labelPath && *label.Value == "unmatched" {
+					foundUnmatched = true
+				}
+			}
+		}
+	}
+	assert.True(t, foundUnmatched, "unmatched routes must use path label 'unmatched', not the raw URL path")
 }

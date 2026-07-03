@@ -13,16 +13,20 @@ on:
       CODECOV_TOKEN:
         required: false
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Filter paths
         id: changes
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
         with:
           filters: |
             coverage:
@@ -33,7 +37,7 @@ jobs:
 
       - name: Free Disk Space
         if: steps.changes.outputs.coverage == 'true'
-        uses: jlumbroso/free-disk-space@v1.3.1
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
           tool-cache: false
           android: true
@@ -45,7 +49,7 @@ jobs:
 
       - name: Setup Go
         if: steps.changes.outputs.coverage == 'true'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
 
@@ -67,7 +71,7 @@ jobs:
 
       - name: Upload coverage reports to Codecov
         if: steps.changes.outputs.coverage == 'true'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           # Even though token upload token is not required for public repos,
           # but adding a token might increase successful uploads as per:
@@ -80,7 +84,7 @@ jobs:
 
       - name: Upload coverage artifact
         if: steps.changes.outputs.coverage == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: go-coverage
           path: coverage.out

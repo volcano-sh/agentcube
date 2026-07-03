@@ -11,25 +11,28 @@ on:
       - main
       - "release-*"
 
+permissions:
+  contents: read
+
 jobs:
   e2e-test:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
 
       - name: Create k8s Kind Cluster
-        uses: helm/kind-action@v1
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
         with:
           version: v0.30.0
           cluster_name: agentcube-e2e
@@ -48,7 +51,7 @@ jobs:
 
       - name: Upload E2E Component Logs
         if: failure() # Only upload logs when tests fail
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: agentcube_e2e_logs_${{ github.run_id }}_${{ github.run_attempt }}
           path: ${{ github.workspace }}/e2e-logs/

@@ -1,5 +1,5 @@
 # Multi-stage build for workloadmanager
-FROM golang:1.26.4-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.4-alpine AS builder
 
 # Build arguments for multi-architecture support
 ARG TARGETOS=linux

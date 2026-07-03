@@ -22,7 +22,7 @@ jobs:
     steps:
       - name: Check if first-time contributor
         id: check_first_time
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -44,7 +44,7 @@ jobs:
 
       - name: Execute workflows if not first-time contributor or has ok-to-test label
         if: steps.check_first_time.outputs.is_first_time == 'false' || contains(github.event.pull_request.labels.*.name, 'ok-to-test')
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         continue-on-error: true
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}

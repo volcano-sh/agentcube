@@ -38,9 +38,14 @@ jobs:
         run: |
           echo "REPOSITORY_OWNER_LOWER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            echo "TAG=${{ github.ref_name }}" >> "$GITHUB_ENV"
+            RELEASE_TAG="${{ github.ref_name }}"
+            echo "TAG=${RELEASE_TAG}" >> "$GITHUB_ENV"
+            echo "CHART_VERSION=${RELEASE_TAG}" >> "$GITHUB_ENV"
+            echo "APP_VERSION=${RELEASE_TAG}" >> "$GITHUB_ENV"
           else
             echo "TAG=latest" >> "$GITHUB_ENV"
+            echo "CHART_VERSION=0.0.0" >> "$GITHUB_ENV"
+            echo "APP_VERSION=latest" >> "$GITHUB_ENV"
           fi
 
       - name: Login to GitHub Container Registry
@@ -67,15 +72,15 @@ jobs:
           CHART_PATH: manifests/charts/base
           IMAGE_REGISTRY: ghcr.io/${{ env.REPOSITORY_OWNER_LOWER }}
         run: |
-          yq e -i '.version = env(TAG) | .appVersion = env(TAG)' "${CHART_PATH}/Chart.yaml"
+          yq e -i '.version = env(CHART_VERSION) | .appVersion = env(APP_VERSION)' "${CHART_PATH}/Chart.yaml"
           yq e -i '
             .router.image.repository = env(IMAGE_REGISTRY) + "/agentcube-router" |
             .router.image.tag = env(TAG) |
             .workloadmanager.image.repository = env(IMAGE_REGISTRY) + "/workloadmanager" |
             .workloadmanager.image.tag = env(TAG)
           ' "${CHART_PATH}/values.yaml"
-          helm package "${CHART_PATH}" --version "${TAG}" --app-version "${TAG}"
+          helm package "${CHART_PATH}" --version "${CHART_VERSION}" --app-version "${APP_VERSION}"
 
       - name: Push Helm chart
         run: |
-          helm push "agentcube-${TAG}.tgz" "oci://ghcr.io/${REPOSITORY_OWNER_LOWER}/charts"
+          helm push "agentcube-${CHART_VERSION}.tgz" "oci://ghcr.io/${REPOSITORY_OWNER_LOWER}/charts"

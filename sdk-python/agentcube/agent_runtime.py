@@ -31,6 +31,8 @@ class AgentRuntimeClient:
         session_id: Optional[str] = None,
         timeout: int = 120,
         connect_timeout: float = 5.0,
+        workload_manager_url: Optional[str] = None,
+        auth_token: Optional[str] = None,
     ):
         self.agent_name = agent_name
         self.namespace = namespace
@@ -48,7 +50,24 @@ class AgentRuntimeClient:
             )
         self.router_url = router_url
 
+        # Initialize Control Plane client for session deletion
+        if workload_manager_url or os.getenv("AGENTCUBE_WORKLOAD_MANAGER_URL"):
+            self.workload_manager_url = (
+                workload_manager_url
+                or os.getenv("AGENTCUBE_WORKLOAD_MANAGER_URL")
+            )
+            self.auth_token = auth_token or os.getenv("AGENTCUBE_AUTH_TOKEN")
+            from agentcube.clients.control_plane import ControlPlaneClient
+            self._control_plane = ControlPlaneClient(
+                workload_manager_url=self.workload_manager_url,
+                auth_token=self.auth_token
+            )
+        else:
+            self._control_plane = None
+
         self.session_id: Optional[str] = session_id
+        self._owned_session = session_id is None
+
         self.dp_client = AgentRuntimeDataPlaneClient(
             router_url=self.router_url,
             namespace=self.namespace,
@@ -70,7 +89,7 @@ class AgentRuntimeClient:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+        self.stop()
 
     def invoke(self, payload: Dict[str, Any], timeout: Optional[float] = None) -> Any:
         if not self.session_id:
@@ -91,3 +110,17 @@ class AgentRuntimeClient:
     def close(self) -> None:
         if self.dp_client:
             self.dp_client.close()
+
+    def stop(self) -> None:
+        """Close local connection and delete server-side session if owned."""
+        try:
+            self.close()
+        except Exception as e:
+            self.logger.warning(f"Error closing local connection: {e}")
+        
+        if self._owned_session and self.session_id and self._control_plane:
+            try:
+                self._control_plane.delete_agent_runtime_session(self.session_id)
+                self.logger.info(f"Deleted AgentRuntime session: {self.session_id}")
+            except Exception as e:
+                self.logger.warning(f"Error deleting AgentRuntime session: {e}")

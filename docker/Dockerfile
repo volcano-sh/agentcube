@@ -27,7 +27,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -ldflags="-s -w" -o workloadmanager ./cmd/workload-manager
 
 # Runtime image
-FROM alpine:3.19
+FROM alpine:3.24
 
 RUN apk --no-cache add ca-certificates
 

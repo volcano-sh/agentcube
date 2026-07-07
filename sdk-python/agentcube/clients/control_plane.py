@@ -12,13 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import os
+from typing import TYPE_CHECKING, Dict, Any, Optional
+
 import requests
-from typing import Dict, Any, Optional
 
 from agentcube.utils.log import get_logger
 from agentcube.utils.utils import read_token_from_file
 from agentcube.utils.http import create_session
+
+if TYPE_CHECKING:
+    from agentcube.auth import AuthProvider
 
 class ControlPlaneClient:
     """Client for AgentCube Control Plane (WorkloadManager).
@@ -33,8 +39,64 @@ class ControlPlaneClient:
         connect_timeout: float = 5.0,
         pool_connections: int = 10,
         pool_maxsize: int = 10,
+        auth: Optional["AuthProvider"] = None,
     ):
-        # ... existing __init__ code ...
+        """Initialize the Control Plane client.
+
+        Args:
+            workload_manager_url: URL of the WorkloadManager service.
+            auth_token: Kubernetes Service Account Token for authentication.
+            timeout: Default request timeout in seconds (default: 120).
+            connect_timeout: Connection timeout in seconds (default: 5).
+            pool_connections: Number of connection pools to cache (default: 10).
+            pool_maxsize: Maximum connections per pool (default: 10).
+            auth: Optional AuthProvider instance (takes priority over auth_token).
+        """
+        # Prioritize argument -> env var
+        self.base_url = workload_manager_url or os.getenv("WORKLOAD_MANAGER_URL")
+        if not self.base_url:
+            raise ValueError(
+                "Workload Manager URL must be provided via 'workload_manager_url' argument "
+                "or 'WORKLOAD_MANAGER_URL' environment variable."
+            )
+
+        # Resolve auth: auth param > auth_token > k8s SA token file
+        if auth:
+            self._auth = auth
+        elif auth_token:
+            from agentcube.auth import TokenAuth
+            self._auth = TokenAuth(auth_token)
+        else:
+            token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+            token = read_token_from_file(token_path)
+            if token:
+                from agentcube.auth import TokenAuth
+                self._auth = TokenAuth(token)
+            else:
+                self._auth = None
+
+        self.timeout = timeout
+        self.connect_timeout = connect_timeout
+
+        self.logger = get_logger(f"{__name__}.ControlPlaneClient")
+
+        # Create session with connection pooling using shared utility
+        self.session = create_session(
+            pool_connections=pool_connections,
+            pool_maxsize=pool_maxsize,
+        )
+
+        # Set default headers
+        self.session.headers.update({
+            "Content-Type": "application/json",
+        })
+
+    def _apply_auth(self, request_kwargs: dict) -> None:
+        """Add Authorization header from auth provider if available."""
+        if not self._auth:
+            return
+        headers = request_kwargs.setdefault("headers", {})
+        headers["Authorization"] = f"Bearer {self._auth.get_token()}"
 
     def create_session(
         self,
@@ -43,10 +105,57 @@ class ControlPlaneClient:
         metadata: Optional[Dict[str, Any]] = None,
         ttl: int = 3600,
     ) -> str:
-        # ... existing create_session code ...
+        payload = {
+            "name": name,
+            "namespace": namespace,
+            "ttl": ttl,
+            "metadata": metadata or {}
+        }
+
+        url = f"{self.base_url}/v1/code-interpreter"
+        self.logger.debug(f"Creating session at {url} with payload: {payload}")
+
+        try:
+            kwargs = {"json": payload, "timeout": (self.connect_timeout, self.timeout)}
+            self._apply_auth(kwargs)
+            response = self.session.post(url, **kwargs)
+            response.raise_for_status()
+
+            data = response.json()
+            if "sessionId" not in data or not data["sessionId"]:
+                self.logger.error("Response JSON missing 'sessionId' in create_session response.")
+                self.logger.debug(f"Full response data: {data}")
+                raise ValueError("Failed to create session: 'sessionId' missing from response")
+            return data["sessionId"]
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Failed to create session: {e}")
+            if e.response is not None:
+                self.logger.error(f"Server response: {e.response.text}")
+            raise
 
     def delete_session(self, session_id: str) -> bool:
-        # ... existing delete_session code ...
+        """Delete a Code Interpreter session.
+
+        Args:
+            session_id: The session ID to delete.
+
+        Returns:
+            True if deleted successfully (or didn't exist), False on failure.
+        """
+        url = f"{self.base_url}/v1/code-interpreter/sessions/{session_id}"
+        self.logger.debug(f"Deleting session {session_id} at {url}")
+
+        try:
+            kwargs: Dict[str, Any] = {"timeout": (self.connect_timeout, self.timeout)}
+            self._apply_auth(kwargs)
+            response = self.session.delete(url, **kwargs)
+            if response.status_code == 404:
+                return True
+            response.raise_for_status()
+            return True
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Failed to delete session {session_id}: {e}")
+            return False
 
     def delete_agent_runtime_session(self, session_id: str) -> Dict[str, Any]:
         """
@@ -65,10 +174,9 @@ class ControlPlaneClient:
         self.logger.debug(f"Deleting agent runtime session {session_id} at {url}")
 
         try:
-            response = self.session.delete(
-                url,
-                timeout=(self.connect_timeout, self.timeout)
-            )
+            kwargs: Dict[str, Any] = {"timeout": (self.connect_timeout, self.timeout)}
+            self._apply_auth(kwargs)
+            response = self.session.delete(url, **kwargs)
             if response.status_code == 404:
                 return {}  # Already gone
             response.raise_for_status()

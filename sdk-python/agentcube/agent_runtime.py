@@ -17,6 +17,7 @@ import os
 from typing import Any, Dict, Optional
 
 from requests.exceptions import JSONDecodeError
+from agentcube.auth import AuthProvider
 from agentcube.clients.agent_runtime_data_plane import AgentRuntimeDataPlaneClient
 from agentcube.utils.log import get_logger
 
@@ -33,6 +34,7 @@ class AgentRuntimeClient:
         connect_timeout: float = 5.0,
         workload_manager_url: Optional[str] = None,
         auth_token: Optional[str] = None,
+        auth: Optional[AuthProvider] = None,
     ):
         self.agent_name = agent_name
         self.namespace = namespace
@@ -41,6 +43,11 @@ class AgentRuntimeClient:
 
         level = logging.DEBUG if verbose else logging.INFO
         self.logger = get_logger(__name__, level=level)
+
+        self._auth = auth
+        if not self._auth and auth_token:
+            from agentcube.auth import TokenAuth
+            self._auth = TokenAuth(auth_token)
 
         router_url = router_url or os.getenv("ROUTER_URL")
         if not router_url:
@@ -56,11 +63,11 @@ class AgentRuntimeClient:
                 workload_manager_url
                 or os.getenv("AGENTCUBE_WORKLOAD_MANAGER_URL")
             )
-            self.auth_token = auth_token or os.getenv("AGENTCUBE_AUTH_TOKEN")
             from agentcube.clients.control_plane import ControlPlaneClient
             self._control_plane = ControlPlaneClient(
                 workload_manager_url=self.workload_manager_url,
-                auth_token=self.auth_token
+                auth_token=auth_token or os.getenv("AGENTCUBE_AUTH_TOKEN"),
+                auth=self._auth,
             )
         else:
             self._control_plane = None
@@ -74,6 +81,7 @@ class AgentRuntimeClient:
             agent_name=self.agent_name,
             timeout=self.timeout,
             connect_timeout=self.connect_timeout,
+            auth=self._auth,
         )
         if verbose:
             self.dp_client.logger.setLevel(logging.DEBUG)
@@ -91,7 +99,7 @@ class AgentRuntimeClient:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.stop()
 
-    def invoke(self, payload: Dict[str, Any], timeout: Optional[float] = None) -> Any:
+    def invoke(self, payload: Dict[str, Any], timeout: Optional[float] = None, path: str = "") -> Any:
         if not self.session_id:
             raise ValueError("AgentRuntime session_id is not initialized")
 
@@ -99,6 +107,7 @@ class AgentRuntimeClient:
             session_id=self.session_id,
             payload=payload,
             timeout=timeout,
+            path=path,
         )
         resp.raise_for_status()
 

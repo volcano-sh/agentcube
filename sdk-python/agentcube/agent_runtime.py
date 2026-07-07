@@ -66,8 +66,7 @@ class AgentRuntimeClient:
             from agentcube.clients.control_plane import ControlPlaneClient
             self._control_plane = ControlPlaneClient(
                 workload_manager_url=self.workload_manager_url,
-                auth_token=auth_token or os.getenv("AGENTCUBE_AUTH_TOKEN"),
-                auth=self._auth,
+                auth_token=self.auth_token
             )
         else:
             self._control_plane = None
@@ -119,6 +118,8 @@ class AgentRuntimeClient:
     def close(self) -> None:
         if self.dp_client:
             self.dp_client.close()
+        if self._control_plane:
+            self._control_plane.close()
 
     def stop(self) -> None:
         """Close local connection and delete server-side session if owned."""
@@ -126,10 +127,11 @@ class AgentRuntimeClient:
             self.close()
         except Exception as e:
             self.logger.warning(f"Error closing local connection: {e}")
-        
+
         if self._owned_session and self.session_id and self._control_plane:
             try:
                 self._control_plane.delete_agent_runtime_session(self.session_id)
                 self.logger.info(f"Deleted AgentRuntime session: {self.session_id}")
+                self.session_id = None
             except Exception as e:
                 self.logger.warning(f"Error deleting AgentRuntime session: {e}")

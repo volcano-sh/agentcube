@@ -13,3 +13,15 @@ updates:
       github-actions:
         patterns:
           - "*"
+
+  - package-ecosystem: "docker"
+    directory: "/docker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "00:00"
+      timezone: "UTC"
+    commit-message:
+      prefix: "chore(deps): "
+    ignore:
+      - dependency-name: "golang"

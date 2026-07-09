@@ -27,3 +27,30 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}
+{{- if .Values.workloadmanager.auth.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-{{ .Values.router.serviceAccountName | default "agentcube-router" }}-workloadmanager
+rules:
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxes"]
+    verbs: ["create", "delete"]
+  - apiGroups: ["extensions.agents.x-k8s.io"]
+    resources: ["sandboxclaims"]
+    verbs: ["create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-{{ .Values.router.serviceAccountName | default "agentcube-router" }}-workloadmanager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-{{ .Values.router.serviceAccountName | default "agentcube-router" }}-workloadmanager
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

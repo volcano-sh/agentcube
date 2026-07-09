@@ -49,6 +49,8 @@ router:
 # AgentCube Workload Manager
 workloadmanager:
   replicas: 1
+  auth:
+    enabled: true
   image:
     repository: ghcr.io/volcano-sh/workloadmanager
     pullPolicy: IfNotPresent

@@ -18,9 +18,13 @@ package types
 
 import (
 	"fmt"
+	"net"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+
+	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 )
 
 type SandboxInfo struct {
@@ -55,6 +59,10 @@ type CreateSandboxRequest struct {
 	Kind      string `json:"kind"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
+	// NetworkPolicy overrides the NetworkPolicy spec from the template for this session only.
+	// When set, it replaces (not merges) the template-level NetworkPolicy entirely.
+	// +optional
+	NetworkPolicy *runtimev1alpha1.SandboxNetworkPolicy `json:"networkPolicy,omitempty"`
 }
 
 type CreateSandboxResponse struct {
@@ -78,6 +86,61 @@ func (car *CreateSandboxRequest) Validate() error {
 	}
 	if car.Name == "" {
 		return fmt.Errorf("name is required")
+	}
+	if err := validateNetworkPolicyOverride(car.NetworkPolicy); err != nil {
+		return fmt.Errorf("invalid networkPolicy: %w", err)
+	}
+	return nil
+}
+
+// validateNetworkPolicyOverride validates a per-session NetworkPolicy override from
+// CreateSandboxRequest. Unlike the CRD field (which has kubebuilder markers), this
+// comes in as raw JSON and bypasses API-server admission, so we validate it here.
+func validateNetworkPolicyOverride(np *runtimev1alpha1.SandboxNetworkPolicy) error {
+	if np == nil {
+		return nil
+	}
+	for _, rule := range np.Egress {
+		for _, cidr := range rule.CIDRs {
+			if _, _, err := net.ParseCIDR(cidr); err != nil {
+				return fmt.Errorf("invalid egress CIDR %q: %w", cidr, err)
+			}
+		}
+		for i, p := range rule.Ports {
+			if err := validatePort(p); err != nil {
+				return fmt.Errorf("invalid egress port[%d]: %w", i, err)
+			}
+		}
+	}
+	for _, rule := range np.Ingress {
+		for _, cidr := range rule.CIDRs {
+			if _, _, err := net.ParseCIDR(cidr); err != nil {
+				return fmt.Errorf("invalid ingress CIDR %q: %w", cidr, err)
+			}
+		}
+		for i, p := range rule.Ports {
+			if err := validatePort(p); err != nil {
+				return fmt.Errorf("invalid ingress port[%d]: %w", i, err)
+			}
+		}
+	}
+	return nil
+}
+
+func validatePort(p runtimev1alpha1.SandboxNetworkPolicyPort) error {
+	if p.Protocol != nil {
+		switch *p.Protocol {
+		case "TCP", "UDP", "SCTP":
+		default:
+			return fmt.Errorf("unsupported protocol %q: must be TCP, UDP, or SCTP", *p.Protocol)
+		}
+	}
+	if p.Port.Type == intstr.Int {
+		if p.Port.IntVal < 1 || p.Port.IntVal > 65535 {
+			return fmt.Errorf("port number %d out of range [1, 65535]", p.Port.IntVal)
+		}
+	} else if p.Port.StrVal == "" {
+		return fmt.Errorf("named port must not be empty")
 	}
 	return nil
 }

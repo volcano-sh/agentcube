@@ -29,6 +29,7 @@ import (
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -126,6 +127,16 @@ func loadPublicKeyFromSecret(clientset kubernetes.Interface) error {
 	cachedPublicKey = string(publicKeyData)
 	publicKeyCacheMutex.Unlock()
 	return nil
+}
+
+// effectiveNetworkPolicy returns the session-level override when set, otherwise the
+// template-level default. Override semantics are "replace, not merge": the session
+// policy replaces the template policy in its entirety.
+func effectiveNetworkPolicy(session, template *runtimev1alpha1.SandboxNetworkPolicy) *runtimev1alpha1.SandboxNetworkPolicy {
+	if session != nil {
+		return session
+	}
+	return template
 }
 
 type buildSandboxParams struct {
@@ -256,13 +267,13 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 	return sandboxClaim
 }
 
-func buildSandboxByAgentRuntime(namespace string, name string, ownerID string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
+func buildSandboxByAgentRuntime(namespace string, name string, ownerID string, ifm *Informers, routerSelector map[string]string, routerNamespace string, sessionNetworkPolicy *runtimev1alpha1.SandboxNetworkPolicy) (*sandboxv1alpha1.Sandbox, *sandboxEntry, *networkingv1.NetworkPolicy, error) {
 	agentRuntimeObj, err := ifm.AgentRuntimeLister.AgentRuntimes(namespace).Get(name)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, nil, api.ErrAgentRuntimeNotFound
+			return nil, nil, nil, api.ErrAgentRuntimeNotFound
 		}
-		return nil, nil, fmt.Errorf("failed to get agent runtime %s/%s: %w", namespace, name, err)
+		return nil, nil, nil, fmt.Errorf("failed to get agent runtime %s/%s: %w", namespace, name, err)
 	}
 
 	sessionID := uuid.New().String()
@@ -305,7 +316,11 @@ func buildSandboxByAgentRuntime(namespace string, name string, ownerID string, i
 		SessionID:   sessionID,
 		IdleTimeout: idleTimeout,
 	}
-	return sandbox, entry, nil
+	np, err := buildNetworkPolicy(sandboxName, namespace, effectiveNetworkPolicy(sessionNetworkPolicy, agentRuntimeObj.Spec.Template.NetworkPolicy), routerSelector, routerNamespace)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to build network policy: %w", err)
+	}
+	return sandbox, entry, np, nil
 }
 
 // buildCodeInterpreterEnvVars copies the template env vars and injects the
@@ -322,18 +337,58 @@ func buildCodeInterpreterEnvVars(templateEnv []corev1.EnvVar, authMode runtimev1
 	return envVars
 }
 
-func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, ownerID string, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+// buildWarmPoolObjects constructs the placeholder Sandbox and SandboxClaim for the
+// warm-pool path. It also logs a warning when a NetworkPolicy is configured, because
+// warm-pool pods do not carry SandboxNameLabelKey and enforcement cannot be applied.
+func buildWarmPoolObjects(namespace, sandboxName, sessionID, ownerID string, idleTimeout time.Duration, ci *runtimev1alpha1.CodeInterpreter, sessionNetworkPolicy *runtimev1alpha1.SandboxNetworkPolicy) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim) {
+	claim := buildSandboxClaimObject(&buildSandboxClaimParams{
+		namespace:           namespace,
+		name:                sandboxName,
+		sandboxTemplateName: ci.Name,
+		sessionID:           sessionID,
+		ownerID:             ownerID,
+		idleTimeout:         idleTimeout,
+		ownerReference: &metav1.OwnerReference{
+			APIVersion: runtimev1alpha1.CodeInterpreterGroupVersionKind.GroupVersion().String(),
+			Kind:       runtimev1alpha1.CodeInterpreterKind,
+			Name:       ci.Name,
+			UID:        ci.UID,
+		},
+	})
+	sb := &sandboxv1alpha1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      sandboxName,
+			Labels:    map[string]string{SessionIdLabelKey: sessionID},
+		},
+	}
+	if ci.Spec.MaxSessionDuration != nil {
+		shutdownTime := metav1.NewTime(time.Now().Add(ci.Spec.MaxSessionDuration.Duration))
+		sb.Spec.Lifecycle.ShutdownTime = &shutdownTime
+	}
+	// Warm-pool pods are pre-created and do not carry SandboxNameLabelKey, so a
+	// NetworkPolicy PodSelector would never match them. Skip NP creation entirely
+	// to avoid the illusion of enforcement. Future support requires agent-sandbox
+	// to propagate claim labels onto the bound pod (or a post-bind pod patch).
+	if effectiveNetworkPolicy(sessionNetworkPolicy, ci.Spec.Template.NetworkPolicy) != nil {
+		klog.Warningf("network policy configured for %s/%s but warm-pool pods do not carry %s: enforcement skipped for this session",
+			namespace, ci.Name, SandboxNameLabelKey)
+	}
+	return sb, claim
+}
+
+func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, ownerID string, informer *Informers, routerSelector map[string]string, routerNamespace string, sessionNetworkPolicy *runtimev1alpha1.SandboxNetworkPolicy) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *networkingv1.NetworkPolicy, *sandboxEntry, error) {
 	codeInterpreterObj, err := informer.CodeInterpreterLister.CodeInterpreters(namespace).Get(codeInterpreterName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, nil, nil, api.ErrCodeInterpreterNotFound
+			return nil, nil, nil, nil, api.ErrCodeInterpreterNotFound
 		}
-		return nil, nil, nil, fmt.Errorf("failed to get code interpreter %s/%s: %w", namespace, codeInterpreterName, err)
+		return nil, nil, nil, nil, fmt.Errorf("failed to get code interpreter %s/%s: %w", namespace, codeInterpreterName, err)
 	}
 
 	// Check public key available if authMode is picod
 	if codeInterpreterObj.Spec.AuthMode == runtimev1alpha1.AuthModePicoD && !IsPublicKeyCached() {
-		return nil, nil, nil, api.ErrPublicKeyMissing
+		return nil, nil, nil, nil, api.ErrPublicKeyMissing
 	}
 
 	sessionID := uuid.New().String()
@@ -363,35 +418,9 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 
 	if codeInterpreterObj.Spec.WarmPoolSize != nil && *codeInterpreterObj.Spec.WarmPoolSize > 0 {
-		sandboxClaim := buildSandboxClaimObject(&buildSandboxClaimParams{
-			namespace:           namespace,
-			name:                sandboxName,
-			sandboxTemplateName: codeInterpreterName,
-			sessionID:           sessionID,
-			ownerID:             ownerID,
-			idleTimeout:         idleTimeout,
-			ownerReference: &metav1.OwnerReference{
-				APIVersion: runtimev1alpha1.CodeInterpreterGroupVersionKind.GroupVersion().String(),
-				Kind:       runtimev1alpha1.CodeInterpreterKind,
-				Name:       codeInterpreterObj.Name,
-				UID:        codeInterpreterObj.UID,
-			},
-		})
-		simpleSandbox := &sandboxv1alpha1.Sandbox{
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: namespace,
-				Name:      sandboxName,
-				Labels: map[string]string{
-					SessionIdLabelKey: sessionID,
-				},
-			},
-		}
-		if codeInterpreterObj.Spec.MaxSessionDuration != nil {
-			shutdownTime := metav1.NewTime(time.Now().Add(codeInterpreterObj.Spec.MaxSessionDuration.Duration))
-			simpleSandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
-		}
 		sandboxEntry.Kind = types.SandboxClaimsKind
-		return simpleSandbox, sandboxClaim, sandboxEntry, nil
+		simpleSandbox, sandboxClaim := buildWarmPoolObjects(namespace, sandboxName, sessionID, ownerID, idleTimeout, codeInterpreterObj, sessionNetworkPolicy)
+		return simpleSandbox, sandboxClaim, nil, sandboxEntry, nil
 	}
 
 	// Normalize RuntimeClassName: if it's an empty string, set it to nil
@@ -434,5 +463,9 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		buildParams.ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration
 	}
 	sandbox := buildSandboxObject(buildParams)
-	return sandbox, nil, sandboxEntry, nil
+	np, err := buildNetworkPolicy(sandboxName, namespace, effectiveNetworkPolicy(sessionNetworkPolicy, codeInterpreterObj.Spec.Template.NetworkPolicy), routerSelector, routerNamespace)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to build network policy: %w", err)
+	}
+	return sandbox, nil, np, sandboxEntry, nil
 }

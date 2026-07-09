@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -59,7 +60,14 @@ func main() {
 		tlsCert          = flag.String("tls-cert", "", "Path to TLS certificate file")
 		tlsKey           = flag.String("tls-key", "", "Path to TLS key file")
 		tlsCA            = flag.String("tls-ca", "", "Path to TLS CA certificate file")
-		enableAuth       = flag.Bool("enable-auth", false, "Enable authorization")
+		enableAuth       = flag.Bool("enable-auth", false, "Enable Authentication")
+		routerSelector   = flag.String("router-selector", "app=agentcube-router",
+			"Pod label selector identifying the router pod, used for the mandatory "+
+				"router→sandbox ingress rule when a sandbox NetworkPolicy is configured. "+
+				"Format: comma-separated key=value pairs (e.g. app=agentcube-router,tier=proxy)")
+		routerNamespace = flag.String("router-namespace", "",
+			"Namespace the router runs in. Used to build a cross-namespace NamespaceSelector "+
+				"for the router→sandbox ingress rule. Defaults to the workloadmanager's own namespace.")
 	)
 
 	// Initialize klog flags
@@ -112,6 +120,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	sel := parseSelector(*routerSelector)
+	if len(sel) == 0 {
+		klog.Warningf("--router-selector %q parsed to an empty selector; falling back to default %v", *routerSelector, workloadmanager.DefaultRouterSelector)
+	}
+
 	// Create API server configuration
 	config := &workloadmanager.Config{
 		Port:             *port,
@@ -121,6 +134,8 @@ func main() {
 		TLSKey:           *tlsKey,
 		EnableAuth:       *enableAuth,
 		MTLSConfig:       tlsConfig,
+		RouterSelector:   sel,
+		RouterNamespace:  *routerNamespace,
 	}
 
 	// Create and initialize API server
@@ -156,32 +171,57 @@ func main() {
 	// Wait for signal or error
 	select {
 	case <-sigCh:
-		klog.Info("Received shutdown signal, shutting down gracefully...")
-
-		// Create a shutdown context with a 15-second deadline
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer shutdownCancel()
-
-		// 1. Stop accepting new requests and drain in-flight ones
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			klog.Errorf("server shutdown error: %v", err)
-		}
-
-		// 2. Cancel root context to stop background workers (GC, informers, controller manager)
-		cancel()
-
-		// 3. Wait for background workers to finish their current operations
-		server.WaitForBackgroundWorkers()
-
-		// 4. Close store connections after all workers have stopped
-		if err := server.CloseStore(); err != nil {
-			klog.Errorf("store close error: %v", err)
-		}
+		gracefulShutdown(cancel, server)
 	case err := <-errCh:
 		klog.Fatalf("Server error: %v", err)
 	}
 
 	klog.Info("Server stopped")
+}
+
+// gracefulShutdown drains in-flight requests, stops background workers, and closes
+// store connections in order, so nothing is torn down while still in use.
+func gracefulShutdown(cancel context.CancelFunc, server *workloadmanager.Server) {
+	klog.Info("Received shutdown signal, shutting down gracefully...")
+
+	// Create a shutdown context with a 15-second deadline
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer shutdownCancel()
+
+	// 1. Stop accepting new requests and drain in-flight ones
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		klog.Errorf("server shutdown error: %v", err)
+	}
+
+	// 2. Cancel root context to stop background workers (GC, informers, controller manager)
+	cancel()
+
+	// 3. Wait for background workers to finish their current operations
+	server.WaitForBackgroundWorkers()
+
+	// 4. Close store connections after all workers have stopped
+	if err := server.CloseStore(); err != nil {
+		klog.Errorf("store close error: %v", err)
+	}
+}
+
+// parseSelector parses a comma-separated "key=value" label selector string into a map.
+// Malformed pairs are silently skipped; callers should validate the resulting map is non-empty.
+func parseSelector(s string) map[string]string {
+	m := make(map[string]string)
+	for _, pair := range strings.Split(s, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(pair, "=")
+		if !ok || strings.TrimSpace(k) == "" {
+			klog.Warningf("--router-selector: skipping malformed pair %q (expected key=value)", pair)
+			continue
+		}
+		m[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	return m
 }
 
 func setupControllers(mgr ctrl.Manager, sandboxReconciler *workloadmanager.SandboxReconciler, codeInterpreterReconciler *workloadmanager.CodeInterpreterReconciler) error {

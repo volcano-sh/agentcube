@@ -1,0 +1,67 @@
+# Example: CodeInterpreter with NetworkPolicy enabled
+#
+# Set networkPolicy to a non-nil value to enforce isolation. A deny-all baseline
+# is created with automatic allow rules for router ingress and DNS egress.
+# Leave networkPolicy unset (nil) to disable enforcement entirely.
+#
+# Two examples are shown:
+#   1. Default enforcement — router ingress and DNS egress only
+#   2. Extra egress        — allow outbound to a specific CIDR/port
+
+---
+# 1. Default enforcement — simplest secure setup
+apiVersion: runtime.agentcube.volcano.sh/v1alpha1
+kind: CodeInterpreter
+metadata:
+  name: interpreter-restricted
+  namespace: default
+spec:
+  ports:
+    - pathPrefix: "/"
+      port: 8080
+      protocol: "HTTP"
+  template:
+    image: ghcr.io/volcano-sh/picod:latest
+    imagePullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+    networkPolicy: {}
+  sessionTimeout: "15m"
+  maxSessionDuration: "8h"
+
+---
+# 2. Extra egress — allow outbound to 10.0.0.0/8 on port 443
+apiVersion: runtime.agentcube.volcano.sh/v1alpha1
+kind: CodeInterpreter
+metadata:
+  name: interpreter-extra-egress
+  namespace: default
+spec:
+  ports:
+    - pathPrefix: "/"
+      port: 8080
+      protocol: "HTTP"
+  template:
+    image: ghcr.io/volcano-sh/picod:latest
+    imagePullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+    networkPolicy:
+      egress:
+        - cidrs:
+            - "10.0.0.0/8"
+          ports:
+            - protocol: TCP
+              port: 443
+  sessionTimeout: "15m"
+  maxSessionDuration: "8h"

@@ -243,11 +243,11 @@ func TestServerCreateSandbox(t *testing.T) {
 		deleteCalls++
 		return nil
 	})
-	patches.ApplyMethod(reflect.TypeOf((*K8sClient)(nil)), "GetSandboxPodIP", func(_ *K8sClient, _ context.Context, _, _, _ string) (string, error) {
+	patches.ApplyMethod(reflect.TypeOf((*K8sClient)(nil)), "GetSandboxPodInfo", func(_ *K8sClient, _ context.Context, _, _, _ string) (string, string, error) {
 		if cur.podIPErr != nil {
-			return "", cur.podIPErr
+			return "", "", cur.podIPErr
 		}
-		return "10.0.0.9", nil
+		return "10.0.0.9", "node-1", nil
 	})
 	patches.ApplyPrivateMethod(reflect.TypeOf(server), "waitForSandboxEntryPointsReady", func(_ *Server, _ context.Context, _ string, _ *sandboxEntry) error {
 		return cur.readyErr
@@ -386,11 +386,11 @@ func TestServerCreateSandboxClaimUsesAdoptedSandboxButStoresClaimName(t *testing
 	patches.ApplyFunc(deleteSandboxClaim, func(_ context.Context, _ dynamic.Interface, _, _ string) error {
 		return nil
 	})
-	patches.ApplyMethod(reflect.TypeOf((*K8sClient)(nil)), "GetSandboxPodIP", func(_ *K8sClient, _ context.Context, namespace, sandboxName, podName string) (string, error) {
+	patches.ApplyMethod(reflect.TypeOf((*K8sClient)(nil)), "GetSandboxPodInfo", func(_ *K8sClient, _ context.Context, namespace, sandboxName, podName string) (string, string, error) {
 		gotNamespace = namespace
 		gotSandboxName = sandboxName
 		gotPodName = podName
-		return "10.0.0.10", nil
+		return "10.0.0.10", "node-1", nil
 	})
 	patches.ApplyPrivateMethod(reflect.TypeOf(server), "waitForSandboxEntryPointsReady", func(_ *Server, _ context.Context, _ string, _ *sandboxEntry) error {
 		return nil
@@ -728,21 +728,23 @@ func makeSandbox(kind, ns, name string) (*sandboxv1alpha1.Sandbox, *sandboxEntry
 	}, entry
 }
 
+type testCaseHSC struct {
+	name              string
+	kind              string
+	body              string
+	buildErr          error
+	buildNotFound     bool
+	createErr         error
+	createResp        *types.CreateSandboxResponse
+	expectStatus      int
+	expectMessage     string
+	expectCreateCalls int
+}
+
 func TestHandleSandboxCreate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	tests := []struct {
-		name              string
-		kind              string
-		body              string
-		buildErr          error
-		buildNotFound     bool
-		createErr         error
-		createResp        *types.CreateSandboxResponse
-		expectStatus      int
-		expectMessage     string
-		expectCreateCalls int
-	}{
+	tests := []testCaseHSC{
 		{
 			name:          "invalid json",
 			kind:          types.AgentRuntimeKind,
@@ -836,10 +838,55 @@ func TestHandleSandboxCreate(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		tc := tt
+	// Patch ONCE at the outer level and read per-case state through a shared
+	// pointer. Re-patching the same function per-subtest on arm64 causes gomonkey
+	// to silently fail on the second apply, because PC-relative branch
+	// instructions don't recalculate correctly after a reset.
+	type fixture struct {
+		tc        *testCaseHSC
+		sb        *sandboxv1alpha1.Sandbox
+		entry     *sandboxEntry
+		claim     *extensionsv1alpha1.SandboxClaim
+		createObj int
+	}
+	var cur *fixture
+	fakeServer := newFakeServer()
+
+	patches := gomonkey.NewPatches()
+	defer patches.Reset()
+
+	patches.ApplyFunc(buildSandboxByAgentRuntime, func(_, _, _ string, _ *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
+		if cur.tc.kind != types.AgentRuntimeKind {
+			return nil, nil, errors.New("unexpected kind")
+		}
+		if cur.tc.buildErr != nil {
+			return nil, nil, cur.tc.buildErr
+		}
+		return cur.sb, cur.entry, nil
+	})
+	patches.ApplyFunc(buildSandboxByCodeInterpreter, func(_, _, _ string, _ *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+		if cur.tc.kind != types.CodeInterpreterKind {
+			return nil, nil, nil, errors.New("unexpected kind")
+		}
+		if cur.tc.buildErr != nil {
+			return nil, nil, nil, cur.tc.buildErr
+		}
+		return cur.sb, cur.claim, cur.entry, nil
+	})
+	patches.ApplyPrivateMethod(reflect.TypeOf(fakeServer), "createSandbox", func(_ *Server, _ context.Context, _ dynamic.Interface, _ *sandboxv1alpha1.Sandbox, _ *extensionsv1alpha1.SandboxClaim, _ *sandboxEntry, _ <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
+		cur.createObj++
+		if cur.tc.createErr != nil {
+			return nil, cur.tc.createErr
+		}
+		if cur.tc.createResp != nil {
+			return cur.tc.createResp, nil
+		}
+		return nil, nil
+	})
+
+	for i := range tests {
+		tc := &tests[i]
 		t.Run(tc.name, func(t *testing.T) {
-			fakeServer := newFakeServer()
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 
@@ -849,45 +896,11 @@ func TestHandleSandboxCreate(t *testing.T) {
 
 			sb, entry := makeSandbox(tc.kind, "ns", "sandbox-1")
 			claim := &extensionsv1alpha1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: sb.Name, Namespace: sb.Namespace}}
-
-			patches := gomonkey.NewPatches()
-			defer patches.Reset()
-
-			patches.ApplyFunc(buildSandboxByAgentRuntime, func(_, _, _ string, _ *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
-				if tc.kind != types.AgentRuntimeKind {
-					return nil, nil, errors.New("unexpected kind")
-				}
-				if tc.buildErr != nil {
-					return nil, nil, tc.buildErr
-				}
-				return sb, entry, nil
-			})
-
-			patches.ApplyFunc(buildSandboxByCodeInterpreter, func(_, _, _ string, _ *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
-				if tc.kind != types.CodeInterpreterKind {
-					return nil, nil, nil, errors.New("unexpected kind")
-				}
-				if tc.buildErr != nil {
-					return nil, nil, nil, tc.buildErr
-				}
-				return sb, claim, entry, nil
-			})
-
-			createCalls := 0
-			patches.ApplyPrivateMethod(reflect.TypeOf(fakeServer), "createSandbox", func(_ *Server, _ context.Context, _ dynamic.Interface, _ *sandboxv1alpha1.Sandbox, _ *extensionsv1alpha1.SandboxClaim, _ *sandboxEntry, _ <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
-				createCalls++
-				if tc.createErr != nil {
-					return nil, tc.createErr
-				}
-				if tc.createResp != nil {
-					return tc.createResp, nil
-				}
-				return nil, nil
-			})
+			cur = &fixture{tc: tc, sb: sb, entry: entry, claim: claim}
 
 			fakeServer.handleSandboxCreate(c, tc.kind)
 
-			require.Equal(t, tc.expectCreateCalls, createCalls, "createSandbox call count")
+			require.Equal(t, tc.expectCreateCalls, cur.createObj, "createSandbox call count")
 			require.Equal(t, tc.expectStatus, w.Code)
 
 			if tc.expectStatus != http.StatusOK {
@@ -1010,4 +1023,24 @@ func TestHandleSandboxCreate_IdentityErrors(t *testing.T) {
 			require.Equal(t, tt.expectMessage, errResp.Message)
 		})
 	}
+}
+
+// TestRecordStickyNode verifies the best-effort write-back guard clauses.
+// recordStickyNode now runs the patch in a goroutine (best-effort async), so
+// these tests verify that the guard clauses prevent a goroutine from being
+// spawned when preconditions are not met.
+func TestRecordStickyNode(t *testing.T) {
+	t.Run("no-op when StickyWorkloadName is empty", func(_ *testing.T) {
+		server := &Server{k8sClient: &K8sClient{}}
+		entry := &sandboxEntry{StickyWorkloadName: "", StickyWorkloadKind: runtimev1alpha1.AgentRuntimeKind}
+		// Must not panic; the guard clause prevents calling PatchWorkloadLastNode.
+		server.recordStickyNode("ns", entry, "node-1")
+	})
+
+	t.Run("no-op when nodeName is empty", func(_ *testing.T) {
+		server := &Server{k8sClient: &K8sClient{}}
+		entry := &sandboxEntry{StickyWorkloadName: "ar-1", StickyWorkloadKind: runtimev1alpha1.AgentRuntimeKind}
+		// Must not panic; the guard clause prevents calling PatchWorkloadLastNode.
+		server.recordStickyNode("ns", entry, "")
+	})
 }

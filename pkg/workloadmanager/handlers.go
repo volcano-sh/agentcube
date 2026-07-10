@@ -425,12 +425,12 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		sandboxPodName = podName
 	}
 
-	podIP, err := s.k8sClient.GetSandboxPodIP(ctx, createdSandbox.Namespace, sandboxNameForPod, sandboxPodName)
+	podIP, nodeName, err := s.k8sClient.GetSandboxPodInfo(ctx, createdSandbox.Namespace, sandboxNameForPod, sandboxPodName)
 	if err != nil {
 		if isContextError(err) {
 			return nil, err
 		}
-		return nil, api.NewInternalError(fmt.Errorf("failed to get sandbox %s/%s pod IP: %w", createdSandbox.Namespace, sandboxNameForPod, err))
+		return nil, api.NewInternalError(fmt.Errorf("failed to get sandbox %s/%s pod info: %w", createdSandbox.Namespace, sandboxNameForPod, err))
 	}
 	if err := s.waitForSandboxEntryPointsReady(ctx, podIP, sandboxEntry); err != nil {
 		if isContextError(err) {
@@ -464,9 +464,47 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	}
 
 	needRollbackSandbox = false
+
+	// Only record the node after the store update succeeds, so that a rollback
+	// (which deletes the sandbox) does not race with a goroutine that has already
+	// recorded a node for a session that was never fully established.
+	s.recordStickyNode(createdSandbox.Namespace, sandboxEntry, nodeName)
 	klog.V(2).Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
 		createdSandbox.Name, createdSandbox.Kind, sandboxEntry.SessionID)
 	return response, nil
+}
+
+// recordStickyNode records the scheduled node on the owning workload so the next
+// session prefers the same node. Best-effort: a failure here must not fail the
+// create, since the session is already usable. The patch runs in a detached
+// goroutine with its own short timeout so that a slow API server or a client
+// disconnect does not delay the sandbox creation response.
+func (s *Server) recordStickyNode(namespace string, sandboxEntry *sandboxEntry, nodeName string) {
+	if sandboxEntry.StickyWorkloadName == "" || nodeName == "" {
+		return
+	}
+	kind := sandboxEntry.StickyWorkloadKind
+	name := sandboxEntry.StickyWorkloadName
+
+	// Hold the shutdown lock while checking the flag and adding to the wait
+	// group. This guarantees that Shutdown() cannot observe a false flag and
+	// then begin wg.Wait between the check and the wg.Add.
+	s.shutdownMu.Lock()
+	if s.shuttingDown {
+		s.shutdownMu.Unlock()
+		return
+	}
+	s.wg.Add(1)
+	s.shutdownMu.Unlock()
+
+	go func() {
+		defer s.wg.Done()
+		patchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.k8sClient.PatchWorkloadLastNode(patchCtx, namespace, kind, name, nodeName); err != nil {
+			klog.Warningf("failed to patch %s %s/%s last-node=%s: %v", kind, namespace, name, nodeName, err)
+		}
+	}()
 }
 
 // rollbackSandboxCreation deletes the sandbox (or sandbox claim) and its store

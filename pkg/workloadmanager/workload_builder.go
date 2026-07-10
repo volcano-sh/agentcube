@@ -274,6 +274,14 @@ func buildSandboxByAgentRuntime(namespace string, name string, ownerID string, i
 		podSpec.RuntimeClassName = nil
 	}
 
+	// Node stickiness: if enabled and a previous session recorded a node, prefer it (soft).
+	stickinessOn := nodeStickinessEnabled(agentRuntimeObj.Spec.NodeStickiness)
+	if stickinessOn {
+		if lastNode := agentRuntimeObj.Annotations[LastNodeAnnotationKey]; lastNode != "" {
+			injectPreferredNodeAffinity(podSpec, lastNode)
+		}
+	}
+
 	buildParams := &buildSandboxParams{
 		namespace:    namespace,
 		workloadName: name,
@@ -305,7 +313,55 @@ func buildSandboxByAgentRuntime(namespace string, name string, ownerID string, i
 		SessionID:   sessionID,
 		IdleTimeout: idleTimeout,
 	}
+	if stickinessOn {
+		entry.StickyWorkloadName = name
+		entry.StickyWorkloadKind = runtimev1alpha1.AgentRuntimeKind
+	}
 	return sandbox, entry, nil
+}
+
+// nodeStickinessEnabled reports whether soft node-affinity stickiness is turned on.
+// A nil spec (field omitted) means disabled.
+func nodeStickinessEnabled(spec *runtimev1alpha1.NodeStickinessSpec) bool {
+	return spec != nil && spec.Enabled
+}
+
+// injectPreferredNodeAffinity appends a soft (preferred) node-affinity term that
+// favors scheduling onto nodeName, without overwriting any affinity the user
+// already defined on the pod spec. It is a no-op when nodeName is empty.
+//
+// The term is always appended, even when an equivalent hostname preference
+// already exists. The Kubernetes scheduler sums the weights of all matching
+// PreferredDuringScheduling terms, so a weight-100 stickiness term on top of a
+// user-defined weight-n term gives the sticky node a total score of 100+n.
+// Weight values must stay in the 1–100 range (API validation), so appending is
+// the only correct way to combine scores without producing an invalid spec.
+func injectPreferredNodeAffinity(podSpec *corev1.PodSpec, nodeName string) {
+	if nodeName == "" {
+		return
+	}
+	term := corev1.PreferredSchedulingTerm{
+		Weight: 100,
+		Preference: corev1.NodeSelectorTerm{
+			MatchExpressions: []corev1.NodeSelectorRequirement{
+				{
+					Key:      corev1.LabelHostname,
+					Operator: corev1.NodeSelectorOpIn,
+					Values:   []string{nodeName},
+				},
+			},
+		},
+	}
+	if podSpec.Affinity == nil {
+		podSpec.Affinity = &corev1.Affinity{}
+	}
+	if podSpec.Affinity.NodeAffinity == nil {
+		podSpec.Affinity.NodeAffinity = &corev1.NodeAffinity{}
+	}
+	podSpec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution = append(
+		podSpec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution,
+		term,
+	)
 }
 
 // buildCodeInterpreterEnvVars copies the template env vars and injects the
@@ -416,6 +472,15 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				Resources:       codeInterpreterObj.Spec.Template.Resources,
 			},
 		},
+	}
+
+	// Node stickiness: if enabled and a previous session recorded a node, prefer it (soft).
+	if nodeStickinessEnabled(codeInterpreterObj.Spec.NodeStickiness) {
+		if lastNode := codeInterpreterObj.Annotations[LastNodeAnnotationKey]; lastNode != "" {
+			injectPreferredNodeAffinity(&podSpec, lastNode)
+		}
+		sandboxEntry.StickyWorkloadName = codeInterpreterName
+		sandboxEntry.StickyWorkloadKind = runtimev1alpha1.CodeInterpreterKind
 	}
 
 	buildParams := &buildSandboxParams{

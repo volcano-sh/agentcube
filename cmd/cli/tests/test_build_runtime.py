@@ -33,7 +33,7 @@ class TestBuildRuntime:
         mock_docker = MockDockerSvc.return_value
         mock_docker.check_docker_available.return_value = True
         mock_docker.build_image.return_value = {
-            "image_name": "test-agent:0.0.1",
+            "image_name": "test-agent:0.0.2",
             "image_id": "1234567890ab",
             "image_size": "50MB",
             "build_time": "5s",
@@ -57,14 +57,14 @@ class TestBuildRuntime:
             result = runtime.build(ws)
 
             assert result["build_mode"] == "local"
-            assert result["image_name"] == "test-agent:0.0.1"
+            assert result["image_name"] == "test-agent:0.0.2"
             assert result["image_size"] == "50MB"
 
             # Check that metadata was updated with build details
             metadata = runtime.metadata_service.load_metadata(ws)
             assert metadata.image is not None
             assert metadata.image["build_mode"] == "local"
-            assert metadata.image["repository_url"] == "test-agent:0.0.1"
+            assert metadata.image["repository_url"] == "test-agent:0.0.2"
 
     def test_build_cloud_success(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -83,12 +83,12 @@ class TestBuildRuntime:
             result = runtime.build(ws, cloud_provider="huawei")
 
             assert result["build_mode"] == "cloud"
-            assert result["image_name"] == "swr.cn-east-3.myhuaweicloud.com/agentcube/test-agent"
+            assert result["image_name"] == "swr.cn-east-3.myhuaweicloud.com/agentcube/test-agent:0.0.3"
             assert result["image_tag"] == "0.0.3"
 
             # Check metadata got updated with cloud build mode
             metadata = runtime.metadata_service.load_metadata(ws)
             assert metadata.image is not None
             assert metadata.image["build_mode"] == "cloud"
-            assert metadata.image["repository_url"] == "swr.cn-east-3.myhuaweicloud.com/agentcube/test-agent"
+            assert metadata.image["repository_url"] == "swr.cn-east-3.myhuaweicloud.com/agentcube/test-agent:0.0.3"
             assert metadata.image["tag"] == "0.0.3"

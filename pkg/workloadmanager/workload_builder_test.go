@@ -349,6 +349,332 @@ func TestBuildCodeInterpreterEnvVars(t *testing.T) {
 	}
 }
 
+func TestInjectPreferredNodeAffinity(t *testing.T) {
+	hostnameTerm := func(node string) corev1.PreferredSchedulingTerm {
+		return corev1.PreferredSchedulingTerm{
+			Weight: 100,
+			Preference: corev1.NodeSelectorTerm{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      corev1.LabelHostname,
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{node},
+					},
+				},
+			},
+		}
+	}
+
+	t.Run("nil affinity is initialized", func(t *testing.T) {
+		podSpec := &corev1.PodSpec{}
+		injectPreferredNodeAffinity(podSpec, "node-a")
+
+		preferred := podSpec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution
+		if len(preferred) != 1 {
+			t.Fatalf("expected 1 preferred term, got %d", len(preferred))
+		}
+		assert.Equal(t, hostnameTerm("node-a"), preferred[0])
+	})
+
+	t.Run("appends without overwriting existing terms", func(t *testing.T) {
+		existing := corev1.PreferredSchedulingTerm{
+			Weight: 10,
+			Preference: corev1.NodeSelectorTerm{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{Key: "zone", Operator: corev1.NodeSelectorOpIn, Values: []string{"z1"}},
+				},
+			},
+		}
+		podSpec := &corev1.PodSpec{
+			Affinity: &corev1.Affinity{
+				NodeAffinity: &corev1.NodeAffinity{
+					PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{existing},
+				},
+			},
+		}
+		injectPreferredNodeAffinity(podSpec, "node-b")
+
+		preferred := podSpec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution
+		if len(preferred) != 2 {
+			t.Fatalf("expected 2 preferred terms, got %d", len(preferred))
+		}
+		assert.Equal(t, existing, preferred[0], "existing term must be preserved")
+		assert.Equal(t, hostnameTerm("node-b"), preferred[1])
+	})
+
+	t.Run("preserves existing required affinity and pod affinity", func(t *testing.T) {
+		required := &corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{
+				{MatchExpressions: []corev1.NodeSelectorRequirement{
+					{Key: "disk", Operator: corev1.NodeSelectorOpIn, Values: []string{"ssd"}},
+				}},
+			},
+		}
+		podSpec := &corev1.PodSpec{
+			Affinity: &corev1.Affinity{
+				NodeAffinity: &corev1.NodeAffinity{
+					RequiredDuringSchedulingIgnoredDuringExecution: required,
+				},
+				PodAffinity: &corev1.PodAffinity{},
+			},
+		}
+		injectPreferredNodeAffinity(podSpec, "node-c")
+
+		assert.Equal(t, required, podSpec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution)
+		assert.NotNil(t, podSpec.Affinity.PodAffinity)
+		assert.Len(t, podSpec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution, 1)
+	})
+
+	t.Run("skips when an equivalent standalone hostname preference exists", func(t *testing.T) {
+		podSpec := &corev1.PodSpec{
+			Affinity: &corev1.Affinity{
+				NodeAffinity: &corev1.NodeAffinity{
+					PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{
+						hostnameTerm("node-d"),
+					},
+				},
+			},
+		}
+		injectPreferredNodeAffinity(podSpec, "node-d")
+
+		preferred := podSpec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution
+		assert.Len(t, preferred, 1, "duplicate hostname preference must not be appended")
+	})
+
+	t.Run("still injects when hostname term carries extra match expressions", func(t *testing.T) {
+		// A NodeSelectorTerm ANDs its expressions, so this term only matches
+		// node-e when it is also in zone z1 — strictly more restrictive than the
+		// soft hostname term we inject, so injection must NOT be suppressed.
+		restrictive := corev1.PreferredSchedulingTerm{
+			Weight: 100,
+			Preference: corev1.NodeSelectorTerm{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{Key: corev1.LabelHostname, Operator: corev1.NodeSelectorOpIn, Values: []string{"node-e"}},
+					{Key: "zone", Operator: corev1.NodeSelectorOpIn, Values: []string{"z1"}},
+				},
+			},
+		}
+		podSpec := &corev1.PodSpec{
+			Affinity: &corev1.Affinity{
+				NodeAffinity: &corev1.NodeAffinity{
+					PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{restrictive},
+				},
+			},
+		}
+		injectPreferredNodeAffinity(podSpec, "node-e")
+
+		preferred := podSpec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution
+		if len(preferred) != 2 {
+			t.Fatalf("expected 2 preferred terms, got %d", len(preferred))
+		}
+		assert.Equal(t, restrictive, preferred[0], "restrictive term must be preserved")
+		assert.Equal(t, hostnameTerm("node-e"), preferred[1])
+	})
+
+	t.Run("still injects when hostname term carries match fields", func(t *testing.T) {
+		withFields := corev1.PreferredSchedulingTerm{
+			Weight: 100,
+			Preference: corev1.NodeSelectorTerm{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{Key: corev1.LabelHostname, Operator: corev1.NodeSelectorOpIn, Values: []string{"node-f"}},
+				},
+				MatchFields: []corev1.NodeSelectorRequirement{
+					{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{"node-f"}},
+				},
+			},
+		}
+		podSpec := &corev1.PodSpec{
+			Affinity: &corev1.Affinity{
+				NodeAffinity: &corev1.NodeAffinity{
+					PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{withFields},
+				},
+			},
+		}
+		injectPreferredNodeAffinity(podSpec, "node-f")
+
+		preferred := podSpec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution
+		assert.Len(t, preferred, 2, "term with match fields is more restrictive; injection must proceed")
+	})
+
+	t.Run("no-op when nodeName is empty", func(t *testing.T) {
+		podSpec := &corev1.PodSpec{}
+		injectPreferredNodeAffinity(podSpec, "")
+		assert.Nil(t, podSpec.Affinity, "affinity must remain nil when nodeName is empty")
+	})
+
+	t.Run("still injects when hostname expression uses different key", func(t *testing.T) {
+		// A term with "zone" In [...] is not a hostname preference, so injection must proceed.
+		zoneTerm := corev1.PreferredSchedulingTerm{
+			Weight: 100,
+			Preference: corev1.NodeSelectorTerm{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{Key: "zone", Operator: corev1.NodeSelectorOpIn, Values: []string{"node-g"}},
+				},
+			},
+		}
+		podSpec := &corev1.PodSpec{
+			Affinity: &corev1.Affinity{
+				NodeAffinity: &corev1.NodeAffinity{
+					PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{zoneTerm},
+				},
+			},
+		}
+		injectPreferredNodeAffinity(podSpec, "node-g")
+		preferred := podSpec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution
+		assert.Len(t, preferred, 2, "non-hostname key must not suppress injection")
+	})
+
+	t.Run("still injects when hostname expression uses different operator", func(t *testing.T) {
+		// A term with "hostname NotIn [...]" is not a soft preference for the same node.
+		notInTerm := corev1.PreferredSchedulingTerm{
+			Weight: 100,
+			Preference: corev1.NodeSelectorTerm{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{Key: corev1.LabelHostname, Operator: corev1.NodeSelectorOpNotIn, Values: []string{"node-h"}},
+				},
+			},
+		}
+		podSpec := &corev1.PodSpec{
+			Affinity: &corev1.Affinity{
+				NodeAffinity: &corev1.NodeAffinity{
+					PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{notInTerm},
+				},
+			},
+		}
+		injectPreferredNodeAffinity(podSpec, "node-h")
+		preferred := podSpec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution
+		assert.Len(t, preferred, 2, "NotIn operator must not suppress injection")
+	})
+
+	t.Run("still injects when hostname preference exists for a different node", func(t *testing.T) {
+		// A hostname In preference for node-i must not suppress injection for node-j.
+		otherTerm := corev1.PreferredSchedulingTerm{
+			Weight: 100,
+			Preference: corev1.NodeSelectorTerm{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{Key: corev1.LabelHostname, Operator: corev1.NodeSelectorOpIn, Values: []string{"node-i"}},
+				},
+			},
+		}
+		podSpec := &corev1.PodSpec{
+			Affinity: &corev1.Affinity{
+				NodeAffinity: &corev1.NodeAffinity{
+					PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{otherTerm},
+				},
+			},
+		}
+		injectPreferredNodeAffinity(podSpec, "node-j")
+		preferred := podSpec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution
+		assert.Len(t, preferred, 2, "hostname preference for a different node must not suppress injection")
+	})
+
+	t.Run("still injects when hostname preference contains multiple values", func(t *testing.T) {
+		// hostname In [node-k, node-l] is not an exclusive preference for node-k.
+		multiTerm := corev1.PreferredSchedulingTerm{
+			Weight: 100,
+			Preference: corev1.NodeSelectorTerm{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{Key: corev1.LabelHostname, Operator: corev1.NodeSelectorOpIn, Values: []string{"node-k", "node-l"}},
+				},
+			},
+		}
+		podSpec := &corev1.PodSpec{
+			Affinity: &corev1.Affinity{
+				NodeAffinity: &corev1.NodeAffinity{
+					PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{multiTerm},
+				},
+			},
+		}
+		injectPreferredNodeAffinity(podSpec, "node-k")
+		preferred := podSpec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution
+		assert.Len(t, preferred, 2, "multi-value hostname preference must not suppress injection")
+	})
+}
+
+func TestBuildSandboxByAgentRuntime_NodeStickiness(t *testing.T) {
+	newIfm := func(ar *runtimev1alpha1.AgentRuntime) *Informers {
+		fakeClient := cubefake.NewSimpleClientset(ar)
+		factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
+		agentRuntimeInformer := factory.Runtime().V1alpha1().AgentRuntimes()
+		if err := agentRuntimeInformer.Informer().GetStore().Add(ar); err != nil {
+			t.Fatalf("failed to add agent runtime to informer store: %v", err)
+		}
+		return &Informers{
+			AgentRuntimeLister:   agentRuntimeInformer.Lister(),
+			AgentRuntimeInformer: agentRuntimeInformer.Informer(),
+			informerFactory:      newFactory(),
+			cubeInformerFactory:  factory,
+		}
+	}
+
+	baseSpec := runtimev1alpha1.AgentRuntimeSpec{
+		Template: &runtimev1alpha1.SandboxTemplate{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "main", Image: "nginx"}},
+			},
+		},
+	}
+	enabledSpec := func() runtimev1alpha1.AgentRuntimeSpec {
+		s := baseSpec
+		s.NodeStickiness = &runtimev1alpha1.NodeStickinessSpec{Enabled: true}
+		return s
+	}
+
+	t.Run("disabled by default does not inject affinity or set sticky fields", func(t *testing.T) {
+		ar := &runtimev1alpha1.AgentRuntime{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace:   testNamespace,
+				Name:        testAgentRuntimeName,
+				Annotations: map[string]string{LastNodeAnnotationKey: "sticky-node"},
+			},
+			Spec: baseSpec,
+		}
+		sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", newIfm(ar))
+		assert.NoError(t, err)
+		assert.Nil(t, sandbox.Spec.PodTemplate.Spec.Affinity, "affinity must not be injected when stickiness is off")
+		assert.Empty(t, entry.StickyWorkloadName, "write-back must be disabled when stickiness is off")
+	})
+
+	t.Run("enabled with no annotation sets sticky fields but injects no affinity", func(t *testing.T) {
+		ar := &runtimev1alpha1.AgentRuntime{
+			ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: testAgentRuntimeName},
+			Spec:       enabledSpec(),
+		}
+		sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", newIfm(ar))
+		assert.NoError(t, err)
+		assert.Nil(t, sandbox.Spec.PodTemplate.Spec.Affinity)
+		assert.Equal(t, testAgentRuntimeName, entry.StickyWorkloadName)
+		assert.Equal(t, runtimev1alpha1.AgentRuntimeKind, entry.StickyWorkloadKind)
+	})
+
+	t.Run("enabled with annotation injects preferred hostname affinity", func(t *testing.T) {
+		ar := &runtimev1alpha1.AgentRuntime{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace:   testNamespace,
+				Name:        testAgentRuntimeName,
+				Annotations: map[string]string{LastNodeAnnotationKey: "sticky-node"},
+			},
+			Spec: enabledSpec(),
+		}
+		sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", newIfm(ar))
+		assert.NoError(t, err)
+		assert.Equal(t, testAgentRuntimeName, entry.StickyWorkloadName)
+
+		affinity := sandbox.Spec.PodTemplate.Spec.Affinity
+		if affinity == nil || affinity.NodeAffinity == nil {
+			t.Fatal("expected node affinity to be injected")
+		}
+		preferred := affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution
+		if len(preferred) != 1 {
+			t.Fatalf("expected 1 preferred term, got %d", len(preferred))
+		}
+		expr := preferred[0].Preference.MatchExpressions
+		if len(expr) != 1 || expr[0].Key != corev1.LabelHostname || expr[0].Values[0] != "sticky-node" {
+			t.Errorf("unexpected match expression: %+v", expr)
+		}
+	})
+}
+
 func TestBuildSandboxByAgentRuntime_NotFound(t *testing.T) {
 	fakeClient := cubefake.NewSimpleClientset()
 	factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
@@ -684,6 +1010,110 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 		t.Fatalf("expected 1 owner reference, got %d", len(claim.OwnerReferences))
 	}
 	assertOwnerReference(t, claim.OwnerReferences[0])
+}
+
+func TestBuildSandboxByCodeInterpreter_NodeStickiness(t *testing.T) {
+	const ciName = "ci-sticky"
+	newIfm := func(ci *runtimev1alpha1.CodeInterpreter) *Informers {
+		fakeClient := cubefake.NewSimpleClientset(ci)
+		factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
+		codeInterpreterInformer := factory.Runtime().V1alpha1().CodeInterpreters()
+		if err := codeInterpreterInformer.Informer().GetStore().Add(ci); err != nil {
+			t.Fatalf("failed to add code interpreter to informer store: %v", err)
+		}
+		return &Informers{
+			CodeInterpreterLister:   codeInterpreterInformer.Lister(),
+			CodeInterpreterInformer: codeInterpreterInformer.Informer(),
+			informerFactory:         newFactory(),
+			cubeInformerFactory:     factory,
+		}
+	}
+
+	baseSpec := runtimev1alpha1.CodeInterpreterSpec{
+		AuthMode: runtimev1alpha1.AuthModeNone,
+		Template: &runtimev1alpha1.CodeInterpreterSandboxTemplate{Image: "my-ci-image:latest"},
+	}
+	enabledSpec := func() runtimev1alpha1.CodeInterpreterSpec {
+		s := baseSpec
+		s.NodeStickiness = &runtimev1alpha1.NodeStickinessSpec{Enabled: true}
+		return s
+	}
+
+	t.Run("disabled by default does not inject affinity or set sticky fields", func(t *testing.T) {
+		ci := &runtimev1alpha1.CodeInterpreter{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace:   testNamespace,
+				Name:        ciName,
+				Annotations: map[string]string{LastNodeAnnotationKey: "sticky-node"},
+			},
+			Spec: baseSpec,
+		}
+		sandbox, _, entry, err := buildSandboxByCodeInterpreter(testNamespace, ciName, "", newIfm(ci))
+		assert.NoError(t, err)
+		assert.Nil(t, sandbox.Spec.PodTemplate.Spec.Affinity, "affinity must not be injected when stickiness is off")
+		assert.Empty(t, entry.StickyWorkloadName, "write-back must be disabled when stickiness is off")
+	})
+
+	t.Run("enabled with no annotation sets sticky fields but injects no affinity", func(t *testing.T) {
+		ci := &runtimev1alpha1.CodeInterpreter{
+			ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: ciName},
+			Spec:       enabledSpec(),
+		}
+		sandbox, _, entry, err := buildSandboxByCodeInterpreter(testNamespace, ciName, "", newIfm(ci))
+		assert.NoError(t, err)
+		assert.Nil(t, sandbox.Spec.PodTemplate.Spec.Affinity)
+		assert.Equal(t, ciName, entry.StickyWorkloadName)
+		assert.Equal(t, runtimev1alpha1.CodeInterpreterKind, entry.StickyWorkloadKind)
+	})
+
+	t.Run("enabled with annotation injects preferred hostname affinity", func(t *testing.T) {
+		ci := &runtimev1alpha1.CodeInterpreter{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace:   testNamespace,
+				Name:        ciName,
+				Annotations: map[string]string{LastNodeAnnotationKey: "sticky-node"},
+			},
+			Spec: enabledSpec(),
+		}
+		sandbox, _, entry, err := buildSandboxByCodeInterpreter(testNamespace, ciName, "", newIfm(ci))
+		assert.NoError(t, err)
+		assert.Equal(t, ciName, entry.StickyWorkloadName)
+		assert.Equal(t, runtimev1alpha1.CodeInterpreterKind, entry.StickyWorkloadKind)
+
+		affinity := sandbox.Spec.PodTemplate.Spec.Affinity
+		if affinity == nil || affinity.NodeAffinity == nil {
+			t.Fatal("expected node affinity to be injected")
+		}
+		preferred := affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution
+		if len(preferred) != 1 {
+			t.Fatalf("expected 1 preferred term, got %d", len(preferred))
+		}
+		expr := preferred[0].Preference.MatchExpressions
+		if len(expr) != 1 || expr[0].Key != corev1.LabelHostname || expr[0].Values[0] != "sticky-node" {
+			t.Errorf("unexpected match expression: %+v", expr)
+		}
+	})
+
+	t.Run("warm pool path does not set sticky fields even when enabled", func(t *testing.T) {
+		ci := &runtimev1alpha1.CodeInterpreter{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace:   testNamespace,
+				Name:        ciName,
+				Annotations: map[string]string{LastNodeAnnotationKey: "sticky-node"},
+			},
+			Spec: runtimev1alpha1.CodeInterpreterSpec{
+				AuthMode:       runtimev1alpha1.AuthModeNone,
+				WarmPoolSize:   ptr.To(int32(3)),
+				Template:       &runtimev1alpha1.CodeInterpreterSandboxTemplate{Image: "my-ci-image:latest"},
+				NodeStickiness: &runtimev1alpha1.NodeStickinessSpec{Enabled: true},
+			},
+		}
+		sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, ciName, "", newIfm(ci))
+		assert.NoError(t, err)
+		assert.NotNil(t, claim, "warm pool path should return a claim")
+		assert.Nil(t, sandbox.Spec.PodTemplate.Spec.Affinity, "warm pool sandbox has no inline pod spec to attach affinity")
+		assert.Empty(t, entry.StickyWorkloadName, "warm pool path cannot influence scheduling, so no write-back")
+	})
 }
 
 func TestBuildSandboxObject_OwnershipLabels(t *testing.T) {

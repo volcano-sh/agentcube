@@ -65,6 +65,19 @@ spec:
                   After this duration, the session will be terminated regardless of activity, to
                   prevent long-lived sandboxes from accumulating unbounded state.
                 type: string
+              nodeStickiness:
+                description: |-
+                  NodeStickiness configures soft node-affinity stickiness across sessions.
+                  Disabled unless explicitly enabled. Has no effect when WarmPoolSize > 0,
+                  since warm-pool sandboxes are pre-scheduled before a session claims them.
+                properties:
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled turns on node stickiness for this workload's sessions.
+                      Defaults to false.
+                    type: boolean
+                type: object
               ports:
                 description: |-
                   Ports is a list of ports that the code interpreter runtime will expose.

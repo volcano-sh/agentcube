@@ -36,7 +36,7 @@ rules:
     verbs: ["update"]
   - apiGroups: ["runtime.agentcube.volcano.sh"]
     resources: ["agentruntimes"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: ["runtime.agentcube.volcano.sh"]
     resources: ["agentruntimes/status"]
     verbs: ["update", "patch"]

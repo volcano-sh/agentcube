@@ -245,23 +245,9 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		return nil, err
 	}
 
-	// Use NewTimer so we can stop it explicitly when another branch wins,
-	// preventing the runtime from retaining the timer until it fires.
-	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
-
-	var createdSandbox *sandboxv1alpha1.Sandbox
-	select {
-	case result := <-resultChan:
-		timer.Stop()
-		createdSandbox = result.Sandbox
-		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
-	case <-ctx.Done():
-		timer.Stop()
-		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
-		return nil, ctx.Err()
-	case <-timer.C:
-		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
-		return nil, errSandboxCreationTimeout
+	createdSandbox, err := waitForSandboxReady(ctx, resultChan, sandbox.Namespace, sandbox.Name)
+	if err != nil {
+		return nil, err
 	}
 
 	// agent-sandbox create pod with same name as sandbox if no warmpool is used
@@ -298,17 +284,65 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		OwnerID:     sandboxEntry.OwnerID,
 	}
 
-	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {
-		if isContextError(err) {
-			return nil, err
+	if updateErr := s.updateSandboxWithRetry(ctx, storeCacheInfo); updateErr != nil {
+		if isContextError(updateErr) {
+			return nil, updateErr
 		}
-		return nil, api.NewInternalError(fmt.Errorf("update store cache failed: %w", err))
+		// A permanent store update failure means the client will not receive the SessionID.
+		// We deliberately leave needRollbackSandbox as true so the deferred rollback
+		// deletes the K8s pod, preventing an inaccessible "zombie pod" resource leak.
+		return nil, api.NewInternalError(fmt.Errorf("update store cache failed after retries: %w", updateErr))
 	}
 
 	needRollbackSandbox = false
+
 	klog.V(2).Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
 		createdSandbox.Name, createdSandbox.Kind, sandboxEntry.SessionID)
 	return response, nil
+}
+
+// updateSandboxWithRetry updates the sandbox store cache with retries for transient failures.
+func (s *Server) updateSandboxWithRetry(ctx context.Context, storeCacheInfo *types.SandboxInfo) error {
+	var updateErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			timer := time.NewTimer(500 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+		updateErr = s.storeClient.UpdateSandbox(ctx, storeCacheInfo)
+		if updateErr == nil {
+			return nil
+		}
+		if isContextError(updateErr) {
+			return updateErr
+		}
+	}
+	return updateErr
+}
+
+// waitForSandboxReady waits for the sandbox to become ready or for the context/timer to expire.
+func waitForSandboxReady(ctx context.Context, resultChan <-chan SandboxStatusUpdate, namespace, name string) (*sandboxv1alpha1.Sandbox, error) {
+	// Use NewTimer so we can stop it explicitly when another branch wins,
+	// preventing the runtime from retaining the timer until it fires.
+	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
+	defer timer.Stop()
+
+	select {
+	case result := <-resultChan:
+		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", namespace, name)
+		return result.Sandbox, nil
+	case <-ctx.Done():
+		klog.Warningf("sandbox %s/%s wait canceled: %v", namespace, name, ctx.Err())
+		return nil, ctx.Err()
+	case <-timer.C:
+		klog.Warningf("sandbox %s/%s create timed out", namespace, name)
+		return nil, errSandboxCreationTimeout
+	}
 }
 
 // rollbackSandboxCreation deletes the sandbox (or sandbox claim) and its store

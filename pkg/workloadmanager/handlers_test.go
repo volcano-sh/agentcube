@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,10 +45,12 @@ import (
 
 type fakeStore struct {
 	store.Store
-	storeErr    error
-	updateErr   error
-	storeCalls  int
-	updateCalls int
+	storeErr         error
+	updateErr        error
+	updateErrs       []error
+	storeCalls       int
+	updateCalls      int
+	deleteStoreCalls int32
 }
 
 func (f *fakeStore) Ping(_ context.Context) error { return nil }
@@ -59,10 +62,20 @@ func (f *fakeStore) StoreSandbox(_ context.Context, _ *types.SandboxInfo) error 
 	return f.storeErr
 }
 func (f *fakeStore) UpdateSandbox(_ context.Context, _ *types.SandboxInfo) error {
+	idx := f.updateCalls
 	f.updateCalls++
+	if f.updateErrs != nil {
+		if idx < len(f.updateErrs) {
+			return f.updateErrs[idx]
+		}
+		return f.updateErrs[len(f.updateErrs)-1]
+	}
 	return f.updateErr
 }
-func (f *fakeStore) DeleteSandboxBySessionID(_ context.Context, _ string) error { return nil }
+func (f *fakeStore) DeleteSandboxBySessionID(_ context.Context, _ string) error {
+	atomic.AddInt32(&f.deleteStoreCalls, 1)
+	return nil
+}
 func (f *fakeStore) ListExpiredSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxInfo, error) {
 	return nil, nil
 }
@@ -102,20 +115,22 @@ func makeEntry() *sandboxEntry {
 
 func TestServerCreateSandbox(t *testing.T) {
 	type testCase struct {
-		name              string
-		sandboxClaim      bool
-		storeErr          error
-		createSandboxErr  error
-		createClaimErr    error
-		podIPErr          error
-		readyErr          error
-		updateErr         error
-		sendResult        bool
-		expectErr         bool
-		expectCreateCalls int
-		expectClaimCalls  int
-		expectDeleteCalls int
-		expectUpdateCalls int
+		name                   string
+		sandboxClaim           bool
+		storeErr               error
+		createSandboxErr       error
+		createClaimErr         error
+		podIPErr               error
+		readyErr               error
+		updateErr              error
+		updateErrs             []error // per-call sequence; overrides updateErr when set
+		sendResult             bool
+		expectErr              bool
+		expectCreateCalls      int
+		expectClaimCalls       int
+		expectDeleteCalls      int
+		expectDeleteStoreCalls int
+		expectUpdateCalls      int
 	}
 	tests := []testCase{
 		{
@@ -137,44 +152,72 @@ func TestServerCreateSandbox(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name:              "sandbox creation fails",
-			createSandboxErr:  errors.New("create sandbox failed"),
-			expectErr:         true,
-			expectCreateCalls: 1,
-			expectDeleteCalls: 1,
+			name:                   "sandbox creation fails",
+			createSandboxErr:       errors.New("create sandbox failed"),
+			expectErr:              true,
+			expectCreateCalls:      1,
+			expectDeleteCalls:      1,
+			expectDeleteStoreCalls: 1,
 		},
 		{
-			name:              "sandbox claim creation fails",
-			sandboxClaim:      true,
-			createClaimErr:    errors.New("create claim failed"),
-			expectErr:         true,
-			expectClaimCalls:  1,
-			expectDeleteCalls: 1,
+			name:                   "sandbox claim creation fails",
+			sandboxClaim:           true,
+			createClaimErr:         errors.New("create claim failed"),
+			expectErr:              true,
+			expectClaimCalls:       1,
+			expectDeleteCalls:      1,
+			expectDeleteStoreCalls: 1,
 		},
 		{
-			name:              "pod ip lookup fails triggers rollback",
-			podIPErr:          errors.New("pod ip missing"),
+			name:                   "pod ip lookup fails triggers rollback",
+			podIPErr:               errors.New("pod ip missing"),
+			sendResult:             true,
+			expectErr:              true,
+			expectCreateCalls:      1,
+			expectDeleteCalls:      1,
+			expectDeleteStoreCalls: 1,
+		},
+		{
+			name:                   "entrypoint readiness failure triggers rollback",
+			readyErr:               errors.New("connection refused"),
+			sendResult:             true,
+			expectErr:              true,
+			expectCreateCalls:      1,
+			expectDeleteCalls:      1,
+			expectDeleteStoreCalls: 1,
+		},
+		{
+			// A permanent store failure must trigger K8s rollback to prevent an inaccessible zombie pod.
+			name:                   "update store fails permanently after retries triggers full rollback to prevent zombie pod",
+			updateErr:              errors.New("update failed"),
+			sendResult:             true,
+			expectErr:              true,
+			expectCreateCalls:      1,
+			expectUpdateCalls:      3, // 3 attempts exhausted
+			expectDeleteCalls:      1, // K8s rollback must execute to prevent resource leak
+			expectDeleteStoreCalls: 1,
+		},
+		{
+			// Transient failure: first attempt fails, second succeeds.
+			// The retry loop must recover without touching K8s.
+			name:              "update store fails once then succeeds — no K8s rollback",
+			updateErrs:        []error{errors.New("transient store blip"), nil},
 			sendResult:        true,
-			expectErr:         true,
+			expectErr:         false,
 			expectCreateCalls: 1,
-			expectDeleteCalls: 1,
+			expectUpdateCalls: 2, // 1 failure + 1 success
+			expectDeleteCalls: 0, // healthy pod must be preserved
 		},
 		{
-			name:              "entrypoint readiness failure triggers rollback",
-			readyErr:          errors.New("connection refused"),
+			// Transient failure: first two attempts fail, third succeeds.
+			// The retry loop must recover without touching K8s.
+			name:              "update store fails twice then succeeds — no K8s rollback",
+			updateErrs:        []error{errors.New("blip 1"), errors.New("blip 2"), nil},
 			sendResult:        true,
-			expectErr:         true,
+			expectErr:         false,
 			expectCreateCalls: 1,
-			expectDeleteCalls: 1,
-		},
-		{
-			name:              "update store fails triggers rollback",
-			updateErr:         errors.New("update failed"),
-			sendResult:        true,
-			expectErr:         true,
-			expectCreateCalls: 1,
-			expectUpdateCalls: 1,
-			expectDeleteCalls: 1,
+			expectUpdateCalls: 3, // 2 failures + 1 success
+			expectDeleteCalls: 0, // healthy pod must be preserved
 		},
 	}
 
@@ -228,7 +271,7 @@ func TestServerCreateSandbox(t *testing.T) {
 			claimCalls = 0
 			deleteCalls = 0
 
-			fakeStoreInst := &fakeStore{storeErr: tt.storeErr, updateErr: tt.updateErr}
+			fakeStoreInst := &fakeStore{storeErr: tt.storeErr, updateErr: tt.updateErr, updateErrs: tt.updateErrs}
 			server.storeClient = fakeStoreInst
 
 			resultChan := make(chan SandboxStatusUpdate, 1)
@@ -249,6 +292,10 @@ func TestServerCreateSandbox(t *testing.T) {
 			require.Equal(t, tt.expectDeleteCalls, deleteCalls, "delete call count")
 			require.Equal(t, 1, fakeStoreInst.storeCalls, "StoreSandbox call count")
 			require.Equal(t, tt.expectUpdateCalls, fakeStoreInst.updateCalls, "UpdateSandbox call count")
+
+			// Store cleanup happens synchronously during the deferred rollback,
+			// so we can check the call count directly.
+			require.Equal(t, tt.expectDeleteStoreCalls, int(atomic.LoadInt32(&fakeStoreInst.deleteStoreCalls)), "DeleteSandboxBySessionID call count")
 
 			if tt.expectErr {
 				require.Error(t, err)

@@ -12,13 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Dict, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import urljoin
 
 import requests
 
 from agentcube.utils.http import create_session
 from agentcube.utils.log import get_logger
+
+if TYPE_CHECKING:
+    from agentcube.auth import AuthProvider
 
 
 class AgentRuntimeDataPlaneClient:
@@ -33,12 +38,14 @@ class AgentRuntimeDataPlaneClient:
         connect_timeout: float = 5.0,
         pool_connections: int = 10,
         pool_maxsize: int = 10,
+        auth: Optional["AuthProvider"] = None,
     ):
         self.router_url = router_url
         self.namespace = namespace
         self.agent_name = agent_name
         self.timeout = timeout
         self.connect_timeout = connect_timeout
+        self._auth = auth
         self.logger = get_logger(f"{__name__}.AgentRuntimeDataPlaneClient")
 
         base_path = (
@@ -51,9 +58,16 @@ class AgentRuntimeDataPlaneClient:
             pool_maxsize=pool_maxsize,
         )
 
+    def _auth_headers(self) -> Dict[str, str]:
+        """Return Authorization header dict if auth is available."""
+        if not self._auth:
+            return {}
+        return {"Authorization": f"Bearer {self._auth.get_token()}"}
+
     def bootstrap_session_id(self) -> str:
         resp = self.session.get(
             self.base_url,
+            headers=self._auth_headers(),
             timeout=(self.connect_timeout, self.timeout),
         )
         session_id = resp.headers.get(self.SESSION_HEADER)
@@ -79,16 +93,22 @@ class AgentRuntimeDataPlaneClient:
         session_id: str,
         payload: Dict[str, Any],
         timeout: Optional[float] = None,
+        path: str = "",
     ) -> requests.Response:
         headers = {
             self.SESSION_HEADER: session_id,
             "Content-Type": "application/json",
         }
+        headers.update(self._auth_headers())
         read_timeout = timeout if timeout is not None else self.timeout
 
-        self.logger.debug(f"POST {self.base_url}")
+        # Ensure path doesn't have leading slash so urljoin works correctly with base_url
+        invoke_path = path.lstrip("/")
+        url = urljoin(self.base_url, invoke_path) if invoke_path else self.base_url
+
+        self.logger.debug(f"POST {url}")
         return self.session.post(
-            self.base_url,
+            url,
             json=payload,
             headers=headers,
             timeout=(self.connect_timeout, read_timeout),

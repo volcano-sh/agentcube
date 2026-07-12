@@ -47,6 +47,14 @@ help: ## Display this help.
 gen-crd: controller-gen ## Generate CRD manifests
 	$(CONTROLLER_GEN) crd paths="./pkg/apis/runtime/v1alpha1/..." output:crd:artifacts:config=manifests/charts/base/crds
 
+.PHONY: install-crds
+install-crds: gen-crd ## Install CRDs into the current Kubernetes cluster
+	kubectl apply -f manifests/charts/base/crds
+
+.PHONY: uninstall-crds
+uninstall-crds: ## Remove CRDs from the current Kubernetes cluster
+	kubectl delete -f manifests/charts/base/crds --ignore-not-found
+
 .PHONY: generate
 generate: controller-gen gen-crd ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./pkg/apis/..."
@@ -72,15 +80,11 @@ build: generate ## Build workloadmanager binary
 	@echo "Building workloadmanager..."
 	go build -o bin/workloadmanager ./cmd/workload-manager
 
-build-agentd: generate ## Build agentd binary
-	@echo "Building agentd..."
-	go build -o bin/agentd ./cmd/agentd
-
 build-router: generate ## Build agentcube-router binary
 	@echo "Building agentcube-router..."
 	go build -o bin/agentcube-router ./cmd/router
 
-build-all: build build-agentd build-router ## Build all binaries
+build-all: build build-router ## Build all binaries
 
 # Run server (development mode)
 run:
@@ -105,7 +109,7 @@ run-router:
 clean:
 	@echo "Cleaning..."
 	rm -rf bin/
-	rm -f workloadmanager agentd agentcube-router
+	rm -f workloadmanager agentcube-router
 
 # Install dependencies
 deps:
@@ -124,10 +128,26 @@ test:
 	@echo "Running tests..."
 	go test -v ./...
 
+.PHONY: test-coverage
+test-coverage: ## Run pkg tests with race detector and coverage
+	go test -race -v -coverprofile=coverage.out -coverpkg=./pkg/... ./pkg/...
+	go tool cover -func=coverage.out
+
 # Format code
+.PHONY: fmt
 fmt: ## Format code
 	@echo "Formatting code..."
 	go fmt ./...
+
+.PHONY: fmt-check
+fmt-check: ## Check Go formatting
+	@echo "Checking Go formatting..."
+	@unformatted="$$(gofmt -l .)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "Go files need formatting:"; \
+		echo "$$unformatted"; \
+		exit 1; \
+	fi
 
 .PHONY: vet
 vet: ## Run go vet against code.
@@ -137,6 +157,14 @@ vet: ## Run go vet against code.
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint
 	$(GOLANGCI_LINT) run ./...
+
+.PHONY: verify
+verify: ## Run local verification before submitting PR
+	$(MAKE) gen-check
+	$(MAKE) fmt-check
+	$(MAKE) vet
+	$(MAKE) lint
+	$(MAKE) test
 
 # Generate copyright headers
 .PHONY: gen-copyright
@@ -254,6 +282,16 @@ docker-push-picod: docker-build-picod
 	@echo "Tagging and pushing Picod Docker image to $(IMAGE_REGISTRY)/$(PICOD_IMAGE)..."
 	docker tag $(PICOD_IMAGE) $(IMAGE_REGISTRY)/$(PICOD_IMAGE)
 	docker push $(IMAGE_REGISTRY)/$(PICOD_IMAGE)
+
+##@ Helm
+
+.PHONY: helm-template
+helm-template: ## Render Helm chart locally
+	helm template agentcube manifests/charts/base
+
+.PHONY: helm-lint
+helm-lint: ## Lint Helm chart
+	helm lint manifests/charts/base
 
 
 ##@ Dependencies

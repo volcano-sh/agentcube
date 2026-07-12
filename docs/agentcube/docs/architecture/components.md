@@ -18,7 +18,7 @@ The gateway to the agent world. Every request from your SDK or frontend goes thr
 - **Lazy Provisioning**: If a request arrives for a non-existent session, the Router automatically triggers the Workload Manager to create it on the fly.
 - **High Availability**: Stateless design allows multiple Router replicas to serve traffic, synchronized via Redis.
 
-## 3. PicoD / AgentD
+## 3. PicoD
 
 The "agent in the box." This is a lightweight daemon running inside every sandbox.
 

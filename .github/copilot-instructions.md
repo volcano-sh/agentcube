@@ -5,7 +5,7 @@
 - **Coding conventions**: 
   - **Follow Kubernetes coding conventions**: https://www.kubernetes.dev/docs/guide/coding-convention/
   - Prefer `klog/logr` over `fmt.Printf`; error strings lowercase/no punctuation; wrap with `%w`. Tie work to `context.Context`, avoid goroutine leaks, keep TODOs as `TODO(name):`. Regenerate after API changes.
-- **Common build targets (from repo root)**: `make build` (workloadmanager), `make build-router`, `make build-agentd`, `make build-all`. Regenerate code/CRDs/clients with `make generate`, `make gen-client`, or `make gen-all`; verify with `make gen-check`. Go toolchain pinned to 1.24.x in `go.mod`.
+- **Common build targets (from repo root)**: `make build` (workloadmanager), `make build-router`, `make build-all`. Regenerate code/CRDs/clients with `make generate`, `make gen-client`, or `make gen-all`; verify with `make gen-check`. Go toolchain pinned to 1.24.x in `go.mod`.
 - **Quality gates**: `make fmt lint vet test` for fast checks (`lint` uses golangci-lint). `make test` runs `go test -v ./...`. Keep `go mod tidy` when deps change.
 - **Patterns to reuse**:
   - Router uses Gin (`pkg/router/server.go`) with session management and JWT signing—follow existing middleware layout.

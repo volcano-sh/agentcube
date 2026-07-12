@@ -451,3 +451,68 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildSandboxPlaceHolder_OwnerID(t *testing.T) {
+	tests := []struct {
+		name    string
+		ownerID string
+	}{
+		{"with owner", "user-123"},
+		{"without owner", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sandbox := &sandboxv1alpha1.Sandbox{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-sandbox",
+					Namespace: "default",
+				},
+			}
+			entry := &sandboxEntry{
+				Kind:        types.SandboxKind,
+				SessionID:   "session-123",
+				OwnerID:     tt.ownerID,
+				IdleTimeout: 15 * time.Minute,
+			}
+
+			info := buildSandboxPlaceHolder(sandbox, entry)
+			assert.Equal(t, tt.ownerID, info.OwnerID)
+		})
+	}
+}
+
+func TestBuildSandboxInfo_OwnerID(t *testing.T) {
+	tests := []struct {
+		name    string
+		ownerID string
+	}{
+		{"with owner", "user-456"},
+		{"without owner", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sandbox := &sandboxv1alpha1.Sandbox{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "test-sandbox",
+					Namespace:         "default",
+					UID:               "uid-123",
+					CreationTimestamp: metav1.Now(),
+				},
+			}
+			entry := &sandboxEntry{
+				Kind:      types.SandboxKind,
+				SessionID: "session-456",
+				OwnerID:   tt.ownerID,
+				Ports: []runtimev1alpha1.TargetPort{
+					{Port: 8080, Protocol: runtimev1alpha1.ProtocolTypeHTTP, PathPrefix: "/"},
+				},
+				IdleTimeout: 15 * time.Minute,
+			}
+
+			info := buildSandboxInfo(sandbox, "10.0.0.1", entry)
+			assert.Equal(t, tt.ownerID, info.OwnerID)
+		})
+	}
+}

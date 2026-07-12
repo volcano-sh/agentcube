@@ -8,12 +8,15 @@ on:
     tags:
       - 'dify-plugin/v*' # Trigger only on plugin-specific tags
 
+permissions:
+  contents: read
+
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Download CLI tool
         run: |
@@ -65,7 +68,7 @@ jobs:
           echo "Full path: $(pwd)/$PACKAGE_NAME"
 
       - name: Checkout target repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: ${{ steps.get_basic_info.outputs.author }}/dify-plugins
           path: dify-plugins

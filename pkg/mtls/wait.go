@@ -21,6 +21,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"k8s.io/klog/v2"
 )
 
 // DefaultCertificateFileWaitTimeout bounds the startup race while spiffe-helper writes the initial SVID files.
@@ -41,6 +43,7 @@ func WaitForCertificateFiles(cfg Config, timeout time.Duration) error {
 			return fmt.Errorf("failed to access mTLS cert/key/CA files: %w", err)
 		}
 		if exist {
+			klog.Infof("All mTLS cert/key/CA files are present")
 			return nil
 		}
 		missing = currentMissing

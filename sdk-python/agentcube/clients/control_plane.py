@@ -12,13 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import os
+from typing import TYPE_CHECKING, Dict, Any, Optional
+
 import requests
-from typing import Dict, Any, Optional
 
 from agentcube.utils.log import get_logger
 from agentcube.utils.utils import read_token_from_file
 from agentcube.utils.http import create_session
+
+if TYPE_CHECKING:
+    from agentcube.auth import AuthProvider
 
 class ControlPlaneClient:
     """Client for AgentCube Control Plane (WorkloadManager).
@@ -33,6 +39,7 @@ class ControlPlaneClient:
         connect_timeout: float = 5.0,
         pool_connections: int = 10,
         pool_maxsize: int = 10,
+        auth: Optional["AuthProvider"] = None,
     ):
         """Initialize the Control Plane client.
 
@@ -43,6 +50,7 @@ class ControlPlaneClient:
             connect_timeout: Connection timeout in seconds (default: 5).
             pool_connections: Number of connection pools to cache (default: 10).
             pool_maxsize: Maximum connections per pool (default: 10).
+            auth: Optional AuthProvider instance (takes priority over auth_token).
         """
         # Prioritize argument -> env var
         self.base_url = workload_manager_url or os.getenv("WORKLOAD_MANAGER_URL")
@@ -52,9 +60,21 @@ class ControlPlaneClient:
                 "or 'WORKLOAD_MANAGER_URL' environment variable."
             )
 
-        # Prioritize argument -> k8s service account token file
-        token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-        token = auth_token or read_token_from_file(token_path)
+        # Resolve auth: auth param > auth_token > k8s SA token file
+        if auth:
+            self._auth = auth
+        elif auth_token:
+            from agentcube.auth import TokenAuth
+            self._auth = TokenAuth(auth_token)
+        else:
+            token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+            token = read_token_from_file(token_path)
+            if token:
+                from agentcube.auth import TokenAuth
+                self._auth = TokenAuth(token)
+            else:
+                self._auth = None
+
         self.timeout = timeout
         self.connect_timeout = connect_timeout
 
@@ -70,8 +90,13 @@ class ControlPlaneClient:
         self.session.headers.update({
             "Content-Type": "application/json",
         })
-        if token:
-            self.session.headers["Authorization"] = f"Bearer {token}"
+
+    def _apply_auth(self, request_kwargs: dict) -> None:
+        """Add Authorization header from auth provider if available."""
+        if not self._auth:
+            return
+        headers = request_kwargs.setdefault("headers", {})
+        headers["Authorization"] = f"Bearer {self._auth.get_token()}"
 
     def create_session(
         self,
@@ -102,11 +127,9 @@ class ControlPlaneClient:
         self.logger.debug(f"Creating session at {url} with payload: {payload}")
 
         try:
-            response = self.session.post(
-                url,
-                json=payload,
-                timeout=(self.connect_timeout, self.timeout)
-            )
+            kwargs = {"json": payload, "timeout": (self.connect_timeout, self.timeout)}
+            self._apply_auth(kwargs)
+            response = self.session.post(url, **kwargs)
             response.raise_for_status()
 
             data = response.json()
@@ -134,10 +157,9 @@ class ControlPlaneClient:
         self.logger.debug(f"Deleting session {session_id} at {url}")
 
         try:
-            response = self.session.delete(
-                url,
-                timeout=(self.connect_timeout, self.timeout)
-            )
+            kwargs: Dict[str, Any] = {"timeout": (self.connect_timeout, self.timeout)}
+            self._apply_auth(kwargs)
+            response = self.session.delete(url, **kwargs)
             if response.status_code == 404:
                 return True # Already gone
             response.raise_for_status()

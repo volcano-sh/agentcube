@@ -361,7 +361,7 @@ func TestBuildSandboxByAgentRuntime_NotFound(t *testing.T) {
 		cubeInformerFactory:  factory,
 	}
 
-	_, _, err := buildSandboxByAgentRuntime(testNamespace, "missing", ifm)
+	_, _, err := buildSandboxByAgentRuntime(testNamespace, "missing", "", ifm)
 	if !errors.Is(err, api.ErrAgentRuntimeNotFound) {
 		t.Fatalf("expected error %v, got %v", api.ErrAgentRuntimeNotFound, err)
 	}
@@ -403,7 +403,7 @@ func TestBuildSandboxByAgentRuntime_Success(t *testing.T) {
 		cubeInformerFactory:  factory,
 	}
 
-	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, ifm)
+	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", ifm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestBuildSandboxByAgentRuntime_DefaultTimeouts(t *testing.T) {
 		cubeInformerFactory:  factory,
 	}
 
-	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, ifm)
+	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", ifm)
 	assert.NoError(t, err)
 	assert.NotNil(t, sandbox)
 	assert.NotNil(t, entry)
@@ -509,7 +509,7 @@ func TestBuildSandboxByAgentRuntime_CustomTimeouts(t *testing.T) {
 		cubeInformerFactory:  factory,
 	}
 
-	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, ifm)
+	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", ifm)
 	assert.NoError(t, err)
 	assert.NotNil(t, sandbox)
 	assert.NotNil(t, entry)
@@ -530,7 +530,7 @@ func TestBuildSandboxByCodeInterpreter_NotFound(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	_, _, _, err := buildSandboxByCodeInterpreter(testNamespace, "missing", ifm)
+	_, _, _, err := buildSandboxByCodeInterpreter(testNamespace, "missing", "", ifm)
 	if !errors.Is(err, api.ErrCodeInterpreterNotFound) {
 		t.Fatalf("expected error %v, got %v", api.ErrCodeInterpreterNotFound, err)
 	}
@@ -565,7 +565,7 @@ func TestBuildSandboxByCodeInterpreter_PicodAuthFailsWithoutKey(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	_, _, _, err = buildSandboxByCodeInterpreter(testNamespace, "ci-picod-no-key", ifm)
+	_, _, _, err = buildSandboxByCodeInterpreter(testNamespace, "ci-picod-no-key", "", ifm)
 	if !errors.Is(err, api.ErrPublicKeyMissing) {
 		t.Fatalf("expected error %v, got %v", api.ErrPublicKeyMissing, err)
 	}
@@ -600,7 +600,7 @@ func TestBuildSandboxByCodeInterpreter_SuccessNoWarmPool(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, "ci-no-wp", ifm)
+	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, "ci-no-wp", "", ifm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -658,7 +658,7 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, testCodeInterpreterWarmPool, ifm)
+	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, testCodeInterpreterWarmPool, "", ifm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -684,4 +684,106 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 		t.Fatalf("expected 1 owner reference, got %d", len(claim.OwnerReferences))
 	}
 	assertOwnerReference(t, claim.OwnerReferences[0])
+}
+
+func TestBuildSandboxObject_OwnershipLabels(t *testing.T) {
+	tests := []struct {
+		name      string
+		ownerID   string
+		wantLabel bool
+		wantAnnot bool
+	}{
+		{
+			name:      "ownerID set",
+			ownerID:   "user-123",
+			wantLabel: true,
+			wantAnnot: true,
+		},
+		{
+			name:      "ownerID empty",
+			ownerID:   "",
+			wantLabel: false,
+			wantAnnot: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := &buildSandboxParams{
+				namespace:   "default",
+				sandboxName: "sandbox-owner-test",
+				sessionID:   "session-owner",
+				ownerID:     tt.ownerID,
+				ttl:         time.Hour,
+				idleTimeout: 15 * time.Minute,
+			}
+			sandbox := buildSandboxObject(params)
+
+			_, hasAnnot := sandbox.ObjectMeta.Annotations["agentcube.io/owner"]
+			_, hasLabel := sandbox.ObjectMeta.Labels["agentcube.io/owner-hash"]
+
+			if hasAnnot != tt.wantAnnot {
+				t.Errorf("expected annotation present=%v, got %v", tt.wantAnnot, hasAnnot)
+			}
+			if hasLabel != tt.wantLabel {
+				t.Errorf("expected label present=%v, got %v", tt.wantLabel, hasLabel)
+			}
+
+			if tt.ownerID != "" {
+				if sandbox.ObjectMeta.Annotations["agentcube.io/owner"] != tt.ownerID {
+					t.Errorf("expected annotation value %q, got %q", tt.ownerID, sandbox.ObjectMeta.Annotations["agentcube.io/owner"])
+				}
+				hash := sandbox.ObjectMeta.Labels["agentcube.io/owner-hash"]
+				if len(hash) != 63 {
+					t.Errorf("expected owner-hash length 63, got %d", len(hash))
+				}
+			}
+		})
+	}
+}
+
+func TestBuildSandboxClaimObject_OwnershipLabels(t *testing.T) {
+	tests := []struct {
+		name      string
+		ownerID   string
+		wantLabel bool
+		wantAnnot bool
+	}{
+		{
+			name:      "ownerID set",
+			ownerID:   "user-456",
+			wantLabel: true,
+			wantAnnot: true,
+		},
+		{
+			name:      "ownerID empty",
+			ownerID:   "",
+			wantLabel: false,
+			wantAnnot: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := &buildSandboxClaimParams{
+				namespace:           "default",
+				name:                "claim-owner-test",
+				sandboxTemplateName: "my-ci",
+				sessionID:           "session-claim-owner",
+				ownerID:             tt.ownerID,
+				idleTimeout:         10 * time.Minute,
+			}
+			claim := buildSandboxClaimObject(params)
+
+			_, hasAnnot := claim.ObjectMeta.Annotations["agentcube.io/owner"]
+			_, hasLabel := claim.ObjectMeta.Labels["agentcube.io/owner-hash"]
+
+			if hasAnnot != tt.wantAnnot {
+				t.Errorf("expected annotation present=%v, got %v", tt.wantAnnot, hasAnnot)
+			}
+			if hasLabel != tt.wantLabel {
+				t.Errorf("expected label present=%v, got %v", tt.wantLabel, hasLabel)
+			}
+		})
+	}
 }

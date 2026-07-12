@@ -1,0 +1,75 @@
+# Default values for the Keycloak addon chart.
+
+# Global settings
+replicas: 1
+imagePullSecrets: []
+
+# Use start-dev mode (embedded H2 DB, HTTP) for local development.
+# Set to false for production — requires database.vendor and proxy settings below.
+devMode: true
+image:
+  repository: quay.io/keycloak/keycloak
+  tag: "26.0.8"
+  pullPolicy: IfNotPresent
+# Keycloak bootstrap admin credentials.
+admin:
+  username: ""                    # Required.
+  password: ""                    # Dev only. Production must use admin.existingSecret.
+  existingSecret: ""              # Name of a pre-existing Secret containing the admin password.
+  existingSecretKey: "admin-password" # Key inside admin.existingSecret holding the password.
+# External database configuration (required when devMode is false)
+database:
+  vendor: ""             # Database type: "postgres", "mysql", "mariadb". Empty = embedded H2 (dev only).
+  url: ""                # JDBC URL, e.g., "jdbc:postgresql://postgres:5432/keycloak"
+  username: ""
+  password: ""
+  existingSecret: ""     # Name of a pre-existing Secret containing the database password
+  existingSecretKey: "db-password"
+# Reverse proxy configuration (required when Keycloak is behind an Ingress or load balancer)
+proxy:
+  headers: ""            # Proxy header mode: "xforwarded" or "forwarded". Empty = disabled.
+  httpEnabled: false     # Allow HTTP traffic when running behind a TLS-terminating proxy
+  hostname: ""           # Public hostname, e.g., "keycloak.example.com". Empty = auto-detect.
+service:
+  type: ClusterIP
+  port: 8080
+  httpsPort: 8443
+realm: "agentcube"
+# OAuth2 client secrets for confidential Keycloak clients.
+# These are used when callers request tokens via the client_credentials grant.
+# The agentcube-cli client is public (PKCE) and does not require a secret.
+clients:
+  # Optional pre-existing Kubernetes Secret containing all client secrets.
+  # If unset, this chart creates keycloak-credentials from clients.*.secret.
+  existingSecret: ""
+  # Keys to read from clients.existingSecret. These are ignored when existingSecret is empty.
+  existingSecretAppKey: "client-app-secret"
+  existingSecretRouterKey: "client-router-secret"
+  existingSecretAdminKey: "client-admin-secret"
+  # Chart-managed client secrets. Used only when clients.existingSecret is empty.
+  app:
+    secret: "" # Secret for agentcube-app, used by SDK/server-side clients.
+  router:
+    secret: "" # Secret for agentcube-router, reserved for Router service-to-service flows.
+  admin:
+    secret: "" # Secret for agentcube-admin, used for administrative client_credentials tokens.
+# TLS configuration for Keycloak terminating TLS directly (devMode=false only)
+tls:
+  existingSecret: ""              # Name of pre-existing Secret containing tls.crt and tls.key
+  secretCertificateKey: "tls.crt" # Key inside the secret holding the certificate
+  secretPrivateKeyKey: "tls.key"  # Key inside the secret holding the private key
+cli:
+  # WARNING: Wildcard URIs (e.g. 'http://localhost*') pose security risks (open redirect vulnerabilities) in production.
+  # When devMode is false, the deployment will fail if these contain wildcards.
+  # You must override these with explicit, fully-qualified URIs for production.
+  redirectUris:
+    - "http://localhost*"
+  webOrigins:
+    - "http://localhost*"
+resources:
+  limits:
+    cpu: 500m
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 512Mi

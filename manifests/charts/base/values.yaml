@@ -9,7 +9,12 @@ fullnameOverride: ""
 # These must be provided by the user during installation
 redis:
   addr: ""
+  # Chart-managed Secret from this value when secretName is unset. Do not set both password and secretName.
   password: ""
+  # User-provided Secret name. When set, the chart does not create {release}-redis.
+  secretName: ""
+  # Key in the Secret (chart-managed or secretName). Default: password.
+  secretKey: "password"
 
 # AgentCube Router
 router:
@@ -32,6 +37,14 @@ router:
   config: {}
   extraEnv: []
   serviceAccountName: "agentcube-router"
+  # JWT configuration for external user authentication.
+  # When jwt.issuerUrl is set, the Router validates Bearer tokens against this issuer.
+  # Works with JWT access tokens from OIDC-compliant providers (Keycloak, Okta, Auth0, etc.).
+  jwt:
+    issuerUrl: ""              # e.g., "http://keycloak.agentcube-system.svc:8080/realms/agentcube"
+    audience: "agentcube-api"  # Expected "aud" claim in access tokens
+    roleClaim: ""              # Required if issuerUrl is set. JSON path to the roles array in the JWT (e.g., "realm_access.roles" for Keycloak, "groups" for Okta).
+    requiredRole: ""           # Required if issuerUrl is set. The role required to access the API endpoints (e.g., "sandbox:invoke").
 
 # AgentCube Workload Manager
 workloadmanager:

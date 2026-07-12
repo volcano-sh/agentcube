@@ -1,3 +1,11 @@
+{{- if .Values.router.jwt.issuerUrl }}
+{{- if empty .Values.router.jwt.roleClaim }}
+  {{- fail "router.jwt.roleClaim is required when router.jwt.issuerUrl is set" }}
+{{- end }}
+{{- if empty .Values.router.jwt.requiredRole }}
+  {{- fail "router.jwt.requiredRole is required when router.jwt.issuerUrl is set" }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -64,8 +72,13 @@ spec:
                   fieldPath: metadata.namespace
             - name: REDIS_ADDR
               value: {{ .Values.redis.addr | quote }}
+            {{- if or .Values.redis.password .Values.redis.secretName }}
             - name: REDIS_PASSWORD
-              value: {{ .Values.redis.password | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.secretName | default (printf "%s-redis" .Release.Name) | quote }}
+                  key: {{ .Values.redis.secretKey | default "password" | quote }}
+            {{- end }}
             - name: WORKLOAD_MANAGER_URL
               value: "http://workloadmanager.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.workloadmanager.service.port }}"
             {{- if .Values.spire.enabled }}
@@ -82,6 +95,12 @@ spec:
             - --mtls-cert={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.certFileName }}
             - --mtls-key={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.keyFileName }}
             - --mtls-ca={{ .Values.spire.spiffeHelper.certDir }}/{{ .Values.spire.spiffeHelper.bundleFileName }}
+            {{- end }}
+            {{- if .Values.router.jwt.issuerUrl }}
+            - {{ printf "--jwt-issuer-url=%s" .Values.router.jwt.issuerUrl | quote }}
+            - {{ printf "--jwt-audience=%s" .Values.router.jwt.audience | quote }}
+            - {{ printf "--jwt-role-claim=%s" .Values.router.jwt.roleClaim | quote }}
+            - {{ printf "--jwt-required-role=%s" .Values.router.jwt.requiredRole | quote }}
             {{- end }}
           resources:
             {{- toYaml .Values.router.resources | nindent 12 }}

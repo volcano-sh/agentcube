@@ -61,6 +61,7 @@ func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxE
 	return &types.SandboxInfo{
 		Kind:             entry.Kind,
 		SessionID:        entry.SessionID,
+		OwnerID:          entry.OwnerID,
 		SandboxNamespace: sandboxCR.GetNamespace(),
 		Name:             sandboxCR.GetName(),
 		ExpiresAt:        expiresAt,
@@ -94,6 +95,7 @@ func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *san
 		SandboxNamespace: sandbox.GetNamespace(),
 		EntryPoints:      accesses,
 		SessionID:        entry.SessionID,
+		OwnerID:          entry.OwnerID,
 		CreatedAt:        createdAt,
 		ExpiresAt:        expiresAt,
 		Status:           getSandboxStatus(sandbox),

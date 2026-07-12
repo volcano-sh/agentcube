@@ -1,30 +1,38 @@
 name: Agentcube E2E Tests
 
 on:
+  push:
+    # Exclude branches created by Dependabot to avoid triggering current workflow
+    # for PRs initiated by Dependabot.
+    branches-ignore:
+      - 'dependabot/**'
   pull_request:
     branches:
       - main
       - "release-*"
+
+permissions:
+  contents: read
 
 jobs:
   e2e-test:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.11"
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: "1.23"
+          go-version-file: go.mod
 
       - name: Create k8s Kind Cluster
-        uses: helm/kind-action@v1
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
         with:
           version: v0.30.0
           cluster_name: agentcube-e2e
@@ -43,7 +51,7 @@ jobs:
 
       - name: Upload E2E Component Logs
         if: failure() # Only upload logs when tests fail
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: agentcube_e2e_logs_${{ github.run_id }}_${{ github.run_attempt }}
           path: ${{ github.workspace }}/e2e-logs/

@@ -557,7 +557,7 @@ func TestNewSessionManager_MTLSEnabled_ValidCerts(t *testing.T) {
 	t.Setenv("WORKLOAD_MANAGER_URL", "https://localhost:8080")
 
 	cfg := &mtls.Config{CertFile: certFile, KeyFile: keyFile, CAFile: caFile}
-	sm, err := NewSessionManager(&fakeStoreClient{}, cfg)
+	sm, err := NewSessionManager(&fakeStoreClient{}, cfg, nil)
 	if err != nil {
 		t.Fatalf("NewSessionManager with mTLS failed: %v", err)
 	}
@@ -590,7 +590,7 @@ func TestNewSessionManager_MTLSDisabled(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sm, err := NewSessionManager(&fakeStoreClient{}, tt.cfg)
+			sm, err := NewSessionManager(&fakeStoreClient{}, tt.cfg, nil)
 			if err != nil {
 				t.Fatalf("NewSessionManager without mTLS failed: %v", err)
 			}
@@ -636,7 +636,7 @@ func generateTestCertsForRouter(t *testing.T, dir string) (certFile, keyFile, ca
 	if err != nil {
 		t.Fatalf("generate leaf key: %v", err)
 	}
-	spiffeURL, _ := url.Parse("spiffe://cluster.local/ns/agentcube-system/sa/agentcube-router")
+	spiffeURL, _ := url.Parse("spiffe://cluster.local/ns/agentcube/sa/agentcube-router")
 	leafTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
 		Subject:      pkix.Name{Organization: []string{"Test Router"}},
@@ -672,5 +672,73 @@ func writePEMFile(t *testing.T, path, blockType string, data []byte) {
 	defer f.Close()
 	if err := pem.Encode(f, &pem.Block{Type: blockType, Bytes: data}); err != nil {
 		t.Fatalf("encode PEM %s: %v", path, err)
+	}
+}
+
+// ---- tests: setIdentityHeader ----
+
+func TestSetIdentityHeader_WithClaims(t *testing.T) {
+	jwtMgr, err := NewJWTManager()
+	if err != nil {
+		t.Fatalf("failed to create JWT manager: %v", err)
+	}
+
+	m := &manager{
+		jwtManager: jwtMgr,
+	}
+
+	req, _ := http.NewRequest("GET", "/", nil)
+	claims := &Claims{
+		Subject: "user-123",
+		Email:   "test@example.com",
+	}
+	ctx := context.WithValue(context.Background(), contextKeyOIDCClaims, claims)
+
+	m.setIdentityHeader(ctx, req)
+
+	token := req.Header.Get("X-AgentCube-User-Identity")
+	if token == "" {
+		t.Fatalf("expected X-AgentCube-User-Identity header to be set")
+	}
+}
+
+func TestSetIdentityHeader_NoClaimsOrNoManager(t *testing.T) {
+	jwtMgr, err := NewJWTManager()
+	if err != nil {
+		t.Fatalf("failed to create JWT manager: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		jwtManager *JWTManager
+		ctx        context.Context
+	}{
+		{
+			name:       "nil jwt manager",
+			jwtManager: nil,
+			ctx:        context.WithValue(context.Background(), contextKeyOIDCClaims, &Claims{Subject: "user"}),
+		},
+		{
+			name:       "no claims in context",
+			jwtManager: jwtMgr,
+			ctx:        context.Background(),
+		},
+		{
+			name:       "wrong type in context",
+			jwtManager: jwtMgr,
+			ctx:        context.WithValue(context.Background(), contextKeyOIDCClaims, "not-a-claims-object"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &manager{jwtManager: tt.jwtManager}
+			req, _ := http.NewRequest("GET", "/", nil)
+			m.setIdentityHeader(tt.ctx, req)
+
+			if token := req.Header.Get("X-AgentCube-User-Identity"); token != "" {
+				t.Errorf("expected no identity header, got %q", token)
+			}
+		})
 	}
 }

@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import base64
 import json
 import time
 import os
 import ast
 import shlex
-from typing import Optional, Any, Dict, List, Union
+from typing import TYPE_CHECKING, Optional, Any, Dict, List, Union
 from urllib.parse import urljoin
 
 import requests
@@ -26,6 +28,9 @@ import requests
 from agentcube.utils.log import get_logger
 from agentcube.utils.http import create_session
 from agentcube.exceptions import CommandExecutionError
+
+if TYPE_CHECKING:
+    from agentcube.auth import AuthProvider
 
 class CodeInterpreterDataPlaneClient:
     """Client for AgentCube Data Plane (Router -> PicoD).
@@ -46,6 +51,7 @@ class CodeInterpreterDataPlaneClient:
         connect_timeout: float = 5.0,
         pool_connections: int = 10,
         pool_maxsize: int = 10,
+        auth: Optional["AuthProvider"] = None,
     ):
         """Initialize Data Plane client.
 
@@ -65,6 +71,7 @@ class CodeInterpreterDataPlaneClient:
         self.connect_timeout = connect_timeout
         self.pool_connections = pool_connections
         self.pool_maxsize = pool_maxsize
+        self._auth = auth
         self.logger = get_logger(f"{__name__}.CodeInterpreterDataPlaneClient")
 
         if base_url:
@@ -98,6 +105,8 @@ class CodeInterpreterDataPlaneClient:
         url = urljoin(self.base_url, endpoint)
 
         headers = {}
+        if self._auth:
+            headers["Authorization"] = f"Bearer {self._auth.get_token()}"
         if body:
             headers["Content-Type"] = "application/json"
 
@@ -235,6 +244,8 @@ class CodeInterpreterDataPlaneClient:
             headers = {
                 "x-agentcube-session-id": self.session_id
             }
+            if self._auth:
+                headers["Authorization"] = f"Bearer {self._auth.get_token()}"
 
             self.logger.debug(f"Uploading file {local_path} to {remote_path}")
             resp = self.session.post(url, files=files, data=data, headers=headers, timeout=self.timeout)

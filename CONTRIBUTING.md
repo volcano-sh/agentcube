@@ -117,14 +117,16 @@ Using AI tools to help write your PR is acceptable, but as the author, you are r
 
 * Maintainers are listed in the top-level [`OWNERS`](./OWNERS) file and `OWNERS` files in subdirectories
 * Subsystem owners review and approve changes in their areas
-* Major design decisions go through design docs in `docs/design/`
+* Major design decisions go through proposals in `docs/proposals/`. Existing
+  historical design documents remain under `docs/design/` and are indexed from
+  `docs/proposals/README.md`.
 
 ##  Tooling
 
 * `make lint` runs linters (`golangci-lint`)
 * `make test` runs unit tests
 * `make e2e` runs the full E2E test suite
-* `make build-all` produces all component binaries (`workloadmanager`, `agentd`, `agentcube-router`) under `bin/`
+* `make build-all` produces component binaries (`workloadmanager`, `agentcube-router`) under `bin/`
 * `make generate` regenerates codegen artifacts (CRDs, DeepCopy methods)
 * `make gen-client` regenerates client-go code
 * `make gen-all` regenerates all codegen artifacts

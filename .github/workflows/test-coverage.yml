@@ -1,6 +1,11 @@
 name: Test Coverage
 
 on:
+  push:
+    # Exclude branches created by Dependabot to avoid triggering current workflow
+    # for PRs initiated by Dependabot.
+    branches-ignore:
+      - 'dependabot/**'
   pull_request:
   merge_group: # enable merge queue
   workflow_call:
@@ -8,16 +13,20 @@ on:
       CODECOV_TOKEN:
         required: false
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Filter paths
         id: changes
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         with:
           filters: |
             coverage:
@@ -28,7 +37,7 @@ jobs:
 
       - name: Free Disk Space
         if: steps.changes.outputs.coverage == 'true'
-        uses: jlumbroso/free-disk-space@v1.3.1
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
           tool-cache: false
           android: true
@@ -40,9 +49,9 @@ jobs:
 
       - name: Setup Go
         if: steps.changes.outputs.coverage == 'true'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: "1.24"
+          go-version-file: go.mod
 
       - name: Run tests with coverage
         if: steps.changes.outputs.coverage == 'true'
@@ -62,7 +71,7 @@ jobs:
 
       - name: Upload coverage reports to Codecov
         if: steps.changes.outputs.coverage == 'true'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           # Even though token upload token is not required for public repos,
           # but adding a token might increase successful uploads as per:
@@ -75,7 +84,7 @@ jobs:
 
       - name: Upload coverage artifact
         if: steps.changes.outputs.coverage == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: go-coverage
           path: coverage.out

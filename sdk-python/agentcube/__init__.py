@@ -14,5 +14,12 @@
 
 from .code_interpreter import CodeInterpreterClient
 from .agent_runtime import AgentRuntimeClient
+from .auth import AuthProvider, TokenAuth, ServiceAccountAuth
 
-__all__ = ["CodeInterpreterClient", "AgentRuntimeClient"]
+__all__ = [
+    "CodeInterpreterClient",
+    "AgentRuntimeClient",
+    "AuthProvider",
+    "TokenAuth",
+    "ServiceAccountAuth",
+]

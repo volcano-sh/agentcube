@@ -1,5 +1,5 @@
 # Multi-stage build for workloadmanager
-FROM golang:1.24.9-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.4-alpine AS builder
 
 # Build arguments for multi-architecture support
 ARG TARGETOS=linux
@@ -27,7 +27,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -ldflags="-s -w" -o workloadmanager ./cmd/workload-manager
 
 # Runtime image
-FROM alpine:3.19
+FROM alpine:3.24
 
 RUN apk --no-cache add ca-certificates
 

@@ -1,0 +1,197 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-realm-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: keycloak
+type: Opaque
+# stringData accepts plain text and Kubernetes base64-encodes it automatically.
+stringData:
+  # Note: The --import-realm flag only applies this JSON on an empty/first start.
+  # Once the realm exists, subsequent pod restarts will silently IGNORE updates to this Secret.
+  # To update a live production realm, use the Keycloak Admin API or a declarative tool.
+  # Filename must follow <realm-name>-realm.json convention for --import-realm to detect it.
+  {{ printf "%s-realm.json" .Values.realm | quote }}: |
+    {
+      "realm": {{ .Values.realm | quote }},
+      "enabled": true,
+      "sslRequired": {{ if .Values.devMode }}"none"{{ else }}"external"{{ end }},
+
+      "defaultRole": {
+        "name": "default-roles-{{ .Values.realm }}",
+        "description": "${role_default-roles}",
+        "composite": true,
+        "clientRole": false
+      },
+
+      "roles": {
+        "realm": [
+          {
+            "name": "default-roles-{{ .Values.realm }}",
+            "description": "${role_default-roles}",
+            "composite": true,
+            "clientRole": false,
+            "composites": {
+              "realm": [
+                "sandbox:invoke"
+              ]
+            }
+          },
+          {
+            "name": "sandbox:invoke",
+            "description": "Permission to invoke agent runtimes and code interpreters."
+          },
+          {
+            "name": "sandbox:manage",
+            "description": "Permission to create/delete AgentRuntime and CodeInterpreter CRDs. Inherits sandbox:invoke.",
+            "composite": true,
+            "composites": {
+              "realm": ["sandbox:invoke"]
+            }
+          },
+          {
+            "name": "admin",
+            "description": "Full administrative access. Inherits sandbox:manage.",
+            "composite": true,
+            "composites": {
+              "realm": ["sandbox:manage"]
+            }
+          }
+        ]
+      },
+
+      "clients": [
+        {
+          "clientId": "agentcube-app",
+          "name": "AgentCube Service",
+          "description": "Confidential client for server-side authentication using client_credentials grant.",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "secret": "${KC_CLIENT_APP_SECRET}",
+          "standardFlowEnabled": false,
+          "directAccessGrantsEnabled": false,
+          "serviceAccountsEnabled": true,
+          "redirectUris": [],
+          "webOrigins": [],
+          "protocolMappers": [
+            {
+              "name": "agentcube-api-audience",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.custom.audience": "agentcube-api",
+                "id.token.claim": "false",
+                "access.token.claim": "true"
+              }
+            }
+          ]
+        },
+        {
+          "clientId": "agentcube-cli",
+          "name": "AgentCube SDK",
+          "description": "Public client for interactive SDK and CLI authentication using authorization code with PKCE.",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": true,
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "serviceAccountsEnabled": false,
+          "redirectUris": {{ .Values.cli.redirectUris | toJson }},
+          "webOrigins": {{ .Values.cli.webOrigins | toJson }},
+          "attributes": {
+            "pkce.code.challenge.method": "S256"
+          },
+          "protocolMappers": [
+            {
+              "name": "agentcube-api-audience",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.custom.audience": "agentcube-api",
+                "id.token.claim": "false",
+                "access.token.claim": "true"
+              }
+            }
+          ]
+        },
+        {
+          "clientId": "agentcube-router",
+          "name": "AgentCube Router",
+          "description": "Internal service client for the Router component.",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "secret": "${KC_CLIENT_ROUTER_SECRET}",
+          "standardFlowEnabled": false,
+          "directAccessGrantsEnabled": false,
+          "serviceAccountsEnabled": true,
+          "redirectUris": [],
+          "webOrigins": []
+        },
+        {
+          "clientId": "agentcube-admin",
+          "name": "AgentCube Admin",
+          "description": "Confidential client for administrative operations.",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "secret": "${KC_CLIENT_ADMIN_SECRET}",
+          "standardFlowEnabled": false,
+          "directAccessGrantsEnabled": false,
+          "serviceAccountsEnabled": true,
+          "redirectUris": [],
+          "webOrigins": [],
+          "protocolMappers": [
+            {
+              "name": "agentcube-api-audience",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.custom.audience": "agentcube-api",
+                "id.token.claim": "false",
+                "access.token.claim": "true"
+              }
+            }
+          ]
+        }
+      ],
+
+      "scopeMappings": [
+        {
+          "client": "agentcube-app",
+          "roles": ["sandbox:invoke"]
+        },
+        {
+          "client": "agentcube-cli",
+          "roles": ["sandbox:invoke"]
+        },
+        {
+          "client": "agentcube-admin",
+          "roles": ["sandbox:invoke", "admin"]
+        }
+      ],
+
+      "users": [
+        {
+          "username": "service-account-agentcube-admin",
+          "enabled": true,
+          "serviceAccountClientId": "agentcube-admin",
+          "realmRoles": [
+            "admin"
+          ]
+        },
+        {
+          "username": "service-account-agentcube-app",
+          "enabled": true,
+          "serviceAccountClientId": "agentcube-app",
+          "realmRoles": [
+            "sandbox:invoke"
+          ]
+        }
+      ]
+    }

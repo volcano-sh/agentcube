@@ -26,7 +26,7 @@ AgentCube bridges the gap between traditional workload management and the unique
 
 - **Workload Manager**: Orchestrates the lifecycle of agent sandboxes.
 - **AgentCube Router**: Handles routing and session management for agent interactions.
-- **AgentD**: A runtime component that manages the execution environment within the sandbox.
+- **PicoD**: The default CodeInterpreter runtime component that executes code and manages files inside the sandbox.
 
 ## Get Started
 

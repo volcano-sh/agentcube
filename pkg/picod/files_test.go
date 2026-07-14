@@ -115,6 +115,11 @@ func TestSanitizePath(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "picod-test-*")
 	assert.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
+	// macOS exposes /var through a /private/var symlink. sanitizePath returns
+	// the canonical path, so use the canonical workspace for the containment
+	// assertion as well.
+	resolvedTmpDir, err := filepath.EvalSymlinks(tmpDir)
+	assert.NoError(t, err)
 
 	server := &Server{
 		workspaceDir: tmpDir,
@@ -204,7 +209,7 @@ func TestSanitizePath(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 				// Verify the result is within the workspace
-				relPath, relErr := filepath.Rel(tmpDir, result)
+				relPath, relErr := filepath.Rel(resolvedTmpDir, result)
 				assert.NoError(t, relErr)
 				assert.NotRegexp(t, `^\.\.`, relPath, "Path should not escape workspace")
 			}

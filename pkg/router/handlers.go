@@ -57,6 +57,11 @@ func (s *Server) handleHealthReady(c *gin.Context) {
 
 // handleInvoke is a private helper function that handles invocation requests for both agents and code interpreters
 func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string) {
+	start := time.Now()
+	defer func() {
+		routerRequestDuration.WithLabelValues(kind).Observe(time.Since(start).Seconds())
+	}()
+
 	klog.V(4).Infof("%s invoke request: namespace=%s, name=%s, path=%s", kind, namespace, name, path)
 
 	// Extract session ID from header
@@ -246,14 +251,24 @@ func (s *Server) waitForUpstreamReachable(ctx context.Context, targetURL *url.UR
 
 func upstreamUnavailableResponse(err error) (int, gin.H) {
 	errText := strings.ToLower(err.Error())
+	var category string
+	var code int
+	var resp gin.H
+
 	switch {
 	case connectionRefusedRetryable(err):
-		return http.StatusBadGateway, gin.H{"error": "sandbox unreachable"}
+		category = "connection_refused"
+		code, resp = http.StatusBadGateway, gin.H{"error": "sandbox unreachable"}
 	case strings.Contains(errText, "deadline exceeded") || strings.Contains(errText, "timeout"):
-		return http.StatusGatewayTimeout, gin.H{"error": "sandbox timeout"}
+		category = "timeout"
+		code, resp = http.StatusGatewayTimeout, gin.H{"error": "sandbox timeout"}
 	default:
-		return http.StatusServiceUnavailable, gin.H{"error": "sandbox unreachable"}
+		category = "other"
+		code, resp = http.StatusServiceUnavailable, gin.H{"error": "sandbox unreachable"}
 	}
+
+	routerProxyErrorsTotal.WithLabelValues(category).Inc()
+	return code, resp
 }
 
 func (s *Server) resolveSandboxTarget(c *gin.Context, sandbox *types.SandboxInfo, path string) (*url.URL, bool) {

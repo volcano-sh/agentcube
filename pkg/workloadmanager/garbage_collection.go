@@ -74,6 +74,11 @@ func (gc *garbageCollector) run(stopCh <-chan struct{}) {
 }
 
 func (gc *garbageCollector) once() {
+	start := time.Now()
+	defer func() {
+		gcCycleDuration.Observe(time.Since(start).Seconds())
+	}()
+
 	ctx, cancel := context.WithTimeout(context.Background(), gcOnceTimeout)
 	defer cancel()
 	now := time.Now()
@@ -84,11 +89,13 @@ func (gc *garbageCollector) once() {
 	candidates, err := gc.storeClient.ListInactiveSandboxes(ctx, now.Add(-gcMinInactiveLookback), gcCandidateLimit)
 	if err != nil {
 		klog.Errorf("garbage collector error listing inactive sandboxes: %v", err)
+		gcErrorsTotal.Inc()
 	}
 
 	// Apply per-sandbox idle timeout: only include sandboxes whose own IdleTimeout
 	// (stored in the session JSON) has actually elapsed since LastActivityAt.
 	inactiveSandboxes := make([]*types.SandboxInfo, 0, len(candidates))
+	reclaimReason := make(map[string]string)
 	for _, s := range candidates {
 		activityAt := s.LastActivityAt
 		if activityAt.IsZero() {
@@ -101,6 +108,7 @@ func (gc *garbageCollector) once() {
 		}
 		if activityAt.Add(idleTimeout).Before(now) {
 			inactiveSandboxes = append(inactiveSandboxes, s)
+			reclaimReason[s.SessionID] = "inactive"
 		}
 	}
 
@@ -108,7 +116,12 @@ func (gc *garbageCollector) once() {
 	expiredSandboxes, err := gc.storeClient.ListExpiredSandboxes(ctx, now, gcCandidateLimit)
 	if err != nil {
 		klog.Errorf("garbage collector error listing expired sandboxes: %v", err)
+		gcErrorsTotal.Inc()
 	}
+	for _, s := range expiredSandboxes {
+		reclaimReason[s.SessionID] = "expired"
+	}
+
 	// Merge and deduplicate: a sandbox may appear in both lists when it is
 	// simultaneously idle-timed-out and past its TTL.
 	gcSandboxes := deduplicateSandboxes(inactiveSandboxes, expiredSandboxes)
@@ -127,12 +140,20 @@ func (gc *garbageCollector) once() {
 		}
 		if err != nil {
 			errs = append(errs, err)
+			gcErrorsTotal.Inc()
 			continue
 		}
 		klog.Infof("garbage collector %s %s/%s session %s deleted", gcSandbox.Kind, gcSandbox.SandboxNamespace, gcSandbox.Name, gcSandbox.SessionID)
 		err = gc.storeClient.DeleteSandboxBySessionID(ctx, gcSandbox.SessionID)
 		if err != nil {
 			errs = append(errs, err)
+			gcErrorsTotal.Inc()
+		} else {
+			reason := reclaimReason[gcSandbox.SessionID]
+			if reason == "" {
+				reason = "inactive"
+			}
+			gcSandboxesReclaimedTotal.WithLabelValues(reason).Inc()
 		}
 	}
 	err = utilerrors.NewAggregate(errs)

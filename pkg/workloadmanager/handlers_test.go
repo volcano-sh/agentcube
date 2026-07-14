@@ -242,7 +242,7 @@ func TestServerCreateSandbox(t *testing.T) {
 				claim = &extensionsv1alpha1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: sb.Name, Namespace: sb.Namespace}}
 			}
 
-			resp, err := server.createSandbox(context.Background(), nil, sb, claim, makeEntry(), resultChan)
+			resp, err := server.createSandbox(context.Background(), nil, sb, claim, makeEntry(), resultChan, "AgentRuntime")
 
 			require.Equal(t, tt.expectCreateCalls, createCalls, "createSandbox call count")
 			require.Equal(t, tt.expectClaimCalls, claimCalls, "createSandboxClaim call count")
@@ -442,7 +442,7 @@ func TestHandleSandboxCreate(t *testing.T) {
 			})
 
 			createCalls := 0
-			patches.ApplyPrivateMethod(reflect.TypeOf(fakeServer), "createSandbox", func(_ *Server, _ context.Context, _ dynamic.Interface, _ *sandboxv1alpha1.Sandbox, _ *extensionsv1alpha1.SandboxClaim, _ *sandboxEntry, _ <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
+			patches.ApplyPrivateMethod(reflect.TypeOf(fakeServer), "createSandbox", func(_ *Server, _ context.Context, _ dynamic.Interface, _ *sandboxv1alpha1.Sandbox, _ *extensionsv1alpha1.SandboxClaim, _ *sandboxEntry, _ <-chan SandboxStatusUpdate, _ string) (*types.CreateSandboxResponse, error) {
 				createCalls++
 				if tc.createErr != nil {
 					return nil, tc.createErr

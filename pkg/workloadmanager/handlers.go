@@ -162,7 +162,7 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	// Ensure cleanup is called when function returns to prevent memory leak
 	defer s.sandboxController.UnWatchSandbox(namespace, sandboxName)
 
-	response, err := s.createSandbox(c.Request.Context(), dynamicClient, sandbox, sandboxClaim, sandboxEntry, resultChan)
+	response, err := s.createSandbox(c.Request.Context(), dynamicClient, sandbox, sandboxClaim, sandboxEntry, resultChan, sandboxReq.Kind)
 	if err != nil {
 		respondCreateError(c, sandbox.Namespace, sandbox.Name, err)
 		return
@@ -222,7 +222,17 @@ func (s *Server) createK8sResources(ctx context.Context, dynamicClient dynamic.I
 }
 
 // createSandbox performs sandbox creation and returns the response payload or an error with an HTTP status code.
-func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
+func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate, kind string) (res *types.CreateSandboxResponse, err error) {
+	start := time.Now()
+	defer func() {
+		status := "success"
+		if err != nil {
+			status = "failure"
+		}
+		sandboxCreateDuration.WithLabelValues(kind, status).Observe(time.Since(start).Seconds())
+		sandboxCreateTotal.WithLabelValues(kind, status).Inc()
+	}()
+
 	placeholder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
 	if err := s.storeClient.StoreSandbox(ctx, placeholder); err != nil {
 		if isContextError(err) {
@@ -238,6 +248,7 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		if !needRollbackSandbox {
 			return
 		}
+		sandboxRollbackTotal.Inc()
 		s.rollbackSandboxCreation(dynamicClient, sandbox, sandboxClaim, sandboxEntry.SessionID)
 	}()
 
@@ -245,23 +256,9 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		return nil, err
 	}
 
-	// Use NewTimer so we can stop it explicitly when another branch wins,
-	// preventing the runtime from retaining the timer until it fires.
-	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
-
-	var createdSandbox *sandboxv1alpha1.Sandbox
-	select {
-	case result := <-resultChan:
-		timer.Stop()
-		createdSandbox = result.Sandbox
-		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
-	case <-ctx.Done():
-		timer.Stop()
-		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
-		return nil, ctx.Err()
-	case <-timer.C:
-		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
-		return nil, errSandboxCreationTimeout
+	createdSandbox, err := s.waitForSandboxReady(ctx, sandbox.Name, sandbox.Namespace, resultChan)
+	if err != nil {
+		return nil, err
 	}
 
 	// agent-sandbox create pod with same name as sandbox if no warmpool is used
@@ -311,6 +308,23 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	return response, nil
 }
 
+func (s *Server) waitForSandboxReady(ctx context.Context, sandboxName, sandboxNamespace string, resultChan <-chan SandboxStatusUpdate) (*sandboxv1alpha1.Sandbox, error) {
+	timer := time.NewTimer(2 * time.Minute)
+	defer timer.Stop()
+
+	select {
+	case result := <-resultChan:
+		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", result.Sandbox.Namespace, result.Sandbox.Name)
+		return result.Sandbox, nil
+	case <-ctx.Done():
+		klog.Warningf("sandbox %s/%s wait canceled: %v", sandboxNamespace, sandboxName, ctx.Err())
+		return nil, ctx.Err()
+	case <-timer.C:
+		klog.Warningf("sandbox %s/%s create timed out", sandboxNamespace, sandboxName)
+		return nil, errSandboxCreationTimeout
+	}
+}
+
 // rollbackSandboxCreation deletes the sandbox (or sandbox claim) and its store
 // placeholder when creation fails. It runs in a fresh context so that a
 // canceled request context does not prevent cleanup.
@@ -349,6 +363,8 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "internal server error")
 		return
 	}
+
+	kind := sandbox.Kind
 
 	dynamicClient := s.k8sClient.dynamicClient
 	if s.config.EnableAuth {
@@ -398,6 +414,8 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "internal server error")
 		return
 	}
+
+	sandboxDeleteTotal.WithLabelValues(kind).Inc()
 
 	klog.Infof("delete %s %s/%s successfully, sessionID: %v ", sandbox.Kind, sandbox.SandboxNamespace, sandbox.Name, sandbox.SessionID)
 	respondJSON(c, http.StatusOK, map[string]string{

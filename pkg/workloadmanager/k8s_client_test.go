@@ -23,8 +23,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 	listersv1 "k8s.io/client-go/listers/core/v1"
+	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+	"sigs.k8s.io/agent-sandbox/controllers"
 )
 
 // Helper function to create a pod with owner reference
@@ -126,8 +131,8 @@ func TestGetSandboxPodIP_Success(t *testing.T) {
 		podLister: mockPodLister,
 	}
 
-	// Execute
-	ip, err := client.GetSandboxPodIP(context.Background(), "test-namespace", "test-sandbox", "")
+	// Execute (pass explicit pod name; label/OwnerReference-based lookup removed)
+	ip, err := client.GetSandboxPodIP(context.Background(), "test-namespace", "test-sandbox", "test-pod")
 
 	// Verify
 	assert.NoError(t, err, "Expected no error for valid pod")
@@ -157,7 +162,7 @@ func TestGetSandboxPodIP_PodNotFound(t *testing.T) {
 		podLister: mockPodLister,
 	}
 
-	// Execute
+	// Execute without podName should return not found (no dynamic client in test)
 	ip, err := client.GetSandboxPodIP(context.Background(), "test-namespace", "test-sandbox", "")
 
 	// Verify
@@ -200,8 +205,8 @@ func TestGetSandboxPodIP_InvalidPodStatus(t *testing.T) {
 				podLister: mockPodLister,
 			}
 
-			// Execute
-			ip, err := client.GetSandboxPodIP(context.Background(), "test-namespace", "test-sandbox", "")
+			// Execute (pass explicit pod name)
+			ip, err := client.GetSandboxPodIP(context.Background(), "test-namespace", "test-sandbox", "test-pod")
 
 			// Verify
 			assert.Error(t, err, "Expected error for invalid pod status")
@@ -209,4 +214,56 @@ func TestGetSandboxPodIP_InvalidPodStatus(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.errMsg, "Error message should indicate the issue")
 		})
 	}
+}
+
+// TestGetSandboxPodIP_AnnotationLookup_Success verifies that when the Sandbox
+// resource carries the pod name annotation, GetSandboxPodIP resolves it and
+// returns the pod IP from the pod lister.
+func TestGetSandboxPodIP_AnnotationLookup_Success(t *testing.T) {
+	pod := createPodWithOwner("pod-anno", "ns-anno", "test-sandbox", corev1.PodRunning, "10.0.0.5")
+	mockPodLister := newMockPodLister()
+	mockPodLister.addPod(pod)
+
+	sb := &sandboxv1alpha1.Sandbox{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "agents.x-k8s.io/v1alpha1",
+			Kind:       "Sandbox",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-sandbox",
+			Namespace: "ns-anno",
+			Annotations: map[string]string{
+				controllers.SandboxPodNameAnnotation: "pod-anno",
+			},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	if err := sandboxv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add sandbox scheme: %v", err)
+	}
+
+	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
+
+	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(sb)
+	if err != nil {
+		t.Fatalf("failed to convert sandbox to unstructured: %v", err)
+	}
+	_, err = dyn.Resource(SandboxGVR).Namespace("ns-anno").Create(
+		context.Background(),
+		&unstructured.Unstructured{Object: unstructuredObj},
+		metav1.CreateOptions{},
+	)
+	if err != nil {
+		t.Fatalf("failed to create sandbox in fake dynamic client: %v", err)
+	}
+
+	client := &K8sClient{
+		podLister:     mockPodLister,
+		dynamicClient: dyn,
+	}
+
+	ip, err := client.GetSandboxPodIP(context.Background(), "ns-anno", "test-sandbox", "")
+	assert.NoError(t, err)
+	assert.Equal(t, "10.0.0.5", ip)
 }

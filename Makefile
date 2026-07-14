@@ -293,6 +293,11 @@ helm-template: ## Render Helm chart locally
 helm-lint: ## Lint Helm chart
 	helm lint manifests/charts/base
 
+.PHONY: helm-check
+helm-check: ## Lint Helm chart and verify templates render
+	$(MAKE) helm-lint
+	$(MAKE) helm-template >/dev/null
+
 
 ##@ Dependencies
 

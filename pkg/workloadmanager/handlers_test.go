@@ -21,9 +21,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,9 +39,14 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/store"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"k8s.io/client-go/rest"
+	k8stesting "k8s.io/client-go/testing"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
-	"sigs.k8s.io/agent-sandbox/controllers"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 )
 
@@ -80,7 +88,7 @@ func readySandbox() *sandboxv1alpha1.Sandbox {
 			Name:              "sandbox-1",
 			Namespace:         "ns-1",
 			UID:               "uid-123",
-			Annotations:       map[string]string{controllers.SandboxPodNameAnnotation: "pod-1"},
+			Annotations:       map[string]string{sandboxv1alpha1.SandboxPodNameAnnotation: "pod-1"},
 			CreationTimestamp: metav1.Now(),
 		},
 		Status: sandboxv1alpha1.SandboxStatus{Conditions: []metav1.Condition{{
@@ -98,6 +106,21 @@ func makeEntry() *sandboxEntry {
 			{Port: 8080, Protocol: runtimev1alpha1.ProtocolTypeHTTP, PathPrefix: "/api"},
 		},
 	}
+}
+
+type recordingStore struct {
+	fakeStore
+	lastUpdated *types.SandboxInfo
+}
+
+func (f *recordingStore) UpdateSandbox(ctx context.Context, sandbox *types.SandboxInfo) error {
+	if err := f.fakeStore.UpdateSandbox(ctx, sandbox); err != nil {
+		return err
+	}
+	copied := *sandbox
+	copied.EntryPoints = append([]types.SandboxEntryPoint(nil), sandbox.EntryPoints...)
+	f.lastUpdated = &copied
+	return nil
 }
 
 func TestServerCreateSandbox(t *testing.T) {
@@ -219,6 +242,17 @@ func TestServerCreateSandbox(t *testing.T) {
 	patches.ApplyPrivateMethod(reflect.TypeOf(server), "waitForSandboxEntryPointsReady", func(_ *Server, _ context.Context, _ string, _ *sandboxEntry) error {
 		return cur.readyErr
 	})
+	patches.ApplyPrivateMethod(reflect.TypeOf(server), "waitForCreatedSandbox", func(_ *Server, _ context.Context, _ dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, _ *extensionsv1alpha1.SandboxClaim, resultChan <-chan SandboxStatusUpdate) (*sandboxv1alpha1.Sandbox, error) {
+		if resultChan == nil {
+			return readySandbox(), nil
+		}
+		select {
+		case result := <-resultChan:
+			return result.Sandbox, nil
+		default:
+			return sandbox, nil
+		}
+	})
 
 	for i := range tests {
 		tt := &tests[i]
@@ -266,6 +300,393 @@ func TestServerCreateSandbox(t *testing.T) {
 			require.Len(t, resp.EntryPoints, 1)
 			require.Equal(t, "/api", resp.EntryPoints[0].Path)
 			require.Equal(t, "10.0.0.9:8080", resp.EntryPoints[0].Endpoint)
+		})
+	}
+}
+
+func TestServerCreateSandboxClaimUsesAdoptedSandboxButStoresClaimName(t *testing.T) {
+	claim := &extensionsv1alpha1.SandboxClaim{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "extensions.agents.x-k8s.io/v1alpha1",
+			Kind:       types.SandboxClaimsKind,
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ci-claim",
+			Namespace: "ns-1",
+		},
+		Status: extensionsv1alpha1.SandboxClaimStatus{
+			SandboxStatus: extensionsv1alpha1.SandboxStatus{
+				Name: "warm-pool-sandbox-abc",
+			},
+		},
+	}
+	claimObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(claim)
+	require.NoError(t, err)
+	claimUnstructured := &unstructured.Unstructured{Object: claimObj}
+
+	adoptedSandboxUnstructured := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       types.SandboxKind,
+			"metadata": map[string]interface{}{
+				"name":              "warm-pool-sandbox-abc",
+				"namespace":         "ns-1",
+				"uid":               "adopted-uid",
+				"creationTimestamp": metav1.Now().Format(time.RFC3339),
+				"annotations": map[string]interface{}{
+					sandboxv1alpha1.SandboxPodNameAnnotation: "warm-pool-pod-abc",
+				},
+			},
+			"status": map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{
+						"type":   string(sandboxv1alpha1.SandboxConditionReady),
+						"status": string(metav1.ConditionTrue),
+					},
+				},
+			},
+		},
+	}
+
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	dynamicClient.PrependReactor("get", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		getAction, ok := action.(k8stesting.GetAction)
+		require.True(t, ok)
+		switch {
+		case action.GetResource() == SandboxClaimGVR && getAction.GetName() == "ci-claim":
+			return true, claimUnstructured.DeepCopy(), nil
+		case action.GetResource() == SandboxGVR && getAction.GetName() == "warm-pool-sandbox-abc":
+			return true, adoptedSandboxUnstructured.DeepCopy(), nil
+		default:
+			return false, nil, nil
+		}
+	})
+
+	storeInst := &recordingStore{}
+	server := &Server{k8sClient: &K8sClient{}, storeClient: storeInst}
+
+	var gotNamespace, gotSandboxName, gotPodName string
+	patches := gomonkey.NewPatches()
+	defer patches.Reset()
+
+	patches.ApplyFunc(createSandboxClaim, func(_ context.Context, _ dynamic.Interface, _ *extensionsv1alpha1.SandboxClaim) error {
+		return nil
+	})
+	patches.ApplyFunc(deleteSandboxClaim, func(_ context.Context, _ dynamic.Interface, _, _ string) error {
+		return nil
+	})
+	patches.ApplyMethod(reflect.TypeOf((*K8sClient)(nil)), "GetSandboxPodIP", func(_ *K8sClient, _ context.Context, namespace, sandboxName, podName string) (string, error) {
+		gotNamespace = namespace
+		gotSandboxName = sandboxName
+		gotPodName = podName
+		return "10.0.0.10", nil
+	})
+	patches.ApplyPrivateMethod(reflect.TypeOf(server), "waitForSandboxEntryPointsReady", func(_ *Server, _ context.Context, _ string, _ *sandboxEntry) error {
+		return nil
+	})
+
+	templateSandbox := &sandboxv1alpha1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      claim.Name,
+			Namespace: claim.Namespace,
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	entry := makeEntry()
+	entry.Kind = types.SandboxClaimsKind
+	resp, err := server.createSandbox(ctx, dynamicClient, templateSandbox, claim, entry, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, "ci-claim", resp.SandboxName)
+	require.Equal(t, "adopted-uid", resp.SandboxID)
+	require.Equal(t, "ns-1", gotNamespace)
+	require.Equal(t, "warm-pool-sandbox-abc", gotSandboxName)
+	require.Equal(t, "warm-pool-pod-abc", gotPodName)
+
+	require.NotNil(t, storeInst.lastUpdated)
+	require.Equal(t, types.SandboxClaimsKind, storeInst.lastUpdated.Kind)
+	require.Equal(t, "ci-claim", storeInst.lastUpdated.Name)
+	require.Equal(t, "ns-1", storeInst.lastUpdated.SandboxNamespace)
+	require.Equal(t, "adopted-uid", storeInst.lastUpdated.SandboxID)
+	require.Equal(t, "10.0.0.10:8080", storeInst.lastUpdated.EntryPoints[0].Endpoint)
+}
+
+func TestWaitForDirectSandboxReadyWatcherFailures(t *testing.T) {
+	server := &Server{}
+	sandbox := readySandbox()
+
+	createdSandbox, err := server.waitForDirectSandboxReady(context.Background(), sandbox, nil)
+	require.Nil(t, createdSandbox)
+	require.ErrorIs(t, err, errSandboxReadyWatcherNotRegistered)
+
+	closedResultChan := make(chan SandboxStatusUpdate)
+	close(closedResultChan)
+	createdSandbox, err = server.waitForDirectSandboxReady(context.Background(), sandbox, closedResultChan)
+	require.Nil(t, createdSandbox)
+	require.ErrorIs(t, err, errSandboxReadyWatcherClosed)
+
+	emptyResultChan := make(chan SandboxStatusUpdate, 1)
+	emptyResultChan <- SandboxStatusUpdate{}
+	createdSandbox, err = server.waitForDirectSandboxReady(context.Background(), sandbox, emptyResultChan)
+	require.Nil(t, createdSandbox)
+	require.ErrorIs(t, err, errSandboxReadyWatcherMissingSandbox)
+}
+
+func TestWaitForClaimSandboxReadyReturnsForbidden(t *testing.T) {
+	claim := &extensionsv1alpha1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "ci-claim", Namespace: "ns-1"},
+	}
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	getCalls := 0
+	dynamicClient.PrependReactor("get", "sandboxclaims", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+		getCalls++
+		return true, nil, apierrors.NewForbidden(
+			schema.GroupResource{Group: SandboxClaimGVR.Group, Resource: SandboxClaimGVR.Resource},
+			claim.Name,
+			errors.New("access denied"),
+		)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	createdSandbox, err := (&Server{}).waitForClaimSandboxReady(ctx, dynamicClient, claim)
+
+	require.Nil(t, createdSandbox)
+	require.Error(t, err)
+	require.True(t, apierrors.IsInternalError(err), "expected permanent read error to fail immediately, got %v", err)
+	require.NotErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, 1, getCalls)
+}
+
+func TestWaitForClaimSandboxReadyReturnsSandboxForbidden(t *testing.T) {
+	claim := &extensionsv1alpha1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "ci-claim", Namespace: "ns-1"},
+		Status: extensionsv1alpha1.SandboxClaimStatus{
+			SandboxStatus: extensionsv1alpha1.SandboxStatus{Name: "adopted-sandbox"},
+		},
+	}
+	claimObject, err := runtime.DefaultUnstructuredConverter.ToUnstructured(claim)
+	require.NoError(t, err)
+
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	claimGetCalls := 0
+	sandboxGetCalls := 0
+	dynamicClient.PrependReactor("get", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		switch action.GetResource() {
+		case SandboxClaimGVR:
+			claimGetCalls++
+			return true, &unstructured.Unstructured{Object: claimObject}, nil
+		case SandboxGVR:
+			sandboxGetCalls++
+			return true, nil, apierrors.NewForbidden(
+				schema.GroupResource{Group: SandboxGVR.Group, Resource: SandboxGVR.Resource},
+				"adopted-sandbox",
+				errors.New("access denied"),
+			)
+		default:
+			return false, nil, nil
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	createdSandbox, err := (&Server{}).waitForClaimSandboxReady(ctx, dynamicClient, claim)
+
+	require.Nil(t, createdSandbox)
+	require.True(t, apierrors.IsInternalError(err), "expected permanent read error to fail immediately, got %v", err)
+	require.NotErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, 1, claimGetCalls)
+	require.Equal(t, 1, sandboxGetCalls)
+}
+
+func TestWaitForClaimSandboxReadyReturnsConversionError(t *testing.T) {
+	claim := &extensionsv1alpha1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "ci-claim", Namespace: "ns-1"},
+	}
+	malformedClaim := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "extensions.agents.x-k8s.io/v1alpha1",
+		"kind":       "SandboxClaim",
+		"metadata": map[string]interface{}{
+			"name":      claim.Name,
+			"namespace": claim.Namespace,
+		},
+		"status": map[string]interface{}{
+			"sandbox": map[string]interface{}{"name": int64(1)},
+		},
+	}}
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	getCalls := 0
+	dynamicClient.PrependReactor("get", "sandboxclaims", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+		getCalls++
+		return true, malformedClaim.DeepCopy(), nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	createdSandbox, err := (&Server{}).waitForClaimSandboxReady(ctx, dynamicClient, claim)
+
+	require.Nil(t, createdSandbox)
+	require.True(t, apierrors.IsInternalError(err), "expected conversion error to fail immediately, got %v", err)
+	require.NotErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, 1, getCalls)
+}
+
+func TestWaitForClaimSandboxReadyCancelsInFlightGet(t *testing.T) {
+	tests := []struct {
+		name          string
+		parentTimeout time.Duration
+		waitTimeout   time.Duration
+		blockSandbox  bool
+		cancelParent  bool
+		wantErr       error
+	}{
+		{
+			name:          "internal readiness deadline",
+			parentTimeout: 2 * time.Second,
+			waitTimeout:   250 * time.Millisecond,
+			wantErr:       errSandboxCreationTimeout,
+		},
+		{
+			name:          "internal readiness deadline during sandbox read",
+			parentTimeout: 2 * time.Second,
+			waitTimeout:   250 * time.Millisecond,
+			blockSandbox:  true,
+			wantErr:       errSandboxCreationTimeout,
+		},
+		{
+			name:          "parent deadline",
+			parentTimeout: 250 * time.Millisecond,
+			waitTimeout:   2 * time.Second,
+			wantErr:       context.DeadlineExceeded,
+		},
+		{
+			name:          "parent cancellation",
+			parentTimeout: 2 * time.Second,
+			waitTimeout:   2 * time.Second,
+			cancelParent:  true,
+			wantErr:       context.Canceled,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requestCanceled := make(chan struct{})
+			ctx, cancel := context.WithTimeout(context.Background(), tt.parentTimeout)
+			defer cancel()
+			apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tt.blockSandbox && strings.Contains(r.URL.Path, "/sandboxclaims/") {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(&extensionsv1alpha1.SandboxClaim{
+						TypeMeta: metav1.TypeMeta{
+							APIVersion: SandboxClaimGVR.Group + "/" + SandboxClaimGVR.Version,
+							Kind:       "SandboxClaim",
+						},
+						ObjectMeta: metav1.ObjectMeta{Name: "ci-claim", Namespace: "ns-1"},
+						Status: extensionsv1alpha1.SandboxClaimStatus{
+							SandboxStatus: extensionsv1alpha1.SandboxStatus{Name: "sandbox-1"},
+						},
+					})
+					return
+				}
+				if tt.cancelParent {
+					cancel()
+				}
+				<-r.Context().Done()
+				close(requestCanceled)
+			}))
+			defer apiServer.Close()
+
+			dynamicClient, err := dynamic.NewForConfig(&rest.Config{Host: apiServer.URL})
+			require.NoError(t, err)
+
+			claim := &extensionsv1alpha1.SandboxClaim{
+				ObjectMeta: metav1.ObjectMeta{Name: "ci-claim", Namespace: "ns-1"},
+			}
+
+			createdSandbox, err := (&Server{}).waitForClaimSandboxReadyWithTimeout(ctx, dynamicClient, claim, tt.waitTimeout)
+
+			require.Nil(t, createdSandbox)
+			require.ErrorIs(t, err, tt.wantErr)
+			if errors.Is(tt.wantErr, errSandboxCreationTimeout) {
+				require.NoError(t, ctx.Err(), "internal deadline must expire before the parent context")
+				require.NotErrorIs(t, err, context.DeadlineExceeded)
+			} else {
+				require.NotErrorIs(t, err, errSandboxCreationTimeout)
+			}
+			select {
+			case <-requestCanceled:
+			case <-time.After(time.Second):
+				t.Fatal("Kubernetes GET was not canceled")
+			}
+		})
+	}
+}
+
+func TestWaitForClaimSandboxReadyRejectsLateReadySandbox(t *testing.T) {
+	claim := &extensionsv1alpha1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "ci-claim", Namespace: "ns-1"},
+		Status: extensionsv1alpha1.SandboxClaimStatus{
+			SandboxStatus: extensionsv1alpha1.SandboxStatus{Name: "sandbox-1"},
+		},
+	}
+	claimObject, err := runtime.DefaultUnstructuredConverter.ToUnstructured(claim)
+	require.NoError(t, err)
+	sandboxObject, err := runtime.DefaultUnstructuredConverter.ToUnstructured(readySandbox())
+	require.NoError(t, err)
+
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	dynamicClient.PrependReactor("get", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		switch action.GetResource() {
+		case SandboxClaimGVR:
+			return true, &unstructured.Unstructured{Object: claimObject}, nil
+		case SandboxGVR:
+			// The fake deliberately ignores cancellation to verify the post-GET deadline check.
+			time.Sleep(100 * time.Millisecond)
+			return true, &unstructured.Unstructured{Object: sandboxObject}, nil
+		default:
+			return false, nil, nil
+		}
+	})
+
+	createdSandbox, err := (&Server{}).waitForClaimSandboxReadyWithTimeout(
+		context.Background(), dynamicClient, claim, 20*time.Millisecond,
+	)
+
+	require.Nil(t, createdSandbox)
+	require.ErrorIs(t, err, errSandboxCreationTimeout)
+}
+
+func TestIsRetryableSandboxReadError(t *testing.T) {
+	resource := schema.GroupResource{Group: SandboxClaimGVR.Group, Resource: SandboxClaimGVR.Resource}
+	tests := []struct {
+		name      string
+		err       error
+		retryable bool
+	}{
+		{name: "not found", err: apierrors.NewNotFound(resource, "claim"), retryable: true},
+		{name: "wrapped not found", err: fmt.Errorf("get claim: %w", apierrors.NewNotFound(resource, "claim")), retryable: true},
+		{name: "timeout", err: apierrors.NewTimeoutError("timeout", 1), retryable: true},
+		{name: "server timeout", err: apierrors.NewServerTimeout(resource, "get", 1), retryable: true},
+		{name: "too many requests", err: apierrors.NewTooManyRequests("busy", 1), retryable: true},
+		{name: "service unavailable", err: apierrors.NewServiceUnavailable("unavailable"), retryable: true},
+		{name: "internal server error", err: apierrors.NewInternalError(errors.New("server failed")), retryable: true},
+		{name: "wrapped unexpected EOF", err: fmt.Errorf("get claim: %w", fmt.Errorf("read response: %w", io.ErrUnexpectedEOF)), retryable: true},
+		{name: "forbidden", err: apierrors.NewForbidden(resource, "claim", errors.New("denied")), retryable: false},
+		{name: "wrapped forbidden", err: fmt.Errorf("get claim: %w", apierrors.NewForbidden(resource, "claim", errors.New("denied"))), retryable: false},
+		{name: "unauthorized", err: apierrors.NewUnauthorized("unauthorized"), retryable: false},
+		{name: "conversion error", err: errors.New("cannot convert object"), retryable: false},
+		{name: "context deadline", err: context.DeadlineExceeded, retryable: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.retryable, isRetryableSandboxReadError(tt.err))
 		})
 	}
 }

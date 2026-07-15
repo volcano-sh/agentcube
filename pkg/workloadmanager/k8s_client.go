@@ -21,8 +21,6 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/klog/v2"
-
 	cubeversioned "github.com/volcano-sh/agentcube/client-go/clientset/versioned"
 	cubeinformers "github.com/volcano-sh/agentcube/client-go/informers/externalversions"
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
@@ -239,6 +237,20 @@ func createSandbox(ctx context.Context, client dynamic.Interface, sandbox *sandb
 	}, nil
 }
 
+// getSandbox gets a Sandbox using the provided dynamic client.
+func getSandbox(ctx context.Context, client dynamic.Interface, namespace, sandboxName string) (*sandboxv1alpha1.Sandbox, error) {
+	obj, err := client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sandbox %s/%s: %w", namespace, sandboxName, err)
+	}
+
+	sandbox := &sandboxv1alpha1.Sandbox{}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, sandbox); err != nil {
+		return nil, fmt.Errorf("failed to convert sandbox %s/%s: %w", namespace, sandboxName, err)
+	}
+	return sandbox, nil
+}
+
 // createSandboxClaim creates a SandboxClaim using the provided dynamic client
 func createSandboxClaim(ctx context.Context, client dynamic.Interface, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
 	// Convert to unstructured for dynamic client
@@ -260,6 +272,20 @@ func createSandboxClaim(ctx context.Context, client dynamic.Interface, sandboxCl
 	}
 
 	return nil
+}
+
+// getSandboxClaim gets a SandboxClaim using the provided dynamic client.
+func getSandboxClaim(ctx context.Context, client dynamic.Interface, namespace, sandboxClaimName string) (*extensionsv1alpha1.SandboxClaim, error) {
+	obj, err := client.Resource(SandboxClaimGVR).Namespace(namespace).Get(ctx, sandboxClaimName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sandbox claim %s/%s: %w", namespace, sandboxClaimName, err)
+	}
+
+	sandboxClaim := &extensionsv1alpha1.SandboxClaim{}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, sandboxClaim); err != nil {
+		return nil, fmt.Errorf("failed to convert sandbox claim %s/%s: %w", namespace, sandboxClaimName, err)
+	}
+	return sandboxClaim, nil
 }
 
 // deleteSandbox deletes a Sandbox using the provided dynamic client
@@ -311,15 +337,17 @@ func (u *UserK8sClient) DeleteSandboxClaim(ctx context.Context, namespace, sandb
 }
 
 // GetSandboxPodIP gets the IP address of the pod corresponding to the Sandbox
-func (c *K8sClient) GetSandboxPodIP(_ context.Context, namespace, sandboxName, podName string) (string, error) {
-	// If podName is provided, try to get it directly from cache first
+func (c *K8sClient) GetSandboxPodIP(ctx context.Context, namespace, sandboxName, podName string) (string, error) {
+	// An explicit Pod name comes from the live Sandbox object. Read the Pod from
+	// the API too, so a lagging informer cannot reject an otherwise ready Sandbox.
 	if podName != "" {
-		pod, err := c.podLister.Pods(namespace).Get(podName)
-		if err == nil && pod != nil {
-			return validateAndGetPodIP(pod)
+		pod, err := c.clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+		if err != nil {
+			return "", fmt.Errorf("failed to get sandbox pod %s/%s: %w", namespace, podName, err)
 		}
-		klog.Infof("failed to get sandbox pod %s/%s: %v, try get pod by sandbox-name label", namespace, podName, err)
+		return validateAndGetPodIP(pod)
 	}
+
 	// Find pod through label selector (sandbox-name label we set)
 	pods, err := c.podLister.Pods(namespace).List(labels.SelectorFromSet(map[string]string{SandboxNameLabelKey: sandboxName}))
 	if err != nil {

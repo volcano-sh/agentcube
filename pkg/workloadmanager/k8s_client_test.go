@@ -18,13 +18,18 @@ package workloadmanager
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/kubernetes"
 	listersv1 "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/rest"
 )
 
 // Helper function to create a pod with owner reference
@@ -132,6 +137,39 @@ func TestGetSandboxPodIP_Success(t *testing.T) {
 	// Verify
 	assert.NoError(t, err, "Expected no error for valid pod")
 	assert.Equal(t, "10.0.0.1", ip, "Expected IP to match pod IP")
+}
+
+func TestGetSandboxPodIPReadsNamedPodFromLiveAPI(t *testing.T) {
+	pod := createPodWithOwner("warm-pool-pod", "test-namespace", "warm-pool-sandbox", corev1.PodRunning, "10.0.0.2")
+	pod.TypeMeta = metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"}
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/namespaces/test-namespace/pods/warm-pool-pod" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(pod); err != nil {
+			t.Errorf("encode pod response: %v", err)
+		}
+	}))
+	defer apiServer.Close()
+
+	clientset, err := kubernetes.NewForConfig(&rest.Config{Host: apiServer.URL})
+	if !assert.NoError(t, err) {
+		return
+	}
+	stalePod := pod.DeepCopy()
+	stalePod.Status.Phase = corev1.PodPending
+	stalePod.Status.PodIP = ""
+	staleLister := newMockPodLister()
+	staleLister.addPod(stalePod)
+	client := &K8sClient{clientset: clientset, podLister: staleLister}
+
+	ip, err := client.GetSandboxPodIP(context.Background(), "test-namespace", "warm-pool-sandbox", "warm-pool-pod")
+
+	assert.NoError(t, err)
+	assert.Equal(t, "10.0.0.2", ip)
 }
 
 // TestGetSandboxPodIP_PodNotFound verifies GetSandboxPodIP returns error when pod is not found

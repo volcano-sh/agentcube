@@ -17,15 +17,19 @@ limitations under the License.
 package workloadmanager
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 )
 
 func setupTestReconciler() *CodeInterpreterReconciler {
@@ -42,8 +46,90 @@ func setupTestReconciler() *CodeInterpreterReconciler {
 	}
 }
 
+func newTestReconcilerWithObjects(objects ...runtime.Object) *CodeInterpreterReconciler {
+	scheme := runtime.NewScheme()
+	_ = runtimev1alpha1.AddToScheme(scheme)
+	_ = sandboxv1alpha1.AddToScheme(scheme)
+	_ = extensionsv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objects...).Build()
+
+	return &CodeInterpreterReconciler{
+		Client: client,
+		Scheme: scheme,
+	}
+}
+
 func stringPtr(s string) *string {
 	return &s
+}
+
+func testCodeInterpreterWithWarmPool() *runtimev1alpha1.CodeInterpreter {
+	warmPoolSize := int32(2)
+	return &runtimev1alpha1.CodeInterpreter{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-code-interpreter",
+			Namespace: "default",
+		},
+		Spec: runtimev1alpha1.CodeInterpreterSpec{
+			AuthMode:     runtimev1alpha1.AuthModeNone,
+			WarmPoolSize: &warmPoolSize,
+			Template: &runtimev1alpha1.CodeInterpreterSandboxTemplate{
+				Image:           "picod:latest",
+				ImagePullPolicy: corev1.PullIfNotPresent,
+			},
+		},
+	}
+}
+
+func TestEnsureSandboxTemplateDisablesAgentSandboxDefaultNetworkPolicy(t *testing.T) {
+	reconciler := newTestReconcilerWithObjects()
+	ci := testCodeInterpreterWithWarmPool()
+
+	_, err := reconciler.ensureSandboxTemplate(context.Background(), ci)
+	assert.NoError(t, err)
+
+	sandboxTemplate := &extensionsv1alpha1.SandboxTemplate{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name:      ci.Name,
+		Namespace: ci.Namespace,
+	}, sandboxTemplate)
+	assert.NoError(t, err)
+	assert.Equal(t, extensionsv1alpha1.NetworkPolicyManagementUnmanaged, sandboxTemplate.Spec.NetworkPolicyManagement)
+}
+
+func TestEnsureSandboxTemplateUpdatesManagedNetworkPolicyToUnmanaged(t *testing.T) {
+	ci := testCodeInterpreterWithWarmPool()
+	existing := &extensionsv1alpha1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+		},
+		Spec: extensionsv1alpha1.SandboxTemplateSpec{
+			NetworkPolicyManagement: extensionsv1alpha1.NetworkPolicyManagementManaged,
+			PodTemplate: sandboxv1alpha1.PodTemplate{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:  "codeinterpreter",
+						Image: "stale-image",
+					}},
+				},
+			},
+		},
+	}
+	reconciler := newTestReconcilerWithObjects(existing)
+
+	_, err := reconciler.ensureSandboxTemplate(context.Background(), ci)
+	assert.NoError(t, err)
+
+	sandboxTemplate := &extensionsv1alpha1.SandboxTemplate{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name:      ci.Name,
+		Namespace: ci.Namespace,
+	}, sandboxTemplate)
+	assert.NoError(t, err)
+	assert.Equal(t, extensionsv1alpha1.NetworkPolicyManagementUnmanaged, sandboxTemplate.Spec.NetworkPolicyManagement)
 }
 
 func TestConvertToPodTemplate_RuntimeClassName_TableDriven(t *testing.T) {

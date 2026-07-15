@@ -41,7 +41,7 @@ Core designs include:
 
 - Using the **Static Pod model** to lock scheduling resources; mirror pods are automatically rebuilt after accidental deletion.
 - Declarative state synchronization based on **CRD Watch/List**.
-- Implements vertical resource scaling via **[containerd runtime shim (v2 Task API)](https://github.com/containerd/containerd/blob/main/api/runtime/task/v2/README.md)** (VPA analogy), independent of InPlacePodVerticalScaling Feature Gate.
+- Implements vertical resource scaling via **[containerd runtime shim (v2 Task API)](https://github.com/containerd/containerd/blob/main/docs/runtime-v2.md)** (VPA analogy), independent of InPlacePodVerticalScaling Feature Gate.
 - Coordinating multi-component status writes via the **SSA (server-side apply) field manager mechanism** to avoid field-level conflicts.
 
 ## Motivation
@@ -126,7 +126,7 @@ The system adopts a two-layer architecture model:
 | Storage backend | Pure etcd (K8s API Server) | Resource pool control plane only needs CRD state; no external storage needed |
 | CRD Scope | Cluster-scoped | placeholder-agent is a node-local singleton (one per node) bound to one Pool; no namespace isolation needed |
 | Phase calculator | Controller aggregation | When placeholder-agent is unreachable (node deleted or agent crash), it cannot update Phase; Controller aggregation + stale detection ensures Phase can still be updated in extreme scenarios |
-| Status write coordination | SSA Apply (fieldManager) | placeholder-agent SSA-Applies status every 30s; Controller occasionally SSA-Applies; field-level ownership avoids conflicts |
+| Status write coordination | SSA Apply (fieldManager) | placeholder-agent SSA-Applies status on event (only on status field changes); heartbeat via Lease every 10s; Controller occasionally SSA-Applies; field-level ownership avoids conflicts |
 | Resource adjustment method | containerd runtime shim (VPA analogy) | As a containerd shim v2 plugin, intercepts container creation calls to adjust resources online; watermark protection during downscale prevents running sandbox OOM |
 
 > **Manifest Self-Healing**: The Static Pod model protects against accidental **Pod** deletion (kubelet rebuilds from manifest). But if the **manifest file itself** is accidentally deleted, kubelet will stop the static pod. To cover this case, the placeholder-agent daemon's reconcile loop periodically verifies that the manifest exists for every active Pool on its node; if the manifest is missing while the Pool CRD still exists, the daemon rewrites it. This makes manifest recovery as automatic as mirror-pod recovery — the agent is the authoritative writer of the manifest, and the CRD (not the manifest) is the source of truth for desired state.
@@ -166,12 +166,12 @@ SandboxPool status is managed by two components via the SSA (Server-Side Apply) 
 
 | Field Manager | Component | Managed Fields | Write Timing |
 |-----------|-----------|---------------|--------------|
-| `placeholder-agent` | placeholder-agent | placeholderPod, placeholderAgent, override, resize, nodeCtl, poolInfo, conditions (non-NodeNotFound/PlaceholderAgentHealthy), lastAppliedGeneration | Periodic SSA Apply every 30s |
+| `placeholder-agent` | placeholder-agent | placeholderPod, placeholderAgent, override, resize, nodeCtl, poolInfo, conditions (non-NodeNotFound/PlaceholderAgentHealthy), lastAppliedGeneration | Event-driven SSA Apply (only on status field changes); heartbeat via Lease every 10s |
 | `sandboxpool-controller` | SandboxPool Controller | **phase**, conditions (NodeNotFound, PlaceholderAgentHealthy) | SSA Apply during Pool Reconcile |
 
-This "data source and aggregator separated" design ensures Phase can still be updated in extreme scenarios — when a node is deleted, the Controller sets Phase=Unready based on the NodeNotFound Condition; when the agent crashes but the Node still exists, the Controller detects stale `PlaceholderAgent.LastHeartbeat` (> 2min) and sets `PlaceholderAgentHealthy=False`, downgrading Phase to Degraded/Unready.
+This "data source and aggregator separated" design ensures Phase can still be updated in extreme scenarios — when a node is deleted, the Controller sets Phase=Unready based on the NodeNotFound Condition; when the agent crashes but the Node still exists, the Controller detects the expired Lease (TTL > 40s with no renewal) and sets `PlaceholderAgentHealthy=False`, downgrading Phase to Degraded/Unready.
 
-> **Heartbeat Timeout Scheduling**: After the agent crashes, no further Pool/Node events are generated, so the Controller's Watch would not trigger a new Reconcile. To cover this scenario, the Controller computes `RequeueAfter = lastHeartbeat + 2min - now` (if the heartbeat has not yet expired) or requeues immediately (if already expired) at the end of each Reconcile, ensuring that even without external events, the heartbeat timeout still triggers a Reconcile to update `PlaceholderAgentHealthy`. Additionally, the Controller performs a full Pool sweep every 30s as a fallback, preventing individual Pool requeues from being lost due to leader election switches or restarts.
+> **Lease-Based Heartbeat**: Each placeholder-agent maintains a `coordination.k8s.io/Lease` object (name = Pool name, cluster-scoped) and renews it every 10s. The Controller Watches Leases; when a Lease's `renewTime` exceeds its TTL (default 40s = 4× renewal interval), the Controller sets `PlaceholderAgentHealthy=False` and downgrades Phase. This mirrors the kubelet heartbeat pattern: the Lease is a high-frequency small object (just renewTime + holderIdentity), while the status SSA Apply is event-driven — only triggered when a status field actually changes. In a 10,000-node cluster, steady-state load is ~1,000 Lease renewals/s (lightweight) with near-zero status Apply requests, versus ~333 status Apply/s if status were used for both heartbeat and state. The Lease renewal interval and TTL are configurable via `--lease-renew-interval` (default 10s) and `--lease-ttl` (default 40s).
 
 > **Conditions SSA note**: The `conditions` field must be declared as a map list in the CRD schema (`x-kubernetes-list-type: map`, `x-kubernetes-list-map-keys: [type]`) so that different field managers can own and update different condition entries without replacing the entire list.
 
@@ -187,30 +187,35 @@ This "data source and aggregator separated" design ensures Phase can still be up
 
 ```go
 type SandboxPoolClassSpec struct {
-    // Target node selector; immutable after creation
+    // Target node selector; immutable after creation.
+    //
+    // Why immutable: the Selector determines the set of nodes a Class applies to.
+    // Changing it would cause large-scale churn — nodes that no longer match would need
+    // their Pools garbage-collected, and newly-matching nodes would need new Pools
+    // created, resulting in a mass rebuild behavior. This mirrors how
+    // Deployment.spec.selector is immutable in Kubernetes for the same reason.
+    // No actual use case requiring mutation has been identified; the restriction can
+    // be lifted in the future if a concrete requirement emerges.
     Selector metav1.LabelSelector `json:"selector"`
 
-    // Additional node selection criteria
-    NodeSelector map[string]string `json:"nodeSelector,omitempty"`
-
-    // Per-node resource quota
+    // Per-node resource quota. Required; resources must be non-empty and include
+    // at least `cpu` and `memory` keys. Other resource keys (e.g. hugepages,
+    // extended resources) are optional.
     ResourcePolicy ResourcePolicy `json:"resourcePolicy"`
 
-    // Placeholder Pod template
-    PlaceholderPodTemplate *PlaceholderPodTemplateSpec `json:"placeholderPodTemplate,omitempty"`
-
-    // node-ctl endpoint (informational only; placeholder-agent obtains the actual address
-    // via --node-ctl-socket startup parameter, not from this field)
-    // Reserved for future declarative reconciliation; currently only unix:// supported
-    NodeCtlEndpoint string `json:"nodeCtlEndpoint,omitempty"`
+    // Placeholder Pod configuration
+    PlaceholderPod *PlaceholderPodSpec `json:"placeholderPod,omitempty"`
 }
 
+// ResourcePolicy wraps a corev1.ResourceList for per-node resource quota definition.
+// Using ResourceList (map[corev1.ResourceName]resource.Quantity) instead of hardcoded
+// CPU/Memory fields preserves room for future extension — e.g. percentage-based specs
+// or additional resource types — without API changes.
 type ResourcePolicy struct {
-    CPU    resource.Quantity `json:"cpu"`
-    Memory resource.Quantity `json:"memory"`
+    Resources corev1.ResourceList `json:"resources,omitempty"`
 }
 
-type PlaceholderPodTemplateSpec struct {
+type PlaceholderPodSpec struct {
     Annotations     map[string]string `json:"annotations,omitempty"`
     Tolerations     []corev1.Toleration `json:"tolerations,omitempty"`
     RuntimeClassName *string           `json:"runtimeClassName,omitempty"`
@@ -236,11 +241,6 @@ type SandboxPoolClassStatus struct {
 }
 ```
 
-**Validation Rules**:
-- `spec.selector` is immutable after creation (Webhook validation)
-- `spec.resourcePolicy.cpu` / `spec.resourcePolicy.memory` are required
-- `spec.nodeCtlEndpoint` (if non-empty) must start with `unix://`. `http://` / `https://` are reserved for future extension; the current version webhook rejects non-`unix://` values
-
 #### SandboxPool
 
 **Group / Version / Kind / Scope**: `sandboxpool.agentcube.volcano.sh` / `v1alpha1` / `SandboxPool` / `Cluster`
@@ -249,31 +249,55 @@ type SandboxPoolClassStatus struct {
 
 ```go
 type SandboxPoolSpec struct {
+    // Reference to the parent SandboxPoolClass. Set by the Controller during Pool creation.
+    // Immutable after creation — changing it would detach the Pool from its Class.
     ClassRef ClassRef `json:"classRef"`
 
+    // Name of the node this Pool is bound to. Set by the Controller during Pool creation.
+    // Immutable after creation — changing it would break the 1-Pool-per-node binding.
+    // A single node cannot have Pools of different Classes — enforced by the Validating
+    // Webhook and four-layer protection (see Validating Webhook section).
     NodeName string `json:"nodeName"`
 
-    // Declarative placeholder; placeholder-agent obtains the actual address via --node-ctl-socket
+    // Node-ctl configuration snapshot. Set by the Controller from Class spec.
+    // placeholder-agent obtains the actual socket address via --node-ctl-socket
+    // startup parameter; this field is informational and for future declarative use.
+    // Optional; when nil, the agent uses its startup flag value.
     NodeCtl *NodeCtlConfig `json:"nodeCtl,omitempty"`
 
-    // Policy snapshot: synced by Controller from Class.spec.resourcePolicy
-    // When Override is enabled, placeholder-agent prioritizes spec.override.resourcePolicy
+    // Resource policy snapshot synced by the Controller from Class.spec.resourcePolicy.
+    // When Override.enabled=true, placeholder-agent prioritizes spec.override.resourcePolicy.
+    // Optional in spec but always set by the Controller during creation.
     ResourcePolicy *ResourcePolicy `json:"resourcePolicy,omitempty"`
 
+    // Operator override for node-specific adjustments. Optional.
+    // When enabled, the agent uses the override's resourcePolicy instead of the Class snapshot.
     Override *OverrideSpec `json:"override,omitempty"`
 }
 
 type OverrideSpec struct {
-    Enabled        bool            `json:"enabled,omitempty"`
-    Reason         string          `json:"reason,omitempty"`
+    // Whether the override is active. When true, the agent uses the override's
+    // resourcePolicy instead of the Class snapshot. Set by operators.
+    Enabled bool `json:"enabled,omitempty"`
+
+    // Human-readable reason for the override. Required when Enabled=true.
+    // Provides audit traceability for why the override was applied.
+    Reason string `json:"reason,omitempty"`
+
+    // The override resource policy. Required when Enabled=true.
+    // When nil and Enabled=true, the webhook rejects the Pool.
     ResourcePolicy *ResourcePolicy `json:"resourcePolicy,omitempty"`
 }
 
 type ClassRef struct {
+    // Name of the SandboxPoolClass this Pool belongs to. Set by the Controller.
     Name string `json:"name"`
 }
 
 type NodeCtlConfig struct {
+    // node-ctl socket endpoint. Currently only unix:// is supported.
+    // placeholder-agent obtains the actual address via --node-ctl-socket;
+    // this field is informational and reserved for future declarative reconciliation.
     Endpoint string `json:"endpoint,omitempty"`
 }
 ```
@@ -318,7 +342,7 @@ type PlaceholderPodInfo struct {
 
 type PlaceholderAgentInfo struct {
     Version        string       `json:"version,omitempty"`
-    LastHeartbeat  *metav1.Time `json:"lastHeartbeat,omitempty"` // Updated by placeholder-agent on each status Patch; used by Controller for staleness detection
+    LastHeartbeat  *metav1.Time `json:"lastHeartbeat,omitempty"` // Updated by placeholder-agent on each status Apply; informational — Controller uses Lease TTL for liveness detection
     NodeCtlStarted bool         `json:"nodeCtlStarted,omitempty"`
     NodeCtlStartAt *metav1.Time `json:"nodeCtlStartAt,omitempty"`
 }
@@ -366,13 +390,6 @@ type PoolInfo struct {
 **Naming Rules**: SandboxPool naming format is `placeholder-{node-name}`, e.g. `placeholder-node-1`. Naming is deterministic per node (one Pool name per node), so Kubernetes API create conflict provides atomicity — when two Classes concurrently create a Pool for the same node, they produce the same name; the API Server accepts only the first, returning AlreadyExists for the second. Class ownership is identified via `spec.classRef.name` and the `sandbox-pool.io/class` Label; do not reverse-derive from the Pool name.
 
 > **Long Node Name Truncation**: Kubernetes object names are limited to 253 characters. The `placeholder-` prefix is 12 characters, so the maximum node name length is 241 characters. If the node name exceeds 241 characters, truncate it to 232 characters and append `-` + the first 8 hex characters of SHA256(node-name) as a suffix, yielding a total length of `placeholder-` (12) + 232 + 1 + 8 = 253 ≤ 253. The truncated name remains deterministic per node, preserving create conflict atomicity.
-
-**Validation Rules**:
-- When `override.enabled=true`, `override.resourcePolicy` must be non-nil
-- When `override.enabled=true`, `override.reason` must not be empty
-- `spec.nodeName` is immutable after creation (Webhook validation) — changing it would detach the Pool from its node and break the 1-Pool-per-node binding
-- `spec.classRef.name` is immutable after creation (Webhook validation) — changing it would detach the Pool from its Class
-- A single node cannot have Pools of different Classes (four-layer protection, see Validating Webhook section below)
 
 **PrintColumn Configuration**:
 
@@ -654,7 +671,7 @@ Node startup
 | `NodeCtlHealthy` | placeholder-agent | node-ctl reachable and responding normally | node-ctl unreachable or abnormal response |
 | `ResizeInProgress` | placeholder-agent | Scale-up or scale-down in progress | No resize in progress |
 | `ResizeDeferred` | placeholder-agent | Downscale deferred due to high watermark | No deferred downscale operation |
-| `PlaceholderAgentHealthy` | sandboxpool-controller | Agent heartbeat within 2min (`status.placeholderAgent.lastHeartbeat` fresh) | Agent never reported / heartbeat timeout > 2min (agent crashed but Node exists) |
+| `PlaceholderAgentHealthy` | sandboxpool-controller | Agent Lease active (renewed within TTL, default 40s) | Agent never reported / Lease expired (TTL > 40s with no renewal, agent crashed but Node exists) |
 | `NodeNotFound` | sandboxpool-controller | Node does not exist; Pool is orphaned | Node exists |
 
 ### Label and Annotation System
@@ -673,7 +690,7 @@ Node startup
 | Role | Permission Scope | Description |
 |------|-----------------|-------------|
 | `sandbox-pool-controller` | ClusterRole | sandboxpoolclasses (get/list/watch), sandboxpools (CRUD+status), nodes (get/list/watch), pods (get/list), events (create/patch), leases (full) |
-| `sandbox-pool-placeholder-agent` | ClusterRole | sandboxpools (get/list/watch), sandboxpools/status (patch), endpoints (full), events (create/patch) |
+| `sandbox-pool-placeholder-agent` | ClusterRole | sandboxpools (get/list/watch), sandboxpools/status (patch), endpoints (full), events (create/patch), leases (create/get/update) |
 | `sandbox-pool-admin` | ClusterRole | CRUD SandboxPoolClass + SandboxPool |
 | `sandbox-pool-viewer` | ClusterRole | Get/List/Watch |
 | `sandbox-pool-operator` | ClusterRole | Update SandboxPool (override operations) |
@@ -682,14 +699,7 @@ Node startup
 
 ### Validating Webhook
 
-| Validation Target | Rule | Description |
-|------------------|------|-------------|
-| SandboxPoolClass UPDATE | `spec.selector` immutable | Prevents mutation of running node set |
-| SandboxPool UPDATE | `spec.nodeName` immutable | Changing it would detach the Pool from its node and break the 1-Pool-per-node binding |
-| SandboxPool UPDATE | `spec.classRef.name` immutable | Changing it would detach the Pool from its Class |
-| SandboxPool CREATE/UPDATE | When override.enabled=true, override.resourcePolicy must be non-nil | Prevents inability to derive valid resource quota |
-| SandboxPool CREATE/UPDATE | When override.enabled=true, override.reason must not be empty | Audit traceability |
-| SandboxPool CREATE | A single node cannot have Pools of different Classes | Second layer of four-layer protection (defense in depth, see below) |
+The ValidatingWebhook enforces the field-level validation rules documented in the API type definitions above (see `SandboxPoolClassSpec` and `SandboxPoolSpec` field comments). Key invariants: `spec.selector` / `spec.nodeName` / `spec.classRef.name` immutability; `override.resourcePolicy` and `override.reason` required when `override.enabled=true`; single-Class-per-node enforced via four-layer protection below.
 
 > **Four-Layer Protection (Single-Class-per-Node Invariant)**:
 >
@@ -717,7 +727,7 @@ Node startup
 | Risk | Impact | Mitigation |
 |------|--------|-----------|
 | Phase update delay (≤30s) | Delay between Conditions change and Phase update | Alert rule sets `for ≥ 1m` buffer to avoid flapping |
-| Conditions stuck at stale values when placeholder-agent unreachable | Phase may not reflect latest state | Controller detects agent heartbeat staleness via `PlaceholderAgentHealthy` Condition (`status.placeholderAgent.lastHeartbeat` > 2min), downgrading Phase to Degraded/Unready; NodeNotFound covers node deletion scenario |
+| Conditions stuck at stale values when placeholder-agent unreachable | Phase may not reflect latest state | Controller detects agent heartbeat staleness via `PlaceholderAgentHealthy` Condition (expired Lease (TTL > 40s)), downgrading Phase to Degraded/Unready; NodeNotFound covers node deletion scenario |
 | SSA Apply concurrent conflict | Both sides SSA Apply status simultaneously | SSA field manager field-level non-overwrite; conflict auto-retried on next Reconcile/reportStatus |
 | selector immutability causes operational inconvenience | Adjusting node range requires deleting and recreating Class | Alternative approaches provided: taint+toleration, remove node Label |
 | EverReady Condition precise tracking | Already implemented via sticky `ConditionEverReady` (set True on first Ready, never reset) | Implemented, no additional field needed |
@@ -729,7 +739,7 @@ Node startup
 - **Concurrent create test**: Two Classes selecting the same node simultaneously; verify deterministic naming + Kubernetes create conflict allows only one Pool creation, losing Class GETs the existing Pool, detects classRef mismatch, emits `NodeConflict` Warning Event and surfaces conflict in Class status (Layer 1); pre-create `checkNodeConflict` logs `NodeConflict` Warning Event on the losing Class (Layer 3).
 - **E2E tests**: Placeholder Pod lifecycle (create/resize/delete/mirror pod rebuild).
 - **Fault injection tests**: node-ctl unreachable, API Server disconnect, node deletion, agent restart.
-- **Heartbeat timeout fault injection**: Agent stops and generates no further Pool/Node events; verify the Controller via RequeueAfter + periodic sweep downgrades `PlaceholderAgentHealthy` to False and Phase to Degraded/Unready after 2min.
+- **Heartbeat timeout fault injection**: Agent stops renewing its Lease; verify the Controller detects Lease TTL expiry (default 40s) and downgrades `PlaceholderAgentHealthy` to False and Phase to Degraded/Unready.
 - **VPA resize tests**: Scale-up/scale-down/Deferred scenarios.
 
 ## Alternatives

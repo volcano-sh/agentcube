@@ -17,6 +17,7 @@ limitations under the License.
 package picod
 
 import (
+	"net/http"
 	"strconv"
 	"time"
 
@@ -24,6 +25,29 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+const methodUnknown = "unknown"
+
+// requestDurationBuckets covers PicoD's full latency range: sub-millisecond
+// for fast file and health-style paths through the 60-second default command
+// timeout used by ExecuteHandler.
+var requestDurationBuckets = []float64{
+	0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5,
+	1, 2.5, 5, 10, 20, 30, 45, 60,
+}
+
+// normalizeMethod maps non-standard HTTP methods to "unknown" to prevent
+// unbounded label cardinality in Prometheus time series.
+func normalizeMethod(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete,
+		http.MethodPatch, http.MethodHead, http.MethodOptions,
+		http.MethodConnect, http.MethodTrace:
+		return method
+	default:
+		return methodUnknown
+	}
+}
 
 // Metrics holds the Prometheus collectors for PicoD.
 type Metrics struct {
@@ -63,7 +87,7 @@ func NewMetrics() *Metrics {
 		prometheus.HistogramOpts{
 			Name:    "picod_http_request_duration_seconds",
 			Help:    "Latency of HTTP requests, partitioned by method and path.",
-			Buckets: prometheus.DefBuckets,
+			Buckets: requestDurationBuckets,
 		},
 		[]string{"method", "path"},
 	)
@@ -108,7 +132,8 @@ func (m *Metrics) Middleware() gin.HandlerFunc {
 		duration := time.Since(start).Seconds()
 
 		status := strconv.Itoa(c.Writer.Status())
-		m.HTTPRequestsTotal.WithLabelValues(c.Request.Method, path, status).Inc()
-		m.HTTPRequestDuration.WithLabelValues(c.Request.Method, path).Observe(duration)
+		method := normalizeMethod(c.Request.Method)
+		m.HTTPRequestsTotal.WithLabelValues(method, path, status).Inc()
+		m.HTTPRequestDuration.WithLabelValues(method, path).Observe(duration)
 	}
 }

@@ -159,6 +159,12 @@ func verifyHTTPRequestDuration(t *testing.T, mf *dto.MetricFamily) {
 			foundExecute = true
 			assert.Greater(t, *m.Histogram.SampleCount, uint64(0))
 			assert.Greater(t, *m.Histogram.SampleSum, 0.0)
+			// Verify the extended bucket set was applied: all 15 explicit
+			// buckets must be present and the uppermost must cover the
+			// 60-second default command timeout.
+			require.Equal(t, len(requestDurationBuckets), len(m.Histogram.Bucket))
+			lastBucket := m.Histogram.Bucket[len(m.Histogram.Bucket)-1]
+			assert.Equal(t, 60.0, *lastBucket.UpperBound)
 		}
 	}
 	assert.True(t, foundExecute, "should record duration for POST /api/execute")
@@ -239,4 +245,66 @@ func TestMetrics_UnmatchedRoute(t *testing.T) {
 		}
 	}
 	assert.True(t, foundUnmatched, "unmatched routes must use path label 'unmatched', not the raw URL path")
+}
+
+func TestNormalizeMethod(t *testing.T) {
+	standard := []string{
+		http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete,
+		http.MethodPatch, http.MethodHead, http.MethodOptions,
+		http.MethodConnect, http.MethodTrace,
+	}
+	for _, m := range standard {
+		assert.Equal(t, m, normalizeMethod(m), "standard method must be preserved: %s", m)
+	}
+
+	custom := []string{"FOO", "BAR", "RANDOM123", "PROPFIND", "MKCOL"}
+	for _, m := range custom {
+		assert.Equal(t, methodUnknown, normalizeMethod(m), "non-standard method must become %q: %s", methodUnknown, m)
+	}
+}
+
+func TestMetrics_UnknownMethod(t *testing.T) {
+	_, routerPubStr := generateRSAKeys(t)
+	server, ts, tmpDir := setupTestServer(t, routerPubStr)
+	defer os.RemoveAll(tmpDir)
+	defer ts.Close()
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	// Send three requests each with a distinct non-standard HTTP method.
+	customMethods := []string{"FOO", "BAR", "RANDOM123"}
+	for _, m := range customMethods {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(m, executeAPIPath, nil)
+		server.engine.ServeHTTP(w, r)
+	}
+
+	metricFamilies, err := server.metrics.Registry.Gather()
+	require.NoError(t, err)
+
+	var unknownSeries int
+	var unknownTotal float64
+	var customLabelFound bool
+	for _, mf := range metricFamilies {
+		if *mf.Name != metricHTTPRequestsTotal {
+			continue
+		}
+		for _, m := range mf.Metric {
+			for _, label := range m.Label {
+				if *label.Name != labelMethod {
+					continue
+				}
+				switch *label.Value {
+				case methodUnknown:
+					unknownSeries++
+					unknownTotal += *m.Counter.Value
+				case "FOO", "BAR", "RANDOM123":
+					customLabelFound = true
+				}
+			}
+		}
+	}
+
+	assert.Equal(t, 1, unknownSeries, "all non-standard methods must collapse into a single %q series", methodUnknown)
+	assert.Equal(t, float64(len(customMethods)), unknownTotal, "counter must reflect all requests in the single series")
+	assert.False(t, customLabelFound, "non-standard method names must not appear as metric label values")
 }

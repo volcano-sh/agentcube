@@ -19,9 +19,9 @@ package main
 import (
 	"context"
 	"flag"
-	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"k8s.io/klog/v2"
 
@@ -31,41 +31,29 @@ import (
 func main() {
 	port := flag.Int("port", 8080, "Port for the PicoD server to listen on")
 	workspace := flag.String("workspace", "", "Root directory for file operations (default: current working directory)")
+	shutdownTimeout := flag.Duration("shutdown-timeout", 90*time.Second, "Grace period for graceful shutdown")
+	maxExecutionTimeout := flag.Duration("max-execution-timeout", 60*time.Second, "Maximum allowed per-command execution timeout")
 
 	// Initialize klog flags
 	klog.InitFlags(nil)
 	flag.Parse()
 
 	config := picod.Config{
-		Port:      *port,
-		Workspace: *workspace,
+		Port:                *port,
+		Workspace:           *workspace,
+		ShutdownTimeout:     *shutdownTimeout,
+		MaxExecutionTimeout: *maxExecutionTimeout,
 	}
 
-	// Create server
+	// Create a context that is canceled on SIGINT or SIGTERM.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Create and start server
 	server := picod.NewServer(config)
 
-	// Setup signal handling with context cancellation
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	// Start PicoD server in goroutine
-	errCh := make(chan error, 1)
-	go func() {
-		klog.Infof("Starting PicoD server on port %d", *port)
-		if err := server.Start(ctx); err != nil {
-			errCh <- err
-		}
-		close(errCh)
-	}()
-
-	// Wait for signal or fatal error
-	select {
-	case <-ctx.Done():
-		klog.Info("Received shutdown signal, shutting down gracefully...")
-		cancel()
-		<-errCh
-	case err := <-errCh:
-		klog.Fatalf("Server error: %v", err)
+	if err := server.Start(ctx); err != nil {
+		klog.Fatalf("PicoD server exited with error: %v", err)
 	}
 
 	klog.Info("PicoD server stopped")

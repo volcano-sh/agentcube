@@ -36,7 +36,7 @@ const (
 // ExecuteRequest defines command execution request body
 type ExecuteRequest struct {
 	Command    []string          `json:"command" binding:"required"` // The command and its arguments to execute. The first element is the executable.
-	Timeout    string            `json:"timeout"`                    // Optional: Timeout for the command execution (e.g., "30s", "500ms"). Defaults to "30s".
+	Timeout    string            `json:"timeout"`                    // Optional: Timeout for the command execution (e.g., "30s", "500ms"). Defaults to MaxExecutionTimeout when omitted; any value exceeding MaxExecutionTimeout is rejected.
 	WorkingDir string            `json:"working_dir"`                // Optional: The working directory for the command.
 	Env        map[string]string `json:"env"`                        // Optional: Environment variables to set for the command.
 }
@@ -71,17 +71,13 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	}
 
 	// Set timeout
-	timeoutDuration := 60 * time.Second // Default timeout
-	if req.Timeout != "" {
-		var err error
-		timeoutDuration, err = time.ParseDuration(req.Timeout)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("Invalid timeout format: %v", err),
-				"code":  http.StatusBadRequest,
-			})
-			return
-		}
+	timeoutDuration, err := s.parseAndCapTimeout(req.Timeout)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+			"code":  http.StatusBadRequest,
+		})
+		return
 	}
 
 	// Create context with timeout
@@ -129,7 +125,7 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	cmd.Stderr = &stderr
 
 	start := time.Now()
-	err := cmd.Run()
+	err = cmd.Run()
 	duration := time.Since(start).Seconds()
 	endTime := time.Now()
 
@@ -158,4 +154,27 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 		StartTime: start,
 		EndTime:   endTime,
 	})
+}
+
+// parseAndCapTimeout parses the timeout string and rejects it if it exceeds
+// the server's per-command maximum (MaxExecutionTimeout), ensuring no command
+// can outlive the server during graceful shutdown.
+// s.config.MaxExecutionTimeout is guaranteed to be > 0 by NewServer.
+func (s *Server) parseAndCapTimeout(timeoutStr string) (time.Duration, error) {
+	timeoutDuration := s.config.MaxExecutionTimeout // Default: use the configured maximum
+	if timeoutStr != "" {
+		var err error
+		timeoutDuration, err = time.ParseDuration(timeoutStr)
+		if err != nil {
+			return 0, fmt.Errorf("invalid timeout format: %w", err)
+		}
+	}
+
+	if timeoutDuration > s.config.MaxExecutionTimeout {
+		return 0, fmt.Errorf(
+			"requested timeout %v exceeds the maximum allowed execution timeout %v",
+			timeoutDuration, s.config.MaxExecutionTimeout,
+		)
+	}
+	return timeoutDuration, nil
 }

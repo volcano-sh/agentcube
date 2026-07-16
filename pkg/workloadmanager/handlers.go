@@ -20,15 +20,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/klog/v2"
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
-	"sigs.k8s.io/agent-sandbox/controllers"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 
 	"github.com/volcano-sh/agentcube/pkg/api"
@@ -36,15 +37,73 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/store"
 )
 
-// errSandboxCreationTimeout is returned when the internal sandbox-ready wait exceeds the 2-minute deadline.
-var errSandboxCreationTimeout = errors.New("sandbox creation timed out")
+var (
+	// errSandboxCreationTimeout is returned when the internal sandbox-ready wait exceeds the 2-minute deadline.
+	errSandboxCreationTimeout = errors.New("sandbox creation timed out")
 
-// storeCleanupTimeout is the maximum duration allowed to clean up a store placeholder.
-const storeCleanupTimeout = 30 * time.Second
+	// errSandboxReadyWatcherNotRegistered is returned when direct sandbox creation starts without a readiness watcher.
+	errSandboxReadyWatcherNotRegistered = errors.New("sandbox ready watcher not registered")
+
+	// errSandboxReadyWatcherClosed is returned when the readiness watcher closes before a sandbox becomes ready.
+	errSandboxReadyWatcherClosed = errors.New("sandbox ready watcher closed before sandbox was ready")
+
+	// errSandboxReadyWatcherMissingSandbox is returned when the readiness watcher reports readiness without a sandbox object.
+	errSandboxReadyWatcherMissingSandbox = errors.New("sandbox ready watcher returned empty sandbox")
+)
+
+const (
+	// sandboxCreationTimeout matches the router's sandbox creation timeout.
+	sandboxCreationTimeout = 2 * time.Minute
+	// storeCleanupTimeout is the maximum duration allowed to clean up a store placeholder.
+	storeCleanupTimeout = 30 * time.Second
+)
 
 // isContextError reports whether err is a context cancellation or deadline error.
 func isContextError(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func sandboxReadyWaitContextError(parentCtx, waitCtx context.Context) error {
+	if waitCtx.Err() == nil {
+		return nil
+	}
+	if context.Cause(waitCtx) == errSandboxCreationTimeout {
+		return errSandboxCreationTimeout
+	}
+	if err := parentCtx.Err(); err != nil {
+		return err
+	}
+	return waitCtx.Err()
+}
+
+func sandboxReadyWaitEnded(parentCtx, waitCtx context.Context, readErr error) (bool, error) {
+	if waitErr := sandboxReadyWaitContextError(parentCtx, waitCtx); waitErr != nil {
+		return true, waitErr
+	}
+	if isContextError(readErr) {
+		return true, readErr
+	}
+	return false, nil
+}
+
+func isRetryableSandboxReadError(err error) bool {
+	if isContextError(err) {
+		return false
+	}
+	return apierrors.IsNotFound(err) ||
+		apierrors.IsTimeout(err) ||
+		apierrors.IsServerTimeout(err) ||
+		apierrors.IsTooManyRequests(err) ||
+		apierrors.IsServiceUnavailable(err) ||
+		apierrors.IsInternalError(err) ||
+		apierrors.IsUnexpectedServerError(err) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		utilnet.IsTimeout(err) ||
+		utilnet.IsProbableEOF(err) ||
+		utilnet.IsConnectionReset(err) ||
+		utilnet.IsHTTP2ConnectionLost(err) ||
+		utilnet.IsConnectionRefused(err)
 }
 
 // handleHealth handles health check requests
@@ -104,19 +163,10 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	var sandboxEntry *sandboxEntry
 	var err error
 
-	ownerID, err := extractOwnerID(c.Request)
-	if err != nil {
-		if errors.Is(err, ErrNoIdentityHeader) {
-			ownerID = ""
-		} else if errors.Is(err, ErrPublicKeyNotCached) {
-			klog.Errorf("Failed to extract owner ID: %v", err)
-			respondError(c, http.StatusServiceUnavailable, "identity verifier not ready")
-			return
-		} else {
-			klog.Errorf("Failed to extract owner ID: %v", err)
-			respondError(c, http.StatusUnauthorized, "invalid identity token")
-			return
-		}
+	ownerID, statusCode, errMsg := resolveSandboxOwnerID(c.Request)
+	if statusCode != 0 {
+		respondError(c, statusCode, errMsg)
+		return
 	}
 
 	switch sandboxReq.Kind {
@@ -141,7 +191,7 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 		sandboxEntry.OwnerID = ownerID
 	}
 
-	// Calculate sandbox name and namespace before creating
+	// Calculate sandbox name and namespace before creating.
 	sandboxName := sandbox.Name
 	namespace := sandbox.Namespace
 
@@ -156,49 +206,70 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 		dynamicClient = userDynamicClient
 	}
 
-	// CRITICAL: Register watcher BEFORE creating sandbox
-	// This ensures we don't miss the Running state notification
-	resultChan := s.sandboxController.WatchSandboxOnce(c.Request.Context(), namespace, sandboxName)
-	// Ensure cleanup is called when function returns to prevent memory leak
-	defer s.sandboxController.UnWatchSandbox(namespace, sandboxName)
+	var resultChan <-chan SandboxStatusUpdate
+	if sandboxClaim == nil {
+		// CRITICAL: Register watcher BEFORE creating sandbox.
+		// This ensures we don't miss the Ready state notification for directly created sandboxes.
+		resultChan = s.sandboxController.WatchSandboxOnce(c.Request.Context(), namespace, sandboxName)
+		// Ensure cleanup is called when function returns to prevent memory leak.
+		defer s.sandboxController.UnWatchSandbox(namespace, sandboxName)
+	}
 
 	response, err := s.createSandbox(c.Request.Context(), dynamicClient, sandbox, sandboxClaim, sandboxEntry, resultChan)
 	if err != nil {
-		respondCreateError(c, sandbox.Namespace, sandbox.Name, err)
+		s.respondSandboxCreateError(c, sandbox, err)
 		return
 	}
 
 	respondJSON(c, http.StatusOK, response)
 }
 
-// respondCreateError maps sandbox-creation errors to the appropriate HTTP response.
-func respondCreateError(c *gin.Context, namespace, name string, err error) {
-	// Client disconnected — abort with 499 so logs/metrics reflect the cancellation.
+func resolveSandboxOwnerID(r *http.Request) (string, int, string) {
+	ownerID, err := extractOwnerID(r)
+	if err == nil {
+		return ownerID, 0, ""
+	}
+	if errors.Is(err, ErrNoIdentityHeader) {
+		return "", 0, ""
+	}
+
+	klog.Errorf("Failed to extract owner ID: %v", err)
+	if errors.Is(err, ErrPublicKeyNotCached) {
+		return "", http.StatusServiceUnavailable, "identity verifier not ready"
+	}
+	return "", http.StatusUnauthorized, "invalid identity token"
+}
+
+func (s *Server) respondSandboxCreateError(c *gin.Context, sandbox *sandboxv1alpha1.Sandbox, err error) {
 	if errors.Is(err, context.Canceled) {
-		klog.Warningf("create sandbox aborted %s/%s: client disconnected", namespace, name)
+		klog.Warningf("create sandbox aborted %s/%s: client disconnected", sandbox.Namespace, sandbox.Name)
 		c.AbortWithStatus(499)
 		return
 	}
-	// Deadline exceeded — client may still be connected; return 504 so they get a meaningful response.
 	if errors.Is(err, context.DeadlineExceeded) {
-		klog.Warningf("create sandbox timed out %s/%s: request deadline exceeded", namespace, name)
+		klog.Warningf("create sandbox timed out %s/%s: request deadline exceeded", sandbox.Namespace, sandbox.Name)
 		respondError(c, http.StatusGatewayTimeout, "request timed out")
 		return
 	}
-	// Internal sandbox-ready wait timed out; surface as 504 rather than a generic 500.
 	if errors.Is(err, errSandboxCreationTimeout) {
-		klog.Warningf("create sandbox timed out %s/%s: sandbox did not become ready within deadline", namespace, name)
+		klog.Warningf("create sandbox timed out %s/%s: sandbox did not become ready within deadline", sandbox.Namespace, sandbox.Name)
 		respondError(c, http.StatusGatewayTimeout, err.Error())
 		return
 	}
-	klog.Errorf("create sandbox failed %s/%s: %v", namespace, name, err)
-	// Internal errors (store, K8s API) must not leak system details to callers;
-	// sandbox-level failures (terminal pod state, timeout) are safe to surface.
+
+	klog.Errorf("create sandbox failed %s/%s: %v", sandbox.Namespace, sandbox.Name, err)
 	msg := err.Error()
-	if apierrors.IsInternalError(err) {
+	if isInternalSandboxCreateError(err) {
 		msg = "internal server error"
 	}
 	respondError(c, http.StatusInternalServerError, msg)
+}
+
+func isInternalSandboxCreateError(err error) bool {
+	return apierrors.IsInternalError(err) ||
+		errors.Is(err, errSandboxReadyWatcherNotRegistered) ||
+		errors.Is(err, errSandboxReadyWatcherClosed) ||
+		errors.Is(err, errSandboxReadyWatcherMissingSandbox)
 }
 
 // createK8sResources creates the K8s sandbox or sandbox claim resource.
@@ -219,6 +290,101 @@ func (s *Server) createK8sResources(ctx context.Context, dynamicClient dynamic.I
 		}
 	}
 	return nil
+}
+
+func (s *Server) waitForDirectSandboxReady(ctx context.Context, sandbox *sandboxv1alpha1.Sandbox, resultChan <-chan SandboxStatusUpdate) (*sandboxv1alpha1.Sandbox, error) {
+	if resultChan == nil {
+		return nil, errSandboxReadyWatcherNotRegistered
+	}
+
+	// Use NewTimer so we can stop it explicitly when another branch wins,
+	// preventing the runtime from retaining the timer until it fires.
+	timer := time.NewTimer(sandboxCreationTimeout)
+	defer timer.Stop()
+
+	select {
+	case result, ok := <-resultChan:
+		if !ok {
+			klog.Warningf("sandbox %s/%s ready watcher closed before ready", sandbox.Namespace, sandbox.Name)
+			return nil, errSandboxReadyWatcherClosed
+		}
+		createdSandbox := result.Sandbox
+		if createdSandbox == nil {
+			klog.Warningf("sandbox %s/%s ready watcher returned empty sandbox", sandbox.Namespace, sandbox.Name)
+			return nil, errSandboxReadyWatcherMissingSandbox
+		}
+		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
+		return createdSandbox, nil
+	case <-ctx.Done():
+		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
+		return nil, ctx.Err()
+	case <-timer.C:
+		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
+		return nil, errSandboxCreationTimeout
+	}
+}
+
+func (s *Server) waitForClaimSandboxReady(ctx context.Context, dynamicClient dynamic.Interface, sandboxClaim *extensionsv1alpha1.SandboxClaim) (*sandboxv1alpha1.Sandbox, error) {
+	return s.waitForClaimSandboxReadyWithTimeout(ctx, dynamicClient, sandboxClaim, sandboxCreationTimeout)
+}
+
+func (s *Server) waitForClaimSandboxReadyWithTimeout(ctx context.Context, dynamicClient dynamic.Interface, sandboxClaim *extensionsv1alpha1.SandboxClaim, timeout time.Duration) (*sandboxv1alpha1.Sandbox, error) {
+	waitCtx, cancel := context.WithTimeoutCause(ctx, timeout, errSandboxCreationTimeout)
+	defer cancel()
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		claim, err := getSandboxClaim(waitCtx, dynamicClient, sandboxClaim.Namespace, sandboxClaim.Name)
+		if ended, waitErr := sandboxReadyWaitEnded(ctx, waitCtx, err); ended {
+			return nil, waitErr
+		}
+		if err != nil {
+			if !isRetryableSandboxReadError(err) {
+				return nil, api.NewInternalError(err)
+			}
+			klog.V(2).Infof("waiting for sandbox claim %s/%s status: %v", sandboxClaim.Namespace, sandboxClaim.Name, err)
+		}
+		if err == nil {
+			if sandboxName := claim.Status.SandboxStatus.Name; sandboxName != "" {
+				createdSandbox, err := getSandbox(waitCtx, dynamicClient, sandboxClaim.Namespace, sandboxName)
+				if ended, waitErr := sandboxReadyWaitEnded(ctx, waitCtx, err); ended {
+					return nil, waitErr
+				}
+				if err != nil {
+					if !isRetryableSandboxReadError(err) {
+						return nil, api.NewInternalError(err)
+					}
+					klog.V(2).Infof("waiting for adopted sandbox %s/%s: %v", sandboxClaim.Namespace, sandboxName, err)
+				} else if getSandboxStatus(createdSandbox) == sandboxStatusReady {
+					if waitErr := sandboxReadyWaitContextError(ctx, waitCtx); waitErr != nil {
+						return nil, waitErr
+					}
+					klog.V(2).Infof("sandbox claim %s/%s adopted ready sandbox %s/%s", sandboxClaim.Namespace, sandboxClaim.Name, createdSandbox.Namespace, createdSandbox.Name)
+					return createdSandbox, nil
+				}
+			}
+		}
+
+		select {
+		case <-waitCtx.Done():
+			waitErr := sandboxReadyWaitContextError(ctx, waitCtx)
+			if errors.Is(waitErr, errSandboxCreationTimeout) {
+				klog.Warningf("sandbox claim %s/%s create timed out", sandboxClaim.Namespace, sandboxClaim.Name)
+			} else {
+				klog.Warningf("sandbox claim %s/%s wait canceled: %v", sandboxClaim.Namespace, sandboxClaim.Name, waitErr)
+			}
+			return nil, waitErr
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Server) waitForCreatedSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, resultChan <-chan SandboxStatusUpdate) (*sandboxv1alpha1.Sandbox, error) {
+	if sandboxClaim != nil {
+		return s.waitForClaimSandboxReady(ctx, dynamicClient, sandboxClaim)
+	}
+	return s.waitForDirectSandboxReady(ctx, sandbox, resultChan)
 }
 
 // createSandbox performs sandbox creation and returns the response payload or an error with an HTTP status code.
@@ -245,55 +411,47 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		return nil, err
 	}
 
-	// Use NewTimer so we can stop it explicitly when another branch wins,
-	// preventing the runtime from retaining the timer until it fires.
-	timer := time.NewTimer(2 * time.Minute) // consistent with router settings
-
-	var createdSandbox *sandboxv1alpha1.Sandbox
-	select {
-	case result := <-resultChan:
-		timer.Stop()
-		createdSandbox = result.Sandbox
-		klog.V(2).Infof("sandbox %s/%s reported ready, verifying entrypoints", createdSandbox.Namespace, createdSandbox.Name)
-	case <-ctx.Done():
-		timer.Stop()
-		klog.Warningf("sandbox %s/%s wait canceled: %v", sandbox.Namespace, sandbox.Name, ctx.Err())
-		return nil, ctx.Err()
-	case <-timer.C:
-		klog.Warningf("sandbox %s/%s create timed out", sandbox.Namespace, sandbox.Name)
-		return nil, errSandboxCreationTimeout
+	createdSandbox, err := s.waitForCreatedSandbox(ctx, dynamicClient, sandbox, sandboxClaim, resultChan)
+	if err != nil {
+		return nil, err
 	}
 
-	// agent-sandbox create pod with same name as sandbox if no warmpool is used
-	// so here we try to get pod IP by sandbox name first
-	// if warmpool is used, the pod name is stored in sandbox's annotation `agents.x-k8s.io/sandbox-pod-name`
-	// https://github.com/kubernetes-sigs/agent-sandbox/blob/3ab7fbcd85ad0d75c6e632ecd14bcaeda5e76e1e/controllers/sandbox_controller.go#L465
-	sandboxPodName := sandbox.Name
-	if podName, exists := createdSandbox.Annotations[controllers.SandboxPodNameAnnotation]; exists {
+	// agent-sandbox creates a Pod with the same name as the Sandbox if no warm pool is used.
+	// If a warm pool is used, the adopted Pod name is stored in
+	// sandboxv1alpha1.SandboxPodNameAnnotation.
+	sandboxNameForPod := createdSandbox.Name
+	sandboxPodName := createdSandbox.Name
+	if podName, exists := createdSandbox.Annotations[sandboxv1alpha1.SandboxPodNameAnnotation]; exists {
 		sandboxPodName = podName
 	}
 
-	podIP, err := s.k8sClient.GetSandboxPodIP(ctx, sandbox.Namespace, sandbox.Name, sandboxPodName)
+	podIP, err := s.k8sClient.GetSandboxPodIP(ctx, createdSandbox.Namespace, sandboxNameForPod, sandboxPodName)
 	if err != nil {
 		if isContextError(err) {
 			return nil, err
 		}
-		return nil, api.NewInternalError(fmt.Errorf("failed to get sandbox %s/%s pod IP: %w", sandbox.Namespace, sandbox.Name, err))
+		return nil, api.NewInternalError(fmt.Errorf("failed to get sandbox %s/%s pod IP: %w", createdSandbox.Namespace, sandboxNameForPod, err))
 	}
 	if err := s.waitForSandboxEntryPointsReady(ctx, podIP, sandboxEntry); err != nil {
 		if isContextError(err) {
 			return nil, err
 		}
-		return nil, api.NewInternalError(fmt.Errorf("failed to verify sandbox %s/%s entrypoints: %w", sandbox.Namespace, sandbox.Name, err))
+		return nil, api.NewInternalError(fmt.Errorf("failed to verify sandbox %s/%s entrypoints: %w", createdSandbox.Namespace, sandboxNameForPod, err))
 	}
 
 	storeCacheInfo := buildSandboxInfo(createdSandbox, podIP, sandboxEntry)
+	if sandboxClaim != nil {
+		storeCacheInfo.Name = sandboxClaim.Name
+		storeCacheInfo.SandboxNamespace = sandboxClaim.Namespace
+		storeCacheInfo.ExpiresAt = placeholder.ExpiresAt
+		storeCacheInfo.CreatedAt = placeholder.CreatedAt
+	}
 
 	response := &types.CreateSandboxResponse{
 		Kind:        storeCacheInfo.Kind,
 		SessionID:   sandboxEntry.SessionID,
 		SandboxID:   storeCacheInfo.SandboxID,
-		SandboxName: sandbox.Name,
+		SandboxName: storeCacheInfo.Name,
 		EntryPoints: storeCacheInfo.EntryPoints,
 		OwnerID:     sandboxEntry.OwnerID,
 	}

@@ -16,7 +16,18 @@ permissions:
 
 jobs:
   e2e-test:
-    runs-on: ubuntu-22.04
+    name: ${{ matrix.check_name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - check_name: e2e-test
+            mtls_enabled: "true"
+            require_codeinterpreter: "false"
+          - check_name: codeinterpreter-e2e-test
+            mtls_enabled: "false"
+            require_codeinterpreter: "true"
     steps:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -45,6 +56,9 @@ jobs:
           install_only: true
 
       - name: Run E2E Tests
+        env:
+          MTLS_ENABLED: ${{ matrix.mtls_enabled }}
+          E2E_REQUIRE_CODEINTERPRETER: ${{ matrix.require_codeinterpreter }}
         run: |
           export ARTIFACTS_PATH=${{ github.workspace }}/e2e-logs
           make e2e
@@ -53,7 +67,7 @@ jobs:
         if: failure() # Only upload logs when tests fail
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: agentcube_e2e_logs_${{ github.run_id }}_${{ github.run_attempt }}
+          name: agentcube_e2e_logs_${{ matrix.check_name }}_${{ github.run_id }}_${{ github.run_attempt }}
           path: ${{ github.workspace }}/e2e-logs/
           if-no-files-found: ignore
 

@@ -12,7 +12,7 @@ export GO111MODULE=on
 
 # Find code-generator
 CODEGEN_PKG=""
-CODEGEN_VERSION="v0.34.1"
+CODEGEN_VERSION="v0.35.4"
 
 # Try vendor directory first
 if [ -d "vendor/k8s.io/code-generator" ]; then
@@ -21,10 +21,10 @@ if [ -d "vendor/k8s.io/code-generator" ]; then
 else
 	# Ensure code-generator is downloaded
 	echo "Ensuring code-generator@${CODEGEN_VERSION} is available..."
-	go get -d "k8s.io/code-generator@${CODEGEN_VERSION}" || true
+	CODEGEN_JSON=$(go mod download -json "k8s.io/code-generator@${CODEGEN_VERSION}")
 	
 	# Find code-generator in module cache
-	CODEGEN_PKG=$(go list -m -f '{{.Dir}}' "k8s.io/code-generator@${CODEGEN_VERSION}" 2>/dev/null || echo "")
+	CODEGEN_PKG=$(printf '%s\n' "${CODEGEN_JSON}" | sed -n 's/^[[:space:]]*"Dir": "\([^"]*\)".*/\1/p')
 	
 	if [ -z "${CODEGEN_PKG}" ] || [ ! -d "${CODEGEN_PKG}" ]; then
 		# Try GOPATH/pkg/mod as fallback
@@ -33,7 +33,7 @@ else
 			CODEGEN_PKG="${GOPATH}/pkg/mod/k8s.io/code-generator@${CODEGEN_VERSION}"
 		else
 			echo "Error: Could not find code-generator@${CODEGEN_VERSION}"
-			echo "Please run: go get k8s.io/code-generator@${CODEGEN_VERSION}"
+			echo "Please run: go mod download k8s.io/code-generator@${CODEGEN_VERSION}"
 			exit 1
 		fi
 	fi

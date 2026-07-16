@@ -40,6 +40,8 @@ import (
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 )
 
+const codeInterpreterNetworkPolicyManagement = extensionsv1alpha1.NetworkPolicyManagementUnmanaged
+
 // CodeInterpreterReconciler reconciles a CodeInterpreter object
 type CodeInterpreterReconciler struct {
 	client.Client
@@ -155,7 +157,8 @@ func (r *CodeInterpreterReconciler) ensureSandboxTemplate(ctx context.Context, c
 				Namespace: ci.Namespace,
 			},
 			Spec: extensionsv1alpha1.SandboxTemplateSpec{
-				PodTemplate: podTemplate,
+				PodTemplate:             podTemplate,
+				NetworkPolicyManagement: codeInterpreterNetworkPolicyManagement,
 			},
 		}
 
@@ -174,9 +177,17 @@ func (r *CodeInterpreterReconciler) ensureSandboxTemplate(ctx context.Context, c
 		return ctrl.Result{}, fmt.Errorf("failed to get SandboxTemplate: %w", err)
 	}
 
-	// Update existing SandboxTemplate if needed
+	// Update existing SandboxTemplate if needed.
+	needsUpdate := false
 	if !r.podTemplateEqual(sandboxTemplate.Spec.PodTemplate, podTemplate) {
 		sandboxTemplate.Spec.PodTemplate = podTemplate
+		needsUpdate = true
+	}
+	if sandboxTemplate.Spec.NetworkPolicyManagement != codeInterpreterNetworkPolicyManagement {
+		sandboxTemplate.Spec.NetworkPolicyManagement = codeInterpreterNetworkPolicyManagement
+		needsUpdate = true
+	}
+	if needsUpdate {
 		if err := r.Update(ctx, sandboxTemplate); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to update SandboxTemplate: %w", err)
 		}

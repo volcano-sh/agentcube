@@ -41,6 +41,8 @@ func init() {
 }
 
 func setupExecuteTestServer(t *testing.T) (*Server, string) {
+	t.Setenv(testHelperProcessEnv, "1")
+
 	// Generate RSA key pair
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -169,7 +171,7 @@ func TestExecuteHandler_TimeoutFormats(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := ExecuteRequest{
-				Command: []string{"echo", "test"},
+				Command: testCommand("echo", "test"),
 				Timeout: tt.timeout,
 			}
 			body, _ := json.Marshal(req)
@@ -234,7 +236,7 @@ func TestExecuteHandler_WorkingDirectory(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := ExecuteRequest{
-				Command:    []string{"pwd"},
+				Command:    testCommand("pwd"),
 				WorkingDir: tt.workingDir,
 			}
 			body, _ := json.Marshal(req)
@@ -264,11 +266,11 @@ func TestExecuteHandler_WorkingDirectory_SymlinkEscape(t *testing.T) {
 	// Plant a symlink inside the workspace that points outside it.
 	outsideDir := t.TempDir()
 	symlinkPath := filepath.Join(tmpDir, "escape")
-	require.NoError(t, os.Symlink(outsideDir, symlinkPath))
+	requireSymlink(t, outsideDir, symlinkPath)
 
 	// Attempt to execute in a subdirectory of the symlink — mkdirSafe should reject this.
 	req := ExecuteRequest{
-		Command:    []string{"pwd"},
+		Command:    testCommand("pwd"),
 		WorkingDir: "escape/newdir",
 	}
 	body, _ := json.Marshal(req)
@@ -291,7 +293,7 @@ func TestExecuteHandler_DefaultsToWorkspace(t *testing.T) {
 
 	// No WorkingDir set — command should run inside the workspace directory.
 	req := ExecuteRequest{
-		Command: []string{"pwd"},
+		Command: testCommand("pwd"),
 	}
 	body, _ := json.Marshal(req)
 
@@ -331,17 +333,17 @@ func TestExecuteHandler_ExitCodes(t *testing.T) {
 	}{
 		{
 			name:         "success (exit 0)",
-			command:      []string{"true"},
+			command:      testCommand("exit", "0"),
 			expectedCode: 0,
 		},
 		{
 			name:         "failure (exit 1)",
-			command:      []string{"false"},
+			command:      testCommand("exit", "1"),
 			expectedCode: 1,
 		},
 		{
 			name:         "custom exit code 42",
-			command:      []string{"sh", "-c", "exit 42"},
+			command:      testCommand("exit", "42"),
 			expectedCode: 42,
 		},
 	}
@@ -374,7 +376,7 @@ func TestExecuteHandler_TimeoutHandling(t *testing.T) {
 	defer os.Unsetenv(PublicKeyEnvVar)
 
 	req := ExecuteRequest{
-		Command: []string{"sleep", "1"},
+		Command: testCommand("sleep", "1s"),
 		Timeout: "100ms",
 	}
 	body, _ := json.Marshal(req)
@@ -401,7 +403,7 @@ func TestExecuteHandler_EnvironmentVariables(t *testing.T) {
 	defer os.Unsetenv(PublicKeyEnvVar)
 
 	req := ExecuteRequest{
-		Command: []string{"sh", "-c", "echo $TEST_VAR"},
+		Command: testCommand("env", "TEST_VAR"),
 		Env: map[string]string{
 			"TEST_VAR": "test-value",
 		},
@@ -429,7 +431,7 @@ func TestExecuteHandler_ResponseStructure(t *testing.T) {
 	defer os.Unsetenv(PublicKeyEnvVar)
 
 	req := ExecuteRequest{
-		Command: []string{"echo", "hello", "world"},
+		Command: testCommand("echo", "hello", "world"),
 	}
 	body, _ := json.Marshal(req)
 
@@ -465,7 +467,7 @@ func TestExecuteHandler_StderrCapture(t *testing.T) {
 	defer os.Unsetenv(PublicKeyEnvVar)
 
 	req := ExecuteRequest{
-		Command: []string{"sh", "-c", "echo 'error message' >&2"},
+		Command: testCommand("stderr-exit", "error message", "0"),
 	}
 	body, _ := json.Marshal(req)
 
@@ -490,7 +492,7 @@ func TestExecuteHandler_CommandWithArguments(t *testing.T) {
 	defer os.Unsetenv(PublicKeyEnvVar)
 
 	req := ExecuteRequest{
-		Command: []string{"sh", "-c", "echo arg1 arg2 arg3"},
+		Command: testCommand("echo", "arg1", "arg2", "arg3"),
 	}
 	body, _ := json.Marshal(req)
 
@@ -515,7 +517,7 @@ func TestExecuteHandler_EmptyEnvVars(t *testing.T) {
 	defer os.Unsetenv(PublicKeyEnvVar)
 
 	req := ExecuteRequest{
-		Command: []string{"echo", "test"},
+		Command: testCommand("echo", "test"),
 		Env:     map[string]string{},
 	}
 	body, _ := json.Marshal(req)
@@ -536,7 +538,7 @@ func TestExecuteHandler_MultipleEnvVars(t *testing.T) {
 	defer os.Unsetenv(PublicKeyEnvVar)
 
 	req := ExecuteRequest{
-		Command: []string{"sh", "-c", "echo $VAR1 $VAR2 $VAR3"},
+		Command: testCommand("echo-env", "VAR1", "VAR2", "VAR3"),
 		Env: map[string]string{
 			"VAR1": "value1",
 			"VAR2": "value2",

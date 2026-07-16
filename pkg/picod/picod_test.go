@@ -64,6 +64,8 @@ func createToken(t *testing.T, key *rsa.PrivateKey, claims jwt.MapClaims) string
 
 // setupTestServer creates a test server with public key loaded from env
 func setupTestServer(t *testing.T, pubPEM string) (*Server, *httptest.Server, string) {
+	t.Setenv(testHelperProcessEnv, "1")
+
 	tmpDir, err := os.MkdirTemp("", "picod_test")
 	require.NoError(t, err)
 
@@ -113,7 +115,9 @@ func TestPicoD_EndToEnd(t *testing.T) {
 
 	t.Run("Unauthenticated Access", func(t *testing.T) {
 		// Execute without auth header
-		execReq := ExecuteRequest{Command: []string{"echo", "hello"}}
+		execReq := ExecuteRequest{
+			Command: testCommand("echo", "hello"),
+		}
 		body, _ := json.Marshal(execReq)
 		req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(body))
 		resp, err := client.Do(req)
@@ -152,29 +156,29 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		}
 
 		// 1. Basic Execution
-		resp := doExec([]string{"echo", "hello"}, nil, "")
+		resp := doExec(testCommand("echo", "hello"), nil, "")
 		assert.Equal(t, "hello\n", resp.Stdout)
 		assert.Equal(t, 0, resp.ExitCode)
 		assert.False(t, resp.StartTime.IsZero())
 		assert.False(t, resp.EndTime.IsZero())
 
 		// 2. Environment Variables
-		resp = doExec([]string{"sh", "-c", "echo $TEST_VAR"}, map[string]string{"TEST_VAR": "picod_env"}, "")
+		resp = doExec(testCommand("env", "TEST_VAR"), map[string]string{"TEST_VAR": "picod_env"}, "")
 		assert.Equal(t, "picod_env\n", resp.Stdout)
 
 		// 3. Stderr and Exit Code
-		resp = doExec([]string{"sh", "-c", "echo error_msg >&2; exit 1"}, nil, "")
+		resp = doExec(testCommand("stderr-exit", "error_msg", "1"), nil, "")
 		assert.Equal(t, "error_msg\n", resp.Stderr)
 		assert.Equal(t, 1, resp.ExitCode)
 
 		// 4. Timeout
-		resp = doExec([]string{"sleep", "2"}, nil, "0.5s")
+		resp = doExec(testCommand("sleep", "2s"), nil, "0.5s")
 		assert.Equal(t, 124, resp.ExitCode)
 		assert.Contains(t, resp.Stderr, "Command timed out")
 
 		// 5. Working Directory Escape (Should Fail)
 		escapeReq := ExecuteRequest{
-			Command:    []string{"ls"},
+			Command:    testCommand("echo", "escape"),
 			WorkingDir: "../",
 		}
 		escapeBody, _ := json.Marshal(escapeReq)
@@ -311,7 +315,9 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		}
 		token := createToken(t, wrongPriv, claims)
 
-		reqBody := ExecuteRequest{Command: []string{"echo", "malicious"}}
+		reqBody := ExecuteRequest{
+			Command: testCommand("echo", "malicious"),
+		}
 		realBody, _ := json.Marshal(reqBody)
 
 		req, _ := http.NewRequest("POST", ts.URL+"/api/execute", bytes.NewBuffer(realBody))
@@ -376,8 +382,7 @@ func TestPicoD_SetWorkspace(t *testing.T) {
 
 	// Create a symlink
 	linkDir := filepath.Join(tmpDir, "link")
-	err = os.Symlink(realDir, linkDir)
-	require.NoError(t, err)
+	requireSymlink(t, realDir, linkDir)
 
 	server := &Server{}
 

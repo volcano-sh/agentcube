@@ -1,0 +1,1114 @@
+---
+title: Multi-Agent Runtime Design Proposal
+authors:
+  - "@Abhinav-kodes"
+creation-date: 2026-05-19
+---
+
+# Multi-Agent Runtime: Design Proposal
+
+Author: Abhinav Singh
+
+> **Status:** Draft  
+> **Target Version:** AgentCube v0.x  
+> **Relates to:** Issue [#301](https://github.com/volcano-sh/agentcube/issues/301)
+
+---
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Motivation](#motivation)
+3. [Goals and Non-Goals](#goals-and-non-goals)
+4. [Use Cases](#use-cases)
+5. [Design](#design)
+   - [Architecture](#architecture)
+   - [CRD Specification](#crd-specification)
+   - [Key Design Decisions](#key-design-decisions)
+   - [Store Layout](#store-layout)
+   - [Core Implementation](#core-implementation-createsandboxgroup)
+   - [Topological Sort and Cycle Detection](#topological-sort-and-cycle-detection)
+6. [API](#api)
+   - [New Endpoints](#new-endpoints)
+   - [Request and Response Types](#request-and-response-types)
+   - [Store Interface Additions](#store-interface-additions)
+   - [CRD Types](#crd-types)
+   - [SandboxInfo Extensions](#sandboxinfo-extensions)
+7. [Controller: MultiAgentRuntimeReconciler](#controller-multiagentruntimereconciler)
+8. [Garbage Collection](#garbage-collection)
+9. [Router Integration](#router-integration)
+10. [SDK Integration](#sdk-integration)
+11. [Backward Compatibility](#backward-compatibility)
+12. [File Change Map](#file-change-map)
+13. [Implementation Plan](#implementation-plan)
+14. [What Stays Unchanged](#what-stays-unchanged)
+15. [Alternatives Considered](#alternatives-considered)
+16. [Future Enhancements](#future-enhancements)
+
+---
+
+## Overview
+
+This document proposes `MultiAgentRuntime`, a new custom resource for the AgentCube project. It introduces a declarative orchestration layer that allows users to define a group of collaborating `AgentRuntime` roles as a single unit with unified lifecycle management.
+
+Each role references an existing `AgentRuntime` CRD by name. The system manages startup ordering, dependency endpoint injection, per-role warm pools, failure handling, and garbage collection for the entire group atomically.
+
+The design is intentionally additive: it reuses the existing transactional sandbox creation pipeline (`createSandbox`, `rollbackSandboxCreation`, `WatchSandboxOnce`, and the store interface) without modification. The multi-agent layer sits above these primitives as a pure composition layer.
+
+---
+
+## Motivation
+
+Complex AI workloads increasingly require multiple specialized agents working together. The existing `example/pcap-analyzer/` already demonstrates this pattern: a planner agent coordinates with a code-interpreter agent to analyze network packet captures. Today, achieving this requires users to:
+
+1. Create each agent sandbox independently via separate API calls.
+2. Discover endpoints and wire inter-agent communication by hand.
+3. Manage lifecycle (idle timeout, TTL, cleanup) for each sandbox individually.
+4. Implement custom rollback logic if any sandbox fails to start.
+
+This manual approach is fragile and does not scale. A single client disconnect mid-creation can leave a partially created group with no cleanup path. There is no first-class notion of a "group" in the store, so GC cannot reason about group-level lifecycle. Warm pools are unavailable at the group level. Three-agent or DAG-structured topologies require custom application-level orchestration code.
+
+`MultiAgentRuntime` addresses all of these gaps by promoting the group from an informal convention to a first-class API object with full lifecycle management.
+
+> **Note:** The existing single-agent `AgentRuntime` and `CodeInterpreter` creation flows are not modified by this proposal. `MultiAgentRuntime` is a pure composition layer that calls the same `createSandbox()` pipeline for each role.
+
+---
+
+## Goals and Non-Goals
+
+### Goals
+
+- Provide a single CRD to declare a group of collaborating `AgentRuntime` roles and their relationships.
+- Support atomic creation and rollback: failure of any role undoes all previously created sandboxes.
+- Support topological startup ordering via a `dependencies[]` field with cycle detection.
+- Support per-role warm pools using the existing `SandboxTemplate` + `SandboxWarmPool` + `SandboxClaim` machinery.
+- Provide a `/topology` endpoint so the coordinator can discover worker endpoints at runtime.
+- Support a `BestEffort` startup policy for cases where some workers are optional.
+- Extend GC to clean up group manifests alongside member sandboxes.
+- Add a `MultiAgentRuntimeReconciler` for post-creation self-healing.
+
+### Non-Goals
+
+- Cross-namespace groups. All roles must be in the same namespace as the `MultiAgentRuntime` resource.
+- Cross-cluster groups. All sandboxes are created in the same Kubernetes cluster.
+- Runtime re-configuration of group topology (e.g., adding or removing roles after creation).
+- Built-in inter-agent message passing or shared memory. Agents communicate over cluster-internal networking using injected endpoints; the transport layer is the application's responsibility.
+- Multi-tenancy isolation between groups. Namespace-level RBAC from the existing `AgentRuntime` applies.
+
+---
+
+## Use Cases
+
+1. **Research team with planner + code-interpreter**
+   A research team deploys a planner agent that breaks complex queries into steps and a code-interpreter agent that executes generated code. Today, the `example/pcap-analyzer/` demonstrates this pattern with manual orchestration. With `MultiAgentRuntime`, the team declares both agents as roles with `dependencies: [planner]` on the code-interpreter, and the system handles startup ordering, endpoint injection, and unified cleanup.
+
+2. **Fan-out analysis pipeline**
+   A security team runs a coordinator agent that fans out to three parallel analysis agents (network, filesystem, process). Each analyzer runs independently with no inter-dependencies. The coordinator discovers all worker endpoints via the `/topology` endpoint and dispatches tasks. `MultiAgentRuntime` with `startupPolicy: BestEffort` allows the pipeline to operate in degraded mode if one analyzer fails to start.
+
+3. **DAG-structured data processing**
+   A data engineering team chains agents in a DAG: an ingestion agent feeds a transformation agent, which feeds both a validation agent and a storage agent. Dependencies ensure each stage starts only after its predecessors are ready. Endpoint injection eliminates manual service discovery.
+
+4. **Latency-sensitive warm pool deployment**
+   A production API team needs sub-second group creation for a coordinator + two workers. By setting `warmPoolSize: 3` on each role, pre-warmed sandboxes are claimed via `SandboxClaim` at group creation time, reducing cold-start latency from minutes to near-zero.
+
+---
+
+## Design
+
+### Architecture
+
+```mermaid
+graph TD
+    Client["External Client"]
+    Router["Router (pkg/router)<br/>proxies to coordinator sessionID only"]
+    WM["WorkloadManager (pkg/workloadmanager)<br/>createSandboxGroup()"]
+    S1["Sandbox/Pod<br/>[planner] (coordinator)"]
+    S2["Sandbox/Pod<br/>[researcher]"]
+    S3["Sandbox/Pod<br/>[coder]"]
+    Store["Store (Redis/Valkey)<br/>sandbox:{sessionID} entries<br/>agentgroup:{groupSessionID} manifest"]
+
+    Client -->|external request| Router
+    Router -->|create group| WM
+    WM -->|createSandbox| S1
+    WM -->|createSandbox| S2
+    WM -->|createSandbox| S3
+    WM -->|SaveAgentGroup| Store
+    S2 <-.->|cluster-internal| S1
+    S3 <-.->|cluster-internal| S1
+    S3 <-.->|cluster-internal| S2
+```
+
+The coordinator is the only role exposed externally through the Router. All inter-agent traffic flows over cluster-internal pod IPs, never touching the Router proxy. This keeps inter-agent latency low and does not require any changes to the Router's proxy logic.
+
+### CRD Specification
+
+```yaml
+apiVersion: runtime.agentcube.volcano.sh/v1alpha1
+kind: MultiAgentRuntime
+metadata:
+  name: research-team
+  namespace: default
+spec:
+  # startupPolicy controls failure semantics during group creation.
+  # Atomic (default): any role failure rolls back all previously created sandboxes.
+  # BestEffort: coordinator must succeed; worker failures are recorded in the group manifest.
+  startupPolicy: Atomic
+  roles:
+    - name: planner
+      runtimeRef: planner-agent   # name of an existing AgentRuntime CRD in this namespace
+      isCoordinator: true         # exactly one role must be marked as coordinator
+      warmPoolSize: 2
+    - name: researcher
+      runtimeRef: researcher-agent
+      warmPoolSize: 3
+      dependencies: [planner]     # planner must be ready before researcher is created
+    - name: coder
+      runtimeRef: coder-agent
+      dependencies: [planner, researcher]
+  sessionTimeout: 15m
+  maxSessionDuration: 8h
+```
+
+> **Example mapping:** The `example/pcap-analyzer/` pattern maps directly onto this spec: `planner` references the planner `AgentRuntime`, and the code-interpreter maps to a worker role with `dependencies: [planner]`. The manual orchestration code in `pcap_analyzer.py` is replaced entirely by this declarative CRD.
+
+### Key Design Decisions
+
+#### Reference-based role definitions
+
+Each role's `runtimeRef` points to an existing `AgentRuntime` CRD in the same namespace. `MultiAgentRuntime` does not inline a pod spec, security context, resource requirements, or image. All of these are already defined and validated in the referenced `AgentRuntime`. This means updating an agent's image or resource limits in the `AgentRuntime` automatically applies to every group that references it, with no duplication.
+
+This decision mirrors the pattern used by `CodeInterpreter`, which also separates the "what" (container spec in the CRD) from the lifecycle management concerns.
+
+#### Flat role list with dependency DAG
+
+Roles are declared in a flat `roles[]` list. Each role optionally declares `dependencies[]` referencing other roles by name. This represents an arbitrary directed acyclic graph (DAG): linear pipelines, fan-out/fan-in, swarms (no dependencies), and peer topologies are all expressible without any structural change to the API.
+
+At creation time, `topoSort()` runs Kahn's algorithm over the dependency graph. Roles with no remaining dependencies are created first. Dependency endpoints are injected into each subsequent role before its sandbox is created. If a cycle is detected, the request is rejected immediately with an error message identifying the involved roles.
+
+#### Coordinator designation
+
+Exactly one role must have `isCoordinator: true`. This is enforced at request time; zero or multiple coordinators result in a validation error. The coordinator's session ID is the only one registered with the Router for external traffic. All other roles are cluster-internal.
+
+The coordinator concept is intentionally separate from the orchestrator concept. A coordinator is simply the external entrypoint; it does not need to control other agents. This supports gateway-style topologies where the coordinator routes requests but does not plan or execute.
+
+#### Per-role warm pools
+
+Each role may set `warmPoolSize`. When greater than zero, the `MultiAgentRuntimeReconciler` creates a `SandboxTemplate` + `SandboxWarmPool` pair for that role, using `controllerutil.SetControllerReference` to bind them to the `MultiAgentRuntime`. At group creation time, warm roles are provisioned via `SandboxClaim` rather than direct `Sandbox` creation, reducing cold-start latency from approximately 2 minutes per role to near-zero.
+
+This reuses the exact same `SandboxTemplate`/`SandboxWarmPool`/`SandboxClaim` machinery already implemented in `CodeInterpreterReconciler`, with no changes to that machinery.
+
+#### Startup policies
+
+**`Atomic` (default):** All roles must succeed. If any role fails, the deferred rollback function in `createSandboxGroup()` calls `rollbackSandboxCreation()` for every previously created sandbox. The call returns an error. This is the correct default for production workloads where a partial group is worse than no group.
+
+**`BestEffort`:** The coordinator must succeed. Worker failures are recorded in the group manifest with `status: "failed"`, and the call returns successfully with partial topology information. The response signals which roles are unavailable. This is appropriate for workloads where some workers are optional or can be retried asynchronously.
+
+In both policies, coordinator failure always causes full rollback and an error return, regardless of how many workers succeeded.
+
+#### Dependency endpoint injection
+
+Before a dependent role's sandbox is created, stable DNS-based endpoints of its dependencies are injected as environment variables into the pod template. To ensure stable communication under the `BestEffort` policy where failed worker pods are replaced and get new IP addresses, the Workload Manager automatically creates a Headless Kubernetes Service for each role in the group. 
+
+* **Service Name:** `mar-{shortHash}-{roleNameSanitized}` (where `{shortHash}` is the first 8 characters of the SHA-256 hash of the `groupSessionID`, and `{roleNameSanitized}` replaces non-DNS-compliant characters with hyphens, **truncated to 50 characters, then stripped of any trailing hyphens**). With a 13-character prefix (`mar-` + 8-char hash + `-`), this guarantees the full service name always fits within the Kubernetes 63-character DNS label limit and is a valid DNS label (no trailing hyphens).
+* **Service Selector:** Matches `GroupSessionID` and `Role` metadata on the sandbox. This ensures the Service remains stable and targets replacement pods correctly under `BestEffort` policies.
+* **Service Lifecycle:** Created during `createSandboxGroup()` and cleaned up automatically via OwnerReferences when the MultiAgentRuntime is deleted.
+
+The environment variables injected into the dependent pod's containers point to the stable Service DNS name:
+
+1. **Default Endpoint (Primary service port):**
+   ```
+   AGENTCUBE_DEP_{ROLE_NAME_SANITIZED_UPPER}_ENDPOINT = {serviceName}.{namespace}.svc.cluster.local:{port}
+   ```
+   * **Port Resolution Rule:**
+     * If `targetPort` is explicitly defined in the dependency's `RoleSpec` (either as a port name or number), that port is used as the default.
+     * If `targetPort` is not specified, and the dependency's `AgentRuntime` CRD defines a single port, that port is used.
+     * If `targetPort` is not specified, and it defines multiple ports, the system first looks for a port named `http` or `default`. If no such port is found, it falls back to the first port in the ports list.
+     * If `targetPort` is not specified and the dependency's `AgentRuntime` CRD defines **no ports**, endpoint injection fails and `injectDependencyEndpoints()` returns an error, which in turn causes the entire group creation to fail (triggering a full rollback under `Atomic` policy). The `ValidatingAdmissionWebhook` should reject at admission time any role that lists a dependency whose referenced `AgentRuntime` exposes no ports, preventing this error from reaching the creation path.
+
+2. **Named Port Endpoints (For multi-service agents exposing multiple ports):**
+   If the dependency's `AgentRuntime` CRD defines named ports, an endpoint environment variable is additionally injected for each named port:
+   ```
+   AGENTCUBE_DEP_{ROLE_NAME_SANITIZED_UPPER}_PORT_{PORT_NAME_SANITIZED_UPPER}_ENDPOINT = {serviceName}.{namespace}.svc.cluster.local:{portNumber}
+   ```
+
+**Validation against Naming Collisions:**
+* Because multiple role names or port names could map to the same sanitized environment variable (e.g., `my-agent` and `my.agent` both sanitize to `AGENTCUBE_DEP_MY_AGENT_ENDPOINT`), the API server validates the group configuration at request admission time. If any two roles or named ports within the group result in the same sanitized environment variable key, the request is rejected with a `400 Bad Request` validation error.
+* The `ValidatingAdmissionWebhook` also explicitly checks for **Role name collisions after truncation**: after computing the sanitized and truncated role name (`{roleNameSanitized-truncated-stripped}`) for each role, if any two roles in the same group produce an identical sanitized name, the request is rejected. This prevents the edge case where two roles whose names are identical in their first 50 characters would silently share a single Headless Service. The webhook cannot compute the final Service name because the `groupSessionID` (which provides the random hash) is only generated at runtime.
+
+**Injection Scope:**
+* The dependency endpoints are injected into the `Env` list of **all containers** (including primary, sidecar, and init-containers) defined in the pod spec. This ensures that any multi-container runtime configuration can reliably resolve the endpoints.
+
+For a role with `dependencies: [my-planner]` in namespace `default` (where `my-planner` maps to service name `mar-abcdef12-my-planner` and exposes a port named `api` at `8080` and `metrics` at `9090`), the dependent pod's containers receive:
+
+```
+AGENTCUBE_DEP_MY_PLANNER_ENDPOINT = mar-abcdef12-my-planner.default.svc.cluster.local:8080
+AGENTCUBE_DEP_MY_PLANNER_PORT_API_ENDPOINT = mar-abcdef12-my-planner.default.svc.cluster.local:8080
+AGENTCUBE_DEP_MY_PLANNER_PORT_METRICS_ENDPOINT = mar-abcdef12-my-planner.default.svc.cluster.local:9090
+```
+
+Injection happens in-memory inside `createSandboxGroup()` by mutating the pod template before it is passed to `buildSandboxByAgentRuntime()`. The referenced `AgentRuntime` CRD object in the informer cache is never written.
+
+### Store Layout
+
+Individual sandbox store entries gain two new fields that associate them with their parent group:
+
+```
+sandbox:{sessionID-planner}    -> SandboxInfo{ ..., GroupSessionID: "grp-xxx", Role: "planner" }
+sandbox:{sessionID-researcher} -> SandboxInfo{ ..., GroupSessionID: "grp-xxx", Role: "researcher" }
+sandbox:{sessionID-coder}      -> SandboxInfo{ ..., GroupSessionID: "grp-xxx", Role: "coder" }
+```
+
+A separate group manifest key stores aggregated role metadata:
+
+```
+agentgroup:{grp-xxx} -> AgentGroupManifest{
+    GroupSessionID: "grp-xxx",
+    CreatedAt: ...,
+    ExpiresAt: ...,
+    Roles: [
+        { Name: "planner",    SessionID: "...", Endpoint: "10.0.0.4:8080", Status: "ready" },
+        { Name: "researcher", SessionID: "...", Endpoint: "10.0.0.5:8080", Status: "ready" },
+        { Name: "coder",      SessionID: "...", Endpoint: "10.0.0.6:8080", Status: "failed" }
+    ]
+}
+```
+
+> **Backward compatibility:** Standalone sandboxes (those not belonging to any group) have empty `GroupSessionID` and `Role` fields. All existing store queries over `sandbox:` keys are unaffected. The `omitempty` JSON tag ensures these fields are absent from serialized standalone entries, so existing store consumers that unmarshal `SandboxInfo` do not break.
+
+### Core Implementation: `createSandboxGroup()`
+
+```go
+type createdRole struct {
+    name         string
+    resp         *types.CreateSandboxResponse
+    sandbox      *sandboxv1alpha1.Sandbox
+    sandboxClaim *extensionsv1alpha1.SandboxClaim
+    sessionID    string
+    serviceDNS   string // stable DNS from the Headless Service (e.g., mar-abc-planner.ns.svc.cluster.local)
+    failed       bool
+}
+
+func (s *Server) createSandboxGroup(
+    ctx context.Context,
+    mar *runtimev1alpha1.MultiAgentRuntime,
+    dynamicClient dynamic.Interface,
+) (*types.CreateAgentGroupResponse, error) {
+
+    groupSessionID := "grp-" + uuid.New().String()
+    var created []createdRole
+
+    // Compute a single baseTime for consistent TTL calculation across all group members
+    baseTime := time.Now()
+
+    needGroupRollback := true
+    var createdServices []string // tracks Headless Service names for rollback
+    defer func() {
+        if !needGroupRollback {
+            return
+        }
+        for _, c := range created {
+            if c.failed {
+                continue
+            }
+            s.rollbackSandboxCreation(dynamicClient, c.sandbox, c.sandboxClaim, c.sessionID)
+        }
+        // Clean up any Headless Services created during group setup.
+        for _, svcName := range createdServices {
+            if err := s.kubeClient.CoreV1().Services(mar.Namespace).Delete(
+                ctx, svcName, metav1.DeleteOptions{},
+            ); err != nil && !apierrors.IsNotFound(err) {
+                klog.Warningf("group %s: rollback service %s: %v", groupSessionID, svcName, err)
+            }
+        }
+    }()
+
+    waves, err := topoSort(mar.Spec.Roles)
+    if err != nil {
+        return nil, err // descriptive cycle or missing dependency error
+    }
+
+    var createdMutex sync.Mutex
+
+    for _, wave := range waves {
+        g, waveCtx := errgroup.WithContext(ctx)
+
+        // Take a snapshot of dependencies created in previous waves to prevent
+        // mutex contention when injecting endpoints concurrently across the wave.
+        createdMutex.Lock()
+        createdSnapshot := make([]createdRole, len(created))
+        copy(createdSnapshot, created)
+        createdMutex.Unlock()
+
+        for _, r := range wave {
+            role := r // capture loop variable
+            g.Go(func() error {
+                // Dispatch to the correct builder based on role Kind.
+                var sandbox *sandboxv1alpha1.Sandbox
+                var sandboxClaim *extensionsv1alpha1.SandboxClaim
+                var sandboxEntry *sandboxEntry
+                var err error
+                if role.Kind == types.CodeInterpreterKind {
+                    sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(
+                        mar.Namespace, role.RuntimeRef, s.informers,
+                    )
+                } else {
+                    // Default: AgentRuntime
+                    sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(
+                        mar.Namespace, role.RuntimeRef, s.informers,
+                    )
+                }
+                if err != nil {
+                    return fmt.Errorf("role %s: build sandbox: %w", role.Name, err)
+                }
+                sandboxEntry.GroupSessionID = groupSessionID
+                sandboxEntry.Role = role.Name
+
+                // Apply group-level SessionTimeout override
+                if mar.Spec.SessionTimeout != nil {
+                    sandboxEntry.IdleTimeout = mar.Spec.SessionTimeout.Duration
+                    if sandbox.Annotations == nil {
+                        sandbox.Annotations = make(map[string]string)
+                    }
+                    sandbox.Annotations[IdleTimeoutAnnotationKey] = mar.Spec.SessionTimeout.Duration.String()
+                }
+
+                // Apply group-level MaxSessionDuration override using the shared baseTime
+                if mar.Spec.MaxSessionDuration != nil {
+                    shutdownTime := metav1.NewTime(baseTime.Add(mar.Spec.MaxSessionDuration.Duration))
+                    sandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
+                }
+
+                // Create a Headless Service for this role to provide a stable DNS endpoint.
+                // NOTE: The service is intentionally created before injectDependencyEndpoints()
+                // and registered in createdServices immediately, so that if the subsequent
+                // injection step fails, the deferred rollback will still clean up this service.
+                svcName, svcDNS, err := s.createHeadlessServiceForRole(
+                    ctx, mar.Namespace, groupSessionID, role.Name, sandbox,
+                )
+                if err != nil {
+                    return fmt.Errorf("role %s: create headless service: %w", role.Name, err)
+                }
+                createdMutex.Lock()
+                createdServices = append(createdServices, svcName)
+                createdMutex.Unlock()
+
+                if len(role.Dependencies) > 0 {
+                    injectErr := injectDependencyEndpoints(&sandbox.Spec.PodTemplate, groupSessionID, role.Dependencies, createdSnapshot)
+                    if injectErr != nil {
+                        return fmt.Errorf("role %s: inject dependency endpoints: %w", role.Name, injectErr)
+                    }
+                }
+
+                // Watch and create sandbox in a closure to prevent watcher resource accumulation from defer in a loop
+                resp, err := func() (*types.CreateSandboxResponse, error) {
+                    resultChan := s.sandboxController.WatchSandboxOnce(waveCtx, sandbox.Namespace, sandbox.Name)
+                    defer s.sandboxController.UnWatchSandbox(sandbox.Namespace, sandbox.Name)
+                    return s.createSandbox(waveCtx, dynamicClient, sandbox, sandboxClaim, sandboxEntry, resultChan)
+                }()
+                if err != nil {
+                    if mar.Spec.StartupPolicy == StartupPolicyBestEffort && !role.IsCoordinator {
+                        klog.Warningf("group %s: role %s failed (BestEffort policy): %v", groupSessionID, role.Name, err)
+                        // Clean up the orphaned Headless Service for the failed worker role
+                        if delErr := s.kubeClient.CoreV1().Services(mar.Namespace).Delete(ctx, svcName, metav1.DeleteOptions{}); delErr != nil && !apierrors.IsNotFound(delErr) {
+                            klog.Warningf("group %s: failed to clean up orphaned service %s: %v", groupSessionID, svcName, delErr)
+                        }
+                        createdMutex.Lock()
+                        created = append(created, createdRole{
+                            name:   role.Name,
+                            failed: true,
+                        })
+                        createdMutex.Unlock()
+                        return nil // skip worker failure under BestEffort
+                    }
+                    return fmt.Errorf("role %s: %w", role.Name, err)
+                }
+
+                createdMutex.Lock()
+                created = append(created, createdRole{
+                    name:         role.Name,
+                    resp:         resp,
+                    sandbox:      sandbox,
+                    sandboxClaim: sandboxClaim,
+                    sessionID:    sandboxEntry.SessionID,
+                    serviceDNS:   svcDNS,
+                    failed:       false,
+                })
+                createdMutex.Unlock()
+                return nil
+            })
+        }
+
+        if err := g.Wait(); err != nil {
+            return nil, err
+        }
+    }
+
+    manifest := buildGroupManifest(groupSessionID, mar.Spec.Roles, created)
+    if err := s.storeClient.SaveAgentGroup(ctx, groupSessionID, manifest); err != nil {
+        return nil, fmt.Errorf("save group manifest: %w", err)
+    }
+
+    needGroupRollback = false
+    return buildGroupResponse(groupSessionID, created), nil
+}
+```
+
+**Key properties:**
+
+- **Parallel Sandbox Creation:** To prevent HTTP gateway or client timeouts when launching large groups, roles that do not share mutual dependencies (i.e., reside at the same level of the dependency DAG) are created in parallel. Sandbox creation proceeds in "dependency waves": all sandboxes within a wave are launched concurrently, and the server waits for all to be ready before proceeding to the next dependent wave.
+- **Consistent TTL:** A single `baseTime` is captured before the creation loop begins and used for all `ShutdownTime` calculations. This ensures every sandbox in the group shares a synchronized absolute TTL, regardless of how long it takes to create each wave.
+- **Headless Service per role:** Before each sandbox is created, `createHeadlessServiceForRole()` provisions a Headless Service whose DNS name (`serviceDNS`) is stored in `createdRole`. The `injectDependencyEndpoints()` function reads `serviceDNS` from `created` to construct stable DNS-based environment variables, explicitly skipping any dependency in `createdSnapshot` where `failed == true` to avoid injecting unreachable endpoints under the `BestEffort` policy. On rollback, all created Services are explicitly deleted alongside their sandboxes.
+- The deferred rollback calls `rollbackSandboxCreation()` for every sandbox in `created` **and** deletes all Headless Services tracked in `createdServices`, preventing resource leaks on partial failure.
+- Roles are created in topological order. A dependency's `serviceDNS` is guaranteed to be in `created` before the dependent role's sandbox is built.
+- `buildSandboxByAgentRuntime()`, `buildSandboxByCodeInterpreter()`, `createSandbox()`, `WatchSandboxOnce()`, and `rollbackSandboxCreation()` are all called as-is. The correct builder is selected by the `role.Kind` field.
+- The `needGroupRollback` flag is only cleared after `SaveAgentGroup` succeeds. A store failure after all sandboxes are created will roll back both Kubernetes resources and Headless Services, maintaining consistency.
+
+> [!NOTE]
+> **Future Improvement: Reconciler-Based Orchestration.** The current design executes `createSandboxGroup()` synchronously within the API handler. For very large groups where the cumulative creation time may approach HTTP proxy timeouts, a more resilient approach would be to have the API handler persist the `MultiAgentRuntime` CRD with a `Creating` status and delegate the actual sandbox orchestration to the `MultiAgentRuntimeReconciler`. This ensures the system can recover and resume group creation even if the Workload Manager restarts mid-process. This is left as a future optimization since the wave-based parallelism already significantly reduces total startup latency for practical group sizes.
+
+The following sequence diagram illustrates the creation flow for a 3-role group under `Atomic` policy:
+
+```mermaid
+sequenceDiagram
+    participant Client as External Client
+    participant Router as Router
+    participant WM as WorkloadManager
+    participant Store as Store (Redis/Valkey)
+    participant K8s as Kubernetes API
+
+    Client->>Router: POST /v1/multi-agent-runtime
+    Router->>WM: Forward (create group)
+    WM->>WM: topoSort(roles) -> [planner, researcher, coder]
+
+    Note over WM, K8s: Role 1: planner (coordinator)
+    WM->>K8s: Create Headless Service [planner]
+    WM->>Store: StoreSandbox(placeholder)
+    WM->>K8s: Create Sandbox [planner]
+    K8s-->>WM: Sandbox Ready
+    WM->>Store: UpdateSandbox(ready)
+
+    Note over WM, K8s: Role 2: researcher (depends on planner)
+    WM->>K8s: Create Headless Service [researcher]
+    WM->>WM: injectDependencyEndpoints(planner Service DNS)
+    WM->>Store: StoreSandbox(placeholder)
+    WM->>K8s: Create Sandbox [researcher]
+    K8s-->>WM: Sandbox Ready
+    WM->>Store: UpdateSandbox(ready)
+
+    Note over WM, K8s: Role 3: coder (depends on planner, researcher)
+    WM->>K8s: Create Headless Service [coder]
+    WM->>WM: injectDependencyEndpoints(planner Service DNS, researcher Service DNS)
+    WM->>Store: StoreSandbox(placeholder)
+    WM->>K8s: Create Sandbox [coder]
+    K8s-->>WM: Sandbox Ready
+    WM->>Store: UpdateSandbox(ready)
+
+    WM->>Store: SaveAgentGroup(manifest)
+    WM-->>Router: CreateAgentGroupResponse
+    Router-->>Client: 200 OK + CreateAgentGroupResponse
+```
+
+### Topological Sort and Cycle Detection
+
+```go
+func topoSort(roles []RoleSpec) ([][]RoleSpec, error) {
+    inDegree := make(map[string]int)
+    adj      := make(map[string][]string)
+    roleMap  := make(map[string]RoleSpec)
+
+    for _, r := range roles {
+        roleMap[r.Name] = r
+        if _, exists := inDegree[r.Name]; !exists {
+            inDegree[r.Name] = 0
+        }
+    }
+
+    // Validate all dependency references before running Kahn's algorithm.
+    // This provides clear "missing dependency" errors instead of confusing cycle errors.
+    for _, r := range roles {
+        for _, dep := range r.Dependencies {
+            if _, exists := roleMap[dep]; !exists {
+                return nil, fmt.Errorf("role %s depends on non-existent role %s", r.Name, dep)
+            }
+            adj[dep] = append(adj[dep], r.Name)
+            inDegree[r.Name]++
+        }
+    }
+
+    var currentQueue []string
+    for _, r := range roles {
+        if inDegree[r.Name] == 0 {
+            currentQueue = append(currentQueue, r.Name)
+        }
+    }
+
+    var waves [][]RoleSpec
+    var totalSorted int
+
+    for len(currentQueue) > 0 {
+        var nextQueue []string
+        var wave []RoleSpec
+
+        for _, name := range currentQueue {
+            wave = append(wave, roleMap[name])
+            totalSorted++
+            for _, neighbor := range adj[name] {
+                inDegree[neighbor]--
+                if inDegree[neighbor] == 0 {
+                    nextQueue = append(nextQueue, neighbor)
+                }
+            }
+        }
+        sort.Strings(nextQueue)
+        waves = append(waves, wave)
+        currentQueue = nextQueue
+    }
+
+    if totalSorted != len(roles) {
+        // All dependencies are valid (checked above), so this must be a cycle.
+        var cycled []string
+        for name, deg := range inDegree {
+            if deg > 0 {
+                cycled = append(cycled, name)
+            }
+        }
+        sort.Strings(cycled)
+        return nil, fmt.Errorf("dependency cycle detected among roles: %v", cycled)
+    }
+    return waves, nil
+}
+```
+
+The algorithm is Kahn's BFS-based topological sort grouped into level-order waves, O(V+E). Missing dependencies are validated **upfront** before the sort begins, ensuring clear error messages. Cycle detection is then derived from the invariant that Kahn's algorithm only produces a complete ordering when no cycle exists. If `totalSorted < len(roles)` after the upfront check passes, the remaining roles must form a cycle. Their names are included in the error message to aid debugging.
+
+---
+
+## API
+
+### New Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/multi-agent-runtime` | Create a new agent group. Returns group session ID and coordinator entrypoints. |
+| `DELETE` | `/v1/multi-agent-runtime/groups/:groupSessionId` | Delete all sandboxes in the group, their associated Headless Services (via OwnerReference cascading), and remove the group manifest from the store. Returns `204 No Content` on success. |
+| `GET` | `/v1/multi-agent-runtime/groups/:groupSessionId/topology` | Return the group manifest including all role endpoints and statuses. Intended for use by the coordinator at startup to discover worker endpoints. |
+
+### Request and Response Types
+
+#### Create Group Request
+
+```go
+type CreateAgentGroupRequest struct {
+    Kind      string `json:"kind"`      // "MultiAgentRuntime"
+    Name      string `json:"name"`      // MultiAgentRuntime CRD name
+    Namespace string `json:"namespace"`
+}
+```
+
+#### Create Group Response
+
+```go
+// AgentGroupRoleState is the shared type used across the API response, group manifest,
+// and topology endpoint. A single type prevents structural drift between these surfaces.
+type AgentGroupRoleState struct {
+    Name      string `json:"name"`
+    SessionID string `json:"sessionId"`
+    Endpoint  string `json:"endpoint"`
+    Status    string `json:"status"` // "ready" | "failed"
+}
+
+type CreateAgentGroupResponse struct {
+    GroupSessionID string                `json:"groupSessionId"`
+    Roles          []AgentGroupRoleState `json:"roles"`
+}
+```
+
+#### Group Manifest (stored in Redis/Valkey)
+
+```go
+type AgentGroupManifest struct {
+    GroupSessionID string                `json:"groupSessionId"`
+    StartupPolicy  string                `json:"startupPolicy"`
+    Namespace      string                `json:"namespace"`
+    Roles          []AgentGroupRoleState `json:"roles"`
+    CreatedAt      time.Time             `json:"createdAt"`
+    ExpiresAt      time.Time             `json:"expiresAt"`
+}
+```
+
+### Store Interface Additions
+
+Five new methods are added to the `Store` interface in `pkg/store/interface.go`. All existing methods are unchanged.
+
+```go
+// SaveAgentGroup persists a group manifest keyed by groupSessionID.
+// Key format: agentgroup:{groupSessionID}
+SaveAgentGroup(ctx context.Context, groupSessionID string, manifest *types.AgentGroupManifest) error
+
+// GetAgentGroup retrieves a group manifest by groupSessionID.
+// Returns ErrNotFound if the key does not exist.
+GetAgentGroup(ctx context.Context, groupSessionID string) (*types.AgentGroupManifest, error)
+
+// DeleteAgentGroup removes a group manifest by groupSessionID.
+DeleteAgentGroup(ctx context.Context, groupSessionID string) error
+
+// DeleteAgentGroupRole atomically removes a single role entry from the group manifest.
+// To ensure atomicity and prevent race conditions where the manifest might be deleted
+// while a concurrent process is adding a role, the implementation should use a Redis Lua script.
+// This script should perform the HDEL and then check HLEN to decide whether to delete
+// the entire key in a single atomic operation.
+DeleteAgentGroupRole(ctx context.Context, groupSessionID, roleName string) error
+
+// UpdateAgentGroupRoleStatus atomically updates the status and endpoint of a specific role
+// within a group manifest. Used by the reconciler during self-healing.
+UpdateAgentGroupRoleStatus(ctx context.Context, groupSessionID, roleName, status, endpoint string) error
+```
+
+Both `store_redis.go` and `store_valkey.go` implement these methods using the key prefix `agentgroup:`. 
+
+> **Store Implementation Note:** To prevent race conditions in a distributed environment during concurrent updates, the store backends (Redis/Valkey) implement group manifests using a **Redis Hash** (`HSET agentgroup:{groupSessionID}`) instead of a raw JSON string.
+> 
+> The hash layout uses a reserved `_metadata` field for top-level group attributes (`GroupSessionID`, `CreatedAt`, `StartupPolicy`, `Namespace`) and individual `role:{roleName}` fields for per-role state:
+> ```
+> HSET agentgroup:{grp-xxx}
+>   _metadata        '{"groupSessionID":"grp-xxx","createdAt":"...","startupPolicy":"Atomic","namespace":"default"}'
+>   role:planner     '{"sessionID":"...","endpoint":"...","status":"ready"}'
+>   role:researcher  '{"sessionID":"...","endpoint":"...","status":"ready"}'
+>   role:coder       '{"sessionID":"...","endpoint":"...","status":"failed"}'
+> ```
+> This allows atomic field-level updates via `HSET` without rewriting the full manifest JSON, avoiding read-modify-write races. `GetAgentGroup()` reads all fields with `HGETALL` and reconstructs the full `AgentGroupManifest` by combining the `_metadata` and `role:*` entries.
+
+### CRD Types
+
+```go
+// MultiAgentRuntime defines a group of collaborating AgentRuntime roles with
+// unified lifecycle management.
+//
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Namespaced
+// +kubebuilder:printcolumn:name="Ready",type="boolean",JSONPath=".status.ready"
+// +kubebuilder:printcolumn:name="Policy",type="string",JSONPath=".spec.startupPolicy"
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+type MultiAgentRuntime struct {
+    metav1.TypeMeta   `json:",inline"`
+    metav1.ObjectMeta `json:"metadata,omitempty"`
+    Spec              MultiAgentRuntimeSpec   `json:"spec"`
+    Status            MultiAgentRuntimeStatus `json:"status,omitempty"`
+}
+
+type MultiAgentRuntimeSpec struct {
+    // StartupPolicy controls failure behavior during group creation.
+    // +kubebuilder:default="Atomic"
+    // +kubebuilder:validation:Enum=Atomic;BestEffort
+    StartupPolicy StartupPolicyType `json:"startupPolicy,omitempty"`
+
+    // Roles defines the set of agent roles in this group.
+    // At least one role must be present, and exactly one must have IsCoordinator=true.
+    // +kubebuilder:validation:MinItems=1
+    Roles []RoleSpec `json:"roles"`
+
+    // SessionTimeout is the idle timeout applied to all sandboxes in the group.
+    // Defaults to 15m.
+    // NOTE: Although this is a pointer type (*metav1.Duration), kubebuilder applies the
+    // default value at admission time, so the pointer is always non-nil after defaulting.
+    // The nil check in createSandboxGroup() is a defensive guard for programmatic callers.
+    // +kubebuilder:default="15m"
+    SessionTimeout *metav1.Duration `json:"sessionTimeout,omitempty"`
+
+    // MaxSessionDuration is the absolute TTL for all sandboxes in the group.
+    // Defaults to 8h.
+    // +kubebuilder:default="8h"
+    MaxSessionDuration *metav1.Duration `json:"maxSessionDuration,omitempty"`
+}
+
+type RoleSpec struct {
+    // Name is the unique identifier for this role within the group.
+    // +kubebuilder:validation:MinLength=1
+    Name string `json:"name"`
+
+    // Kind specifies the type of the referenced runtime.
+    // Defaults to "AgentRuntime". Set to "CodeInterpreter" to reference a CodeInterpreter CRD.
+    // +optional
+    // +kubebuilder:default="AgentRuntime"
+    // +kubebuilder:validation:Enum=AgentRuntime;CodeInterpreter
+    Kind string `json:"kind,omitempty"`
+
+    // RuntimeRef is the name of an existing AgentRuntime or CodeInterpreter CRD in the same namespace.
+    // +kubebuilder:validation:MinLength=1
+    RuntimeRef string `json:"runtimeRef"`
+
+    // IsCoordinator marks this role as the external entrypoint for the group.
+    // Exactly one role must be marked as coordinator.
+    // +optional
+    IsCoordinator bool `json:"isCoordinator,omitempty"`
+
+    // WarmPoolSize specifies the number of pre-warmed sandboxes for this role.
+    // When set, the reconciler creates a SandboxTemplate + SandboxWarmPool for this role.
+    // +optional
+    // +kubebuilder:validation:Minimum=0
+    WarmPoolSize *int32 `json:"warmPoolSize,omitempty"`
+
+    // Dependencies lists the names of roles that must be ready before this role is created.
+    // Circular dependencies are rejected at request time.
+    // +optional
+    Dependencies []string `json:"dependencies,omitempty"`
+
+    // TargetPort specifies the name or number of the port in the referenced AgentRuntime
+    // or CodeInterpreter to be used by dependent roles. If empty, the default Port Resolution Rule applies.
+    // +optional
+    TargetPort string `json:"targetPort,omitempty"`
+}
+
+type StartupPolicyType string
+
+const (
+    // StartupPolicyAtomic rolls back all created sandboxes if any role fails.
+    StartupPolicyAtomic     StartupPolicyType = "Atomic"
+    // StartupPolicyBestEffort allows worker failures; coordinator failure still rolls back everything.
+    StartupPolicyBestEffort StartupPolicyType = "BestEffort"
+)
+
+type MultiAgentRuntimeStatus struct {
+    // Conditions reflect the current state of the MultiAgentRuntime.
+    // Standard conditions: Ready, Degraded, Failed.
+    Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+    // Ready is true when all required roles are running and healthy.
+    Ready bool `json:"ready,omitempty"`
+
+    // RoleStatuses tracks per-role operational state. Updated by the reconciler
+    // during self-healing (Phase 4). Complements the store-side group manifest
+    // by providing Kubernetes-native observability via kubectl.
+    // +optional
+    RoleStatuses []RoleStatusEntry `json:"roleStatuses,omitempty"`
+}
+
+type RoleStatusEntry struct {
+    // Name is the role name matching RoleSpec.Name.
+    Name string `json:"name"`
+    // Status is the current operational state: "Ready", "Failed", "Replacing".
+    Status string `json:"status"`
+    // SessionID is the sandbox session ID for this role, if available.
+    SessionID string `json:"sessionId,omitempty"`
+}
+```
+
+### SandboxInfo Extensions
+
+Two fields are added to `SandboxInfo` in `pkg/common/types/sandbox.go`. Both fields are empty for standalone sandboxes, preserving full backward compatibility.
+
+```go
+type SandboxInfo struct {
+    // ... existing fields unchanged ...
+
+    // GroupSessionID associates this sandbox with a MultiAgentRuntime group.
+    // Empty string for standalone (non-group) sandboxes.
+    GroupSessionID string `json:"groupSessionId,omitempty"`
+
+    // Role identifies this sandbox's role within its group.
+    // Empty string for standalone sandboxes.
+    Role string `json:"role,omitempty"`
+}
+```
+
+---
+
+## Controller: `MultiAgentRuntimeReconciler`
+
+A new `MultiAgentRuntimeReconciler` in `pkg/workloadmanager/multiagent_controller.go` manages the lifecycle of `MultiAgentRuntime` resources. It is registered with the existing `controller-runtime` manager already wired in `cmd/workload-manager/main.go` alongside `CodeInterpreterReconciler`.
+
+The reconciler uses `GenerationChangedPredicate` to avoid reconcile loops triggered by status-only updates, consistent with `CodeInterpreterReconciler`.
+
+### Warm Pool Management (Phase 2)
+
+For each role with `warmPoolSize > 0`, the reconciler ensures a `SandboxTemplate` and `SandboxWarmPool` exist with the correct spec. Both resources are created with `controllerutil.SetControllerReference` pointing to the `MultiAgentRuntime`, so they are garbage collected when the `MultiAgentRuntime` is deleted. If the `warmPoolSize` changes, the reconciler updates the `SandboxWarmPool` spec in place.
+
+### Self-Healing (Phase 4)
+
+The reconciler watches for `Sandbox` objects whose `GroupSessionID` matches a known group. On pod failure:
+
+- **`Atomic` policy**: the reconciler calls `handleDeleteAgentGroup()` to tear down all remaining sandboxes and delete the group manifest. It sets a `Failed` condition on the `MultiAgentRuntimeStatus`.
+- **`BestEffort` policy**: the reconciler attempts to create a replacement sandbox for the failed role. On success, it calls `UpdateAgentGroupRoleStatus()` with the new endpoint. On repeated failure, it sets a `Degraded` condition.
+
+> [!NOTE]
+> **DNS-Based Self-Healing in BestEffort Groups:** 
+> Because environment variables are immutable once a pod is running, replacing a failed worker pod with a new pod under the `BestEffort` policy would render direct Pod IP environment variables stale. 
+> 
+> By utilizing Headless Kubernetes Services, the injected environment variable points to a stable DNS endpoint (e.g., `grp-abc-my-planner.default.svc.cluster.local`). When a worker pod is replaced, the service's selector automatically targets the new pod's IP. Active dependent pods (like the coordinator) resolve the same DNS name to the new worker IP without needing environment variable updates or dynamic service discovery polling.
+
+### Status Conditions
+
+| Condition | Meaning |
+|-----------|---------|
+| `Ready=True` | All roles are running and healthy |
+| `Ready=False, reason=Creating` | Group creation is in progress |
+| `Degraded=True` | One or more workers failed (BestEffort policy only) |
+| `Failed=True` | Group has been torn down due to a critical failure |
+
+---
+
+## Garbage Collection
+
+The existing GC in `pkg/workloadmanager/garbage_collection.go` is extended with group awareness.
+
+### Group-Aware Idle Timeout
+
+Because the Router only proxies external traffic directly to the coordinator, only the coordinator's `LastActivityAt` timestamp in the store is updated during active sessions. Internal worker sandboxes that receive no direct external traffic would otherwise retain static `LastActivityAt` values, causing the GC to prematurely delete them while the coordinator is still active.
+
+To prevent this, the GC evaluates idle timeouts group-wide:
+1. When checking if a sandbox is idle, if its `GroupSessionID` is non-empty, the GC retrieves the group manifest once per GC cycle via `GetAgentGroup()` (result cached in a `map[string]*AgentGroupManifest` local to that cycle). The manifest's `role:*` fields contain the `SessionID` of each member, including the coordinator.
+2. The coordinator's `SandboxInfo` (including `LastActivityAt`) is fetched with a single `GetSandbox(coordinatorSessionID)` call. This result is also cached per group per cycle, so it is only fetched once regardless of how many worker sandboxes belong to that group. If the coordinator's `SandboxInfo` is unavailable (e.g., already evicted), the GC falls back to the maximum `LastActivityAt` among all group member sandboxes whose `SandboxInfo` can be retrieved.
+3. The idle duration for **all members of the group** is calculated based on the resolved coordinator (or fallback) `LastActivityAt` timestamp.
+4. Individual sandboxes in a group are only deleted for inactivity if the group as a whole is determined to be idle.
+
+Caching both the group manifest and the coordinator `SandboxInfo` per group per GC cycle reduces the total number of store roundtrips to O(1) per group rather than O(N) per group member.
+
+### Group Metadata Cleanup
+
+When the GC deletes a sandbox that has a non-empty `GroupSessionID`:
+
+1. It calls `DeleteAgentGroupRole(ctx, groupSessionID, roleName)` to atomically remove the role's entry from the Redis Hash using a Lua script. This script executes `HDEL` and avoids a read-modify-write cycle, preventing race conditions when multiple GC goroutines may be cleaning up members of the same group concurrently.
+2. `DeleteAgentGroupRole()`'s Lua script additionally checks `HLEN` after deletion. If no `role:*` fields remain in the hash, it deletes the `_metadata` field and removes the entire `agentgroup:` key in the same atomic transaction.
+
+This ensures group manifests do not accumulate indefinitely in the store after their member sandboxes expire. The atomic `HDEL` approach also prevents data loss from concurrent GC deletions of sibling roles within the same group.
+
+---
+
+## Router Integration
+
+`pkg/router/session_manager.go` is extended with a `MultiAgentRuntimeKind` case in the endpoint resolution switch:
+
+```go
+case types.MultiAgentRuntimeKind:
+    endpoint = m.workloadMgrAddr + "/v1/multi-agent-runtime"
+```
+
+The Router tracks only the coordinator's session ID for external request routing. Worker endpoints are stored in the group manifest and are internal-only. No changes are required to the Router's proxy logic.
+
+> **Note:** The Router does not need to know that a session belongs to a group. It proxies requests to the coordinator's sandbox exactly as it would proxy requests to any standalone `AgentRuntime` sandbox. The group abstraction is fully transparent to the Router.
+
+---
+
+## SDK Integration
+
+The Python SDK exposes a `MultiAgentRuntimeClient` that wraps the three new HTTP endpoints:
+
+```python
+from agentcube import MultiAgentRuntimeClient
+
+client = MultiAgentRuntimeClient(
+    base_url="https://router.example.com",
+    # auth=...,  # same auth options as existing clients
+)
+
+# Create a group
+group = client.create_group(
+    name="research-team",
+    namespace="default",
+)
+print(f"Group created: {group.group_session_id}")
+coordinator = next(r for r in group.roles if r.name == "planner")
+print(f"Coordinator endpoint: {coordinator.endpoint}")
+
+# Discover worker topology (coordinator calls this at startup)
+topology = client.get_topology(group.group_session_id)
+for role in topology.roles:
+    print(f"  {role.name}: {role.endpoint} ({role.status})")
+
+# Delete the group
+client.delete_group(group.group_session_id)
+```
+
+Token lifecycle, retry logic, and error handling follow the same patterns as the existing `CodeInterpreterClient`.
+
+---
+
+## Backward Compatibility
+
+This feature is fully backward compatible. No existing behavior changes unless the user creates a `MultiAgentRuntime` resource:
+
+| Concern | Impact |
+|---------|--------|
+| Existing `AgentRuntime` creation flow | Unchanged. `createSandbox()` is called as-is. |
+| Existing `CodeInterpreter` creation flow | Unchanged. |
+| Existing store schema | Two new `omitempty` fields (`GroupSessionID`, `Role`) added to `SandboxInfo`. Existing entries deserialize with zero values. No migration required. |
+| Existing GC logic | Unchanged for standalone sandboxes. Group cleanup is additive. |
+| Existing Router proxy | Unchanged. Group awareness is limited to the endpoint switch. |
+| Store key namespace | New `agentgroup:` prefix does not collide with existing `sandbox:` prefix. |
+| API surface | Three new endpoints under `/v1/multi-agent-runtime`. No changes to existing endpoints. |
+
+---
+
+## File Change Map
+
+### New Files
+
+| File | Description |
+|------|-------------|
+| `pkg/apis/runtime/v1alpha1/multiagentruntime_types.go` | CRD types with kubebuilder markers |
+| `pkg/workloadmanager/multiagent_controller.go` | `MultiAgentRuntimeReconciler` |
+| `pkg/workloadmanager/multiagent_controller_test.go` | Reconciler unit tests |
+| `pkg/workloadmanager/multiagent_webhook.go` | `ValidatingAdmissionWebhook` for `MultiAgentRuntime` configuration validation |
+| `pkg/workloadmanager/multiagent_webhook_test.go` | Webhook unit tests (coordinator count, naming collisions, missing deps, DNS label) |
+| `manifests/charts/base/templates/multiagentruntime-webhook.yaml` | Webhook `ValidatingWebhookConfiguration` manifest |
+| `sdk-python/agentcube/multi_agent.py` | `MultiAgentRuntimeClient` for the Python SDK |
+| `sdk-python/examples/multi_agent_usage.py` | End-to-end usage example |
+| `test/e2e/multi_agent_runtime.yaml` | E2E test fixtures |
+| `docs/design/multi-agent-runtime-proposal.md` | This document |
+| `manifests/charts/base/crds/runtime.agentcube.volcano.sh_multiagentruntimes.yaml` | Auto-generated by `make gen-crd` |
+
+### Modified Files
+
+| File | Change |
+|------|--------|
+| `pkg/apis/runtime/v1alpha1/register.go` | Add `MultiAgentRuntimeKind`, `MultiAgentRuntimeListKind`, `MultiAgentRuntimeGroupVersionKind` |
+| `pkg/apis/runtime/v1alpha1/zz_generated.deepcopy.go` | Regenerated by `make generate` |
+| `pkg/common/types/types.go` | Add `MultiAgentRuntimeKind` constant |
+| `pkg/common/types/sandbox.go` | Add `GroupSessionID`, `Role` to `SandboxInfo`; add `AgentGroupManifest`, `AgentGroupRoleState`, group request/response types |
+| `pkg/api/errors.go` | Add `ErrMultiAgentRuntimeNotFound`; add `multiAgentRuntimeResource` in `workloadResource()` switch |
+| `pkg/workloadmanager/informers.go` | Add `MultiAgentRuntimeGVR`; add informer wiring and cache sync |
+| `pkg/workloadmanager/workload_builder.go` | Add `GroupSessionID`, `Role` fields to `sandboxEntry` struct |
+| `pkg/workloadmanager/sandbox_helper.go` | Propagate `GroupSessionID` and `Role` in `buildSandboxPlaceHolder()` and `buildSandboxInfo()` |
+| `pkg/workloadmanager/handlers.go` | Add `handleMultiAgentRuntimeCreate`, `createSandboxGroup`, `handleDeleteAgentGroup`, `handleGetGroupTopology` |
+| `pkg/workloadmanager/handlers_test.go` | Add group creation and rollback test cases |
+| `pkg/workloadmanager/server.go` | Add 3 new routes under `/v1/multi-agent-runtime` |
+| `pkg/workloadmanager/garbage_collection.go` | Group manifest cleanup when last member sandbox is GC'd |
+| `pkg/store/interface.go` | Add `SaveAgentGroup`, `GetAgentGroup`, `DeleteAgentGroup`, `DeleteAgentGroupRole`, `UpdateAgentGroupRoleStatus` |
+| `pkg/store/store_redis.go` | Implement all 5 group methods |
+| `pkg/store/store_redis_test.go` | Group CRUD tests |
+| `pkg/store/store_valkey.go` | Implement all 5 group methods |
+| `pkg/store/store_valkey_test.go` | Group CRUD tests |
+| `pkg/router/session_manager.go` | Add `MultiAgentRuntimeKind` case in endpoint switch |
+| `cmd/workload-manager/main.go` | Phase 1: HTTP routes; Phase 4: reconciler wiring |
+| `sdk-python/agentcube/__init__.py` | Export `MultiAgentRuntimeClient` |
+| `test/e2e/e2e_test.go` | Add `TestMultiAgentRuntimeCreate`, `TestMultiAgentRuntimeRollback` |
+
+---
+
+## Implementation Plan
+
+### Phase 1 - Core Foundation (Weeks 1-4)
+
+Deliverables that satisfy the mentorship expected outcomes on their own.
+
+- Define `MultiAgentRuntime` CRD types with kubebuilder markers; run `make generate` + `make gen-crd`.
+- Implement a **ValidatingAdmissionWebhook** for `MultiAgentRuntime` to enforce configuration invariants at admission time:
+  - Exactly one role must be marked as `isCoordinator`.
+  - No two roles may produce the same sanitized environment variable key (naming collision detection).
+  - `dependencies[]` references must point to roles defined within the same spec.
+  - Role names must be valid DNS label fragments (lowercase alphanumeric and hyphens, max 63 characters).
+- Implement `createSandboxGroup()` with `Atomic` rollback (no `BestEffort` yet), including `topoSort()`, `injectDependencyEndpoints()`, and Headless Service creation per role.
+- Add `GroupSessionID` + `Role` to `SandboxInfo`; propagate through `buildSandboxPlaceHolder()` + `buildSandboxInfo()`.
+- Implement all 5 store methods in `store_redis.go` + `store_valkey.go` with full unit test coverage.
+- Add `MultiAgentRuntimeKind` to Router endpoint switch.
+- Extend GC to clean up `agentgroup:` manifest keys when last member sandbox is deleted.
+- Unit tests: `createSandboxGroup()` with atomic rollback on partial failure, store CRUD, coordinator validation, cycle detection, admission webhook validation.
+- E2E test: kind cluster (same setup as existing E2E), create a 3-role group, verify all sandboxes running, delete group, verify cleanup.
+- User guide: YAML example + `kubectl` workflow.
+
+### Phase 2 - Warm Pools Per Role (Weeks 5-6)
+
+- Implement `warmPoolSize` field handling in `MultiAgentRuntimeReconciler`.
+- Reconciler creates `SandboxTemplate` + `SandboxWarmPool` per warm role with owner references.
+- Group creation uses `SandboxClaim` for warm roles, cold `Sandbox` creation for others.
+- Add E2E test comparing cold-start vs warm-start group creation latency.
+
+### Phase 3 - Topology Endpoint and SDK (Weeks 7-8)
+
+- Add `GET /v1/multi-agent-runtime/groups/:groupSessionId/topology` endpoint.
+- Add `get_topology()` to Python SDK `MultiAgentRuntimeClient`.
+- E2E test: verify dependency endpoint env vars are present in dependent pod environment.
+
+### Phase 4 - StartupPolicy and Self-Healing (Weeks 9-11)
+
+- Implement `BestEffort` startup policy in `createSandboxGroup()`.
+- Implement `MultiAgentRuntimeReconciler` self-healing:
+  - `Atomic`: tear down entire group on worker pod crash.
+  - `BestEffort`: attempt role restart, update group manifest with new endpoint.
+- Add per-role status conditions to `MultiAgentRuntimeStatus`.
+- Wire reconciler into `cmd/workload-manager/main.go`.
+
+### Phase 5 - Observability and Documentation (Week 12)
+
+- Add Prometheus metrics:
+  - `agentcube_group_creation_duration_seconds` (histogram)
+  - `agentcube_group_role_failures_total` (counter, labels: `role`, `policy`)
+  - `agentcube_active_groups` (gauge)
+- Finalize design document, API reference, and troubleshooting guide.
+
+---
+
+## What Stays Unchanged
+
+The following functions and components are called as-is with zero modifications:
+
+| Component | Location | Used By |
+|-----------|----------|---------|
+| `createSandbox()` | `pkg/workloadmanager/handlers.go` | Called per-role inside `createSandboxGroup()` |
+| `rollbackSandboxCreation()` | `pkg/workloadmanager/handlers.go` | Called in deferred rollback |
+| `buildSandboxByAgentRuntime()` | `pkg/workloadmanager/workload_builder.go` | Called per-role to build sandbox spec |
+| `WatchSandboxOnce()` / `UnWatchSandbox()` | `pkg/workloadmanager/sandbox_controller.go` | Called per-role for readiness watching |
+| All `AgentRuntime` + `CodeInterpreter` creation flows | Various | Not touched |
+| All existing store methods | `pkg/store/` | Not touched |
+| GC idle-timeout + TTL logic for standalone sandboxes | `pkg/workloadmanager/garbage_collection.go` | Not touched |
+| Router proxy logic for `AgentRuntime` + `CodeInterpreter` | `pkg/router/` | Not touched |
+
+---
+
+## Alternatives Considered
+
+### Inline pod spec in `MultiAgentRuntime`
+
+An early design embedded a full pod spec within each role definition, similar to how `CodeInterpreter` defines its own container template. This was rejected for three reasons:
+
+1. It duplicates the security context, resource requirements, image configuration, and environment variables already defined and validated in the referenced `AgentRuntime`.
+2. Changes to an agent's configuration require updates in two places (the `AgentRuntime` CRD and every `MultiAgentRuntime` that embeds it), creating a maintenance burden that grows with the number of groups.
+3. Admission validation for pod specs would need to be duplicated in the `MultiAgentRuntime` webhook, diverging from the single source of truth already established by `AgentRuntime`.
+
+The `runtimeRef` approach provides clean separation of concerns: `AgentRuntime` owns the workload definition; `MultiAgentRuntime` owns the topology and lifecycle policy.
+
+### Hardcoded orchestrator/workers split
+
+An alternative used a two-level structure with a single `orchestrator` field and a `workers[]` list, similar to Ray's head-node/worker-node model or Kubeflow's launcher/worker distinction. This was rejected because:
+
+1. It restricts valid topologies to star patterns. DAG pipelines, mesh topologies, and peer-to-peer swarms cannot be expressed.
+2. It conflates "coordinator" (external entrypoint) with "orchestrator" (controls other agents). These are separate concerns: a gateway-style coordinator does not plan or dispatch tasks to workers.
+3. The flat `roles[]` list with optional `dependencies[]` is strictly more expressive. The overhead is a single topological sort (O(V+E)), which is negligible for the group sizes this feature targets (2-10 roles).
+
+### Separate control plane service
+
+A design was considered where a dedicated `multi-agent-controller` deployment managed group lifecycle independently from the workload manager. This was rejected because:
+
+1. It introduces an additional deployment, service, RBAC configuration, and operational surface for cluster administrators.
+2. The workload manager already has the store client, informer cache, dynamic Kubernetes client, and sandbox controller necessary for group management. Replicating these in a separate service introduces duplication and divergence risk.
+3. Inter-service communication between the new controller and the workload manager would add latency, a new failure mode, and the complexity of defining an internal API between the two.
+4. The `MultiAgentRuntimeReconciler` integrates naturally into the existing `controller-runtime` manager already wired in `cmd/workload-manager/main.go`, following the same pattern as `CodeInterpreterReconciler`. No new binary is required.
+
+---
+
+## Future Enhancements
+
+The following items are explicitly out of scope for this proposal but are noted as natural extensions:
+
+### Dynamic role scaling
+
+Allow the `MultiAgentRuntime` spec to be updated after creation to add or remove worker roles. This would require the reconciler to diff the desired state against the group manifest and create/delete sandboxes accordingly. The current design's flat `roles[]` list and group manifest structure are compatible with this extension.
+
+### Cross-namespace groups
+
+Allow roles to reference `AgentRuntime` CRDs in different namespaces. This requires namespace-scoped RBAC checks during group creation and cross-namespace informer watches. The `runtimeRef` field would be extended to `namespace/name` format.
+
+### Group-level metrics and logging
+
+Aggregate per-role Prometheus metrics into group-level dashboards. Correlate logs across all roles in a group using the `GroupSessionID` as a trace identifier. The `GroupSessionID` is already propagated to all sandbox entries in the store, so log correlation is achievable without schema changes.
+
+### Inter-agent communication primitives
+
+Provide optional shared volumes or message queues between roles. This is explicitly a non-goal of the current design (agents communicate via injected endpoints over cluster networking), but it could be layered on top of the group abstraction if demand emerges.
+
+### Integration with AgentCube auth layer
+
+When the authentication proposal (see `docs/design/auth-proposal.md`) is implemented, `MultiAgentRuntime` group creation requests will be subject to the same Keycloak JWT validation and RBAC checks. The `sandbox:invoke` role would be extended to cover group creation, or a new `group:create` role introduced. No changes to the `MultiAgentRuntime` design are needed because the auth middleware sits in front of all workload manager endpoints.

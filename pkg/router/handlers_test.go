@@ -241,6 +241,63 @@ func TestHandleInvoke_NoEntryPoints(t *testing.T) {
 	}
 }
 
+func TestDetermineUpstreamURL_PathPrefix(t *testing.T) {
+	tests := []struct {
+		name        string
+		path        string
+		entryPoints []types.SandboxEntryPoint
+		wantHost    string
+	}{
+		{
+			name: "longest prefix wins",
+			path: "/api/run",
+			entryPoints: []types.SandboxEntryPoint{
+				{Endpoint: "10.0.0.1:8080", Protocol: "HTTP", Path: "/"},
+				{Endpoint: "10.0.0.2:8080", Protocol: "HTTP", Path: "/api"},
+			},
+			wantHost: "10.0.0.2:8080",
+		},
+		{
+			name: "prefix must end on boundary",
+			path: "/api2/run",
+			entryPoints: []types.SandboxEntryPoint{
+				{Endpoint: "10.0.0.1:8080", Protocol: "HTTP", Path: "/api"},
+				{Endpoint: "10.0.0.2:8080", Protocol: "HTTP", Path: "/"},
+			},
+			wantHost: "10.0.0.2:8080",
+		},
+		{
+			name: "normalizes slashes",
+			path: "api/run",
+			entryPoints: []types.SandboxEntryPoint{
+				{Endpoint: "10.0.0.1:8080", Protocol: "HTTP", Path: "/api/"},
+			},
+			wantHost: "10.0.0.1:8080",
+		},
+		{
+			name: "falls back when no prefix matches",
+			path: "/api2/run",
+			entryPoints: []types.SandboxEntryPoint{
+				{Endpoint: "10.0.0.1:8080", Protocol: "HTTP", Path: "/api"},
+			},
+			wantHost: "10.0.0.1:8080",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sandbox := &types.SandboxInfo{EntryPoints: tt.entryPoints}
+			upstreamURL, err := determineUpstreamURL(sandbox, tt.path)
+			if err != nil {
+				t.Fatalf("determineUpstreamURL returned error: %v", err)
+			}
+			if upstreamURL.Host != tt.wantHost {
+				t.Fatalf("expected host %s, got %s", tt.wantHost, upstreamURL.Host)
+			}
+		})
+	}
+}
+
 func TestHandleAgentInvoke(t *testing.T) {
 	// Set required environment variables
 	setupEnv()

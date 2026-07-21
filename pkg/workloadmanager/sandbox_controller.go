@@ -88,6 +88,9 @@ func (r *SandboxReconciler) WatchSandboxOnce(_ context.Context, namespace, name 
 	if r.watchers == nil {
 		r.watchers = make(map[types.NamespacedName]chan SandboxStatusUpdate)
 	}
+	if oldChan, exists := r.watchers[key]; exists {
+		close(oldChan)
+	}
 	r.watchers[key] = resultChan
 	klog.V(2).Infof("Registered for future notification for sandbox %s/%s", key.Namespace, key.Name)
 

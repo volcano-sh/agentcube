@@ -43,7 +43,7 @@ type codeInterpreterLister struct {
 
 // NewCodeInterpreterLister returns a new CodeInterpreterLister.
 func NewCodeInterpreterLister(indexer cache.Indexer) CodeInterpreterLister {
-	return &codeInterpreterLister{listers.New[*runtimev1alpha1.CodeInterpreter](indexer, runtimev1alpha1.Resource("codeinterpreter").GroupResource())}
+	return &codeInterpreterLister{listers.New[*runtimev1alpha1.CodeInterpreter](indexer, runtimev1alpha1.Resource("codeinterpreter"))}
 }
 
 // CodeInterpreters returns an object that can list and get CodeInterpreters.

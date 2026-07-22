@@ -12,36 +12,42 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 from agentcube import AgentRuntimeClient
 
-# first time: it will create a new pod
+
+agent_name = os.getenv("AGENT_RUNTIME_NAME", "simple-agentruntime")
+namespace = os.getenv("SANDBOX_NAMESPACE", "default")
+
+# Create a new AgentRuntime session.
 agent_client_v1 = AgentRuntimeClient(
-    agent_name="my-agent",
-    router_url="http://localhost:8081",
-    namespace="default",
+    agent_name=agent_name,
+    namespace=namespace,
     verbose=True,
 )
+session_id = agent_client_v1.session_id
 print(agent_client_v1.session_id)
 
 result_v1 = agent_client_v1.invoke(
-    payload={"prompt": "Hello World!"},
+    payload={"input": "Hello World!"},
+    path="echo",
 )
 print(result_v1)
+agent_client_v1.close()  # The remote session remains reusable.
 
-# second time: it will try to reuse the pod created before
+# Reuse the same AgentRuntime session with a new client.
 agent_client_v2 = AgentRuntimeClient(
-    agent_name="my-agent",
-    router_url="http://localhost:8081",
-    namespace="default",
-    session_id=agent_client_v1.session_id,
+    agent_name=agent_name,
+    namespace=namespace,
+    session_id=session_id,
     verbose=True,
 )
-# same with the first time
 print(agent_client_v2.session_id)
 
 result_v2 = agent_client_v2.invoke(
-    payload={"prompt": "Hello World!"},
+    payload={"input": "Hello again!"},
+    path="echo",
 )
 print(result_v2)
-
-
+agent_client_v2.close()

@@ -27,7 +27,9 @@ import (
 
 // DefaultCertificateFileWaitTimeout bounds the startup race while spiffe-helper writes the initial SVID files.
 // spiffe-helper remains a sidecar so it can rotate certificates after startup.
-const DefaultCertificateFileWaitTimeout = 30 * time.Second
+// Increased to 120s for E2E environments where SPIRE agent and controller-manager
+// must bootstrap before spiffe-helper can deliver the initial SVID bundle.
+const DefaultCertificateFileWaitTimeout = 120 * time.Second
 
 // WaitForCertificateFiles waits until the configured cert, key, and CA files exist.
 func WaitForCertificateFiles(cfg Config, timeout time.Duration) error {

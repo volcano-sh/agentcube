@@ -26,7 +26,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+	sandboxv1beta1 "sigs.k8s.io/agent-sandbox/api/v1beta1"
 )
 
 type SandboxReconciler struct {
@@ -39,11 +39,11 @@ type SandboxReconciler struct {
 }
 
 type SandboxStatusUpdate struct {
-	Sandbox *sandboxv1alpha1.Sandbox
+	Sandbox *sandboxv1beta1.Sandbox
 }
 
 func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	sandbox := &sandboxv1alpha1.Sandbox{}
+	sandbox := &sandboxv1beta1.Sandbox{}
 	if err := r.Get(ctx, req.NamespacedName, sandbox); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}

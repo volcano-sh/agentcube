@@ -108,14 +108,16 @@ spec:
             httpGet:
               path: /health/live
               port: {{ .Values.router.service.targetPort }}
-            initialDelaySeconds: 1
-            periodSeconds: 2
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /health/ready
               port: {{ .Values.router.service.targetPort }}
-            initialDelaySeconds: 1
-            periodSeconds: 2
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
       {{- if .Values.spire.enabled }}
       volumes:
         - name: spire-agent-socket

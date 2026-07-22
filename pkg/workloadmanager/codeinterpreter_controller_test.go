@@ -28,14 +28,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
-	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
-	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
+	sandboxv1beta1 "sigs.k8s.io/agent-sandbox/api/v1beta1"
+	extensionsv1beta1 "sigs.k8s.io/agent-sandbox/extensions/api/v1beta1"
 )
 
 func setupTestReconciler() *CodeInterpreterReconciler {
 	scheme := runtime.NewScheme()
 	_ = runtimev1alpha1.AddToScheme(scheme)
-	_ = sandboxv1alpha1.AddToScheme(scheme)
+	_ = sandboxv1beta1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -49,8 +49,8 @@ func setupTestReconciler() *CodeInterpreterReconciler {
 func newTestReconcilerWithObjects(objects ...runtime.Object) *CodeInterpreterReconciler {
 	scheme := runtime.NewScheme()
 	_ = runtimev1alpha1.AddToScheme(scheme)
-	_ = sandboxv1alpha1.AddToScheme(scheme)
-	_ = extensionsv1alpha1.AddToScheme(scheme)
+	_ = sandboxv1beta1.AddToScheme(scheme)
+	_ = extensionsv1beta1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
 	client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objects...).Build()
@@ -90,30 +90,32 @@ func TestEnsureSandboxTemplateDisablesAgentSandboxDefaultNetworkPolicy(t *testin
 	_, err := reconciler.ensureSandboxTemplate(context.Background(), ci)
 	assert.NoError(t, err)
 
-	sandboxTemplate := &extensionsv1alpha1.SandboxTemplate{}
+	sandboxTemplate := &extensionsv1beta1.SandboxTemplate{}
 	err = reconciler.Get(context.Background(), types.NamespacedName{
 		Name:      ci.Name,
 		Namespace: ci.Namespace,
 	}, sandboxTemplate)
 	assert.NoError(t, err)
-	assert.Equal(t, extensionsv1alpha1.NetworkPolicyManagementUnmanaged, sandboxTemplate.Spec.NetworkPolicyManagement)
+	assert.Equal(t, extensionsv1beta1.NetworkPolicyManagementUnmanaged, sandboxTemplate.Spec.NetworkPolicyManagement)
 }
 
 func TestEnsureSandboxTemplateUpdatesManagedNetworkPolicyToUnmanaged(t *testing.T) {
 	ci := testCodeInterpreterWithWarmPool()
-	existing := &extensionsv1alpha1.SandboxTemplate{
+	existing := &extensionsv1beta1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ci.Name,
 			Namespace: ci.Namespace,
 		},
-		Spec: extensionsv1alpha1.SandboxTemplateSpec{
-			NetworkPolicyManagement: extensionsv1alpha1.NetworkPolicyManagementManaged,
-			PodTemplate: sandboxv1alpha1.PodTemplate{
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{
-						Name:  "codeinterpreter",
-						Image: "stale-image",
-					}},
+		Spec: extensionsv1beta1.SandboxTemplateSpec{
+			NetworkPolicyManagement: extensionsv1beta1.NetworkPolicyManagementManaged,
+			SandboxBlueprint: sandboxv1beta1.SandboxBlueprint{
+				PodTemplate: sandboxv1beta1.PodTemplate{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name:  "codeinterpreter",
+							Image: "stale-image",
+						}},
+					},
 				},
 			},
 		},
@@ -123,13 +125,13 @@ func TestEnsureSandboxTemplateUpdatesManagedNetworkPolicyToUnmanaged(t *testing.
 	_, err := reconciler.ensureSandboxTemplate(context.Background(), ci)
 	assert.NoError(t, err)
 
-	sandboxTemplate := &extensionsv1alpha1.SandboxTemplate{}
+	sandboxTemplate := &extensionsv1beta1.SandboxTemplate{}
 	err = reconciler.Get(context.Background(), types.NamespacedName{
 		Name:      ci.Name,
 		Namespace: ci.Namespace,
 	}, sandboxTemplate)
 	assert.NoError(t, err)
-	assert.Equal(t, extensionsv1alpha1.NetworkPolicyManagementUnmanaged, sandboxTemplate.Spec.NetworkPolicyManagement)
+	assert.Equal(t, extensionsv1beta1.NetworkPolicyManagementUnmanaged, sandboxTemplate.Spec.NetworkPolicyManagement)
 }
 
 func TestConvertToPodTemplate_RuntimeClassName_TableDriven(t *testing.T) {

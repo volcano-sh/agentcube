@@ -27,6 +27,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -47,8 +48,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
-	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
+	sandboxv1beta1 "sigs.k8s.io/agent-sandbox/api/v1beta1"
+	extensionsv1beta1 "sigs.k8s.io/agent-sandbox/extensions/api/v1beta1"
 )
 
 const (
@@ -66,6 +67,8 @@ const (
 var (
 	agentcubeNamespace = getEnv("WORKLOAD_NAMESPACE", "agentcube")
 	scheme             = runtime.NewScheme()
+	e2ePrereqOnce      sync.Once
+	e2ePrereqErr       error
 )
 
 type claimedSandboxResources struct {
@@ -79,8 +82,8 @@ type claimedSandboxResources struct {
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(sandboxv1alpha1.AddToScheme(scheme))
-	utilruntime.Must(extensionsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(sandboxv1beta1.AddToScheme(scheme))
+	utilruntime.Must(extensionsv1beta1.AddToScheme(scheme))
 	utilruntime.Must(v1alpha1.AddToScheme(scheme))
 }
 
@@ -180,6 +183,64 @@ func skipIfMTLS(t *testing.T) {
 		}
 		t.Skip("skipping direct-WM test: mTLS is active (test client has no client cert)")
 	}
+}
+
+func skipIfE2EPrereqsUnavailable(t *testing.T, requireKubeConfig bool) {
+	t.Helper()
+
+	e2ePrereqOnce.Do(func() {
+		if os.Getenv("E2E_SKIP") == enabledEnvValue {
+			e2ePrereqErr = fmt.Errorf("E2E_SKIP=true")
+			return
+		}
+
+		if requireKubeConfig {
+			if _, err := getKubeConfig(); err != nil {
+				e2ePrereqErr = fmt.Errorf("kubeconfig unavailable: %w", err)
+				return
+			}
+		}
+
+		routerURL := getEnv("ROUTER_URL", defaultRouterURL)
+		if os.Getenv("ROUTER_URL") == "" && routerURL == defaultRouterURL {
+			e2ePrereqErr = fmt.Errorf("default router endpoint %s is not available", routerURL)
+			return
+		}
+		if err := probeHTTPHealth(routerURL + "/health/live"); err != nil {
+			e2ePrereqErr = fmt.Errorf("router not reachable at %s: %w", routerURL, err)
+			return
+		}
+
+		if requireKubeConfig {
+			workloadMgrURL := getEnv("WORKLOAD_MANAGER_URL", defaultWorkloadMgrURL)
+			if os.Getenv("WORKLOAD_MANAGER_URL") == "" && workloadMgrURL == defaultWorkloadMgrURL {
+				e2ePrereqErr = fmt.Errorf("default workload manager endpoint %s is not available", workloadMgrURL)
+				return
+			}
+			if err := probeHTTPHealth(workloadMgrURL + "/health"); err != nil {
+				e2ePrereqErr = fmt.Errorf("workload manager not reachable at %s: %w", workloadMgrURL, err)
+			}
+		}
+	})
+
+	if e2ePrereqErr != nil {
+		t.Skipf("skipping e2e test: %v", e2ePrereqErr)
+	}
+}
+
+func probeHTTPHealth(url string) error {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusInternalServerError {
+		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
 // runAgentRuntimeTestCase executes a single AgentRuntime test case
@@ -620,6 +681,7 @@ func (e *testEnv) listFiles(namespace, name, sessionID, path string) ([]FileInfo
 
 // TestAgentRuntimeBasicInvocation tests basic echo-agent functionality
 func TestAgentRuntimeBasicInvocation(t *testing.T) {
+	skipIfE2EPrereqsUnavailable(t, false)
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace
@@ -667,6 +729,7 @@ func TestAgentRuntimeBasicInvocation(t *testing.T) {
 
 // TestAgentRuntimeErrorHandling tests: Missing/invalid AgentRuntime
 func TestAgentRuntimeErrorHandling(t *testing.T) {
+	skipIfE2EPrereqsUnavailable(t, false)
 	env := newTestEnv(t)
 
 	// Modify invokeAgentRuntime to return status code for error handling tests
@@ -736,6 +799,7 @@ func TestAgentRuntimeErrorHandling(t *testing.T) {
 
 // TestAgentRuntimeSessionTTL tests: Idle session / TTL behavior
 func TestAgentRuntimeSessionTTL(t *testing.T) {
+	skipIfE2EPrereqsUnavailable(t, false)
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace
@@ -809,6 +873,7 @@ func TestAgentRuntimeSessionTTL(t *testing.T) {
 // TestCodeInterpreterWarmPool tests: Code interpreter with warmpool functionality
 func TestCodeInterpreterWarmPool(t *testing.T) {
 	skipIfMTLS(t)
+	skipIfE2EPrereqsUnavailable(t, true)
 	env := newTestEnv(t)
 	ctx, err := newE2ETestContext()
 	require.NoError(t, err)
@@ -856,6 +921,7 @@ func TestCodeInterpreterWarmPool(t *testing.T) {
 // TestCodeInterpreterBasicInvocation tests basic code interpreter invocation
 func TestCodeInterpreterBasicInvocation(t *testing.T) {
 	skipIfMTLS(t)
+	skipIfE2EPrereqsUnavailable(t, true)
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace
@@ -900,6 +966,7 @@ func TestCodeInterpreterBasicInvocation(t *testing.T) {
 // TestCodeInterpreterFileOperations tests file upload/download via code interpreter API
 func TestCodeInterpreterFileOperations(t *testing.T) {
 	skipIfMTLS(t)
+	skipIfE2EPrereqsUnavailable(t, true)
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace
@@ -1036,10 +1103,10 @@ func (ctx *e2eTestContext) cleanupCodeInterpreter(t *testing.T, namespace, name,
 func (ctx *e2eTestContext) verifyClaimedResourcesDeleted(t *testing.T, namespace string, claimedResources *claimedSandboxResources) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		return ctx.objectUIDGone(namespace, claimedResources.claimName, claimedResources.claimUID, &extensionsv1alpha1.SandboxClaim{})
+		return ctx.objectUIDGone(namespace, claimedResources.claimName, claimedResources.claimUID, &extensionsv1beta1.SandboxClaim{})
 	}, 30*time.Second, time.Second, "adopting SandboxClaim %s/%s should be deleted", namespace, claimedResources.claimName)
 	require.Eventually(t, func() bool {
-		return ctx.objectUIDGone(namespace, claimedResources.sandboxName, claimedResources.sandboxUID, &sandboxv1alpha1.Sandbox{})
+		return ctx.objectUIDGone(namespace, claimedResources.sandboxName, claimedResources.sandboxUID, &sandboxv1beta1.Sandbox{})
 	}, 30*time.Second, time.Second, "adopted Sandbox %s/%s should be deleted", namespace, claimedResources.sandboxName)
 	require.Eventually(t, func() bool {
 		return ctx.objectUIDGone(namespace, claimedResources.podName, claimedResources.podUID, &corev1.Pod{})
@@ -1236,7 +1303,7 @@ func (ctx *e2eTestContext) deleteYamlFile(yamlPath string) error {
 
 // countSandboxClaims counts the number of SandboxClaim resources owned by a CodeInterpreter
 func (ctx *e2eTestContext) countSandboxClaims(namespace, codeInterpreterName string) (int, error) {
-	sandboxClaimList := &extensionsv1alpha1.SandboxClaimList{}
+	sandboxClaimList := &extensionsv1beta1.SandboxClaimList{}
 	err := ctx.ctrlClient.List(context.Background(), sandboxClaimList, client.InNamespace(namespace))
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -1292,7 +1359,7 @@ func (ctx *e2eTestContext) getWarmPoolPodIdentities(namespace, codeInterpreterNa
 func (ctx *e2eTestContext) listWarmPoolPods(namespace, codeInterpreterName string) ([]corev1.Pod, error) {
 	listCtx := context.Background()
 
-	sandboxList := &sandboxv1alpha1.SandboxList{}
+	sandboxList := &sandboxv1beta1.SandboxList{}
 	if err := ctx.ctrlClient.List(listCtx, sandboxList, client.InNamespace(namespace)); err != nil {
 		return nil, fmt.Errorf("failed to list sandboxes: %w", err)
 	}
@@ -1329,7 +1396,7 @@ func (ctx *e2eTestContext) listWarmPoolPods(namespace, codeInterpreterName strin
 	return pods, nil
 }
 
-func isWarmPoolSandbox(sandbox sandboxv1alpha1.Sandbox, codeInterpreterName string) bool {
+func isWarmPoolSandbox(sandbox sandboxv1beta1.Sandbox, codeInterpreterName string) bool {
 	if sandbox.DeletionTimestamp != nil || sandbox.UID == "" {
 		return false
 	}
@@ -1406,14 +1473,14 @@ func (ctx *e2eTestContext) arePodsReady(namespace, codeInterpreterName string) (
 }
 
 // getSandboxClaimByOwner finds exactly one SandboxClaim owned by the specified owner
-func (ctx *e2eTestContext) getSandboxClaimByOwner(namespace, ownerKind, ownerName string) (*extensionsv1alpha1.SandboxClaim, error) {
-	sandboxClaimList := &extensionsv1alpha1.SandboxClaimList{}
+func (ctx *e2eTestContext) getSandboxClaimByOwner(namespace, ownerKind, ownerName string) (*extensionsv1beta1.SandboxClaim, error) {
+	sandboxClaimList := &extensionsv1beta1.SandboxClaimList{}
 	err := ctx.ctrlClient.List(context.Background(), sandboxClaimList, client.InNamespace(namespace))
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sandboxclaims: %w", err)
 	}
 
-	var found *extensionsv1alpha1.SandboxClaim
+	var found *extensionsv1beta1.SandboxClaim
 	for i := range sandboxClaimList.Items {
 		claim := &sandboxClaimList.Items[i]
 		for _, ownerRef := range claim.OwnerReferences {
@@ -1431,14 +1498,14 @@ func (ctx *e2eTestContext) getSandboxClaimByOwner(namespace, ownerKind, ownerNam
 }
 
 // getSandboxByOwner finds exactly one Sandbox owned by the specified owner
-func (ctx *e2eTestContext) getSandboxByOwner(namespace, ownerKind, ownerName string) (*sandboxv1alpha1.Sandbox, error) {
-	sandboxList := &sandboxv1alpha1.SandboxList{}
+func (ctx *e2eTestContext) getSandboxByOwner(namespace, ownerKind, ownerName string) (*sandboxv1beta1.Sandbox, error) {
+	sandboxList := &sandboxv1beta1.SandboxList{}
 	err := ctx.ctrlClient.List(context.Background(), sandboxList, client.InNamespace(namespace))
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sandboxes: %w", err)
 	}
 
-	var found *sandboxv1alpha1.Sandbox
+	var found *sandboxv1beta1.Sandbox
 	for i := range sandboxList.Items {
 		sandbox := &sandboxList.Items[i]
 		for _, ownerRef := range sandbox.OwnerReferences {
@@ -1606,6 +1673,7 @@ func runCodeInterpreterLoadTest(
 // TestCodeInterpreterWarmPoolLoad tests code interpreter with warmpool under load (10 requests per second)
 func TestCodeInterpreterWarmPoolLoad(t *testing.T) {
 	skipIfMTLS(t)
+	skipIfE2EPrereqsUnavailable(t, true)
 	env := newTestEnv(t)
 	ctx, err := newE2ETestContext()
 	require.NoError(t, err)
@@ -1648,6 +1716,7 @@ func TestCodeInterpreterWarmPoolLoad(t *testing.T) {
 // TestCodeInterpreterBasicInvocationLoad tests code interpreter without warmpool under load (2 requests per second)
 func TestCodeInterpreterBasicInvocationLoad(t *testing.T) {
 	skipIfMTLS(t)
+	skipIfE2EPrereqsUnavailable(t, true)
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace

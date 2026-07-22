@@ -25,16 +25,15 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/volcano-sh/agentcube/pkg/api"
+	"github.com/volcano-sh/agentcube/pkg/common/types"
+	"github.com/volcano-sh/agentcube/pkg/store"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/klog/v2"
-	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
-	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
-
-	"github.com/volcano-sh/agentcube/pkg/api"
-	"github.com/volcano-sh/agentcube/pkg/common/types"
-	"github.com/volcano-sh/agentcube/pkg/store"
+	sandboxv1beta1 "sigs.k8s.io/agent-sandbox/api/v1beta1"
+	extensionsv1beta1 "sigs.k8s.io/agent-sandbox/extensions/api/v1beta1"
 )
 
 var (
@@ -158,8 +157,8 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 		return
 	}
 
-	var sandbox *sandboxv1alpha1.Sandbox
-	var sandboxClaim *extensionsv1alpha1.SandboxClaim
+	var sandbox *sandboxv1beta1.Sandbox
+	var sandboxClaim *extensionsv1beta1.SandboxClaim
 	var sandboxEntry *sandboxEntry
 	var err error
 
@@ -240,7 +239,7 @@ func resolveSandboxOwnerID(r *http.Request) (string, int, string) {
 	return "", http.StatusUnauthorized, "invalid identity token"
 }
 
-func (s *Server) respondSandboxCreateError(c *gin.Context, sandbox *sandboxv1alpha1.Sandbox, err error) {
+func (s *Server) respondSandboxCreateError(c *gin.Context, sandbox *sandboxv1beta1.Sandbox, err error) {
 	if errors.Is(err, context.Canceled) {
 		klog.Warningf("create sandbox aborted %s/%s: client disconnected", sandbox.Namespace, sandbox.Name)
 		c.AbortWithStatus(499)
@@ -273,7 +272,7 @@ func isInternalSandboxCreateError(err error) bool {
 }
 
 // createK8sResources creates the K8s sandbox or sandbox claim resource.
-func (s *Server) createK8sResources(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
+func (s *Server) createK8sResources(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1beta1.Sandbox, sandboxClaim *extensionsv1beta1.SandboxClaim) error {
 	if sandboxClaim != nil {
 		if err := createSandboxClaim(ctx, dynamicClient, sandboxClaim); err != nil {
 			if isContextError(err) {
@@ -292,7 +291,7 @@ func (s *Server) createK8sResources(ctx context.Context, dynamicClient dynamic.I
 	return nil
 }
 
-func (s *Server) waitForDirectSandboxReady(ctx context.Context, sandbox *sandboxv1alpha1.Sandbox, resultChan <-chan SandboxStatusUpdate) (*sandboxv1alpha1.Sandbox, error) {
+func (s *Server) waitForDirectSandboxReady(ctx context.Context, sandbox *sandboxv1beta1.Sandbox, resultChan <-chan SandboxStatusUpdate) (*sandboxv1beta1.Sandbox, error) {
 	if resultChan == nil {
 		return nil, errSandboxReadyWatcherNotRegistered
 	}
@@ -324,11 +323,11 @@ func (s *Server) waitForDirectSandboxReady(ctx context.Context, sandbox *sandbox
 	}
 }
 
-func (s *Server) waitForClaimSandboxReady(ctx context.Context, dynamicClient dynamic.Interface, sandboxClaim *extensionsv1alpha1.SandboxClaim) (*sandboxv1alpha1.Sandbox, error) {
+func (s *Server) waitForClaimSandboxReady(ctx context.Context, dynamicClient dynamic.Interface, sandboxClaim *extensionsv1beta1.SandboxClaim) (*sandboxv1beta1.Sandbox, error) {
 	return s.waitForClaimSandboxReadyWithTimeout(ctx, dynamicClient, sandboxClaim, sandboxCreationTimeout)
 }
 
-func (s *Server) waitForClaimSandboxReadyWithTimeout(ctx context.Context, dynamicClient dynamic.Interface, sandboxClaim *extensionsv1alpha1.SandboxClaim, timeout time.Duration) (*sandboxv1alpha1.Sandbox, error) {
+func (s *Server) waitForClaimSandboxReadyWithTimeout(ctx context.Context, dynamicClient dynamic.Interface, sandboxClaim *extensionsv1beta1.SandboxClaim, timeout time.Duration) (*sandboxv1beta1.Sandbox, error) {
 	waitCtx, cancel := context.WithTimeoutCause(ctx, timeout, errSandboxCreationTimeout)
 	defer cancel()
 	ticker := time.NewTicker(1 * time.Second)
@@ -380,7 +379,7 @@ func (s *Server) waitForClaimSandboxReadyWithTimeout(ctx context.Context, dynami
 	}
 }
 
-func (s *Server) waitForCreatedSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, resultChan <-chan SandboxStatusUpdate) (*sandboxv1alpha1.Sandbox, error) {
+func (s *Server) waitForCreatedSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1beta1.Sandbox, sandboxClaim *extensionsv1beta1.SandboxClaim, resultChan <-chan SandboxStatusUpdate) (*sandboxv1beta1.Sandbox, error) {
 	if sandboxClaim != nil {
 		return s.waitForClaimSandboxReady(ctx, dynamicClient, sandboxClaim)
 	}
@@ -388,7 +387,7 @@ func (s *Server) waitForCreatedSandbox(ctx context.Context, dynamicClient dynami
 }
 
 // createSandbox performs sandbox creation and returns the response payload or an error with an HTTP status code.
-func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
+func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interface, sandbox *sandboxv1beta1.Sandbox, sandboxClaim *extensionsv1beta1.SandboxClaim, sandboxEntry *sandboxEntry, resultChan <-chan SandboxStatusUpdate) (*types.CreateSandboxResponse, error) {
 	placeholder := buildSandboxPlaceHolder(sandbox, sandboxEntry)
 	if err := s.storeClient.StoreSandbox(ctx, placeholder); err != nil {
 		if isContextError(err) {
@@ -418,10 +417,10 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 
 	// agent-sandbox creates a Pod with the same name as the Sandbox if no warm pool is used.
 	// If a warm pool is used, the adopted Pod name is stored in
-	// sandboxv1alpha1.SandboxPodNameAnnotation.
+	// sandboxv1beta1.SandboxPodNameAnnotation.
 	sandboxNameForPod := createdSandbox.Name
 	sandboxPodName := createdSandbox.Name
-	if podName, exists := createdSandbox.Annotations[sandboxv1alpha1.SandboxPodNameAnnotation]; exists {
+	if podName, exists := createdSandbox.Annotations[sandboxv1beta1.SandboxPodNameAnnotation]; exists {
 		sandboxPodName = podName
 	}
 
@@ -472,7 +471,7 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 // rollbackSandboxCreation deletes the sandbox (or sandbox claim) and its store
 // placeholder when creation fails. It runs in a fresh context so that a
 // canceled request context does not prevent cleanup.
-func (s *Server) rollbackSandboxCreation(dynamicClient dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox, sandboxClaim *extensionsv1alpha1.SandboxClaim, sessionID string) {
+func (s *Server) rollbackSandboxCreation(dynamicClient dynamic.Interface, sandbox *sandboxv1beta1.Sandbox, sandboxClaim *extensionsv1beta1.SandboxClaim, sessionID string) {
 	ctxTimeout, cancel := context.WithTimeout(context.Background(), storeCleanupTimeout)
 	defer cancel()
 	if sandboxClaim != nil {

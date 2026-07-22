@@ -4,6 +4,8 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
+# Prerequisite: ensure `go` is available on PATH before running this script.
+
 SCRIPT_ROOT=$(dirname "${BASH_SOURCE[0]}")/..
 cd "${SCRIPT_ROOT}"
 
@@ -54,27 +56,68 @@ echo "Generating client-go code for runtime.agentcube.volcano.sh/v1alpha1..."
 # Note: We skip gen_helpers because controller-gen in 'make generate' already generates
 # the deepcopy code. Using gen_helpers here would delete and regenerate it, causing conflicts.
 
-# Generate client code
-# Note: input-dir must be a local path, not a Go package path
-kube::codegen::gen_client \
-  --with-watch \
-  --output-dir "${SCRIPT_ROOT}/client-go" \
-  --output-pkg github.com/volcano-sh/agentcube/client-go \
-  --boilerplate "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
-  --one-input-api runtime/v1alpha1 \
-  "${SCRIPT_ROOT}/pkg/apis"
+# Ensure codegen binaries are installed in a known bin dir (honor GOBIN if set)
+GOPATH_BIN="$(go env GOBIN)"
+if [ -z "${GOPATH_BIN}" ]; then
+	GOPATH_RAW="$(go env GOPATH)"
+	GOPATH_FIRST="${GOPATH_RAW%%[:;]*}"
+	GOPATH_BIN="${GOPATH_FIRST}/bin"
+fi
+mkdir -p "${GOPATH_BIN}"
+GOEXE="$(go env GOEXE)"
+TMP_CODEGEN="${SCRIPT_ROOT}/.codegen_tmp"
+rm -rf "${TMP_CODEGEN}"
+mkdir -p "${TMP_CODEGEN}"
+trap 'rm -rf "${TMP_CODEGEN}"' EXIT
+cp -r "${CODEGEN_PKG}"/* "${TMP_CODEGEN}/"
+chmod -R u+w "${TMP_CODEGEN}"
 
-# Fix lister-gen bug: Resource() returns GroupVersionResource but listers.New needs GroupResource
-# This is a workaround for https://github.com/kubernetes/code-generator/issues/XXX
-echo "Fixing lister-gen GroupResource issue..."
-find "${SCRIPT_ROOT}/client-go/listers" -name "*.go" -type f | while read -r file; do
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    sed -i '' 's/runtimev1alpha1\.Resource("codeinterpreter")/runtimev1alpha1.Resource("codeinterpreter").GroupResource()/g' "$file"
-    sed -i '' 's/runtimev1alpha1\.Resource("agentruntime")/runtimev1alpha1.Resource("agentruntime").GroupResource()/g' "$file"
-  else
-    sed -i 's/runtimev1alpha1\.Resource("codeinterpreter")/runtimev1alpha1.Resource("codeinterpreter").GroupResource()/g' "$file"
-    sed -i 's/runtimev1alpha1\.Resource("agentruntime")/runtimev1alpha1.Resource("agentruntime").GroupResource()/g' "$file"
-  fi
-done
+# Patch informer-gen Windows path bug where path.Base is called on filepath.Join backslash paths
+TARGETS_GO="${TMP_CODEGEN}/cmd/informer-gen/generators/targets.go"
+if [ -f "${TARGETS_GO}" ]; then
+	if [[ "${OSTYPE:-}" == "darwin"* ]]; then
+		sed -i '' 's/path\.Base(\(.*\))/path.Base(filepath.ToSlash(\1))/g' "${TARGETS_GO}"
+	else
+		sed -i 's/path\.Base(\(.*\))/path.Base(filepath.ToSlash(\1))/g' "${TARGETS_GO}"
+	fi
+else
+	echo "Warning: ${TARGETS_GO} not found; skipping informer-gen Windows path patch" >&2
+fi
+
+(
+  cd "${TMP_CODEGEN}"
+  GO111MODULE=on GOBIN="${GOPATH_BIN}" go install ./cmd/client-gen ./cmd/lister-gen ./cmd/informer-gen
+)
+rm -rf "${TMP_CODEGEN}"
+
+# Clean client-go output directory before generation
+rm -rf "${SCRIPT_ROOT}/client-go"
+
+NORMALIZED_ROOT=$(echo "${SCRIPT_ROOT}" | sed 's:\\:/:g')
+
+# 1. client-gen
+"${GOPATH_BIN}/client-gen${GOEXE}" \
+  --go-header-file "${NORMALIZED_ROOT}/hack/boilerplate.go.txt" \
+  --output-dir "./client-go/clientset" \
+  --output-pkg "github.com/volcano-sh/agentcube/client-go/clientset" \
+  --clientset-name "versioned" \
+  --input-base "github.com/volcano-sh/agentcube/pkg/apis" \
+  --input "runtime/v1alpha1"
+
+# 2. lister-gen
+"${GOPATH_BIN}/lister-gen${GOEXE}" \
+  --go-header-file "${NORMALIZED_ROOT}/hack/boilerplate.go.txt" \
+  --output-dir "./client-go/listers" \
+  --output-pkg "github.com/volcano-sh/agentcube/client-go/listers" \
+  "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
+
+# 3. informer-gen
+"${GOPATH_BIN}/informer-gen${GOEXE}" \
+  --go-header-file "${NORMALIZED_ROOT}/hack/boilerplate.go.txt" \
+  --output-dir "./client-go/informers" \
+  --output-pkg "github.com/volcano-sh/agentcube/client-go/informers" \
+  --versioned-clientset-package "github.com/volcano-sh/agentcube/client-go/clientset/versioned" \
+  --listers-package "github.com/volcano-sh/agentcube/client-go/listers" \
+  "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 
 echo "Client-go code generation completed!"

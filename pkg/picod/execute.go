@@ -53,8 +53,12 @@ type ExecuteResponse struct {
 
 // ExecuteHandler handles command execution requests
 func (s *Server) ExecuteHandler(c *gin.Context) {
+	s.metrics.ActiveExecutions.Inc()
+	defer s.metrics.ActiveExecutions.Dec()
+
 	var req ExecuteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		s.metrics.ExecuteRequestsTotal.WithLabelValues("invalid").Inc()
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 			"code":  http.StatusBadRequest,
@@ -63,6 +67,7 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	}
 
 	if len(req.Command) == 0 {
+		s.metrics.ExecuteRequestsTotal.WithLabelValues("invalid").Inc()
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "command cannot be empty",
 			"code":  http.StatusBadRequest,
@@ -76,6 +81,7 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 		var err error
 		timeoutDuration, err = time.ParseDuration(req.Timeout)
 		if err != nil {
+			s.metrics.ExecuteRequestsTotal.WithLabelValues("invalid").Inc()
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": fmt.Sprintf("Invalid timeout format: %v", err),
 				"code":  http.StatusBadRequest,
@@ -92,28 +98,11 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	// Use the first element as the command and the rest as arguments
 	cmd := exec.CommandContext(ctx, req.Command[0], req.Command[1:]...) //nolint:gosec // This is an agent designed to execute arbitrary commands
 
-	// Default working directory to workspace; override if the request specifies one.
-	cmd.Dir = s.workspaceDir
-	if req.WorkingDir != "" {
-		safeWorkingDir, err := s.sanitizePath(req.WorkingDir)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("Invalid working directory: %v", err),
-				"code":  http.StatusBadRequest,
-			})
-			return
-		}
-		if _, statErr := os.Stat(safeWorkingDir); os.IsNotExist(statErr) {
-			if err := s.mkdirSafe(safeWorkingDir); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"error": fmt.Sprintf("Failed to create working directory: %v", err),
-					"code":  http.StatusInternalServerError,
-				})
-				return
-			}
-		}
-		cmd.Dir = safeWorkingDir
+	workingDir, ok := s.prepareWorkingDir(c, req.WorkingDir)
+	if !ok {
+		return
 	}
+	cmd.Dir = workingDir
 
 	// Set environment variables
 	if len(req.Env) > 0 {
@@ -134,13 +123,21 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	endTime := time.Now()
 
 	var exitCode int
+	var outcomeStatus string
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		exitCode = TimeoutExitCode
+		outcomeStatus = "timeout"
 		stderr.WriteString(fmt.Sprintf("Command timed out after %.0f seconds", timeoutDuration.Seconds()))
 	} else if cmd.ProcessState != nil {
 		exitCode = cmd.ProcessState.ExitCode()
+		if exitCode == 0 {
+			outcomeStatus = "success"
+		} else {
+			outcomeStatus = "error"
+		}
 	} else {
 		exitCode = 1
+		outcomeStatus = "error"
 		if stderr.Len() > 0 {
 			stderr.WriteString("\n")
 		}
@@ -150,6 +147,8 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 		}
 	}
 
+	s.metrics.ExecuteRequestsTotal.WithLabelValues(outcomeStatus).Inc()
+
 	c.JSON(http.StatusOK, ExecuteResponse{
 		Stdout:    stdout.String(),
 		Stderr:    stderr.String(),
@@ -158,4 +157,30 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 		StartTime: start,
 		EndTime:   endTime,
 	})
+}
+
+func (s *Server) prepareWorkingDir(c *gin.Context, reqWorkingDir string) (string, bool) {
+	if reqWorkingDir == "" {
+		return s.workspaceDir, true
+	}
+	safeWorkingDir, err := s.sanitizePath(reqWorkingDir)
+	if err != nil {
+		s.metrics.ExecuteRequestsTotal.WithLabelValues("invalid").Inc()
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Invalid working directory: %v", err),
+			"code":  http.StatusBadRequest,
+		})
+		return "", false
+	}
+	if _, statErr := os.Stat(safeWorkingDir); os.IsNotExist(statErr) {
+		if err := s.mkdirSafe(safeWorkingDir); err != nil {
+			s.metrics.ExecuteRequestsTotal.WithLabelValues("error").Inc()
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": fmt.Sprintf("Failed to create working directory: %v", err),
+				"code":  http.StatusInternalServerError,
+			})
+			return "", false
+		}
+	}
+	return safeWorkingDir, true
 }

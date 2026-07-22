@@ -32,7 +32,7 @@ detect_mtls_enabled() {
 if [ -z "${MTLS_ENABLED+x}" ]; then
     detect_mtls_enabled
 fi
-AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION:-v0.4.6}
+AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION:-v0.5.2}
 E2E_REQUIRE_CODEINTERPRETER=${E2E_REQUIRE_CODEINTERPRETER:-false}
 WORKLOAD_MANAGER_IMAGE=${WORKLOAD_MANAGER_IMAGE:-workloadmanager:latest}
 ROUTER_IMAGE=${ROUTER_IMAGE:-agentcube-router:latest}
@@ -679,8 +679,11 @@ if [ "${KEYCLOAK_ENABLED}" = "true" ]; then
 fi
 
 echo "Running LangChain AgentcubeSandbox E2E..."
-if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" MTLS_ENABLED="${MTLS_ENABLED}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_langchain_agentcube_sandbox.py; then
-    echo "ERROR: LangChain tests failed with exit code $?"
+WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" MTLS_ENABLED="${MTLS_ENABLED}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_langchain_agentcube_sandbox.py
+EXIT_CODE=$?
+
+if [ $EXIT_CODE -ne 0 ]; then
+    echo "ERROR: LangChain tests failed with exit code $EXIT_CODE"
     TEST_FAILED=1
 else
     echo "✓ LangChain tests passed"
@@ -749,7 +752,7 @@ fi
 # Agent-Sandbox Upgrade Test (Advanced / Optional)
 # Note: Upgrade test is an exploratory advanced scenario. If it fails, core E2E tests may still pass.
 # Core functionality validation (invocations, TTL, port-forwarding) takes precedence.
-if [ $TEST_FAILED -eq 0 ] && [ "${AGENT_SANDBOX_VERSION}" = "v0.4.6" ]; then
+if [ $TEST_FAILED -eq 0 ] && [ "${E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST:-false}" = "true" ]; then
     cd "$REPO_ROOT"
     echo "Running Agent-Sandbox Upgrade Test (v0.4.6 -> v0.5.2, optional/exploratory)..."
     require_cmd jq
@@ -759,18 +762,12 @@ if [ $TEST_FAILED -eq 0 ] && [ "${AGENT_SANDBOX_VERSION}" = "v0.4.6" ]; then
     MIGRATE_TMP="$(mktemp)"
 
     echo "Downloading agent-sandbox migration helper for ${NEW_VERSION}..."
-    MIGRATE_URLS=(
-        "https://raw.githubusercontent.com/kubernetes-sigs/agent-sandbox/${NEW_VERSION}/dev/tools/migrate.sh"
-        "https://raw.githubusercontent.com/kubernetes-sigs/agent-sandbox/main/dev/tools/migrate.sh"
-    )
     MIGRATE_DOWNLOADED=0
-    for migrate_url in "${MIGRATE_URLS[@]}"; do
-        if curl_download "${migrate_url}" "${MIGRATE_TMP}"; then
-            MIGRATE_DOWNLOADED=1
-            break
-        fi
-        echo "  retrying with alternate migration helper URL: ${migrate_url}"
-    done
+    MIGRATE_URL="https://raw.githubusercontent.com/kubernetes-sigs/agent-sandbox/${NEW_VERSION}/dev/tools/migrate.sh"
+
+    if curl_download "${MIGRATE_URL}" "${MIGRATE_TMP}"; then
+        MIGRATE_DOWNLOADED=1
+    fi
 
     if [ $MIGRATE_DOWNLOADED -eq 0 ]; then
         echo "Error: failed to download migrate.sh"

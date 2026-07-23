@@ -497,7 +497,7 @@ EOF
     done
     
     if [ -z "$SB_CLAIM_1" ]; then
-        echo "❌ Error: upgrade-ci-1 SandboxClaim was not created."
+        echo "Error: upgrade-ci-1 SandboxClaim was not created."
         UPGRADE_FAILED=1
     fi
 
@@ -526,8 +526,8 @@ spec:
 EOF
 
         echo "5. Upgrading agent-sandbox manifests to ${NEW_VERSION}..."
-        kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${NEW_VERSION}/manifest.yaml"
-        kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${NEW_VERSION}/extensions.yaml"
+        # Note: v0.5.2 renamed manifest.yaml -> sandbox-with-extensions.yaml
+        kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${NEW_VERSION}/sandbox-with-extensions.yaml"
         kubectl scale deployment agent-sandbox-controller -n agent-sandbox-system --replicas=1
 
         echo "Waiting for v0.5.2 controller & webhook readiness..."
@@ -538,17 +538,17 @@ EOF
         NEW_POD_UID=$(kubectl get pod "${SB_NAME_1}-0" -n "${WORKLOAD_NAMESPACE}" -o jsonpath='{.metadata.uid}' 2>/dev/null || echo "")
 
         if [ "$OLD_SB_UID" != "$NEW_SB_UID" ]; then
-            echo "❌ Verification Failed: Sandbox UID changed! (${OLD_SB_UID} != ${NEW_SB_UID})"
+            echo "Verification Failed: Sandbox UID changed! (${OLD_SB_UID} != ${NEW_SB_UID})"
             UPGRADE_FAILED=1
         else
-            echo "✅ Sandbox UID preserved successfully."
+            echo "Sandbox UID preserved successfully."
         fi
 
         if [ -n "$OLD_POD_UID" ] && [ "$OLD_POD_UID" != "$NEW_POD_UID" ]; then
-            echo "❌ Verification Failed: Pod UID changed! (${OLD_POD_UID} != ${NEW_POD_UID})"
+            echo "Verification Failed: Pod UID changed! (${OLD_POD_UID} != ${NEW_POD_UID})"
             UPGRADE_FAILED=1
         else
-            echo "✅ Pod UID preserved successfully."
+            echo "Pod UID preserved successfully."
         fi
 
         echo "7. Verifying unbound claim (upgrade-ci-2) becomes Ready..."
@@ -566,9 +566,9 @@ EOF
         done
 
         if [ "$UNBOUND_READY" = "true" ]; then
-            echo "✅ Unbound claim (upgrade-ci-2) became Bound/Ready."
+            echo "Unbound claim (upgrade-ci-2) became Bound/Ready."
         else
-            echo "❌ Verification Failed: upgrade-ci-2 did not become Bound."
+            echo "Verification Failed: upgrade-ci-2 did not become Bound."
             UPGRADE_FAILED=1
         fi
 
@@ -585,15 +585,15 @@ EOF
         done
 
         if [ "$GC_SUCCESS" = "true" ]; then
-            echo "✅ Claim deletion correctly garbage-collected Sandbox (${SB_NAME_1})."
+            echo "Claim deletion correctly garbage-collected Sandbox (${SB_NAME_1})."
         else
-            echo "❌ Verification Failed: Sandbox ${SB_NAME_1} was not garbage collected."
+            echo "Verification Failed: Sandbox ${SB_NAME_1} was not garbage collected."
             UPGRADE_FAILED=1
         fi
     fi
 
     if [ $UPGRADE_FAILED -ne 0 ]; then
-        echo "❌ Agent-Sandbox Upgrade Test FAILED!"
+        echo "Agent-Sandbox Upgrade Test FAILED!"
         TEST_FAILED=1
     fi
 fi

@@ -294,6 +294,35 @@ kubectl_apply_url() {
     rm -f "${tmp}"
 }
 
+install_agent_sandbox_release() {
+    local version="$1"
+    local tmp
+    tmp="$(mktemp)"
+
+    local asset_urls=(
+        "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${version}/sandbox-with-extensions.yaml"
+        "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${version}/sandbox.yaml"
+        "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${version}/manifest.yaml"
+    )
+
+    for url in "${asset_urls[@]}"; do
+        echo "Downloading agent-sandbox install asset: ${url}"
+        if curl_download "${url}" "${tmp}"; then
+            if kubectl apply --validate=false -f "${tmp}"; then
+                rm -f "${tmp}"
+                return 0
+            fi
+            echo "Warning: failed to apply agent-sandbox asset ${url}; trying next candidate" >&2
+        else
+            echo "Warning: failed to download agent-sandbox asset ${url}; trying next candidate" >&2
+        fi
+    done
+
+    rm -f "${tmp}"
+    echo "Error: failed to install agent-sandbox from any supported release asset for ${version}" >&2
+    return 1
+}
+
 verify_agent_sandbox_controller() {
     local expected_image="registry.k8s.io/agent-sandbox/agent-sandbox-controller:${AGENT_SANDBOX_VERSION}"
     local actual_image
@@ -350,9 +379,10 @@ run_setup() {
     done
 
     step "Installing agent-sandbox (${AGENT_SANDBOX_VERSION})..."
-    # Download then apply to avoid URL parsing issues / improve debuggability.
-    kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml"
-    kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml"
+    if ! install_agent_sandbox_release "${AGENT_SANDBOX_VERSION}"; then
+        echo "Failed to install agent-sandbox ${AGENT_SANDBOX_VERSION}" >&2
+        exit 1
+    fi
     verify_agent_sandbox_controller
 
     step "Building images..."

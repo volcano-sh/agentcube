@@ -17,7 +17,7 @@ if [ -z "${MTLS_ENABLED+x}" ]; then
         MTLS_ENABLED=true
     fi
 fi
-AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION:-v0.4.6}
+AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION:-v0.5.2}
 E2E_REQUIRE_CODEINTERPRETER=${E2E_REQUIRE_CODEINTERPRETER:-false}
 WORKLOAD_MANAGER_IMAGE=${WORKLOAD_MANAGER_IMAGE:-workloadmanager:latest}
 ROUTER_IMAGE=${ROUTER_IMAGE:-agentcube-router:latest}
@@ -305,8 +305,12 @@ run_setup() {
     done
 
     step "Installing agent-sandbox (${AGENT_SANDBOX_VERSION})..."
-    kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml"
-    kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml"
+    if [[ "${AGENT_SANDBOX_VERSION}" == "v0.5.2"* ]]; then
+        kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/sandbox-with-extensions.yaml"
+    else
+        kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml"
+        kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml"
+    fi
     verify_agent_sandbox_controller
 
     step "Building images..."

@@ -2,42 +2,29 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# Prevent Docker attestation metadata bugs during Kind image load
+export BUILDX_NO_DEFAULT_ATTESTATION=${BUILDX_NO_DEFAULT_ATTESTATION:-1}
+export DOCKER_BUILDKIT=${DOCKER_BUILDKIT:-1}
+
 # Configuration
 E2E_CLUSTER_NAME=${E2E_CLUSTER_NAME:-agentcube-e2e}
 E2E_CLEAN_CLUSTER=${E2E_CLEAN_CLUSTER:-true}
 E2E_SKIP_SETUP=${E2E_SKIP_SETUP:-false}
-AGENTCUBE_NAMESPACE=${AGENTCUBE_NAMESPACE:-agentcube}
-WORKLOAD_NAMESPACE=${WORKLOAD_NAMESPACE:-agentcube}
-
-detect_mtls_enabled() {
-    if [ -n "${MTLS_ENABLED+x}" ]; then
-        return 0
-    fi
-
-    if kubectl get deployment workloadmanager -n "${AGENTCUBE_NAMESPACE}" >/dev/null 2>&1; then
-        if kubectl -n "${AGENTCUBE_NAMESPACE}" get deployment workloadmanager \
-            -o jsonpath='{.spec.template.spec.containers[?(@.name=="workloadmanager")].args[*]}' 2>/dev/null \
-            | grep -q -- '--tls-cert='; then
-            MTLS_ENABLED=true
-        else
-            MTLS_ENABLED=false
-        fi
-    elif [ "${E2E_SKIP_SETUP}" = "true" ]; then
+if [ -z "${MTLS_ENABLED+x}" ]; then
+    if [ "${E2E_SKIP_SETUP}" = "true" ]; then
         MTLS_ENABLED=false
     else
         MTLS_ENABLED=true
     fi
-}
-
-if [ -z "${MTLS_ENABLED+x}" ]; then
-    detect_mtls_enabled
 fi
-AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION:-v0.5.2}
+AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION:-v0.4.6}
 E2E_REQUIRE_CODEINTERPRETER=${E2E_REQUIRE_CODEINTERPRETER:-false}
 WORKLOAD_MANAGER_IMAGE=${WORKLOAD_MANAGER_IMAGE:-workloadmanager:latest}
 ROUTER_IMAGE=${ROUTER_IMAGE:-agentcube-router:latest}
 PICOD_IMAGE=${PICOD_IMAGE:-picod:latest}
 REDIS_IMAGE=${REDIS_IMAGE:-redis:7-alpine}
+AGENTCUBE_NAMESPACE=${AGENTCUBE_NAMESPACE:-agentcube}
+WORKLOAD_NAMESPACE=${WORKLOAD_NAMESPACE:-agentcube}
 E2E_VENV_DIR=${E2E_VENV_DIR:-/tmp/agentcube-e2e-venv}
 MCP_K8S_LOCAL_PORT=${MCP_K8S_LOCAL_PORT:-19446}
 KEYCLOAK_ENABLED=${KEYCLOAK_ENABLED:-false}
@@ -213,7 +200,7 @@ collect_component_logs() {
                 > "${artifacts_dir}/sandbox-${pod}-${c}.log" 2>&1 || true
             [ -s "${artifacts_dir}/sandbox-${pod}-${c}.log" ] || \
                 kubectl -n "${AGENTCUBE_NAMESPACE}" logs "$pod" -c "$c" --previous --tail=10000 \
-                    > "${artifacts_dir}/sandbox-${pod}-${c}.log" 2>/dev/null || true
+                    > "${artifacts_dir}/sandbox-${pod}-${c}.log" 2>&1 || true
         done
     done
 
@@ -294,35 +281,6 @@ kubectl_apply_url() {
     rm -f "${tmp}"
 }
 
-install_agent_sandbox_release() {
-    local version="$1"
-    local tmp
-    tmp="$(mktemp)"
-
-    local asset_urls=(
-        "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${version}/sandbox-with-extensions.yaml"
-        "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${version}/sandbox.yaml"
-        "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${version}/manifest.yaml"
-    )
-
-    for url in "${asset_urls[@]}"; do
-        echo "Downloading agent-sandbox install asset: ${url}"
-        if curl_download "${url}" "${tmp}"; then
-            if kubectl apply --validate=false -f "${tmp}"; then
-                rm -f "${tmp}"
-                return 0
-            fi
-            echo "Warning: failed to apply agent-sandbox asset ${url}; trying next candidate" >&2
-        else
-            echo "Warning: failed to download agent-sandbox asset ${url}; trying next candidate" >&2
-        fi
-    done
-
-    rm -f "${tmp}"
-    echo "Error: failed to install agent-sandbox from any supported release asset for ${version}" >&2
-    return 1
-}
-
 verify_agent_sandbox_controller() {
     local expected_image="registry.k8s.io/agent-sandbox/agent-sandbox-controller:${AGENT_SANDBOX_VERSION}"
     local actual_image
@@ -379,15 +337,13 @@ run_setup() {
     done
 
     step "Installing agent-sandbox (${AGENT_SANDBOX_VERSION})..."
-    if ! install_agent_sandbox_release "${AGENT_SANDBOX_VERSION}"; then
-        echo "Failed to install agent-sandbox ${AGENT_SANDBOX_VERSION}" >&2
-        exit 1
-    fi
+    # Download then apply to avoid URL parsing issues / improve debuggability.
+    kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml"
+    kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml"
     verify_agent_sandbox_controller
 
     step "Building images..."
-    # Change to project root for make commands
-    cd "$REPO_ROOT"
+    # We assume we are in the project root
     make docker-build
     make docker-build-router
     make docker-build-picod
@@ -524,15 +480,9 @@ run_setup() {
 echo "Starting E2E tests..."
 
 if [ "${E2E_SKIP_SETUP}" = "true" ]; then
-    if kubectl get svc workloadmanager -n "${AGENTCUBE_NAMESPACE}" >/dev/null 2>&1 && \
-       kubectl get svc agentcube-router -n "${AGENTCUBE_NAMESPACE}" >/dev/null 2>&1; then
-        echo "Skipping setup phase (E2E_SKIP_SETUP=true)"
-        echo "Assuming cluster '${E2E_CLUSTER_NAME}' is already running with deployed services..."
-        echo "Using namespace: ${AGENTCUBE_NAMESPACE}"
-    else
-        echo "Skipping setup was requested, but required services are missing; provisioning them now..."
-        run_setup
-    fi
+    echo "Skipping setup phase (E2E_SKIP_SETUP=true)"
+    echo "Assuming cluster '${E2E_CLUSTER_NAME}' is already running with deployed services..."
+    echo "Using namespace: ${AGENTCUBE_NAMESPACE}"
 else
     run_setup
 fi
@@ -550,12 +500,6 @@ for port in 8080 8081 "${MCP_K8S_LOCAL_PORT:-19446}" 19245; do
 done
 rm -f /tmp/workload_port_forward.log /tmp/router_port_forward.log 2>/dev/null || true
 sleep 2
-
-step "Preparing test namespaces and service account..."
-ensure_namespace "${AGENTCUBE_NAMESPACE}"
-ensure_namespace "${WORKLOAD_NAMESPACE}"
-kubectl create serviceaccount e2e-test -n "${AGENTCUBE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
-kubectl create clusterrolebinding e2e-test-binding --clusterrole=workloadmanager --serviceaccount="${AGENTCUBE_NAMESPACE}:e2e-test" --dry-run=client -o yaml | kubectl apply -f -
 
 step "Running tests..."
 # Create token
@@ -652,10 +596,10 @@ source "$E2E_VENV_DIR/bin/activate"
 pip install --upgrade pip
 
 # Install agentcube SDK in development mode
-# Use absolute paths to support running from any directory
-pip install -e "$REPO_ROOT/sdk-python"
-pip install -e "$REPO_ROOT/integrations/code-interpreter-mcp"
-pip install -e "$REPO_ROOT/integrations/langchain-agentcube"
+# We are currently in project root, sdk-python is at ./sdk-python
+pip install -e ./sdk-python
+pip install -e ./integrations/code-interpreter-mcp
+pip install -e ./integrations/langchain-agentcube
 
 # Check if agentcube package is available after installation
 require_python
@@ -665,7 +609,6 @@ TEST_FAILED=0
 
 echo "Running Go tests..."
 # When SPIRE/mTLS is active, direct-WM tests skip because the test client has no client cert.
-cd "$REPO_ROOT"
 if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" \
    ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" \
    MTLS_ENABLED="${MTLS_ENABLED}" \
@@ -678,7 +621,7 @@ if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" \
 fi
 
 echo "Running Python CodeInterpreter tests..."
-cd "$_SCRIPT_DIR"
+cd "$(dirname "$0")"
 
 if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" \
    ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" \
@@ -688,10 +631,7 @@ if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" \
    API_TOKEN=$API_TOKEN \
    AGENTCUBE_NAMESPACE="${WORKLOAD_NAMESPACE}" \
    "$E2E_VENV_DIR/bin/python" test_codeinterpreter.py; then
-    echo "ERROR: Python CodeInterpreter tests failed with exit code $?"
     TEST_FAILED=1
-else
-    echo "✓ Python CodeInterpreter tests passed"
 fi
 
 if [ "${KEYCLOAK_ENABLED}" = "true" ]; then
@@ -709,30 +649,18 @@ if [ "${KEYCLOAK_ENABLED}" = "true" ]; then
 fi
 
 echo "Running LangChain AgentcubeSandbox E2E..."
-WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" MTLS_ENABLED="${MTLS_ENABLED}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_langchain_agentcube_sandbox.py
-EXIT_CODE=$?
-
-if [ $EXIT_CODE -ne 0 ]; then
-    echo "ERROR: LangChain tests failed with exit code $EXIT_CODE"
+if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" MTLS_ENABLED="${MTLS_ENABLED}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${AGENTCUBE_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_langchain_agentcube_sandbox.py; then
     TEST_FAILED=1
-else
-    echo "✓ LangChain tests passed"
 fi
 
 echo "Running Python Code Interpreter MCP tests (streamable-http, local subprocess)..."
 if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" MTLS_ENABLED="${MTLS_ENABLED}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${WORKLOAD_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_mcp_code_interpreter.py; then
-    echo "ERROR: MCP code-interpreter tests failed with exit code $?"
     TEST_FAILED=1
-else
-    echo "✓ MCP code-interpreter tests passed"
 fi
 
 echo "Running Python Code Interpreter MCP stdio tests..."
 if ! WORKLOAD_MANAGER_URL="http://localhost:${WORKLOAD_MANAGER_LOCAL_PORT}" ROUTER_URL="http://localhost:${ROUTER_LOCAL_PORT}" MTLS_ENABLED="${MTLS_ENABLED}" API_TOKEN=$API_TOKEN AGENTCUBE_NAMESPACE="${WORKLOAD_NAMESPACE}" "$E2E_VENV_DIR/bin/python" test_mcp_code_interpreter_stdio.py; then
-    echo "ERROR: MCP stdio tests failed with exit code $?"
     TEST_FAILED=1
-else
-    echo "✓ MCP stdio tests passed"
 fi
 
 if [ "${E2E_SKIP_SETUP}" = "true" ]; then
@@ -771,241 +699,22 @@ else
         cd "$_SCRIPT_DIR"
         export MCP_K8S_MCP_URL="http://127.0.0.1:${MCP_K8S_LOCAL_PORT}/mcp"
         if ! MTLS_ENABLED="${MTLS_ENABLED}" "$E2E_VENV_DIR/bin/python" test_mcp_code_interpreter_k8s.py; then
-            echo "ERROR: MCP K8s tests failed with exit code $?"
             TEST_FAILED=1
-        else
-            echo "✓ MCP K8s tests passed"
         fi
     fi
 fi
 
-# Agent-Sandbox Upgrade Test (Advanced / Optional)
-# Note: Upgrade test is an exploratory advanced scenario. If it fails, core E2E tests may still pass.
-# Core functionality validation (invocations, TTL, port-forwarding) takes precedence.
-if [ $TEST_FAILED -eq 0 ] && [ "${E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST:-false}" = "true" ]; then
-    cd "$REPO_ROOT"
-    echo "Running Agent-Sandbox Upgrade Test (v0.4.6 -> v0.5.2, optional/exploratory)..."
-    require_cmd jq
-    require_cmd curl
-    UPGRADE_FAILED=0
-    NEW_VERSION="v0.5.2"
-    MIGRATE_TMP="$(mktemp)"
-
-    echo "Downloading agent-sandbox migration helper for ${NEW_VERSION}..."
-    MIGRATE_DOWNLOADED=0
-    MIGRATE_URL="https://raw.githubusercontent.com/kubernetes-sigs/agent-sandbox/${NEW_VERSION}/dev/tools/migrate.sh"
-
-    if curl_download "${MIGRATE_URL}" "${MIGRATE_TMP}"; then
-        MIGRATE_DOWNLOADED=1
-    fi
-
-    if [ $MIGRATE_DOWNLOADED -eq 0 ]; then
-        echo "Error: failed to download migrate.sh"
-        UPGRADE_FAILED=1
-    fi
-
-    if [ $UPGRADE_FAILED -eq 0 ]; then
-        echo "Pre-pulling v0.5.2 agent-sandbox controller image to avoid slow/failed pulls during upgrade..."
-        UPGRADE_CONTROLLER_IMAGE="registry.k8s.io/agent-sandbox/agent-sandbox-controller:${NEW_VERSION}"
-        if ! docker pull "${UPGRADE_CONTROLLER_IMAGE}"; then
-            echo "Warning: Failed to pre-pull ${UPGRADE_CONTROLLER_IMAGE}; upgrade may fall back to registry pull (could be slow/fail)"
-        else
-            echo "Pre-loading v0.5.2 controller image into Kind..."
-            if ! kind load docker-image "${UPGRADE_CONTROLLER_IMAGE}" --name "${E2E_CLUSTER_NAME}"; then
-                echo "Warning: Failed to load ${UPGRADE_CONTROLLER_IMAGE} into Kind; nodes will attempt registry pull"
-            fi
-        fi
-    fi
-
-    if [ $UPGRADE_FAILED -eq 0 ]; then
-        chmod +x "${MIGRATE_TMP}"
-        echo "1. Running pre-upgrade bootstrap..."
-        if ! "${MIGRATE_TMP}" --phase=bootstrap; then
-            echo "Error: migrate.sh bootstrap phase failed."
-            UPGRADE_FAILED=1
-        fi
-    fi
-
-    # Ensure idempotency if a previous run left resources behind.
-    kubectl delete codeinterpreter upgrade-ci-1 upgrade-ci-2 -n "${WORKLOAD_NAMESPACE}" --ignore-not-found=true || true
-    if [ $UPGRADE_FAILED -eq 0 ]; then
-        echo "2. Creating upgrade-ci-1 CodeInterpreter with warm pool under v0.4.6..."
-        cat <<EOF | kubectl apply -n "${WORKLOAD_NAMESPACE}" -f - || UPGRADE_FAILED=1
-apiVersion: runtime.agentcube.volcano.sh/v1alpha1
-kind: CodeInterpreter
-metadata:
-  name: upgrade-ci-1
-spec:
-  warmPoolSize: 1
-  ports:
-    - pathPrefix: "/"
-      port: 8080
-      protocol: "HTTP"
-  template:
-    image: picod:latest
-    imagePullPolicy: IfNotPresent
-    args:
-      - --workspace=/root
-    labels:
-      app: upgrade-ci-1
-      test: e2e-upgrade
-    resources:
-      limits:
-        cpu: "500m"
-        memory: "512Mi"
-      requests:
-        cpu: "100m"
-        memory: "128Mi"
-EOF
-
-    echo "  Waiting for upgrade-ci-1's SandboxClaim to become Bound (up to 60s)..."
-    SB_CLAIM_NAME=""
-    for i in {1..30}; do
-        SB_CLAIM_NAME=$(kubectl get sandboxclaim -n "${WORKLOAD_NAMESPACE}" -o json \
-            | jq -r '.items[] | select(any(.metadata.ownerReferences[]?; .name=="upgrade-ci-1")) | .metadata.name' \
-            2>/dev/null | head -n 1 || true)
-        if [ -n "$SB_CLAIM_NAME" ] && kubectl get sandboxclaim "$SB_CLAIM_NAME" -n "${WORKLOAD_NAMESPACE}" 2>/dev/null | grep -qw Bound; then
-            echo "  SandboxClaim ${SB_CLAIM_NAME} is Bound under v0.4.6."
-            break
-        fi
-        sleep 2
-    done
-
-    if [ -z "$SB_CLAIM_NAME" ] || ! kubectl get sandboxclaim "$SB_CLAIM_NAME" -n "${WORKLOAD_NAMESPACE}" 2>/dev/null | grep -qw Bound; then
-        echo "Error: upgrade-ci-1's SandboxClaim did not become Bound under v0.4.6."
-        UPGRADE_FAILED=1
-    fi
+step "Running Dedicated Agent-Sandbox Migration Scenario..."
+if ! bash "${_SCRIPT_DIR}/test_migration.sh"; then
+    echo "❌ Agent-Sandbox Migration Test Failed."
+    TEST_FAILED=1
 fi
 
-    if [ $UPGRADE_FAILED -eq 0 ]; then
-        echo "3. Capturing sandbox name for post-upgrade GC verification..."
-        SB_NAME=$(kubectl get sandboxclaim "${SB_CLAIM_NAME}" -n "${WORKLOAD_NAMESPACE}" \
-            -o jsonpath='{.status.sandboxName}' 2>/dev/null || echo "")
-        echo "  Pre-upgrade sandbox name: ${SB_NAME:-<unknown>}"
-    fi
-
-    if [ $UPGRADE_FAILED -eq 0 ]; then
-        echo "4. Upgrading agent-sandbox to ${NEW_VERSION} via server-side apply..."
-        kubectl apply --server-side \
-            -f "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${NEW_VERSION}/sandbox-with-extensions.yaml" \
-            || UPGRADE_FAILED=1
-    fi
-
-    if [ $UPGRADE_FAILED -eq 0 ]; then
-        echo "5. Waiting for new v0.5.2 controller to become ready (up to 180s)..."
-        kubectl rollout status deployment/agent-sandbox-controller \
-            -n agent-sandbox-system --timeout=180s || UPGRADE_FAILED=1
-    fi
-
-    if [ $UPGRADE_FAILED -eq 0 ]; then
-        echo "6. Running post-upgrade migrate..."
-        if ! "${MIGRATE_TMP}" --phase=migrate; then
-            echo "Error: migrate.sh migrate phase failed."
-            UPGRADE_FAILED=1
-        fi
-    fi
-
-    if [ $UPGRADE_FAILED -eq 0 ]; then
-        echo "7. Verifying controller is running the v0.5.2 image..."
-        ACTUAL_IMAGE=$(kubectl get deployment agent-sandbox-controller -n agent-sandbox-system \
-            -o jsonpath='{.spec.template.spec.containers[?(@.name=="agent-sandbox-controller")].image}' \
-            2>/dev/null || echo "")
-        EXPECTED_IMAGE="registry.k8s.io/agent-sandbox/agent-sandbox-controller:${NEW_VERSION}"
-        if [ "${ACTUAL_IMAGE}" != "${EXPECTED_IMAGE}" ]; then
-            echo "Error: controller image mismatch: expected ${EXPECTED_IMAGE}, got ${ACTUAL_IMAGE}"
-            UPGRADE_FAILED=1
-        else
-            echo "  Controller image verified: ${ACTUAL_IMAGE}"
-        fi
-    fi
-
-    if [ $UPGRADE_FAILED -eq 0 ]; then
-        echo "8. Creating upgrade-ci-2 to verify new claims bind under v0.5.2..."
-        cat <<EOF | kubectl apply -n "${WORKLOAD_NAMESPACE}" -f - || UPGRADE_FAILED=1
-apiVersion: runtime.agentcube.volcano.sh/v1alpha1
-kind: CodeInterpreter
-metadata:
-  name: upgrade-ci-2
-spec:
-  warmPoolSize: 1
-  ports:
-    - pathPrefix: "/"
-      port: 8080
-      protocol: "HTTP"
-  template:
-    image: picod:latest
-    imagePullPolicy: IfNotPresent
-    args:
-      - --workspace=/root
-    labels:
-      app: upgrade-ci-2
-      test: e2e-upgrade
-    resources:
-      limits:
-        cpu: "500m"
-        memory: "512Mi"
-      requests:
-        cpu: "100m"
-        memory: "128Mi"
-EOF
-        echo "  Waiting for upgrade-ci-2's SandboxClaim to become Bound under v0.5.2 (up to 120s)..."
-        SB_CLAIM_2_NAME=""
-        for i in {1..60}; do
-            SB_CLAIM_2_NAME=$(kubectl get sandboxclaim -n "${WORKLOAD_NAMESPACE}" -o json \
-                | jq -r '.items[] | select(any(.metadata.ownerReferences[]?; .name=="upgrade-ci-2")) | .metadata.name' \
-                2>/dev/null | head -n 1 || true)
-            if [ -n "$SB_CLAIM_2_NAME" ] && kubectl get sandboxclaim "$SB_CLAIM_2_NAME" -n "${WORKLOAD_NAMESPACE}" 2>/dev/null | grep -qw Bound; then
-                echo "  SandboxClaim ${SB_CLAIM_2_NAME} is Bound under v0.5.2."
-                break
-            fi
-            sleep 2
-        done
-        if [ -z "$SB_CLAIM_2_NAME" ] || ! kubectl get sandboxclaim "$SB_CLAIM_2_NAME" -n "${WORKLOAD_NAMESPACE}" 2>/dev/null | grep -qw Bound; then
-            echo "Error: upgrade-ci-2's SandboxClaim did not become Bound after upgrade to v0.5.2."
-            kubectl get sandboxclaim -n "${WORKLOAD_NAMESPACE}" -o wide 2>/dev/null || true
-            UPGRADE_FAILED=1
-        fi
-    fi
-
-    if [ $UPGRADE_FAILED -eq 0 ]; then
-        echo "9. Verifying GC: deleting upgrade-ci-1 and waiting for its Sandbox to disappear..."
-        kubectl delete codeinterpreter upgrade-ci-1 -n "${WORKLOAD_NAMESPACE}" --ignore-not-found=true || UPGRADE_FAILED=1
-        if [ $UPGRADE_FAILED -eq 0 ] && [ -n "${SB_NAME:-}" ]; then
-            GC_FAILED=0
-            for i in {1..30}; do
-                if ! kubectl get sandbox "${SB_NAME}" -n "${WORKLOAD_NAMESPACE}" 2>/dev/null | grep -q "${SB_NAME}"; then
-                    echo "  Sandbox ${SB_NAME} was garbage collected."
-                    GC_FAILED=0
-                    break
-                fi
-                GC_FAILED=1
-                sleep 2
-            done
-            if [ $GC_FAILED -eq 1 ]; then
-                echo "Error: Sandbox ${SB_NAME} was not garbage collected after deleting upgrade-ci-1."
-                UPGRADE_FAILED=1
-            fi
-        fi
-    fi
-
-    echo "10. Cleaning up upgrade test resources..."
-    kubectl delete codeinterpreter upgrade-ci-1 upgrade-ci-2 -n "${WORKLOAD_NAMESPACE}" --ignore-not-found=true || true
-    rm -f "${MIGRATE_TMP:-}"
-
-    if [ $UPGRADE_FAILED -eq 0 ]; then
-        echo "Upgrade test (v0.4.6 -> v0.5.2) completed successfully!"
-    else
-        echo "ERROR: Upgrade test (v0.4.6 -> v0.5.2) failed"
-        TEST_FAILED=1
-    fi
-fi
-
-# Collect logs if core tests failed
-echo "[DEBUG] TEST_FAILED value: $TEST_FAILED"
+# Collect logs if tests failed
 if [ $TEST_FAILED -eq 1 ]; then
-    echo "Core tests failed, collecting component logs..."
+    echo "Tests failed, collecting component logs..."
     collect_component_logs
     exit 1
 fi
 
-echo "All core E2E tests passed!"
+echo "All tests passed!"

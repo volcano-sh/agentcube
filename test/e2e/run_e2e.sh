@@ -965,7 +965,8 @@ EOF
     if [ $UPGRADE_FAILED -eq 0 ]; then
         echo "Upgrade test (v0.4.6 -> v0.5.2) completed successfully!"
     else
-        echo "WARNING: Upgrade test (v0.4.6 -> v0.5.2) failed (non-fatal; core E2E tests may still pass)"
+        echo "ERROR: Upgrade test (v0.4.6 -> v0.5.2) failed"
+        TEST_FAILED=1
     fi
 fi
 

@@ -27,6 +27,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -66,6 +67,8 @@ const (
 var (
 	agentcubeNamespace = getEnv("WORKLOAD_NAMESPACE", "agentcube")
 	scheme             = runtime.NewScheme()
+	e2ePrereqOnce      sync.Once
+	e2ePrereqErr       error
 )
 
 type claimedSandboxResources struct {
@@ -180,6 +183,64 @@ func skipIfMTLS(t *testing.T) {
 		}
 		t.Skip("skipping direct-WM test: mTLS is active (test client has no client cert)")
 	}
+}
+
+func skipIfE2EPrereqsUnavailable(t *testing.T, requireKubeConfig bool) {
+	t.Helper()
+
+	e2ePrereqOnce.Do(func() {
+		if os.Getenv("E2E_SKIP") == enabledEnvValue {
+			e2ePrereqErr = fmt.Errorf("E2E_SKIP=true")
+			return
+		}
+
+		if requireKubeConfig {
+			if _, err := getKubeConfig(); err != nil {
+				e2ePrereqErr = fmt.Errorf("kubeconfig unavailable: %w", err)
+				return
+			}
+		}
+
+		routerURL := getEnv("ROUTER_URL", defaultRouterURL)
+		if os.Getenv("ROUTER_URL") == "" && routerURL == defaultRouterURL {
+			e2ePrereqErr = fmt.Errorf("default router endpoint %s is not available", routerURL)
+			return
+		}
+		if err := probeHTTPHealth(routerURL + "/health/live"); err != nil {
+			e2ePrereqErr = fmt.Errorf("router not reachable at %s: %w", routerURL, err)
+			return
+		}
+
+		if requireKubeConfig {
+			workloadMgrURL := getEnv("WORKLOAD_MANAGER_URL", defaultWorkloadMgrURL)
+			if os.Getenv("WORKLOAD_MANAGER_URL") == "" && workloadMgrURL == defaultWorkloadMgrURL {
+				e2ePrereqErr = fmt.Errorf("default workload manager endpoint %s is not available", workloadMgrURL)
+				return
+			}
+			if err := probeHTTPHealth(workloadMgrURL + "/health"); err != nil {
+				e2ePrereqErr = fmt.Errorf("workload manager not reachable at %s: %w", workloadMgrURL, err)
+			}
+		}
+	})
+
+	if e2ePrereqErr != nil {
+		t.Skipf("skipping e2e test: %v", e2ePrereqErr)
+	}
+}
+
+func probeHTTPHealth(url string) error {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusInternalServerError {
+		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
 // runAgentRuntimeTestCase executes a single AgentRuntime test case
@@ -620,6 +681,7 @@ func (e *testEnv) listFiles(namespace, name, sessionID, path string) ([]FileInfo
 
 // TestAgentRuntimeBasicInvocation tests basic echo-agent functionality
 func TestAgentRuntimeBasicInvocation(t *testing.T) {
+	skipIfE2EPrereqsUnavailable(t, false)
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace
@@ -667,6 +729,7 @@ func TestAgentRuntimeBasicInvocation(t *testing.T) {
 
 // TestAgentRuntimeErrorHandling tests: Missing/invalid AgentRuntime
 func TestAgentRuntimeErrorHandling(t *testing.T) {
+	skipIfE2EPrereqsUnavailable(t, false)
 	env := newTestEnv(t)
 
 	// Modify invokeAgentRuntime to return status code for error handling tests
@@ -736,6 +799,7 @@ func TestAgentRuntimeErrorHandling(t *testing.T) {
 
 // TestAgentRuntimeSessionTTL tests: Idle session / TTL behavior
 func TestAgentRuntimeSessionTTL(t *testing.T) {
+	skipIfE2EPrereqsUnavailable(t, false)
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace
@@ -809,6 +873,7 @@ func TestAgentRuntimeSessionTTL(t *testing.T) {
 // TestCodeInterpreterWarmPool tests: Code interpreter with warmpool functionality
 func TestCodeInterpreterWarmPool(t *testing.T) {
 	skipIfMTLS(t)
+	skipIfE2EPrereqsUnavailable(t, true)
 	env := newTestEnv(t)
 	ctx, err := newE2ETestContext()
 	require.NoError(t, err)
@@ -856,6 +921,7 @@ func TestCodeInterpreterWarmPool(t *testing.T) {
 // TestCodeInterpreterBasicInvocation tests basic code interpreter invocation
 func TestCodeInterpreterBasicInvocation(t *testing.T) {
 	skipIfMTLS(t)
+	skipIfE2EPrereqsUnavailable(t, true)
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace
@@ -900,6 +966,7 @@ func TestCodeInterpreterBasicInvocation(t *testing.T) {
 // TestCodeInterpreterFileOperations tests file upload/download via code interpreter API
 func TestCodeInterpreterFileOperations(t *testing.T) {
 	skipIfMTLS(t)
+	skipIfE2EPrereqsUnavailable(t, true)
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace
@@ -1606,6 +1673,7 @@ func runCodeInterpreterLoadTest(
 // TestCodeInterpreterWarmPoolLoad tests code interpreter with warmpool under load (10 requests per second)
 func TestCodeInterpreterWarmPoolLoad(t *testing.T) {
 	skipIfMTLS(t)
+	skipIfE2EPrereqsUnavailable(t, true)
 	env := newTestEnv(t)
 	ctx, err := newE2ETestContext()
 	require.NoError(t, err)
@@ -1648,6 +1716,7 @@ func TestCodeInterpreterWarmPoolLoad(t *testing.T) {
 // TestCodeInterpreterBasicInvocationLoad tests code interpreter without warmpool under load (2 requests per second)
 func TestCodeInterpreterBasicInvocationLoad(t *testing.T) {
 	skipIfMTLS(t)
+	skipIfE2EPrereqsUnavailable(t, true)
 	env := newTestEnv(t)
 
 	namespace := agentcubeNamespace

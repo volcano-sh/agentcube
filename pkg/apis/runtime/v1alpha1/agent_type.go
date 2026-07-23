@@ -88,7 +88,3 @@ type AgentRuntimeList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []AgentRuntime `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&AgentRuntime{}, &AgentRuntimeList{})
-}

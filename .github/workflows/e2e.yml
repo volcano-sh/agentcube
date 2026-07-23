@@ -59,6 +59,7 @@ jobs:
         env:
           MTLS_ENABLED: ${{ matrix.mtls_enabled }}
           E2E_REQUIRE_CODEINTERPRETER: ${{ matrix.require_codeinterpreter }}
+          E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST: "true"
         run: |
           export ARTIFACTS_PATH=${{ github.workspace }}/e2e-logs
           make e2e

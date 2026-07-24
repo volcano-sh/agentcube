@@ -60,7 +60,8 @@ jobs:
           AGENT_SANDBOX_VERSION: v0.5.2
           MTLS_ENABLED: ${{ matrix.mtls_enabled }}
           E2E_REQUIRE_CODEINTERPRETER: ${{ matrix.require_codeinterpreter }}
-          E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST: "true"
+          # Normal CI runs use fresh v0.5.2 install; upgrade test is opt-in only.
+          E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST: "false"
         run: |
           export ARTIFACTS_PATH=${{ github.workspace }}/e2e-logs
           make e2e

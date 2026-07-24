@@ -382,7 +382,7 @@ func validateAndGetPodIP(pod *corev1.Pod) (string, error) {
 	return pod.Status.PodIP, nil
 }
 
-// WaitForSandboxReady waits for the Sandbox to be ready
+// WaitForSandboxReady waits for the Sandbox to be ready using v1beta1 conditions.
 func (c *K8sClient) WaitForSandboxReady(ctx context.Context, namespace, sandboxName string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -395,8 +395,8 @@ func (c *K8sClient) WaitForSandboxReady(ctx context.Context, namespace, sandboxN
 		case <-ctx.Done():
 			return fmt.Errorf("timeout waiting for sandbox to be ready")
 		case <-ticker.C:
-			// Check Sandbox status
-			sandbox, err := c.dynamicClient.Resource(SandboxGVR).Namespace(namespace).Get(
+			// Get Sandbox via dynamic client and convert to typed v1beta1 object
+			unstructuredSandbox, err := c.dynamicClient.Resource(SandboxGVR).Namespace(namespace).Get(
 				ctx,
 				sandboxName,
 				metav1.GetOptions{},
@@ -405,18 +405,13 @@ func (c *K8sClient) WaitForSandboxReady(ctx context.Context, namespace, sandboxN
 				continue
 			}
 
-			// Check status.phase or status.ready
-			status, found, err := unstructured.NestedMap(sandbox.Object, "status")
-			if err != nil || !found {
+			sandbox := &sandboxv1beta1.Sandbox{}
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredSandbox.Object, sandbox); err != nil {
 				continue
 			}
 
-			phase, found, err := unstructured.NestedString(status, "phase")
-			if err != nil || !found {
-				continue
-			}
-
-			if phase == "Running" || phase == "Ready" {
+			// Use the same condition-based check as getSandboxStatus in sandbox_helper.go
+			if getSandboxStatus(sandbox) == sandboxStatusReady {
 				return nil
 			}
 		}

@@ -398,6 +398,10 @@ run_setup() {
         kubectl apply -k "https://github.com/spiffe/spire-controller-manager/config/crd?ref=v0.6.4"
     fi
 
+    # Deploy all chart resources with Helm but WITHOUT --wait to break the SPIRE
+    # bootstrap circular dependency: WM/router pods start spiffe-helper sidecars
+    # that need SPIRE agent socket, but SPIRE components are also deployed in the
+    # same Helm release. We manually sequence the rollout below.
     helm upgrade --install agentcube manifests/charts/base \
         --namespace "${AGENTCUBE_NAMESPACE}" \
         --create-namespace \
@@ -414,15 +418,15 @@ run_setup() {
         --set spire.enabled="${MTLS_ENABLED}" \
         --set spire.agent.insecureBootstrap=true \
         --set spire.agent.skipKubeletVerification=true \
-        --wait --timeout=10m
+        --timeout=10m
 
     if [ "${MTLS_ENABLED}" = "true" ]; then
-        step "Waiting for SPIRE infrastructure..."
+        step "Waiting for SPIRE infrastructure (required before WM/router can get certs)..."
         kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status statefulset/spire-server --timeout=300s
         kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status daemonset/spire-agent --timeout=300s
     fi
 
-    step "Waiting for deployments..."
+    step "Waiting for deployments (WM/router now have certs available after SPIRE is ready)..."
     kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/workloadmanager --timeout=300s
     kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/agentcube-router --timeout=300s
 

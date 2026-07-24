@@ -241,8 +241,20 @@ func (r *CodeInterpreterReconciler) ensureSandboxWarmPool(ctx context.Context, c
 
 	// Update existing SandboxWarmPool if needed
 	needsUpdate := false
-	if warmPool.Spec.Replicas == nil || ci.Spec.WarmPoolSize == nil || *warmPool.Spec.Replicas != *ci.Spec.WarmPoolSize {
-		warmPool.Spec.Replicas = ci.Spec.WarmPoolSize
+
+	// Handle nil cases properly
+	desiredReplicas := int32(0)
+	if ci.Spec.WarmPoolSize != nil {
+		desiredReplicas = *ci.Spec.WarmPoolSize
+	}
+
+	currentReplicas := int32(0)
+	if warmPool.Spec.Replicas != nil {
+		currentReplicas = *warmPool.Spec.Replicas
+	}
+
+	if currentReplicas != desiredReplicas {
+		warmPool.Spec.Replicas = &desiredReplicas
 		needsUpdate = true
 	}
 	if warmPool.Spec.TemplateRef.Name != templateName {

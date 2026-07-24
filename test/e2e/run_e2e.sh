@@ -29,9 +29,6 @@ E2E_VENV_DIR=${E2E_VENV_DIR:-/tmp/agentcube-e2e-venv}
 MCP_K8S_LOCAL_PORT=${MCP_K8S_LOCAL_PORT:-19446}
 KEYCLOAK_ENABLED=${KEYCLOAK_ENABLED:-false}
 KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.0}
-<<<<<<< HEAD
-E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST=${E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST:-true}
-=======
 ## By default we disable the historical v0.4.6->v0.5.2 upgrade/migration test
 ## AgentCube requires v1beta1 types in its compiled client; running the
 ## in-place upgrade fixture against a v0.4.6 controller is no longer valid
@@ -45,7 +42,6 @@ if [[ "${AGENT_SANDBOX_VERSION}" == "v0.4.6" && "${E2E_RUN_AGENT_SANDBOX_UPGRADE
 fi
 
 echo "Resolved AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION}"
->>>>>>> 66e057f (update e2e.yml)
 
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "$_SCRIPT_DIR/../.." && pwd)"
@@ -351,11 +347,8 @@ run_setup() {
     done
 
     step "Installing agent-sandbox (${AGENT_SANDBOX_VERSION})..."
-<<<<<<< HEAD
-=======
     cleanup_old_agent_sandbox_install
 
->>>>>>> 66e057f (update e2e.yml)
     if [[ "${AGENT_SANDBOX_VERSION}" == "v0.5.2"* ]]; then
         kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/sandbox-with-extensions.yaml"
     else

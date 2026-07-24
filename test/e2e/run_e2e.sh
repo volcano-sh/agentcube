@@ -29,7 +29,23 @@ E2E_VENV_DIR=${E2E_VENV_DIR:-/tmp/agentcube-e2e-venv}
 MCP_K8S_LOCAL_PORT=${MCP_K8S_LOCAL_PORT:-19446}
 KEYCLOAK_ENABLED=${KEYCLOAK_ENABLED:-false}
 KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.0}
+<<<<<<< HEAD
 E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST=${E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST:-true}
+=======
+## By default we disable the historical v0.4.6->v0.5.2 upgrade/migration test
+## AgentCube requires v1beta1 types in its compiled client; running the
+## in-place upgrade fixture against a v0.4.6 controller is no longer valid
+## for normal CI runs. Set this to "true" to opt into the migration test.
+E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST=${E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST:-false}
+
+if [[ "${AGENT_SANDBOX_VERSION}" == "v0.4.6" && "${E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST}" != "true" ]]; then
+    echo "Error: AGENT_SANDBOX_VERSION=v0.4.6 is not valid unless E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST=true." >&2
+    echo "This script now defaults to agent-sandbox v0.5.2 for normal E2E runs." >&2
+    exit 1
+fi
+
+echo "Resolved AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION}"
+>>>>>>> 66e057f (update e2e.yml)
 
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "$_SCRIPT_DIR/../.." && pwd)"
@@ -235,6 +251,36 @@ kind_load_image() {
     fi
 }
 
+cleanup_old_agent_sandbox_install() {
+    echo "Cleaning up any old agent-sandbox installation..."
+    kubectl delete namespace agent-sandbox-system --ignore-not-found=true --wait=true --timeout=120s 2>/dev/null || true
+    kubectl delete crd sandboxclaims.extensions.agents.x-k8s.io sandboxes.agents.x-k8s.io \
+        sandboxtemplates.extensions.agents.x-k8s.io sandboxwarmpools.extensions.agents.x-k8s.io \
+        --ignore-not-found=true 2>/dev/null || true
+}
+
+validate_agent_sandbox_crd_version() {
+    local expected_version="v1beta1"
+    local crds=(
+        sandboxclaims.extensions.agents.x-k8s.io
+        sandboxes.agents.x-k8s.io
+        sandboxtemplates.extensions.agents.x-k8s.io
+        sandboxwarmpools.extensions.agents.x-k8s.io
+    )
+
+    for crd in "${crds[@]}"; do
+        if ! kubectl get crd "${crd}" >/dev/null 2>&1; then
+            echo "Error: expected CRD ${crd} is missing." >&2
+            exit 1
+        fi
+        if ! kubectl get crd "${crd}" -o jsonpath='{.spec.versions[*].name}' | grep -qw "${expected_version}"; then
+            echo "Error: CRD ${crd} does not expose expected version ${expected_version}." >&2
+            kubectl get crd "${crd}" -o yaml 2>/dev/null || true
+            exit 1
+        fi
+    done
+}
+
 curl_download() {
     local url="$1"
     local out="$2"
@@ -305,6 +351,11 @@ run_setup() {
     done
 
     step "Installing agent-sandbox (${AGENT_SANDBOX_VERSION})..."
+<<<<<<< HEAD
+=======
+    cleanup_old_agent_sandbox_install
+
+>>>>>>> 66e057f (update e2e.yml)
     if [[ "${AGENT_SANDBOX_VERSION}" == "v0.5.2"* ]]; then
         kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/sandbox-with-extensions.yaml"
     else
@@ -312,6 +363,7 @@ run_setup() {
         kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml"
     fi
     verify_agent_sandbox_controller
+    validate_agent_sandbox_crd_version
 
     step "Building images..."
     make docker-build

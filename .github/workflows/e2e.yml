@@ -57,6 +57,7 @@ jobs:
 
       - name: Run E2E Tests
         env:
+          AGENT_SANDBOX_VERSION: v0.5.2
           MTLS_ENABLED: ${{ matrix.mtls_enabled }}
           E2E_REQUIRE_CODEINTERPRETER: ${{ matrix.require_codeinterpreter }}
           E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST: "true"

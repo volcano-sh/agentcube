@@ -165,9 +165,6 @@ func (s *Server) Start(ctx context.Context) error {
 			}
 			err = s.httpServer.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
 		} else {
-			protocols := &http.Protocols{}
-			protocols.SetUnencryptedHTTP2(true)
-			s.httpServer.Protocols = protocols
 			err = s.httpServer.ListenAndServe()
 		}
 		if err != nil && err != http.ErrServerClosed {

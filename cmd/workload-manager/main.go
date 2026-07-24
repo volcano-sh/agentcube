@@ -29,8 +29,8 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/klog/v2"
-	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
-	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
+	sandboxv1beta1 "sigs.k8s.io/agent-sandbox/api/v1beta1"
+	extensionsv1beta1 "sigs.k8s.io/agent-sandbox/extensions/api/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -46,8 +46,8 @@ var (
 
 func init() {
 	utilruntime.Must(scheme.AddToScheme(schemeBuilder))
-	utilruntime.Must(sandboxv1alpha1.AddToScheme(schemeBuilder))
-	utilruntime.Must(extensionsv1alpha1.AddToScheme(schemeBuilder))
+	utilruntime.Must(sandboxv1beta1.AddToScheme(schemeBuilder))
+	utilruntime.Must(extensionsv1beta1.AddToScheme(schemeBuilder))
 	utilruntime.Must(runtimev1alpha1.AddToScheme(schemeBuilder))
 }
 
@@ -187,7 +187,7 @@ func main() {
 func setupControllers(mgr ctrl.Manager, sandboxReconciler *workloadmanager.SandboxReconciler, codeInterpreterReconciler *workloadmanager.CodeInterpreterReconciler) error {
 	// Setup Sandbox controller
 	if err := ctrl.NewControllerManagedBy(mgr).
-		For(&sandboxv1alpha1.Sandbox{}).
+		For(&sandboxv1beta1.Sandbox{}).
 		Complete(sandboxReconciler); err != nil {
 		return fmt.Errorf("unable to create sandbox controller: %w", err)
 	}

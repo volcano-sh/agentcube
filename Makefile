@@ -338,7 +338,7 @@ endef
 # E2E Test targets
 E2E_CLUSTER_NAME ?= agentcube-e2e
 AGENT_SANDBOX_REPO ?= https://github.com/kubernetes-sigs/agent-sandbox.git
-AGENT_SANDBOX_VERSION ?= main
+AGENT_SANDBOX_VERSION ?= v0.5.2
 
 e2e:
 	./test/e2e/run_e2e.sh

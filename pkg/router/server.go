@@ -23,11 +23,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/store"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 // Server is the main structure for Router apiserver
@@ -186,7 +186,6 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Create HTTP/2 server for better performance
 	h2s := &http2.Server{}
-
 	// Wrap handler with h2c for HTTP/2 cleartext support
 	h2cHandler := h2c.NewHandler(s.engine, h2s)
 

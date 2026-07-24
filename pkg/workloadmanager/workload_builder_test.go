@@ -182,8 +182,8 @@ func TestBuildSandboxClaimObject(t *testing.T) {
 		if claim.Name != "claim-abc" {
 			t.Errorf("expected name claim-abc, got %q", claim.Name)
 		}
-		if claim.Spec.TemplateRef.Name != "my-ci" {
-			t.Errorf("expected templateRef name my-ci, got %q", claim.Spec.TemplateRef.Name)
+		if claim.Spec.WarmPoolRef.Name != "my-ci" {
+			t.Errorf("expected templateRef name my-ci, got %q", claim.Spec.WarmPoolRef.Name)
 		}
 		if claim.Labels[SessionIdLabelKey] != "session-claim-test" {
 			t.Errorf("expected label %s=session-claim-test, got %q", SessionIdLabelKey, claim.Labels[SessionIdLabelKey])
@@ -677,8 +677,8 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 	if entry.Kind != types.SandboxClaimsKind {
 		t.Errorf("expected entry.Kind to be %q, got %q", types.SandboxClaimsKind, entry.Kind)
 	}
-	if claim.Spec.TemplateRef.Name != testCodeInterpreterWarmPool {
-		t.Errorf("expected templateRef name %q, got %q", testCodeInterpreterWarmPool, claim.Spec.TemplateRef.Name)
+	if claim.Spec.WarmPoolRef.Name != testCodeInterpreterWarmPool {
+		t.Errorf("expected templateRef name %q, got %q", testCodeInterpreterWarmPool, claim.Spec.WarmPoolRef.Name)
 	}
 	if len(claim.OwnerReferences) != 1 {
 		t.Fatalf("expected 1 owner reference, got %d", len(claim.OwnerReferences))

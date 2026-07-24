@@ -132,20 +132,13 @@ func (s *Server) setupRoutes() {
 	v1Group.DELETE("/code-interpreter/sessions/:sessionId", s.handleDeleteSandbox)
 }
 
-// Start starts the API server
+// Start starts the API server.
+// The HTTP server is started immediately in a background goroutine so that
+// Kubernetes probes (/health) are answered without waiting for informer
+// cache sync (which can take up to a minute on the first startup).
+// Cache sync, store ping, and the garbage collector are set up inside the
+// goroutine once the listener is up.
 func (s *Server) Start(ctx context.Context) error {
-	// Initialize store with informer before starting server
-
-	if err := s.informers.RunAndWaitForCacheSync(ctx); err != nil {
-		return fmt.Errorf("failed to wait for caches to sync: %w", err)
-	}
-
-	if err := s.storeClient.Ping(ctx); err != nil {
-		return fmt.Errorf("failed to ping store: %w", err)
-	}
-
-	klog.Info("kv store Ping check successfully")
-
 	addr := ":" + s.config.Port
 
 	s.httpServer = &http.Server{
@@ -155,6 +148,44 @@ func (s *Server) Start(ctx context.Context) error {
 		IdleTimeout: 90 * time.Second, // golang http default transport's idletimeout is 90s
 	}
 
+	// Channel to collect fatal startup errors from the background goroutine.
+	startupErr := make(chan error, 2)
+
+	// Start the HTTP listener in a goroutine so the health endpoint is
+	// available immediately for Kubernetes readiness probes.
+	go func() {
+		var err error
+		mtlsConfigured := s.config.MTLSConfig.CertFile != "" && s.config.MTLSConfig.KeyFile != "" && s.config.MTLSConfig.CAFile != ""
+		if mtlsConfigured {
+			err = s.startMTLSServer(addr)
+		} else if s.config.EnableTLS {
+			if s.config.TLSCert == "" || s.config.TLSKey == "" {
+				startupErr <- fmt.Errorf("TLS enabled but cert/key not provided")
+				return
+			}
+			err = s.httpServer.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
+		} else {
+			protocols := &http.Protocols{}
+			protocols.SetUnencryptedHTTP2(true)
+			s.httpServer.Protocols = protocols
+			err = s.httpServer.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
+			startupErr <- err
+		}
+	}()
+
+	// Now wait for informer caches to sync and the store to become reachable.
+	// This runs concurrently with the HTTP listener so /health stays up.
+	if err := s.informers.RunAndWaitForCacheSync(ctx); err != nil {
+		return fmt.Errorf("failed to wait for caches to sync: %w", err)
+	}
+
+	if err := s.storeClient.Ping(ctx); err != nil {
+		return fmt.Errorf("failed to ping store: %w", err)
+	}
+
+	klog.Info("kv store Ping check successfully")
 	klog.Infof("Server listening on %s", addr)
 
 	gc := newGarbageCollector(s.k8sClient, s.storeClient, 15*time.Second)
@@ -164,27 +195,13 @@ func (s *Server) Start(ctx context.Context) error {
 		gc.run(ctx.Done())
 	}()
 
-	// Start mTLS, TLS, or plain HTTP server
-	var err error
-	mtlsConfigured := s.config.MTLSConfig.CertFile != "" && s.config.MTLSConfig.KeyFile != "" && s.config.MTLSConfig.CAFile != ""
-	if mtlsConfigured {
-		err = s.startMTLSServer(addr)
-	} else if s.config.EnableTLS {
-		if s.config.TLSCert == "" || s.config.TLSKey == "" {
-			return fmt.Errorf("TLS enabled but cert/key not provided")
-		}
-		err = s.httpServer.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
-	} else {
-		protocols := &http.Protocols{}
-		protocols.SetUnencryptedHTTP2(true)
-		s.httpServer.Protocols = protocols
-		err = s.httpServer.ListenAndServe()
-	}
-
-	if err != nil && err != http.ErrServerClosed {
+	// If the HTTP listener failed before we finished cache sync, return the error.
+	select {
+	case err := <-startupErr:
 		return err
+	default:
+		return nil
 	}
-	return nil
 }
 
 // startMTLSServer configures and starts the server with mutual TLS.

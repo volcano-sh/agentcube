@@ -427,8 +427,22 @@ run_setup() {
     fi
 
     step "Waiting for deployments (WM/router now have certs available after SPIRE is ready)..."
-    kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/workloadmanager --timeout=300s
-    kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/agentcube-router --timeout=300s
+    if ! kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/workloadmanager --timeout=300s; then
+        echo "ERROR: workloadmanager deployment failed to roll out. Collecting diagnostics..."
+        kubectl -n "${AGENTCUBE_NAMESPACE}" get pods -o wide
+        kubectl -n "${AGENTCUBE_NAMESPACE}" describe pod -l app=workloadmanager
+        kubectl -n "${AGENTCUBE_NAMESPACE}" logs -l app=workloadmanager --tail=100 --prefix=true 2>/dev/null || true
+        kubectl -n "${AGENTCUBE_NAMESPACE}" logs -l app=workloadmanager --tail=100 --prefix=true --previous 2>/dev/null || true
+        exit 1
+    fi
+    if ! kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/agentcube-router --timeout=300s; then
+        echo "ERROR: agentcube-router deployment failed to roll out. Collecting diagnostics..."
+        kubectl -n "${AGENTCUBE_NAMESPACE}" get pods -o wide
+        kubectl -n "${AGENTCUBE_NAMESPACE}" describe pod -l app=agentcube-router
+        kubectl -n "${AGENTCUBE_NAMESPACE}" logs -l app=agentcube-router --tail=100 --prefix=true 2>/dev/null || true
+        kubectl -n "${AGENTCUBE_NAMESPACE}" logs -l app=agentcube-router --tail=100 --prefix=true --previous 2>/dev/null || true
+        exit 1
+    fi
 
     step "Creating ServiceAccount and Token..."
     kubectl create serviceaccount e2e-test -n "${AGENTCUBE_NAMESPACE}" || true

@@ -92,8 +92,7 @@ class TestBuildRuntime:
             assert metadata_on_disk.version == "0.0.2"
             assert metadata_on_disk.image is None
 
-    def test_build_cloud_fails_without_dry_run(self):
-        import pytest
+    def test_build_cloud_success_without_dry_run(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             ws = Path(tmpdir)
             self._write_yaml(ws / "agent_metadata.yaml", {
@@ -107,8 +106,20 @@ class TestBuildRuntime:
             (ws / "Dockerfile").touch()
 
             runtime = BuildRuntime(verbose=True)
-            with pytest.raises(ValueError, match="Real cloud builds are not supported yet"):
-                runtime.build(ws, cloud_provider="huawei", dry_run=False)
+            result = runtime.build(ws, cloud_provider="huawei", dry_run=False)
+
+            assert result["build_mode"] == "cloud"
+            assert result["image_name"] == "swr.cn-east-3.myhuaweicloud.com/agentcube/test-agent:0.0.3"
+            assert result["image_tag"] == "0.0.3"
+            assert "dry_run" not in result
+
+            # Check that metadata on disk got updated
+            metadata_on_disk = runtime.metadata_service.load_metadata(ws)
+            assert metadata_on_disk.version == "0.0.3"
+            assert metadata_on_disk.image is not None
+            assert metadata_on_disk.image["build_mode"] == "cloud"
+            assert metadata_on_disk.image["repository_url"] == "swr.cn-east-3.myhuaweicloud.com/agentcube/test-agent:0.0.3"
+            assert "dry_run" not in metadata_on_disk.image
 
     def test_build_local_dry_run(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -160,7 +171,7 @@ class TestBuildRuntime:
             (ws / "Dockerfile").touch()
 
             runtime = PublishRuntime(verbose=True)
-            with pytest.raises(ValueError, match="Cannot publish a dry-run/simulated build image"):
+            with pytest.raises(ValueError, match=r"Cannot publish a dry-run/simulated build image\. Please run a real build \(local or cloud build without --dry-run\) before publishing\."):
                 runtime.publish(ws)
 
     def test_build_cloud_custom_registry_as_base(self):
@@ -297,3 +308,49 @@ class TestBuildRuntime:
 
             runtime._prepare_local_image.assert_called_once()
             runtime._prepare_cloud_image.assert_not_called()
+
+    def test_publish_cloud_build_success(self):
+        from agentcube.runtime.publish_runtime import PublishRuntime
+        from unittest.mock import MagicMock
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = Path(tmpdir)
+            self._write_yaml(ws / "agent_metadata.yaml", {
+                "agent_name": "test-agent",
+                "entrypoint": "python main.py",
+                "build_mode": "cloud",
+                "version": "0.0.2",
+                "image": {
+                    "repository_url": "swr.cn-east-3.myhuaweicloud.com/agentcube/test-agent:0.0.2",
+                    "tag": "0.0.2",
+                    "build_mode": "cloud",
+                    "build_size": "45.2MB",
+                    "build_time": "12.4s"
+                },
+                "router_url": "http://router.example.com",
+                "workload_manager_url": "http://wlm.example.com",
+                "readiness_probe_path": "/healthz",
+                "readiness_probe_port": 8080,
+                "port": 8080
+            })
+            (ws / "main.py").touch()
+            (ws / "requirements.txt").touch()
+            (ws / "Dockerfile").touch()
+
+            runtime = PublishRuntime(verbose=True)
+            metadata = runtime.metadata_service.load_metadata(ws)
+
+            runtime._prepare_cloud_image = MagicMock(return_value="swr.cn-east-3.myhuaweicloud.com/agentcube/test-agent:0.0.2")
+            runtime._prepare_local_image = MagicMock()
+
+            # Mock agentcube_provider
+            runtime.agentcube_provider = MagicMock()
+            runtime.agentcube_provider.deploy_agent_runtime.return_value = {
+                "deployment_name": "test-agent-deployment",
+                "namespace": "default",
+            }
+
+            result = runtime.publish(ws, provider="agentcube", agent_endpoint="http://example.com")
+            assert result["status"] == "deployed"
+            assert result["agent_endpoint"] == "http://example.com"
+            runtime._prepare_cloud_image.assert_called_once()
+            runtime._prepare_local_image.assert_not_called()

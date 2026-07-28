@@ -228,11 +228,6 @@ class BuildRuntime:
     ) -> Dict[str, Any]:
         """Build the image using cloud services."""
         dry_run = options.get('dry_run', False)
-        if not dry_run:
-            raise ValueError(
-                "Real cloud builds are not supported yet. "
-                "Use --dry-run for a simulated cloud build."
-            )
 
         cloud_provider = (options.get("cloud_provider") or "huawei").lower()
         if cloud_provider != "huawei" and not (metadata.registry_url or "").strip():
@@ -286,23 +281,27 @@ class BuildRuntime:
             "tag": tag,
             "build_mode": "cloud",
             "build_size": build_size,
-            "build_time": build_time,
-            "dry_run": True
+            "build_time": build_time
         }
+        if dry_run:
+            image_info["dry_run"] = True
+
         if not dry_run:
             updates = {"image": image_info}
             self.metadata_service.update_metadata(workspace_path, updates)
         else:
             metadata.image = image_info
 
-        return {
+        result = {
             "image_name": image_name,
             "image_tag": tag,
             "image_size": build_size,
             "build_time": build_time,
-            "build_mode": "cloud",
-            "dry_run": True
+            "build_mode": "cloud"
         }
+        if dry_run:
+            result["dry_run"] = True
+        return result
 
     def _update_build_metadata(
         self,

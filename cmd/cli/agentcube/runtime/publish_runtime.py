@@ -79,7 +79,7 @@ class PublishRuntime:
         if image_info and image_info.get("dry_run"):
             raise ValueError(
                 "Cannot publish a dry-run/simulated build image. "
-                "Please run a real build (local build without --dry-run) before publishing."
+                "Please run a real build (local or cloud build without --dry-run) before publishing."
             )
 
         # Delete session_id from metadata if it exists
@@ -339,7 +339,7 @@ class PublishRuntime:
         if image_info and image_info.get("dry_run"):
             raise ValueError(
                 "Cannot publish a dry-run/simulated build image. "
-                "Please run a real build (local build without --dry-run) before publishing."
+                "Please run a real build (local or cloud build without --dry-run) before publishing."
             )
 
         build_mode = options.get('build_mode')

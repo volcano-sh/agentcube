@@ -87,13 +87,10 @@ class TestBuildRuntime:
             assert result["image_tag"] == "0.0.3"
             assert result["dry_run"] is True
 
-            # Check metadata got updated with cloud build mode and dry_run
-            metadata = runtime.metadata_service.load_metadata(ws)
-            assert metadata.image is not None
-            assert metadata.image["build_mode"] == "cloud"
-            assert metadata.image["repository_url"] == "swr.cn-east-3.myhuaweicloud.com/agentcube/test-agent:0.0.3"
-            assert metadata.image["tag"] == "0.0.3"
-            assert metadata.image["dry_run"] is True
+            # Check metadata on disk remains unchanged (side-effect free)
+            metadata_on_disk = runtime.metadata_service.load_metadata(ws)
+            assert metadata_on_disk.version == "0.0.2"
+            assert metadata_on_disk.image is None
 
     def test_build_cloud_fails_without_dry_run(self):
         import pytest
@@ -134,10 +131,10 @@ class TestBuildRuntime:
             assert result["image_size"] == "10.0MB"
             assert result["build_time"] == "1.0s"
 
-            # Check that metadata has dry_run = True
-            metadata = runtime.metadata_service.load_metadata(ws)
-            assert metadata.image is not None
-            assert metadata.image["dry_run"] is True
+            # Check that metadata on disk remains unchanged (side-effect free)
+            metadata_on_disk = runtime.metadata_service.load_metadata(ws)
+            assert metadata_on_disk.version == "0.0.2"
+            assert metadata_on_disk.image is None
 
     def test_publish_dry_run_image_fails(self):
         import pytest
@@ -187,9 +184,9 @@ class TestBuildRuntime:
             assert result["image_name"] == "myregistry.com/myproject/test-agent:0.0.3"
             assert result["image_tag"] == "0.0.3"
 
-            metadata = runtime.metadata_service.load_metadata(ws)
-            assert metadata.image is not None
-            assert metadata.image["repository_url"] == "myregistry.com/myproject/test-agent:0.0.3"
+            metadata_on_disk = runtime.metadata_service.load_metadata(ws)
+            assert metadata_on_disk.image is None
+            assert metadata_on_disk.version == "0.0.2"
 
     def test_build_cloud_custom_registry_with_tag_fails(self):
         import pytest
@@ -227,3 +224,76 @@ class TestBuildRuntime:
             runtime = BuildRuntime(verbose=True)
             with pytest.raises(ValueError, match="registry_url must be set for non-huawei cloud providers"):
                 runtime.build(ws, cloud_provider="aliyun", dry_run=True)
+
+    def test_build_cloud_custom_registry_with_port(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = Path(tmpdir)
+            self._write_yaml(ws / "agent_metadata.yaml", {
+                "agent_name": "test-agent",
+                "entrypoint": "python main.py",
+                "build_mode": "cloud",
+                "version": "0.0.2",
+                "registry_url": "localhost:5000",
+            })
+            (ws / "main.py").touch()
+            (ws / "requirements.txt").touch()
+            (ws / "Dockerfile").touch()
+
+            runtime = BuildRuntime(verbose=True)
+            result = runtime.build(ws, cloud_provider="huawei", dry_run=True)
+
+            assert result["build_mode"] == "cloud"
+            assert result["image_name"] == "localhost:5000/test-agent:0.0.3"
+
+    def test_build_cloud_custom_registry_with_port_and_namespace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = Path(tmpdir)
+            self._write_yaml(ws / "agent_metadata.yaml", {
+                "agent_name": "test-agent",
+                "entrypoint": "python main.py",
+                "build_mode": "cloud",
+                "version": "0.0.2",
+                "registry_url": "localhost:5000/myproject",
+            })
+            (ws / "main.py").touch()
+            (ws / "requirements.txt").touch()
+            (ws / "Dockerfile").touch()
+
+            runtime = BuildRuntime(verbose=True)
+            result = runtime.build(ws, cloud_provider="huawei", dry_run=True)
+
+            assert result["build_mode"] == "cloud"
+            assert result["image_name"] == "localhost:5000/myproject/test-agent:0.0.3"
+
+    def test_publish_uses_metadata_image_build_mode(self):
+        from agentcube.runtime.publish_runtime import PublishRuntime
+        from unittest.mock import MagicMock
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = Path(tmpdir)
+            self._write_yaml(ws / "agent_metadata.yaml", {
+                "agent_name": "test-agent",
+                "entrypoint": "python main.py",
+                "build_mode": "cloud",
+                "version": "0.0.2",
+                "image": {
+                    "repository_url": "test-agent",
+                    "tag": "0.0.2",
+                    "build_mode": "local",
+                    "build_size": "10MB",
+                    "build_time": "1s"
+                }
+            })
+            (ws / "main.py").touch()
+            (ws / "requirements.txt").touch()
+            (ws / "Dockerfile").touch()
+
+            runtime = PublishRuntime(verbose=True)
+            metadata = runtime.metadata_service.load_metadata(ws)
+
+            runtime._prepare_local_image = MagicMock(return_value="test-agent:0.0.2")
+            runtime._prepare_cloud_image = MagicMock()
+
+            runtime._prepare_image_for_publishing(ws, metadata, {})
+
+            runtime._prepare_local_image.assert_called_once()
+            runtime._prepare_cloud_image.assert_not_called()

@@ -342,7 +342,12 @@ class PublishRuntime:
                 "Please run a real build (local build without --dry-run) before publishing."
             )
 
-        build_mode = options.get('build_mode', metadata.build_mode)
+        build_mode = options.get('build_mode')
+        if not build_mode:
+            if image_info and isinstance(image_info, dict):
+                build_mode = image_info.get("build_mode")
+            if not build_mode:
+                build_mode = metadata.build_mode
 
         if build_mode == 'local':
             return self._prepare_local_image(workspace_path, metadata, options)

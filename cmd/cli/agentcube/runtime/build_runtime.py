@@ -65,10 +65,11 @@ class BuildRuntime:
         # Step 2: Load metadata
         metadata = self.metadata_service.load_metadata(workspace_path)
         original_version = metadata.version
+        dry_run = options.get('dry_run', False)
 
         try:
             # Step 3: Auto-increment version
-            metadata = self._increment_version(workspace_path, metadata)
+            metadata = self._increment_version(workspace_path, metadata, dry_run=dry_run)
 
             # Step 4: Determine build mode
             build_mode = options.get('build_mode', metadata.build_mode)
@@ -80,17 +81,18 @@ class BuildRuntime:
             else:
                 raise ValueError(f"Unsupported build mode: {build_mode}")
         except Exception as e:
-            if self.verbose:
-                logger.warning(f"Build failed: {e}. Reverting version update.")
+            if not dry_run:
+                if self.verbose:
+                    logger.warning(f"Build failed: {e}. Reverting version update.")
 
-            # Revert version
-            updates = {"version": original_version}
-            self.metadata_service.update_metadata(workspace_path, updates)
+                # Revert version
+                updates = {"version": original_version}
+                self.metadata_service.update_metadata(workspace_path, updates)
 
             # Re-raise the exception to the caller
             raise
 
-    def _increment_version(self, workspace_path: Path, metadata) -> Any:
+    def _increment_version(self, workspace_path: Path, metadata, dry_run: bool = False) -> Any:
         """
         Increment the agent version in metadata.
         Defaults to 0.0.1 if no version is set.
@@ -117,6 +119,10 @@ class BuildRuntime:
 
         if self.verbose:
             logger.info(f"Incrementing version: {current_version} -> {new_version}")
+
+        if dry_run:
+            metadata.version = new_version
+            return metadata
 
         # Update metadata
         updates = {"version": new_version}
@@ -249,9 +255,22 @@ class BuildRuntime:
             registry_url = f"swr.{region}.myhuaweicloud.com/agentcube"
 
         # Reject embedded tags and ensure the agent name is included in the repo path.
+        # Check if registry_url contains an image tag (a colon that is not a port number).
+        if "/" in registry_url:
+            host, path_part = registry_url.split("/", 1)
+            if ":" in path_part:
+                raise ValueError("registry_url must not include an image tag; use --tag or version instead")
+            if ":" in host:
+                port_part = host.rsplit(":", 1)[-1]
+                if not port_part.isdigit():
+                    raise ValueError("registry_url must not include an image tag; use --tag or version instead")
+        else:
+            if ":" in registry_url:
+                host, port_part = registry_url.rsplit(":", 1)
+                if not port_part.isdigit():
+                    raise ValueError("registry_url must not include an image tag; use --tag or version instead")
+
         last_segment = registry_url.rsplit("/", 1)[-1]
-        if ":" in last_segment:
-            raise ValueError("registry_url must not include an image tag; use --tag or version instead")
         if last_segment != agent_name:
             registry_url = f"{registry_url}/{agent_name}"
 
@@ -270,8 +289,11 @@ class BuildRuntime:
             "build_time": build_time,
             "dry_run": True
         }
-        updates = {"image": image_info}
-        self.metadata_service.update_metadata(workspace_path, updates)
+        if not dry_run:
+            updates = {"image": image_info}
+            self.metadata_service.update_metadata(workspace_path, updates)
+        else:
+            metadata.image = image_info
 
         return {
             "image_name": image_name,
@@ -302,8 +324,11 @@ class BuildRuntime:
             image_info["dry_run"] = True
 
         # Update metadata
-        updates = {"image": image_info}
-        self.metadata_service.update_metadata(workspace_path, updates)
+        if not dry_run:
+            updates = {"image": image_info}
+            self.metadata_service.update_metadata(workspace_path, updates)
+        else:
+            metadata.image = image_info
 
         if self.verbose:
             logger.debug(f"Updated metadata with build info: {image_info}")

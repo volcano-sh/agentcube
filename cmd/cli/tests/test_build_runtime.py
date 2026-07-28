@@ -165,3 +165,65 @@ class TestBuildRuntime:
             runtime = PublishRuntime(verbose=True)
             with pytest.raises(ValueError, match="Cannot publish a dry-run/simulated build image"):
                 runtime.publish(ws)
+
+    def test_build_cloud_custom_registry_as_base(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = Path(tmpdir)
+            self._write_yaml(ws / "agent_metadata.yaml", {
+                "agent_name": "test-agent",
+                "entrypoint": "python main.py",
+                "build_mode": "cloud",
+                "version": "0.0.2",
+                "registry_url": "myregistry.com/myproject/",
+            })
+            (ws / "main.py").touch()
+            (ws / "requirements.txt").touch()
+            (ws / "Dockerfile").touch()
+
+            runtime = BuildRuntime(verbose=True)
+            result = runtime.build(ws, cloud_provider="huawei", dry_run=True)
+
+            assert result["build_mode"] == "cloud"
+            assert result["image_name"] == "myregistry.com/myproject/test-agent:0.0.3"
+            assert result["image_tag"] == "0.0.3"
+
+            metadata = runtime.metadata_service.load_metadata(ws)
+            assert metadata.image is not None
+            assert metadata.image["repository_url"] == "myregistry.com/myproject/test-agent:0.0.3"
+
+    def test_build_cloud_custom_registry_with_tag_fails(self):
+        import pytest
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = Path(tmpdir)
+            self._write_yaml(ws / "agent_metadata.yaml", {
+                "agent_name": "test-agent",
+                "entrypoint": "python main.py",
+                "build_mode": "cloud",
+                "version": "0.0.2",
+                "registry_url": "myregistry.com/myproject/test-agent:latest",
+            })
+            (ws / "main.py").touch()
+            (ws / "requirements.txt").touch()
+            (ws / "Dockerfile").touch()
+
+            runtime = BuildRuntime(verbose=True)
+            with pytest.raises(ValueError, match="registry_url must not include an image tag"):
+                runtime.build(ws, cloud_provider="huawei", dry_run=True)
+
+    def test_build_cloud_non_huawei_without_registry_url_fails(self):
+        import pytest
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = Path(tmpdir)
+            self._write_yaml(ws / "agent_metadata.yaml", {
+                "agent_name": "test-agent",
+                "entrypoint": "python main.py",
+                "build_mode": "cloud",
+                "version": "0.0.2",
+            })
+            (ws / "main.py").touch()
+            (ws / "requirements.txt").touch()
+            (ws / "Dockerfile").touch()
+
+            runtime = BuildRuntime(verbose=True)
+            with pytest.raises(ValueError, match="registry_url must be set for non-huawei cloud providers"):
+                runtime.build(ws, cloud_provider="aliyun", dry_run=True)

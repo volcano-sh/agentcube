@@ -228,7 +228,9 @@ class BuildRuntime:
                 "Use --dry-run for a simulated cloud build."
             )
 
-        cloud_provider = options.get("cloud_provider") or "huawei"
+        cloud_provider = (options.get("cloud_provider") or "huawei").lower()
+        if cloud_provider != "huawei" and not (metadata.registry_url or "").strip():
+            raise ValueError("registry_url must be set for non-huawei cloud providers")
 
         logger.info(f"Initiating cloud build using provider: {cloud_provider}")
         logger.info(f"Packaging workspace {workspace_path} for cloud build...")
@@ -240,11 +242,18 @@ class BuildRuntime:
         default_tag = metadata.version if metadata.version else "latest"
         tag = options.get("tag", default_tag)
 
-        # If registry_url is defined, use it. Otherwise construct a cloud SWR registry URL.
-        registry_url = metadata.registry_url
+        # If registry_url is defined, treat it as a base repo; otherwise construct a Huawei SWR base.
+        registry_url = (metadata.registry_url or "").rstrip("/")
         if not registry_url:
             region = metadata.region or "cn-east-3"
-            registry_url = f"swr.{region}.myhuaweicloud.com/agentcube/{agent_name}"
+            registry_url = f"swr.{region}.myhuaweicloud.com/agentcube"
+
+        # Reject embedded tags and ensure the agent name is included in the repo path.
+        last_segment = registry_url.rsplit("/", 1)[-1]
+        if ":" in last_segment:
+            raise ValueError("registry_url must not include an image tag; use --tag or version instead")
+        if last_segment != agent_name:
+            registry_url = f"{registry_url}/{agent_name}"
 
         image_name = f"{registry_url}:{tag}"
         build_size = "45.2MB"  # Mock size for simulated cloud build

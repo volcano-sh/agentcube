@@ -23,11 +23,11 @@ AgentCube relies on the [kubernetes-sigs/agent-sandbox](https://github.com/kuber
 
 ```bash
 # Install agent-sandbox CRDs and controller
-AGENT_SANDBOX_VERSION=v0.5.2
+AGENT_SANDBOX_VERSION=v0.5.3
 kubectl apply --server-side -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/sandbox-with-extensions.yaml
 ```
 
-### Upgrade Guide (v0.4.6 to v0.5.2)
+### Upgrade Guide (v0.4.6 to v0.5.3)
 
 When upgrading an existing `v0.4.6` installation with active or warm-pool `CodeInterpreter` claims (`warmPoolSize > 0`), applying `v0.5.2` directly can cause claims to map to `warmPoolRef.name=shadow-pool-<template>`. Because `v0.5.2` requeues with `WarmPoolNotFound` if the shadow pool does not exist, claims may hit AgentCube's 2-minute create timeout and enter rollback. 
 
@@ -38,10 +38,11 @@ To safely upgrade from `v0.4.6` to `v0.5.2`, follow these mandatory steps:
    kubectl get sandboxclaims,sandboxes,codeinterpreters -A -o yaml > backup.yaml
    ```
 2. **Download the Migration Helper**
-   Obtain the pinned `v0.5.2` migration helper script from the release assets:
+   The `migrate.sh` helper is not published as a release asset for some versions. Use the tag-pinned raw helper from the repo instead:
    ```bash
-   wget https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.5.2/migrate.sh
-   # Recommended: verify migrate.sh integrity (checksum/signature) using the release assets/notes before executing it.
+   MIGRATE_URL="https://raw.githubusercontent.com/kubernetes-sigs/agent-sandbox/v0.5.3/dev/tools/migrate.sh"
+   curl -fsSL -o migrate.sh "${MIGRATE_URL}"
+   # Recommended: inspect and verify the script before running.
    chmod +x migrate.sh
    ```
 3. **Run Pre-Upgrade Bootstrap**

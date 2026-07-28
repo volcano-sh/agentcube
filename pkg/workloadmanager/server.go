@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -45,6 +46,9 @@ type Server struct {
 	storeClient       store.Store
 	wg                sync.WaitGroup
 	certWatcher       *mtls.CertWatcher // mTLS cert watcher for graceful cleanup
+	// ready indicates whether the server is ready to serve traffic.
+	// It remains false until informer caches sync and store ping succeed.
+	ready int32
 }
 
 type Config struct {
@@ -148,7 +152,7 @@ func (s *Server) Start(ctx context.Context) error {
 		IdleTimeout: 90 * time.Second, // golang http default transport's idletimeout is 90s
 	}
 
-	// Channel to collect fatal startup errors from the background goroutine.
+	// Channel to collect fatal listener errors from the background goroutine.
 	startupErr := make(chan error, 2)
 
 	// Start the HTTP listener in a goroutine so the health endpoint is
@@ -173,7 +177,8 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	// Now wait for informer caches to sync and the store to become reachable.
-	// This runs concurrently with the HTTP listener so /health stays up.
+	// This runs concurrently with the HTTP listener so /health stays up but
+	// readiness remains false until these checks complete.
 	if err := s.informers.RunAndWaitForCacheSync(ctx); err != nil {
 		return fmt.Errorf("failed to wait for caches to sync: %w", err)
 	}
@@ -185,6 +190,7 @@ func (s *Server) Start(ctx context.Context) error {
 	klog.Info("kv store Ping check successfully")
 	klog.Infof("Server listening on %s", addr)
 
+	// Start garbage collector
 	gc := newGarbageCollector(s.k8sClient, s.storeClient, 15*time.Second)
 	s.wg.Add(1)
 	go func() {
@@ -192,12 +198,18 @@ func (s *Server) Start(ctx context.Context) error {
 		gc.run(ctx.Done())
 	}()
 
-	// If the HTTP listener failed before we finished cache sync, return the error.
+	// Mark server as ready only after caches synced and store ping succeeded
+	atomic.StoreInt32(&s.ready, 1)
+
+	// Block until context cancellation or listener error occurs so that
+	// listener failures are propagated to the caller for the lifetime
+	// of the server rather than being silently lost.
 	select {
+	case <-ctx.Done():
+		// Context cancelled: normal shutdown path.
+		return nil
 	case err := <-startupErr:
 		return err
-	default:
-		return nil
 	}
 }
 
@@ -229,6 +241,7 @@ func (s *Server) startMTLSServer(addr string) error {
 	tlsListener := tls.NewListener(ln, serverTLS)
 
 	klog.Info("WorkloadManager mTLS enabled: accepting clients with valid SPIRE-provisioned certificates")
+	// Serve and return any serve-time error to caller so it can be propagated.
 	return s.httpServer.Serve(tlsListener)
 }
 
@@ -239,6 +252,8 @@ func configureHTTP2TLSServer(server *http.Server, tlsConfig *tls.Config) error {
 
 // Shutdown performs graceful shutdown of the HTTP server.
 func (s *Server) Shutdown(ctx context.Context) error {
+	// Mark as not ready immediately to avoid receiving traffic while shutting down
+	atomic.StoreInt32(&s.ready, 0)
 	if s.httpServer != nil {
 		klog.Info("Shutting down HTTP server...")
 		if err := s.httpServer.Shutdown(ctx); err != nil {

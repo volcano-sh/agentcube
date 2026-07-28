@@ -30,10 +30,10 @@ jobs:
             require_codeinterpreter: "true"
     steps:
       - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.11"
 
@@ -57,11 +57,11 @@ jobs:
 
       - name: Run E2E Tests
         env:
-          AGENT_SANDBOX_VERSION: v0.5.2
+          AGENT_SANDBOX_VERSION: v0.5.3
           MTLS_ENABLED: ${{ matrix.mtls_enabled }}
           E2E_REQUIRE_CODEINTERPRETER: ${{ matrix.require_codeinterpreter }}
-          # Normal CI runs use fresh v0.5.2 install; upgrade test is opt-in only.
-          E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST: "false"
+          # Enable the historical agent-sandbox upgrade/migration test in CI.
+          E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST: "true"
         run: |
           export ARTIFACTS_PATH=${{ github.workspace }}/e2e-logs
           make e2e

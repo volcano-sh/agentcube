@@ -17,7 +17,7 @@ if [ -z "${MTLS_ENABLED+x}" ]; then
         MTLS_ENABLED=true
     fi
 fi
-AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION:-v0.5.2}
+AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION:-v0.5.3}
 E2E_REQUIRE_CODEINTERPRETER=${E2E_REQUIRE_CODEINTERPRETER:-false}
 WORKLOAD_MANAGER_IMAGE=${WORKLOAD_MANAGER_IMAGE:-workloadmanager:latest}
 ROUTER_IMAGE=${ROUTER_IMAGE:-agentcube-router:latest}
@@ -349,7 +349,8 @@ run_setup() {
     step "Installing agent-sandbox (${AGENT_SANDBOX_VERSION})..."
     cleanup_old_agent_sandbox_install
 
-    if [[ "${AGENT_SANDBOX_VERSION}" == "v0.5.2"* ]]; then
+    # For v0.5.x releases use the consolidated sandbox-with-extensions.yaml
+    if [[ "${AGENT_SANDBOX_VERSION}" == "v0.5."* ]]; then
         kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/sandbox-with-extensions.yaml"
     else
         kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml"
@@ -487,6 +488,37 @@ sleep 2
 step "Running tests..."
 API_TOKEN=$(kubectl create token e2e-test -n "${AGENTCUBE_NAMESPACE}" --duration=24h)
 
+# Deploy in-cluster Code Interpreter MCP (for MCP k8s E2E) and port-forward it.
+# Build and load the MCP image into Kind, apply the deployment, inject API token,
+# wait for rollout, and create a local port-forward to the MCP Service.
+if [ "${E2E_SKIP_SETUP}" != "true" ]; then
+    step "Building agentcube-code-interpreter-mcp image and deploying in-cluster MCP"
+    if docker build -f integrations/code-interpreter-mcp/Dockerfile -t agentcube-code-interpreter-mcp:latest integrations/code-interpreter-mcp; then
+        kind load docker-image agentcube-code-interpreter-mcp:latest --name "${E2E_CLUSTER_NAME}" || true
+    else
+        echo "Warning: failed to build agentcube-code-interpreter-mcp image, continuing (may be prebuilt)"
+    fi
+
+    kubectl -n "${AGENTCUBE_NAMESPACE}" apply -f integrations/code-interpreter-mcp/deployment.yaml
+    # Inject API_TOKEN into Deployment so in-cluster MCP can call WM/Router
+    kubectl -n "${AGENTCUBE_NAMESPACE}" set env deployment/agentcube-code-interpreter-mcp API_TOKEN="${API_TOKEN}" || true
+    kubectl -n "${AGENTCUBE_NAMESPACE}" rollout status deployment/agentcube-code-interpreter-mcp --timeout=180s || true
+
+    # Port-forward MCP service for test client access
+    echo "Starting in-cluster MCP port-forward to local port ${MCP_K8S_LOCAL_PORT}"
+    kubectl -n "${AGENTCUBE_NAMESPACE}" port-forward svc/agentcube-code-interpreter-mcp "${MCP_K8S_LOCAL_PORT}:8000" > /tmp/mcp_k8s_port_forward.log 2>&1 &
+    MCP_K8S_PF_PID=$!
+    # Export URL used by MCP k8s E2E tests
+    export MCP_K8S_MCP_URL="http://127.0.0.1:${MCP_K8S_LOCAL_PORT}/mcp"
+fi
+
+# Set OIDC_ENABLED for OIDC E2E tests when Keycloak is deployed
+if [ "${KEYCLOAK_ENABLED}" = "true" ]; then
+    export OIDC_ENABLED="true"
+else
+    export OIDC_ENABLED="false"
+fi
+
 echo "Starting workload manager port-forward..."
 kubectl port-forward svc/workloadmanager -n "${AGENTCUBE_NAMESPACE}" "${WORKLOAD_MANAGER_LOCAL_PORT}:8080" > /tmp/workload_port_forward.log 2>&1 &
 WORKLOAD_PID=$!
@@ -535,10 +567,11 @@ fi
 # Agent-Sandbox Upgrade & Migration Test Block
 # ==============================================================================
 if [ $TEST_FAILED -eq 0 ] && [ "${E2E_RUN_AGENT_SANDBOX_UPGRADE_TEST}" = "true" ]; then
-    step "Running Agent-Sandbox Upgrade & Migration Test (v0.4.6 -> v0.5.2)..."
+    step "Running Agent-Sandbox Upgrade & Migration Test (v0.4.6 -> v0.5.3)..."
     UPGRADE_FAILED=0
-    NEW_VERSION="v0.5.2"
-    
+    NEW_VERSION="v0.5.3"
+    MIGRATE_RAW_URL="https://raw.githubusercontent.com/kubernetes-sigs/agent-sandbox/${NEW_VERSION}/dev/tools/migrate.sh"
+
     echo "1. Creating 1st CodeInterpreter claim (upgrade-ci-1)..."
     cat <<EOF | kubectl apply -n "${WORKLOAD_NAMESPACE}" -f -
 apiVersion: runtime.agentcube.volcano.sh/v1alpha1
@@ -576,6 +609,23 @@ EOF
 
         echo "Captured UIDs -> Sandbox: ${OLD_SB_UID}, Pod: ${OLD_POD_UID}"
 
+        echo "2. Running migration bootstrap (tag-pinned helper: ${MIGRATE_RAW_URL})..."
+        TMP_MIGRATE_SCRIPT=$(mktemp)
+        if ! curl_download "${MIGRATE_RAW_URL}" "${TMP_MIGRATE_SCRIPT}"; then
+            echo "Warning: failed to download migrate helper ${MIGRATE_RAW_URL}, attempting direct raw URL..."
+            if ! curl_download "${MIGRATE_RAW_URL}" "${TMP_MIGRATE_SCRIPT}"; then
+                echo "Error: unable to obtain migrate helper script" >&2
+                UPGRADE_FAILED=1
+            fi
+        fi
+        if [ $UPGRADE_FAILED -eq 0 ]; then
+            chmod +x "${TMP_MIGRATE_SCRIPT}"
+            echo "Running bootstrap phase..."
+            if ! bash "${TMP_MIGRATE_SCRIPT}" --phase=bootstrap; then
+                echo "Warning: migrate.sh bootstrap phase failed" >&2
+            fi
+        fi
+
         echo "3. Stopping v0.4.6 agent-sandbox-controller..."
         kubectl scale deployment agent-sandbox-controller -n agent-sandbox-system --replicas=0
         kubectl -n agent-sandbox-system rollout status deployment/agent-sandbox-controller --timeout=60s || true
@@ -593,11 +643,10 @@ spec:
 EOF
 
         echo "5. Upgrading agent-sandbox manifests to ${NEW_VERSION}..."
-        # Note: v0.5.2 renamed manifest.yaml -> sandbox-with-extensions.yaml
         kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${NEW_VERSION}/sandbox-with-extensions.yaml"
         kubectl scale deployment agent-sandbox-controller -n agent-sandbox-system --replicas=1
 
-        echo "Waiting for v0.5.2 controller & webhook readiness..."
+        echo "Waiting for ${NEW_VERSION} controller & webhook readiness..."
         kubectl -n agent-sandbox-system rollout status deployment/agent-sandbox-controller --timeout=300s
 
         echo "6. Verifying UID preservation for upgrade-ci-1..."
@@ -657,6 +706,15 @@ EOF
             echo "Verification Failed: Sandbox ${SB_NAME_1} was not garbage collected."
             UPGRADE_FAILED=1
         fi
+        # Run migrate finalization if we downloaded the helper
+        if [ -n "${TMP_MIGRATE_SCRIPT:-}" ] && [ -f "${TMP_MIGRATE_SCRIPT}" ]; then
+            echo "Running migrate phase to finalize migration..."
+            if ! bash "${TMP_MIGRATE_SCRIPT}" --phase=migrate; then
+                echo "Warning: migrate.sh migrate phase failed" >&2
+            fi
+            rm -f "${TMP_MIGRATE_SCRIPT}"
+        fi
+
     fi
 
     if [ $UPGRADE_FAILED -ne 0 ]; then

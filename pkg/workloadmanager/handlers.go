@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -107,9 +108,11 @@ func isRetryableSandboxReadError(err error) bool {
 
 // handleHealth handles health check requests
 func (s *Server) handleHealth(c *gin.Context) {
-	respondJSON(c, http.StatusOK, map[string]string{
-		"status": "healthy",
-	})
+	if atomic.LoadInt32(&s.ready) == 1 {
+		respondJSON(c, http.StatusOK, map[string]string{"status": "healthy"})
+	} else {
+		respondJSON(c, http.StatusServiceUnavailable, map[string]string{"status": "starting"})
+	}
 }
 
 // handleAgentRuntimeCreate handles AgentRuntime sandbox creation requests.

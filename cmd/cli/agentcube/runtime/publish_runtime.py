@@ -74,6 +74,14 @@ class PublishRuntime:
         # Load metadata early to prepare image
         metadata = self.metadata_service.load_metadata(workspace_path)
 
+        # Prevent dry-run builds from being published
+        image_info = metadata.image
+        if image_info and image_info.get("dry_run"):
+            raise ValueError(
+                "Cannot publish a dry-run/simulated build image. "
+                "Please run a real build (local build without --dry-run) before publishing."
+            )
+
         # Delete session_id from metadata if it exists
         if metadata.session_id:
             if self.verbose:
@@ -327,6 +335,13 @@ class PublishRuntime:
         options: Dict[str, Any]
     ) -> str:
         """Prepare the container image for publishing."""
+        image_info = metadata.image
+        if image_info and image_info.get("dry_run"):
+            raise ValueError(
+                "Cannot publish a dry-run/simulated build image. "
+                "Please run a real build (local build without --dry-run) before publishing."
+            )
+
         build_mode = options.get('build_mode', metadata.build_mode)
 
         if build_mode == 'local':

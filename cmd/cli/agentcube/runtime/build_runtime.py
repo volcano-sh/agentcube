@@ -145,46 +145,58 @@ class BuildRuntime:
         options: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Build the image using local Docker."""
+        dry_run = options.get('dry_run', False)
+
         if self.verbose:
-            logger.info("Starting local Docker build")
-
-        # Check Docker availability
-        if not self.docker_service.check_docker_available():
-            raise RuntimeError("Docker is not available or not running")
-
-        # Prepare build arguments
-        build_args = {}
-
-        # Add proxy if provided
-        proxy = options.get('proxy')
-        if proxy:
-            build_args.update({
-                'http_proxy': proxy,
-                'https_proxy': proxy,
-                'HTTP_PROXY': proxy,
-                'HTTPS_PROXY': proxy
-            })
-            if self.verbose:
-                logger.info(f"Using proxy: {proxy}")
-
-        # Build the image
-        dockerfile_path = workspace_path / "Dockerfile"
-        image_name = metadata.agent_name.lower().replace(' ', '-')
+            if dry_run:
+                logger.info("Simulating local Docker build (dry-run)")
+            else:
+                logger.info("Starting local Docker build")
 
         # Use version from metadata as default tag, fallback to latest
         default_tag = metadata.version if metadata.version else 'latest'
         tag = options.get('tag', default_tag)
+        image_name = metadata.agent_name.lower().replace(' ', '-')
 
-        build_result = self.docker_service.build_image(
-            dockerfile_path=dockerfile_path,
-            context_path=workspace_path,
-            image_name=image_name,
-            tag=tag,
-            build_args=build_args
-        )
+        if dry_run:
+            build_result = {
+                "image_name": f"{image_name}:{tag}",
+                "image_size": "10.0MB",
+                "build_time": "1.0s",
+            }
+        else:
+            # Check Docker availability
+            if not self.docker_service.check_docker_available():
+                raise RuntimeError("Docker is not available or not running")
+
+            # Prepare build arguments
+            build_args = {}
+
+            # Add proxy if provided
+            proxy = options.get('proxy')
+            if proxy:
+                build_args.update({
+                    'http_proxy': proxy,
+                    'https_proxy': proxy,
+                    'HTTP_PROXY': proxy,
+                    'HTTPS_PROXY': proxy
+                })
+                if self.verbose:
+                    logger.info(f"Using proxy: {proxy}")
+
+            # Build the image
+            dockerfile_path = workspace_path / "Dockerfile"
+
+            build_result = self.docker_service.build_image(
+                dockerfile_path=dockerfile_path,
+                context_path=workspace_path,
+                image_name=image_name,
+                tag=tag,
+                build_args=build_args
+            )
 
         # Update metadata with build information
-        self._update_build_metadata(workspace_path, metadata, build_result, tag)
+        self._update_build_metadata(workspace_path, metadata, build_result, tag, dry_run=dry_run)
 
         result = {
             "image_name": build_result["image_name"],
@@ -193,6 +205,9 @@ class BuildRuntime:
             "build_time": build_result["build_time"],
             "build_mode": "local"
         }
+
+        if dry_run:
+            result["dry_run"] = True
 
         if self.verbose:
             logger.info(f"Local build completed: {result}")
@@ -206,6 +221,13 @@ class BuildRuntime:
         options: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Build the image using cloud services."""
+        dry_run = options.get('dry_run', False)
+        if not dry_run:
+            raise ValueError(
+                "Real cloud builds are not supported yet. "
+                "Use --dry-run for a simulated cloud build."
+            )
+
         cloud_provider = options.get("cloud_provider") or "huawei"
 
         logger.info(f"Initiating cloud build using provider: {cloud_provider}")
@@ -236,7 +258,8 @@ class BuildRuntime:
             "tag": tag,
             "build_mode": "cloud",
             "build_size": build_size,
-            "build_time": build_time
+            "build_time": build_time,
+            "dry_run": True
         }
         updates = {"image": image_info}
         self.metadata_service.update_metadata(workspace_path, updates)
@@ -246,7 +269,8 @@ class BuildRuntime:
             "image_tag": tag,
             "image_size": build_size,
             "build_time": build_time,
-            "build_mode": "cloud"
+            "build_mode": "cloud",
+            "dry_run": True
         }
 
     def _update_build_metadata(
@@ -254,7 +278,8 @@ class BuildRuntime:
         workspace_path: Path,
         metadata,
         build_result: Dict[str, str],
-        tag: str = "latest"
+        tag: str = "latest",
+        dry_run: bool = False
     ) -> None:
         """Update metadata with build information."""
         image_info = {
@@ -264,6 +289,8 @@ class BuildRuntime:
             "build_size": build_result["image_size"],
             "build_time": build_result["build_time"]
         }
+        if dry_run:
+            image_info["dry_run"] = True
 
         # Update metadata
         updates = {"image": image_info}

@@ -118,7 +118,8 @@ class TestBuildRuntime:
             assert metadata_on_disk.version == "0.0.3"
             assert metadata_on_disk.image is not None
             assert metadata_on_disk.image["build_mode"] == "cloud"
-            assert metadata_on_disk.image["repository_url"] == "swr.cn-east-3.myhuaweicloud.com/agentcube/test-agent:0.0.3"
+            expected_repo = "swr.cn-east-3.myhuaweicloud.com/agentcube/test-agent:0.0.3"
+            assert metadata_on_disk.image["repository_url"] == expected_repo
             assert "dry_run" not in metadata_on_disk.image
 
     def test_build_local_dry_run(self):
@@ -171,7 +172,11 @@ class TestBuildRuntime:
             (ws / "Dockerfile").touch()
 
             runtime = PublishRuntime(verbose=True)
-            with pytest.raises(ValueError, match=r"Cannot publish a dry-run/simulated build image\. Please run a real build \(local or cloud build without --dry-run\) before publishing\."):
+            expected_error = (
+                r"Cannot publish a dry-run/simulated build image\. "
+                r"Please run a real build \(local or cloud build without --dry-run\) before publishing\."
+            )
+            with pytest.raises(ValueError, match=expected_error):
                 runtime.publish(ws)
 
     def test_build_cloud_custom_registry_as_base(self):
@@ -337,9 +342,9 @@ class TestBuildRuntime:
             (ws / "Dockerfile").touch()
 
             runtime = PublishRuntime(verbose=True)
-            metadata = runtime.metadata_service.load_metadata(ws)
 
-            runtime._prepare_cloud_image = MagicMock(return_value="swr.cn-east-3.myhuaweicloud.com/agentcube/test-agent:0.0.2")
+            mocked_url = "swr.cn-east-3.myhuaweicloud.com/agentcube/test-agent:0.0.2"
+            runtime._prepare_cloud_image = MagicMock(return_value=mocked_url)
             runtime._prepare_local_image = MagicMock()
 
             # Mock agentcube_provider

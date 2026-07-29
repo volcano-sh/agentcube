@@ -78,16 +78,18 @@ async def _mcp_client_session(
     request_timeout: float = 120.0,
 ) -> AsyncIterator[tuple[Any, Any]]:
     """MCP Streamable HTTP client session; closes cleanly on exit."""
-    import httpx
+    import httpx2
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client
 
     url = f"http://{host}:{port}/mcp"
-    async with httpx.AsyncClient(timeout=request_timeout) as http_client:
+    async with httpx2.AsyncClient(
+        timeout=request_timeout,
+        follow_redirects=True,
+    ) as http_client:
         async with streamable_http_client(url, http_client=http_client) as (
             read_stream,
             write_stream,
-            _,
         ):
             async with ClientSession(read_stream, write_stream) as session:
                 init_result = await session.initialize()
@@ -175,15 +177,18 @@ class TestMCPCodeInterpreterE2E(unittest.TestCase):
             print("[MCP E2E] MCP server subprocess stopped\n")
 
     def test_mcp_protocol_initialize_ping_list_tools(self):
-        """MCP: initialize, ping, tools/list; assert full tool surface and inputSchema."""
+        """MCP: initialize, ping, tools/list; assert full tool surface and input_schema."""
 
         async def body():
             async with _mcp_client_session(self.host, self.port) as (session, init_result):
-                self.assertIsNotNone(init_result.protocolVersion, "initialize must return protocolVersion")
-                print(f"[MCP E2E] initialize protocolVersion={init_result.protocolVersion!r}")
-                si = init_result.serverInfo
+                self.assertIsNotNone(
+                    init_result.protocol_version,
+                    "initialize must return protocol_version",
+                )
+                print(f"[MCP E2E] initialize protocol_version={init_result.protocol_version!r}")
+                si = init_result.server_info
                 if si is not None:
-                    print(f"[MCP E2E] serverInfo.name={getattr(si, 'name', None)!r}")
+                    print(f"[MCP E2E] server_info.name={getattr(si, 'name', None)!r}")
 
                 ping = await session.send_ping()
                 self.assertIsNotNone(ping)
@@ -201,15 +206,15 @@ class TestMCPCodeInterpreterE2E(unittest.TestCase):
                         (t.description or "").strip(),
                         f"tool {t.name!r} must have a non-empty description",
                     )
-                    schema = getattr(t, "inputSchema", None) or {}
+                    schema = t.input_schema or {}
                     self.assertEqual(
                         schema.get("type"),
                         "object",
-                        f"tool {t.name!r} inputSchema.type must be object",
+                        f"tool {t.name!r} input_schema.type must be object",
                     )
                     props = schema.get("properties")
                     if not isinstance(props, dict):
-                        self.fail(f"tool {t.name!r} inputSchema.properties must be dict, got {props!r}")
+                        self.fail(f"tool {t.name!r} input_schema.properties must be dict, got {props!r}")
                     print(f"[MCP E2E] tool {t.name!r} input properties: {list(props.keys())}")
 
         _run_async(body())
@@ -226,7 +231,7 @@ class TestMCPCodeInterpreterE2E(unittest.TestCase):
                         "session_reuse": False,
                     },
                 )
-                self.assertFalse(res.isError, _tool_result_text(res))
+                self.assertFalse(res.is_error, _tool_result_text(res))
                 data = json.loads(_tool_result_text(res))
                 self.assertIn("mcp-cmd-ok", data.get("output", ""), data)
                 print(f"[MCP E2E] execute_command ok: {data!r}")
@@ -234,7 +239,7 @@ class TestMCPCodeInterpreterE2E(unittest.TestCase):
         _run_async(body())
 
     def test_mcp_stateless_execution_nameerror(self):
-        """SDK case2 equivalent: two run_code calls on same session; second fails (isError)."""
+        """SDK case2 equivalent: two run_code calls on same session; second fails (is_error)."""
 
         async def body():
             async with _mcp_client_session(self.host, self.port) as (session, _):
@@ -246,7 +251,7 @@ class TestMCPCodeInterpreterE2E(unittest.TestCase):
                         "session_reuse": True,
                     },
                 )
-                self.assertFalse(r1.isError, _tool_result_text(r1))
+                self.assertFalse(r1.is_error, _tool_result_text(r1))
                 sid = json.loads(_tool_result_text(r1))["session_id"]
                 print(f"[MCP E2E] stateless step1 session_id={sid!r}")
 
@@ -259,7 +264,7 @@ class TestMCPCodeInterpreterE2E(unittest.TestCase):
                         "session_reuse": True,
                     },
                 )
-                self.assertTrue(r2.isError, "stateless print(x) must surface as MCP tool error")
+                self.assertTrue(r2.is_error, "stateless print(x) must surface as MCP tool error")
                 err_text = _tool_result_text(r2)
                 self.assertTrue(
                     "NameError" in err_text or "name 'x' is not defined" in err_text or "not defined" in err_text,
@@ -268,7 +273,7 @@ class TestMCPCodeInterpreterE2E(unittest.TestCase):
                 print(f"[MCP E2E] stateless step2 error as expected: {err_text[:200]!r}...")
 
                 r3 = await session.call_tool("stop_session", {"session_id": sid})
-                self.assertFalse(r3.isError, _tool_result_text(r3))
+                self.assertFalse(r3.is_error, _tool_result_text(r3))
 
         _run_async(body())
 
@@ -286,14 +291,14 @@ class TestMCPCodeInterpreterE2E(unittest.TestCase):
                         "session_reuse": True,
                     },
                 )
-                self.assertFalse(w.isError, _tool_result_text(w))
+                self.assertFalse(w.is_error, _tool_result_text(w))
                 sid = json.loads(_tool_result_text(w))["session_id"]
 
                 lst = await session.call_tool(
                     "list_files",
                     {"path": ".", "session_id": sid, "session_reuse": True},
                 )
-                self.assertFalse(lst.isError, _tool_result_text(lst))
+                self.assertFalse(lst.is_error, _tool_result_text(lst))
                 payload = json.loads(_tool_result_text(lst))
                 files = payload.get("entries") or []
                 names = []
@@ -315,13 +320,13 @@ class TestMCPCodeInterpreterE2E(unittest.TestCase):
                         "session_reuse": True,
                     },
                 )
-                self.assertFalse(r.isError, _tool_result_text(r))
+                self.assertFalse(r.is_error, _tool_result_text(r))
                 out = json.loads(_tool_result_text(r)).get("output", "")
                 self.assertIn(marker, out, out)
                 print(f"[MCP E2E] read marker via run_code ok: {out!r}")
 
                 st = await session.call_tool("stop_session", {"session_id": sid})
-                self.assertFalse(st.isError, _tool_result_text(st))
+                self.assertFalse(st.is_error, _tool_result_text(st))
                 d_stop = json.loads(_tool_result_text(st))
                 self.assertEqual(d_stop.get("status"), "stopped")
 
@@ -353,7 +358,7 @@ class TestMCPCodeInterpreterE2E(unittest.TestCase):
                             "session_reuse": True,
                         },
                     )
-                    self.assertFalse(u.isError, _tool_result_text(u))
+                    self.assertFalse(u.is_error, _tool_result_text(u))
                     sid = json.loads(_tool_result_text(u))["session_id"]
 
                     d = await session.call_tool(
@@ -365,7 +370,7 @@ class TestMCPCodeInterpreterE2E(unittest.TestCase):
                             "session_reuse": True,
                         },
                     )
-                    self.assertFalse(d.isError, _tool_result_text(d))
+                    self.assertFalse(d.is_error, _tool_result_text(d))
 
                     with open(out_path, "rb") as f:
                         self.assertEqual(f.read(), payload_bytes)
@@ -383,7 +388,7 @@ class TestMCPCodeInterpreterE2E(unittest.TestCase):
                             pass
                     if sid:
                         st = await session.call_tool("stop_session", {"session_id": sid})
-                        self.assertFalse(st.isError, _tool_result_text(st))
+                        self.assertFalse(st.is_error, _tool_result_text(st))
 
         _run_async(body())
 

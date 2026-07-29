@@ -84,7 +84,7 @@ E2E_SKIP_SETUP=true ./test/e2e/run_e2e.sh
 |------|-------------|
 | `test_mcp_protocol_initialize_ping_list_tools` | MCP `initialize`, notification path, `ping`, `tools/list`; asserts tools `run_code`, `execute_command`, `write_file`, `list_files`, `stop_session` |
 | `test_mcp_execute_command` | `execute_command`: `echo` output |
-| `test_mcp_stateless_execution_nameerror` | Two `run_code` on same session (SDK case2); second expects `isError` + NameError-like text |
+| `test_mcp_stateless_execution_nameerror` | Two `run_code` on same session (SDK case2); second expects `is_error` + NameError-like text |
 | `test_mcp_write_list_run_code_file_workflow` | `write_file` → `list_files` → `run_code` read file; `session_reuse` + `stop_session` (light SDK case3 + reuse) |
 
 Minimal **`run_code`** smoke (SDK case1 style) lives in **`test_mcp_code_interpreter_stdio.py`** and **`test_mcp_code_interpreter_k8s.py`** to avoid duplicating the same check three times.

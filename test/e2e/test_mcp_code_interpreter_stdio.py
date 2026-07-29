@@ -80,8 +80,8 @@ class TestMCPCodeInterpreterStdioE2E(unittest.TestCase):
             async with stdio_client(params) as (read_stream, write_stream):
                 async with ClientSession(read_stream, write_stream) as session:
                     init = await session.initialize()
-                    self.assertIsNotNone(init.protocolVersion)
-                    print(f"[MCP stdio E2E] initialize ok protocolVersion={init.protocolVersion!r}")
+                    self.assertIsNotNone(init.protocol_version)
+                    print(f"[MCP stdio E2E] initialize ok protocol_version={init.protocol_version!r}")
 
                     tools = await session.list_tools()
                     names = {t.name for t in tools.tools}
@@ -97,7 +97,7 @@ class TestMCPCodeInterpreterStdioE2E(unittest.TestCase):
                             "session_reuse": False,
                         },
                     )
-                    self.assertFalse(res.isError, _tool_result_text(res))
+                    self.assertFalse(res.is_error, _tool_result_text(res))
                     data = json.loads(_tool_result_text(res))
                     self.assertIn("4", (data.get("output") or ""), data)
                     print(f"[MCP stdio E2E] run_code ok output={data.get('output')!r}")

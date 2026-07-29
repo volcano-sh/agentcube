@@ -56,15 +56,17 @@ class TestMCPCodeInterpreterK8sDeploymentE2E(unittest.TestCase):
             raise unittest.SkipTest("MCP_K8S_MCP_URL not set (in-cluster MCP E2E not started)")
 
         async def body():
-            import httpx
+            import httpx2
             from mcp import ClientSession
             from mcp.client.streamable_http import streamable_http_client
 
-            async with httpx.AsyncClient(timeout=120.0) as http_client:
+            async with httpx2.AsyncClient(
+                timeout=120.0,
+                follow_redirects=True,
+            ) as http_client:
                 async with streamable_http_client(url, http_client=http_client) as (
                     read_stream,
                     write_stream,
-                    _,
                 ):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
@@ -83,7 +85,7 @@ class TestMCPCodeInterpreterK8sDeploymentE2E(unittest.TestCase):
                                 "session_reuse": False,
                             },
                         )
-                        self.assertFalse(res.isError, _tool_result_text(res))
+                        self.assertFalse(res.is_error, _tool_result_text(res))
                         data = json.loads(_tool_result_text(res))
                         self.assertIn("5", (data.get("output") or ""), data)
                         print(f"[MCP K8s E2E] run_code via in-cluster pod ok output={data.get('output')!r}")

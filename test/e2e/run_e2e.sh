@@ -13,7 +13,7 @@ if [ -z "${MTLS_ENABLED+x}" ]; then
         MTLS_ENABLED=true
     fi
 fi
-AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION:-v0.4.6}
+AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION:-v0.5.3}
 E2E_REQUIRE_CODEINTERPRETER=${E2E_REQUIRE_CODEINTERPRETER:-false}
 WORKLOAD_MANAGER_IMAGE=${WORKLOAD_MANAGER_IMAGE:-workloadmanager:latest}
 ROUTER_IMAGE=${ROUTER_IMAGE:-agentcube-router:latest}
@@ -333,10 +333,354 @@ run_setup() {
     done
 
     step "Installing agent-sandbox (${AGENT_SANDBOX_VERSION})..."
+    
+    # E2E Upgrade test logic
+    if [ "${E2E_SKIP_SETUP}" != "true" ] && [ "${AGENT_SANDBOX_VERSION}" = "v0.5.3" ]; then
+        step "Seeding v0.4.6 agent-sandbox for upgrade test..."
+        kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.4.6/manifest.yaml"
+        kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.4.6/extensions.yaml"
+        
+        kubectl -n agent-sandbox-system rollout status deployment/agent-sandbox-controller --timeout=300s
+        
+        # Seed the template and pool first so the claim controller can adopt a
+        # known Ready member instead of racing a cold fallback.
+        ensure_namespace "${AGENTCUBE_NAMESPACE}"
+        cat <<EOF | kubectl apply -f -
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: e2e-upgrade-template
+  namespace: ${AGENTCUBE_NAMESPACE}
+spec:
+  podTemplate:
+    spec:
+      containers:
+      - name: pause
+        image: registry.k8s.io/pause:3.10
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxWarmPool
+metadata:
+  name: e2e-upgrade-warmpool
+  namespace: ${AGENTCUBE_NAMESPACE}
+spec:
+  replicas: 1
+  sandboxTemplateRef:
+    name: e2e-upgrade-template
+EOF
+
+        echo "Waiting for v0.4.6 warm pool to expose one Ready, pool-owned Sandbox..."
+        for i in $(seq 1 30); do
+            WARM_POOL_UID=$(kubectl get sandboxwarmpool e2e-upgrade-warmpool -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+            POOL_SELECTOR=$(kubectl get sandboxwarmpool e2e-upgrade-warmpool -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.status.selector}' 2>/dev/null || true)
+            POOL_REPLICAS=$(kubectl get sandboxwarmpool e2e-upgrade-warmpool -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.status.replicas}' 2>/dev/null || true)
+            POOL_READY_REPLICAS=$(kubectl get sandboxwarmpool e2e-upgrade-warmpool -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
+
+            POOL_MEMBER_COUNT=0
+            POOL_MEMBER_NAME=""
+            if [ -n "${POOL_SELECTOR}" ]; then
+                POOL_MEMBER_COUNT=$(kubectl get sandboxes -n "${AGENTCUBE_NAMESPACE}" -l "${POOL_SELECTOR}" -o name 2>/dev/null | wc -l | tr -d '[:space:]' || true)
+                POOL_MEMBER_NAME=$(kubectl get sandboxes -n "${AGENTCUBE_NAMESPACE}" -l "${POOL_SELECTOR}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+            fi
+
+            if [ "${POOL_REPLICAS:-0}" -eq 1 ] && [ "${POOL_READY_REPLICAS:-0}" -eq 1 ] && [ "${POOL_MEMBER_COUNT:-0}" -eq 1 ] && [ -n "${POOL_MEMBER_NAME}" ]; then
+                POOL_MEMBER_OWNER_KIND=$(kubectl get sandbox "${POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].kind}' 2>/dev/null || true)
+                POOL_MEMBER_OWNER_NAME=$(kubectl get sandbox "${POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].name}' 2>/dev/null || true)
+                POOL_MEMBER_OWNER_UID=$(kubectl get sandbox "${POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].uid}' 2>/dev/null || true)
+                POOL_MEMBER_READY=$(kubectl get sandbox "${POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+
+                if [ "${POOL_MEMBER_OWNER_KIND}" = "SandboxWarmPool" ] && [ "${POOL_MEMBER_OWNER_NAME}" = "e2e-upgrade-warmpool" ] && [ "${POOL_MEMBER_OWNER_UID}" = "${WARM_POOL_UID}" ] && [ "${POOL_MEMBER_READY}" = "True" ]; then
+                    BOUND_SANDBOX_NAME="${POOL_MEMBER_NAME}"
+                    BOUND_SANDBOX_UID=$(kubectl get sandbox "${BOUND_SANDBOX_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.uid}')
+                    BOUND_POD_NAME=$(kubectl get sandbox "${BOUND_SANDBOX_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.annotations.agents\.x-k8s\.io/pod-name}' 2>/dev/null || true)
+                    BOUND_POD_NAME=${BOUND_POD_NAME:-${BOUND_SANDBOX_NAME}}
+                    BOUND_POD_UID=$(kubectl get pod "${BOUND_POD_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+                    if [ -n "${BOUND_POD_UID}" ]; then
+                        echo "Captured Ready v0.4.6 pool member ${BOUND_SANDBOX_NAME} (${BOUND_SANDBOX_UID}) and Pod ${BOUND_POD_NAME} (${BOUND_POD_UID})"
+                        break
+                    fi
+                fi
+            fi
+            if [ "$i" -eq 30 ]; then
+                echo "Timed out waiting for one Ready Sandbox owned by e2e-upgrade-warmpool" >&2
+                kubectl get sandboxwarmpool e2e-upgrade-warmpool -n "${AGENTCUBE_NAMESPACE}" -o yaml >&2 || true
+                kubectl get sandboxes -n "${AGENTCUBE_NAMESPACE}" -o yaml >&2 || true
+                exit 1
+            fi
+            sleep 2
+        done
+
+        echo "Creating a claim that targets the captured v0.4.6 warm pool member..."
+        cat <<EOF | kubectl apply -f -
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxClaim
+metadata:
+  name: upgrade-bound-claim
+  namespace: ${AGENTCUBE_NAMESPACE}
+spec:
+  sandboxTemplateRef:
+    name: e2e-upgrade-template
+  warmpool: e2e-upgrade-warmpool
+EOF
+
+        CLAIM_UID=$(kubectl get sandboxclaim upgrade-bound-claim -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.uid}')
+
+        echo "Waiting for the v0.4.6 claim controller to complete adoption of ${BOUND_SANDBOX_NAME}..."
+        for i in $(seq 1 30); do
+            CLAIM_ASSIGNED_SANDBOX=$(kubectl get sandboxclaim upgrade-bound-claim -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.labels.agents\.x-k8s\.io/sandbox-name}' 2>/dev/null || true)
+            CLAIM_BOUND_SANDBOX=$(kubectl get sandboxclaim upgrade-bound-claim -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.status.sandbox.name}' 2>/dev/null || true)
+            CLAIM_READY=$(kubectl get sandboxclaim upgrade-bound-claim -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+            ADOPTED_OWNER_KIND=$(kubectl get sandbox "${BOUND_SANDBOX_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].kind}' 2>/dev/null || true)
+            ADOPTED_OWNER_NAME=$(kubectl get sandbox "${BOUND_SANDBOX_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].name}' 2>/dev/null || true)
+            ADOPTED_OWNER_UID=$(kubectl get sandbox "${BOUND_SANDBOX_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].uid}' 2>/dev/null || true)
+            ADOPTED_POOL_LABEL=$(kubectl get sandbox "${BOUND_SANDBOX_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.labels.agents\.x-k8s\.io/warm-pool-sandbox}' 2>/dev/null || true)
+            ADOPTED_CLAIM_UID_LABEL=$(kubectl get sandbox "${BOUND_SANDBOX_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.labels.agents\.x-k8s\.io/claim-uid}' 2>/dev/null || true)
+            ADOPTED_SANDBOX_UID=$(kubectl get sandbox "${BOUND_SANDBOX_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+            ADOPTED_POD_UID=$(kubectl get pod "${BOUND_POD_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+
+            if [ "${CLAIM_ASSIGNED_SANDBOX}" = "${BOUND_SANDBOX_NAME}" ] && [ "${CLAIM_BOUND_SANDBOX}" = "${BOUND_SANDBOX_NAME}" ] && [ "${CLAIM_READY}" = "True" ] && [ "${ADOPTED_OWNER_KIND}" = "SandboxClaim" ] && [ "${ADOPTED_OWNER_NAME}" = "upgrade-bound-claim" ] && [ "${ADOPTED_OWNER_UID}" = "${CLAIM_UID}" ] && [ -z "${ADOPTED_POOL_LABEL}" ] && [ "${ADOPTED_CLAIM_UID_LABEL}" = "${CLAIM_UID}" ] && [ "${ADOPTED_SANDBOX_UID}" = "${BOUND_SANDBOX_UID}" ] && [ "${ADOPTED_POD_UID}" = "${BOUND_POD_UID}" ]; then
+                echo "v0.4.6 controller adopted the captured Sandbox without recreating its Sandbox or Pod"
+                break
+            fi
+            if [ "$i" -eq 30 ]; then
+                echo "Timed out waiting for controller-driven adoption of ${BOUND_SANDBOX_NAME}" >&2
+                kubectl get sandboxclaim upgrade-bound-claim -n "${AGENTCUBE_NAMESPACE}" -o yaml >&2 || true
+                kubectl get sandbox "${BOUND_SANDBOX_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o yaml >&2 || true
+                kubectl logs -n agent-sandbox-system deployment/agent-sandbox-controller --tail=100 >&2 || true
+                exit 1
+            fi
+            sleep 2
+        done
+
+        echo "Waiting for v0.4.6 to replenish the pool after the real adoption..."
+        for i in $(seq 1 30); do
+            POOL_READY_REPLICAS=$(kubectl get sandboxwarmpool e2e-upgrade-warmpool -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
+            POOL_MEMBER_COUNT=$(kubectl get sandboxes -n "${AGENTCUBE_NAMESPACE}" -l "${POOL_SELECTOR}" -o name 2>/dev/null | wc -l | tr -d '[:space:]' || true)
+            PRE_UPGRADE_POOL_MEMBER_NAME=$(kubectl get sandboxes -n "${AGENTCUBE_NAMESPACE}" -l "${POOL_SELECTOR}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+            if [ "${POOL_READY_REPLICAS:-0}" -eq 1 ] && [ "${POOL_MEMBER_COUNT:-0}" -eq 1 ] && [ -n "${PRE_UPGRADE_POOL_MEMBER_NAME}" ] && [ "${PRE_UPGRADE_POOL_MEMBER_NAME}" != "${BOUND_SANDBOX_NAME}" ]; then
+                PRE_UPGRADE_POOL_MEMBER_UID=$(kubectl get sandbox "${PRE_UPGRADE_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+                PRE_UPGRADE_POOL_OWNER_KIND=$(kubectl get sandbox "${PRE_UPGRADE_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].kind}' 2>/dev/null || true)
+                PRE_UPGRADE_POOL_OWNER_NAME=$(kubectl get sandbox "${PRE_UPGRADE_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].name}' 2>/dev/null || true)
+                PRE_UPGRADE_POOL_OWNER_UID=$(kubectl get sandbox "${PRE_UPGRADE_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].uid}' 2>/dev/null || true)
+                PRE_UPGRADE_POOL_MEMBER_READY=$(kubectl get sandbox "${PRE_UPGRADE_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+                if [ -n "${PRE_UPGRADE_POOL_MEMBER_UID}" ] && [ "${PRE_UPGRADE_POOL_MEMBER_UID}" != "${BOUND_SANDBOX_UID}" ] && [ "${PRE_UPGRADE_POOL_OWNER_KIND}" = "SandboxWarmPool" ] && [ "${PRE_UPGRADE_POOL_OWNER_NAME}" = "e2e-upgrade-warmpool" ] && [ "${PRE_UPGRADE_POOL_OWNER_UID}" = "${WARM_POOL_UID}" ] && [ "${PRE_UPGRADE_POOL_MEMBER_READY}" = "True" ]; then
+                    echo "Captured v0.4.6 replacement pool member ${PRE_UPGRADE_POOL_MEMBER_NAME} (${PRE_UPGRADE_POOL_MEMBER_UID})"
+                    break
+                fi
+            fi
+            if [ "$i" -eq 30 ]; then
+                echo "Timed out waiting for v0.4.6 to replenish e2e-upgrade-warmpool after adoption" >&2
+                kubectl get sandboxwarmpool e2e-upgrade-warmpool -n "${AGENTCUBE_NAMESPACE}" -o yaml >&2 || true
+                kubectl get sandboxes -n "${AGENTCUBE_NAMESPACE}" -o yaml >&2 || true
+                exit 1
+            fi
+            sleep 2
+        done
+
+        echo "Creating an isolated v0.4.6 cold-start fixture..."
+        cat <<EOF | kubectl apply -f -
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxClaim
+metadata:
+  name: shadow-pool-e2e-code-interpreter
+  namespace: ${AGENTCUBE_NAMESPACE}
+spec:
+  sandboxTemplateRef:
+    name: e2e-upgrade-template
+  warmpool: none
+EOF
+        kubectl wait --for='jsonpath={.status.conditions[?(@.type=="Ready")].status}=True' sandboxclaim/shadow-pool-e2e-code-interpreter -n "${AGENTCUBE_NAMESPACE}" --timeout=60s
+        COLD_SANDBOX_NAME=$(kubectl get sandboxclaim shadow-pool-e2e-code-interpreter -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.status.sandbox.name}')
+        if [ "${COLD_SANDBOX_NAME}" != "shadow-pool-e2e-code-interpreter" ]; then
+            echo "Error: cold fixture unexpectedly adopted a warm pool member: ${COLD_SANDBOX_NAME}" >&2
+            exit 1
+        fi
+
+        echo "Running migration bootstrap phase..."
+        curl -fsSL https://raw.githubusercontent.com/kubernetes-sigs/agent-sandbox/refs/tags/v0.5.3/helm/files/migrate.sh -o /tmp/migrate.sh
+        chmod +x /tmp/migrate.sh
+        /tmp/migrate.sh --phase=bootstrap
+    fi
+
     # Download then apply to avoid URL parsing issues / improve debuggability.
-    kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml"
-    kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml"
+    if [[ "${AGENT_SANDBOX_VERSION}" =~ ^v0\.4\. ]]; then
+        kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml"
+        kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml"
+    else
+        kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/sandbox-with-extensions.yaml"
+        kubectl -n agent-sandbox-system patch deployment agent-sandbox-controller --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--sandbox-concurrent-workers=10"}]'
+    fi
+    
     verify_agent_sandbox_controller
+    if [ "${E2E_SKIP_SETUP}" != "true" ] && [ "${AGENT_SANDBOX_VERSION}" = "v0.5.3" ]; then
+        echo "Waiting for conversion webhook to become responsive (kube-proxy endpoint sync)..."
+        for i in {1..30}; do
+            if kubectl get sandboxwarmpools.extensions.agents.x-k8s.io -A >/dev/null 2>&1; then
+                echo "Webhook is responsive!"
+                break
+            fi
+            echo "Webhook not ready yet, waiting... (attempt $i/30)"
+            if [ $i -eq 30 ]; then
+                echo "Timed out waiting for webhook. Controller logs:"
+                kubectl logs -n agent-sandbox-system -l control-plane=controller-manager || true
+                exit 1
+            fi
+            sleep 5
+        done
+        
+        echo "Running migration migrate phase..."
+        /tmp/migrate.sh --phase=migrate
+        
+        step "Verifying SandboxClaims survived migration"
+        kubectl get sandboxclaim shadow-pool-e2e-code-interpreter -n "${AGENTCUBE_NAMESPACE}" || {
+            echo "Error: Seeded cold SandboxClaim was lost during migration!" >&2
+            exit 1
+        }
+        
+        kubectl get sandboxclaim upgrade-bound-claim -n "${AGENTCUBE_NAMESPACE}" || {
+            echo "Error: Seeded bound SandboxClaim was lost during migration!" >&2
+            exit 1
+        }
+
+        echo "Waiting for v0.5.3 controllers to reconcile the exact bound and idle pool lineages..."
+        CONTROLLER_NAMESPACE="agent-sandbox-system"
+        for i in $(seq 1 60); do
+            POST_UPGRADE_CLAIM_UID=$(kubectl get sandboxclaim upgrade-bound-claim -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+            POST_UPGRADE_WARM_POOL_REF=$(kubectl get sandboxclaim upgrade-bound-claim -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.spec.warmPoolRef.name}' 2>/dev/null || true)
+            POST_UPGRADE_BINDING=$(kubectl get sandboxclaim upgrade-bound-claim -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.status.sandbox.name}' 2>/dev/null || true)
+            POST_UPGRADE_OWNER_KIND=$(kubectl get sandbox "${BOUND_SANDBOX_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].kind}' 2>/dev/null || true)
+            POST_UPGRADE_OWNER_NAME=$(kubectl get sandbox "${BOUND_SANDBOX_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].name}' 2>/dev/null || true)
+            POST_UPGRADE_OWNER_UID=$(kubectl get sandbox "${BOUND_SANDBOX_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].uid}' 2>/dev/null || true)
+            BOUND_LAUNCH_TYPE=$(kubectl get sandbox "${BOUND_SANDBOX_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.labels.agents\.x-k8s\.io/launch-type}' 2>/dev/null || true)
+            IDLE_LAUNCH_TYPE=$(kubectl get sandbox "${PRE_UPGRADE_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.labels.agents\.x-k8s\.io/launch-type}' 2>/dev/null || true)
+            POST_UPGRADE_POOL_UID=$(kubectl get sandboxwarmpool e2e-upgrade-warmpool -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+            POST_UPGRADE_POOL_SELECTOR=$(kubectl get sandboxwarmpool e2e-upgrade-warmpool -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.status.selector}' 2>/dev/null || true)
+            POST_UPGRADE_IDLE_UID=$(kubectl get sandbox "${PRE_UPGRADE_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+            POST_UPGRADE_IDLE_OWNER_KIND=$(kubectl get sandbox "${PRE_UPGRADE_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].kind}' 2>/dev/null || true)
+            POST_UPGRADE_IDLE_OWNER_NAME=$(kubectl get sandbox "${PRE_UPGRADE_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].name}' 2>/dev/null || true)
+            POST_UPGRADE_IDLE_OWNER_UID=$(kubectl get sandbox "${PRE_UPGRADE_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].uid}' 2>/dev/null || true)
+
+            if [ "${POST_UPGRADE_CLAIM_UID}" = "${CLAIM_UID}" ] &&
+                [ "${POST_UPGRADE_WARM_POOL_REF}" = "e2e-upgrade-warmpool" ] &&
+                [ "${POST_UPGRADE_BINDING}" = "${BOUND_SANDBOX_NAME}" ] &&
+                [ "${POST_UPGRADE_OWNER_KIND}" = "SandboxClaim" ] &&
+                [ "${POST_UPGRADE_OWNER_NAME}" = "upgrade-bound-claim" ] &&
+                [ "${POST_UPGRADE_OWNER_UID}" = "${CLAIM_UID}" ] &&
+                [ "${BOUND_LAUNCH_TYPE}" = "warm" ] &&
+                [ "${IDLE_LAUNCH_TYPE}" = "warm" ] &&
+                [ "${POST_UPGRADE_POOL_UID}" = "${WARM_POOL_UID}" ] &&
+                [ -n "${POST_UPGRADE_POOL_SELECTOR}" ] &&
+                [ "${POST_UPGRADE_POOL_SELECTOR}" = "${POOL_SELECTOR}" ] &&
+                [ "${POST_UPGRADE_IDLE_UID}" = "${PRE_UPGRADE_POOL_MEMBER_UID}" ] &&
+                [ "${POST_UPGRADE_IDLE_OWNER_KIND}" = "SandboxWarmPool" ] &&
+                [ "${POST_UPGRADE_IDLE_OWNER_NAME}" = "e2e-upgrade-warmpool" ] &&
+                [ "${POST_UPGRADE_IDLE_OWNER_UID}" = "${WARM_POOL_UID}" ]; then
+                echo "v0.5.3 controllers marked both preserved warm-start lineages"
+                break
+            fi
+            if [ "$i" -eq 60 ]; then
+                echo "Error: v0.5.3 controllers did not reconcile the preserved bound and idle pool lineages" >&2
+                kubectl get sandboxclaim upgrade-bound-claim -n "${AGENTCUBE_NAMESPACE}" -o yaml >&2 || true
+                kubectl get sandboxwarmpool e2e-upgrade-warmpool -n "${AGENTCUBE_NAMESPACE}" -o yaml >&2 || true
+                kubectl get sandbox "${BOUND_SANDBOX_NAME}" "${PRE_UPGRADE_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o yaml >&2 || true
+                kubectl logs -n "${CONTROLLER_NAMESPACE}" deployment/agent-sandbox-controller --tail=100 >&2 || true
+                exit 1
+            fi
+            sleep 2
+        done
+
+        echo "Waiting for upgrade-bound-claim to report Ready=True after current-controller reconciliation..."
+        if ! kubectl wait --for='jsonpath={.status.conditions[?(@.type=="Ready")].status}=True' sandboxclaim/upgrade-bound-claim -n "${AGENTCUBE_NAMESPACE}" --timeout=60s; then
+            echo "Error: Timed out waiting 60s for SandboxClaim upgrade-bound-claim Ready=True!" >&2
+            echo "=== SandboxClaim Diagnostics ===" >&2
+            kubectl get sandboxclaim upgrade-bound-claim -n "${AGENTCUBE_NAMESPACE}" -o yaml >&2
+            kubectl describe sandboxclaim upgrade-bound-claim -n "${AGENTCUBE_NAMESPACE}" >&2
+            echo "=== Events ===" >&2
+            kubectl get events -n "${AGENTCUBE_NAMESPACE}" --sort-by=.metadata.creationTimestamp | tail -50 >&2
+            echo "=== Controller Logs ===" >&2
+            kubectl logs -n "${CONTROLLER_NAMESPACE}" deployment/agent-sandbox-controller --tail=100 >&2 || true
+            exit 1
+        fi
+        
+        echo "Verifying warm-start regression: bound Sandbox and Pod UIDs must not change..."
+        POST_UPGRADE_SANDBOX_UID=$(kubectl get sandbox "${BOUND_SANDBOX_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.uid}')
+        POST_UPGRADE_POD_UID=$(kubectl get pod "${BOUND_POD_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.uid}')
+        
+        if [ "${POST_UPGRADE_SANDBOX_UID}" != "${BOUND_SANDBOX_UID}" ] || [ -z "${POST_UPGRADE_SANDBOX_UID}" ]; then
+            echo "Error: Bound Sandbox UID changed or lost during upgrade! (Expected: ${BOUND_SANDBOX_UID}, Got: ${POST_UPGRADE_SANDBOX_UID})" >&2
+            exit 1
+        fi
+        
+        if [ "${POST_UPGRADE_POD_UID}" != "${BOUND_POD_UID}" ] || [ -z "${POST_UPGRADE_POD_UID}" ]; then
+            echo "Error: Bound Pod UID changed or lost during upgrade! (Expected: ${BOUND_POD_UID}, Got: ${POST_UPGRADE_POD_UID})" >&2
+            exit 1
+        fi
+        
+        echo "SandboxClaim migration, bound lifecycle, and exact pool lineage verified successfully"
+        
+        echo "Verifying garbage collection of the migrated claim-owned lineage..."
+        kubectl delete sandboxclaim upgrade-bound-claim -n "${AGENTCUBE_NAMESPACE}"
+        
+        if ! kubectl wait --for=delete "sandbox/${BOUND_SANDBOX_NAME}" -n "${AGENTCUBE_NAMESPACE}" --timeout=90s; then
+            echo "Error: bound Sandbox ${BOUND_SANDBOX_NAME} was not garbage-collected" >&2
+            kubectl get sandbox "${BOUND_SANDBOX_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o yaml >&2 || true
+            exit 1
+        fi
+        if ! kubectl wait --for=delete "pod/${BOUND_POD_NAME}" -n "${AGENTCUBE_NAMESPACE}" --timeout=90s; then
+            echo "Error: bound Pod ${BOUND_POD_NAME} was not garbage-collected" >&2
+            kubectl get pod "${BOUND_POD_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o yaml >&2 || true
+            exit 1
+        fi
+        echo "Original Sandbox ${BOUND_SANDBOX_NAME} (${BOUND_SANDBOX_UID}) and Pod ${BOUND_POD_NAME} (${BOUND_POD_UID}) were garbage-collected"
+
+        echo "Verifying claim deletion did not disturb the idle pool member..."
+        POST_GC_IDLE_UID=$(kubectl get sandbox "${PRE_UPGRADE_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+        POST_GC_IDLE_OWNER_UID=$(kubectl get sandbox "${PRE_UPGRADE_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].uid}' 2>/dev/null || true)
+        if [ "${POST_GC_IDLE_UID}" != "${PRE_UPGRADE_POOL_MEMBER_UID}" ] || [ "${POST_GC_IDLE_OWNER_UID}" != "${WARM_POOL_UID}" ]; then
+            echo "Error: claim garbage collection changed the independent idle pool lineage" >&2
+            exit 1
+        fi
+
+        echo "Deleting the preserved idle member to causally exercise v0.5.3 pool refill..."
+        kubectl delete sandbox "${PRE_UPGRADE_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}"
+        if ! kubectl wait --for=delete "sandbox/${PRE_UPGRADE_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" --timeout=90s; then
+            echo "Error: idle pool member ${PRE_UPGRADE_POOL_MEMBER_NAME} was not deleted" >&2
+            exit 1
+        fi
+
+        for i in $(seq 1 60); do
+            READY_REPLICAS=$(kubectl get sandboxwarmpool e2e-upgrade-warmpool -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
+            CURRENT_POOL_SELECTOR=$(kubectl get sandboxwarmpool e2e-upgrade-warmpool -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.status.selector}' 2>/dev/null || true)
+            CURRENT_POOL_MEMBER_COUNT=0
+            NEW_POOL_MEMBER_NAME=""
+            if [ -n "${CURRENT_POOL_SELECTOR}" ]; then
+                CURRENT_POOL_MEMBER_COUNT=$(kubectl get sandboxes -n "${AGENTCUBE_NAMESPACE}" -l "${CURRENT_POOL_SELECTOR}" -o name 2>/dev/null | wc -l | tr -d '[:space:]' || true)
+                NEW_POOL_MEMBER_NAME=$(kubectl get sandboxes -n "${AGENTCUBE_NAMESPACE}" -l "${CURRENT_POOL_SELECTOR}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+            fi
+
+            if [ "${READY_REPLICAS:-0}" -eq 1 ] && [ "${CURRENT_POOL_MEMBER_COUNT:-0}" -eq 1 ] && [ "${CURRENT_POOL_SELECTOR}" = "${POOL_SELECTOR}" ] && [ -n "${NEW_POOL_MEMBER_NAME}" ] && [ "${NEW_POOL_MEMBER_NAME}" != "${PRE_UPGRADE_POOL_MEMBER_NAME}" ] && [ "${NEW_POOL_MEMBER_NAME}" != "${BOUND_SANDBOX_NAME}" ]; then
+                NEW_POOL_MEMBER_UID=$(kubectl get sandbox "${NEW_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+                NEW_POOL_OWNER_KIND=$(kubectl get sandbox "${NEW_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].kind}' 2>/dev/null || true)
+                NEW_POOL_OWNER_NAME=$(kubectl get sandbox "${NEW_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].name}' 2>/dev/null || true)
+                NEW_POOL_OWNER_UID=$(kubectl get sandbox "${NEW_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].uid}' 2>/dev/null || true)
+                NEW_POOL_LAUNCH_TYPE=$(kubectl get sandbox "${NEW_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.metadata.labels.agents\.x-k8s\.io/launch-type}' 2>/dev/null || true)
+                NEW_POOL_MEMBER_READY=$(kubectl get sandbox "${NEW_POOL_MEMBER_NAME}" -n "${AGENTCUBE_NAMESPACE}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+                if [ -n "${NEW_POOL_MEMBER_UID}" ] && [ "${NEW_POOL_MEMBER_UID}" != "${PRE_UPGRADE_POOL_MEMBER_UID}" ] && [ "${NEW_POOL_MEMBER_UID}" != "${BOUND_SANDBOX_UID}" ] && [ "${NEW_POOL_OWNER_KIND}" = "SandboxWarmPool" ] && [ "${NEW_POOL_OWNER_NAME}" = "e2e-upgrade-warmpool" ] && [ "${NEW_POOL_OWNER_UID}" = "${WARM_POOL_UID}" ] && [ "${NEW_POOL_LAUNCH_TYPE}" = "warm" ] && [ "${NEW_POOL_MEMBER_READY}" = "True" ]; then
+                    echo "v0.5.3 refilled e2e-upgrade-warmpool with exact replacement ${NEW_POOL_MEMBER_NAME} (${NEW_POOL_MEMBER_UID})"
+                    break
+                fi
+            fi
+            if [ "$i" -eq 60 ]; then
+                echo "Error: v0.5.3 did not refill e2e-upgrade-warmpool with an exact Ready replacement" >&2
+                kubectl get sandboxwarmpool e2e-upgrade-warmpool -n "${AGENTCUBE_NAMESPACE}" -o yaml >&2 || true
+                kubectl get sandboxes -n "${AGENTCUBE_NAMESPACE}" -o yaml >&2 || true
+                kubectl logs -n "${CONTROLLER_NAMESPACE}" deployment/agent-sandbox-controller --tail=100 >&2 || true
+                exit 1
+            fi
+            sleep 2
+        done
+    fi
+
 
     step "Building images..."
     # We assume we are in the project root
@@ -699,6 +1043,8 @@ else
         fi
     fi
 fi
+
+
 
 # Collect logs if tests failed
 if [ $TEST_FAILED -eq 1 ]; then

@@ -19,6 +19,7 @@ package picod
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -300,6 +301,10 @@ func TestMkdirSafe(t *testing.T) {
 	})
 
 	t.Run("symlink pointing outside workspace is blocked", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Symlinks require admin privileges on Windows")
+		}
+
 		// Create an external directory that the symlink will point to
 		externalDir, err := os.MkdirTemp("", "picod-external-*")
 		assert.NoError(t, err)

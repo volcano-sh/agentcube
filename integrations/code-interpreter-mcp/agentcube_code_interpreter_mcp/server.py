@@ -3,7 +3,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 
-"""FastMCP server backed by AgentCube CodeInterpreterClient."""
+"""MCP server backed by AgentCube CodeInterpreterClient."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Optional
 
 import requests
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 # In-process cache of live CodeInterpreterClient instances for session_reuse.
@@ -166,22 +166,16 @@ def _call_with_session_recovery(
 
 def create_mcp_server(
     *,
-    host: str = "127.0.0.1",
-    port: int = 8000,
     instructions: str | None = None,
-) -> FastMCP:
+) -> MCPServer:
     instr = instructions or (
         "AgentCube sandbox. Multi-step: session_reuse=true, pass session_id from prior JSON; "
         "each run_code is a new process—only files persist. stop_session when done. "
         "If a session_id is expired, the server recreates the sandbox once (workspace files are lost)."
     )
-    app = FastMCP(
+    app = MCPServer(
         "agentcube-code-interpreter",
         instructions=instr,
-        host=host,
-        port=port,
-        stateless_http=True,
-        json_response=True,
     )
     CodeInterpreterClient = _import_client()
 

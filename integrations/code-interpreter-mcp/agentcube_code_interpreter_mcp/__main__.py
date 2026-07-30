@@ -33,8 +33,17 @@ def main() -> None:
         help="Listen port for streamable-http (default: MCP_PORT or 8000)",
     )
     args = parser.parse_args()
-    mcp = create_mcp_server(host=args.host, port=args.port)
-    mcp.run(transport=args.transport)
+    mcp = create_mcp_server()
+    if args.transport == "streamable-http":
+        mcp.run(
+            transport="streamable-http",
+            host=args.host,
+            port=args.port,
+            stateless_http=True,
+            json_response=True,
+        )
+    else:
+        mcp.run(transport="stdio")
 
 
 if __name__ == "__main__":

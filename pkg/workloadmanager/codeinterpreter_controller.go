@@ -168,13 +168,14 @@ func (r *CodeInterpreterReconciler) ensureSandboxTemplate(ctx context.Context, c
 		}
 
 		if err := r.Create(ctx, sandboxTemplate); err != nil {
-			if !errors.IsAlreadyExists(err) {
-				return ctrl.Result{}, fmt.Errorf("failed to create SandboxTemplate: %w", err)
-			}
+			return ctrl.Result{}, fmt.Errorf("failed to create SandboxTemplate: %w", err)
 		}
 		return ctrl.Result{}, nil
 	} else if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to get SandboxTemplate: %w", err)
+	}
+	if !metav1.IsControlledBy(sandboxTemplate, ci) {
+		return ctrl.Result{}, fmt.Errorf("SandboxTemplate %s/%s is not controlled by CodeInterpreter %s", ci.Namespace, templateName, ci.Name)
 	}
 
 	// Update existing SandboxTemplate if needed.
@@ -228,13 +229,14 @@ func (r *CodeInterpreterReconciler) ensureSandboxWarmPool(ctx context.Context, c
 		}
 
 		if err := r.Create(ctx, warmPool); err != nil {
-			if !errors.IsAlreadyExists(err) {
-				return fmt.Errorf("failed to create SandboxWarmPool: %w", err)
-			}
+			return fmt.Errorf("failed to create SandboxWarmPool: %w", err)
 		}
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("failed to get SandboxWarmPool: %w", err)
+	}
+	if !metav1.IsControlledBy(warmPool, ci) {
+		return fmt.Errorf("SandboxWarmPool %s/%s is not controlled by CodeInterpreter %s", ci.Namespace, warmPoolName, ci.Name)
 	}
 
 	// Update existing SandboxWarmPool if needed
@@ -267,6 +269,9 @@ func (r *CodeInterpreterReconciler) deleteSandboxWarmPool(ctx context.Context, c
 	} else if err != nil {
 		return fmt.Errorf("failed to get SandboxWarmPool: %w", err)
 	}
+	if !metav1.IsControlledBy(warmPool, ci) {
+		return fmt.Errorf("SandboxWarmPool %s/%s is not controlled by CodeInterpreter %s", ci.Namespace, warmPoolName, ci.Name)
+	}
 
 	if err := r.Delete(ctx, warmPool); err != nil {
 		if !errors.IsNotFound(err) {
@@ -286,6 +291,9 @@ func (r *CodeInterpreterReconciler) deleteSandboxTemplate(ctx context.Context, c
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("failed to get SandboxTemplate: %w", err)
+	}
+	if !metav1.IsControlledBy(sandboxTemplate, ci) {
+		return fmt.Errorf("SandboxTemplate %s/%s is not controlled by CodeInterpreter %s", ci.Namespace, templateName, ci.Name)
 	}
 
 	if err := r.Delete(ctx, sandboxTemplate); err != nil {

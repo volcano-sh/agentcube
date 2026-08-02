@@ -71,6 +71,7 @@ func testCodeInterpreterWithWarmPool() *runtimev1alpha1.CodeInterpreter {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-code-interpreter",
 			Namespace: "default",
+			UID:       "test-code-interpreter",
 		},
 		Spec: runtimev1alpha1.CodeInterpreterSpec{
 			AuthMode:     runtimev1alpha1.AuthModeNone,
@@ -81,6 +82,12 @@ func testCodeInterpreterWithWarmPool() *runtimev1alpha1.CodeInterpreter {
 			},
 		},
 	}
+}
+
+func setCodeInterpreterOwner(object metav1.Object, ci *runtimev1alpha1.CodeInterpreter) {
+	object.SetOwnerReferences([]metav1.OwnerReference{
+		*metav1.NewControllerRef(ci, runtimev1alpha1.GroupVersion.WithKind("CodeInterpreter")),
+	})
 }
 
 func TestEnsureSandboxTemplateDisablesAgentSandboxDefaultNetworkPolicy(t *testing.T) {
@@ -118,6 +125,7 @@ func TestEnsureSandboxTemplateUpdatesManagedNetworkPolicyToUnmanaged(t *testing.
 			},
 		},
 	}
+	setCodeInterpreterOwner(existing, ci)
 	reconciler := newTestReconcilerWithObjects(existing)
 
 	_, err := reconciler.ensureSandboxTemplate(context.Background(), ci)
@@ -130,6 +138,107 @@ func TestEnsureSandboxTemplateUpdatesManagedNetworkPolicyToUnmanaged(t *testing.
 	}, sandboxTemplate)
 	assert.NoError(t, err)
 	assert.Equal(t, extensionsv1alpha1.NetworkPolicyManagementUnmanaged, sandboxTemplate.Spec.NetworkPolicyManagement)
+}
+
+func TestEnsureSandboxTemplateRejectsUnownedTemplate(t *testing.T) {
+	ci := testCodeInterpreterWithWarmPool()
+	existing := &extensionsv1alpha1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+		},
+		Spec: extensionsv1alpha1.SandboxTemplateSpec{
+			PodTemplate: sandboxv1alpha1.PodTemplate{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:  "existing",
+						Image: "existing-image",
+					}},
+				},
+			},
+		},
+	}
+	reconciler := newTestReconcilerWithObjects(existing)
+
+	_, err := reconciler.ensureSandboxTemplate(context.Background(), ci)
+	assert.ErrorContains(t, err, "is not controlled by CodeInterpreter")
+
+	sandboxTemplate := &extensionsv1alpha1.SandboxTemplate{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name:      ci.Name,
+		Namespace: ci.Namespace,
+	}, sandboxTemplate)
+	assert.NoError(t, err)
+	assert.Equal(t, "existing-image", sandboxTemplate.Spec.PodTemplate.Spec.Containers[0].Image)
+}
+
+func TestEnsureSandboxWarmPoolRejectsUnownedWarmPool(t *testing.T) {
+	ci := testCodeInterpreterWithWarmPool()
+	existing := &extensionsv1alpha1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+		},
+		Spec: extensionsv1alpha1.SandboxWarmPoolSpec{
+			Replicas: 7,
+			TemplateRef: extensionsv1alpha1.SandboxTemplateRef{
+				Name: "existing-template",
+			},
+		},
+	}
+	reconciler := newTestReconcilerWithObjects(existing)
+
+	err := reconciler.ensureSandboxWarmPool(context.Background(), ci)
+	assert.ErrorContains(t, err, "is not controlled by CodeInterpreter")
+
+	warmPool := &extensionsv1alpha1.SandboxWarmPool{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name:      ci.Name,
+		Namespace: ci.Namespace,
+	}, warmPool)
+	assert.NoError(t, err)
+	assert.Equal(t, int32(7), warmPool.Spec.Replicas)
+	assert.Equal(t, "existing-template", warmPool.Spec.TemplateRef.Name)
+}
+
+func TestDeleteSandboxTemplateRejectsUnownedTemplate(t *testing.T) {
+	ci := testCodeInterpreterWithWarmPool()
+	existing := &extensionsv1alpha1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+		},
+	}
+	reconciler := newTestReconcilerWithObjects(existing)
+
+	err := reconciler.deleteSandboxTemplate(context.Background(), ci)
+	assert.ErrorContains(t, err, "is not controlled by CodeInterpreter")
+
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name:      ci.Name,
+		Namespace: ci.Namespace,
+	}, &extensionsv1alpha1.SandboxTemplate{})
+	assert.NoError(t, err)
+}
+
+func TestDeleteSandboxWarmPoolRejectsUnownedWarmPool(t *testing.T) {
+	ci := testCodeInterpreterWithWarmPool()
+	existing := &extensionsv1alpha1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+		},
+	}
+	reconciler := newTestReconcilerWithObjects(existing)
+
+	err := reconciler.deleteSandboxWarmPool(context.Background(), ci)
+	assert.ErrorContains(t, err, "is not controlled by CodeInterpreter")
+
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name:      ci.Name,
+		Namespace: ci.Namespace,
+	}, &extensionsv1alpha1.SandboxWarmPool{})
+	assert.NoError(t, err)
 }
 
 func TestConvertToPodTemplate_RuntimeClassName_TableDriven(t *testing.T) {

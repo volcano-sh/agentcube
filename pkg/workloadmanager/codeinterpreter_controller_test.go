@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -53,7 +54,11 @@ func newTestReconcilerWithObjects(objects ...runtime.Object) *CodeInterpreterRec
 	_ = extensionsv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
-	client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objects...).Build()
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&runtimev1alpha1.CodeInterpreter{}).
+		WithRuntimeObjects(objects...).
+		Build()
 
 	return &CodeInterpreterReconciler{
 		Client: client,
@@ -84,12 +89,6 @@ func testCodeInterpreterWithWarmPool() *runtimev1alpha1.CodeInterpreter {
 	}
 }
 
-func setCodeInterpreterOwner(object metav1.Object, ci *runtimev1alpha1.CodeInterpreter) {
-	object.SetOwnerReferences([]metav1.OwnerReference{
-		*metav1.NewControllerRef(ci, runtimev1alpha1.GroupVersion.WithKind("CodeInterpreter")),
-	})
-}
-
 func TestEnsureSandboxTemplateDisablesAgentSandboxDefaultNetworkPolicy(t *testing.T) {
 	reconciler := newTestReconcilerWithObjects()
 	ci := testCodeInterpreterWithWarmPool()
@@ -112,6 +111,9 @@ func TestEnsureSandboxTemplateUpdatesManagedNetworkPolicyToUnmanaged(t *testing.
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ci.Name,
 			Namespace: ci.Namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(ci, runtimev1alpha1.GroupVersion.WithKind("CodeInterpreter")),
+			},
 		},
 		Spec: extensionsv1alpha1.SandboxTemplateSpec{
 			NetworkPolicyManagement: extensionsv1alpha1.NetworkPolicyManagementManaged,
@@ -125,8 +127,7 @@ func TestEnsureSandboxTemplateUpdatesManagedNetworkPolicyToUnmanaged(t *testing.
 			},
 		},
 	}
-	setCodeInterpreterOwner(existing, ci)
-	reconciler := newTestReconcilerWithObjects(existing)
+	reconciler := newTestReconcilerWithObjects(ci, existing)
 
 	_, err := reconciler.ensureSandboxTemplate(context.Background(), ci)
 	assert.NoError(t, err)
@@ -158,7 +159,7 @@ func TestEnsureSandboxTemplateRejectsUnownedTemplate(t *testing.T) {
 			},
 		},
 	}
-	reconciler := newTestReconcilerWithObjects(existing)
+	reconciler := newTestReconcilerWithObjects(ci, existing)
 
 	_, err := reconciler.ensureSandboxTemplate(context.Background(), ci)
 	assert.ErrorContains(t, err, "is not controlled by CodeInterpreter")
@@ -170,6 +171,18 @@ func TestEnsureSandboxTemplateRejectsUnownedTemplate(t *testing.T) {
 	}, sandboxTemplate)
 	assert.NoError(t, err)
 	assert.Equal(t, "existing-image", sandboxTemplate.Spec.PodTemplate.Spec.Containers[0].Image)
+
+	storedCI := &runtimev1alpha1.CodeInterpreter{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name:      ci.Name,
+		Namespace: ci.Namespace,
+	}, storedCI)
+	assert.NoError(t, err)
+	condition := apimeta.FindStatusCondition(storedCI.Status.Conditions, "Ready")
+	if assert.NotNil(t, condition) {
+		assert.Equal(t, metav1.ConditionFalse, condition.Status)
+		assert.Equal(t, "OwnershipConflict", condition.Reason)
+	}
 }
 
 func TestEnsureSandboxWarmPoolRejectsUnownedWarmPool(t *testing.T) {
@@ -186,7 +199,7 @@ func TestEnsureSandboxWarmPoolRejectsUnownedWarmPool(t *testing.T) {
 			},
 		},
 	}
-	reconciler := newTestReconcilerWithObjects(existing)
+	reconciler := newTestReconcilerWithObjects(ci, existing)
 
 	err := reconciler.ensureSandboxWarmPool(context.Background(), ci)
 	assert.ErrorContains(t, err, "is not controlled by CodeInterpreter")
@@ -209,7 +222,7 @@ func TestDeleteSandboxTemplateRejectsUnownedTemplate(t *testing.T) {
 			Namespace: ci.Namespace,
 		},
 	}
-	reconciler := newTestReconcilerWithObjects(existing)
+	reconciler := newTestReconcilerWithObjects(ci, existing)
 
 	err := reconciler.deleteSandboxTemplate(context.Background(), ci)
 	assert.ErrorContains(t, err, "is not controlled by CodeInterpreter")
@@ -229,7 +242,7 @@ func TestDeleteSandboxWarmPoolRejectsUnownedWarmPool(t *testing.T) {
 			Namespace: ci.Namespace,
 		},
 	}
-	reconciler := newTestReconcilerWithObjects(existing)
+	reconciler := newTestReconcilerWithObjects(ci, existing)
 
 	err := reconciler.deleteSandboxWarmPool(context.Background(), ci)
 	assert.ErrorContains(t, err, "is not controlled by CodeInterpreter")

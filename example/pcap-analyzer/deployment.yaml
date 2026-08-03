@@ -47,7 +47,7 @@ spec:
             - name: WORKLOAD_MANAGER_URL
               value: "http://workloadmanager.agentcube.svc.cluster.local:8080"
             - name: ROUTER_URL
-              value: "http://router.agentcube.svc.cluster.local:8080"
+              value: "http://agentcube-router.agentcube.svc.cluster.local:8080"
             - name: CODEINTERPRETER_NAME
               value: "my-interpreter"  # Name of CodeInterpreter CRD
             - name: SANDBOX_NAMESPACE

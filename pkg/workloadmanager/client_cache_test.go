@@ -171,7 +171,7 @@ func TestClientCache_SetAndGet(t *testing.T) {
 	cache := NewClientCache(10)
 
 	// Test Get on non-existent key
-	client := cache.Get("nonexistent-key")
+	client := cache.Get("nonexistent-key", "token")
 	assert.Nil(t, client)
 
 	// Test Set and Get
@@ -186,7 +186,7 @@ func TestClientCache_SetAndGet(t *testing.T) {
 
 	cache.Set(key, token, newClient)
 
-	retrieved := cache.Get(key)
+	retrieved := cache.Get(key, token)
 	assert.NotNil(t, retrieved)
 	assert.Equal(t, newClient, retrieved)
 	assert.Equal(t, 1, cache.Size())
@@ -208,7 +208,7 @@ func TestClientCache_Get_ExpiredToken(t *testing.T) {
 	cache.Set(key, token, client)
 
 	// Should return nil because token is expired
-	retrieved := cache.Get(key)
+	retrieved := cache.Get(key, token)
 	assert.Nil(t, retrieved)
 	assert.Equal(t, 0, cache.Size(), "Expired entry should be removed")
 }
@@ -230,9 +230,28 @@ func TestClientCache_Get_TokenWithoutExpiry(t *testing.T) {
 	cache.Set(key, token, client)
 
 	// Should return client because tokenExpiry is zero (no expiry check)
-	retrieved := cache.Get(key)
+	retrieved := cache.Get(key, token)
 	assert.NotNil(t, retrieved)
 	assert.Equal(t, client, retrieved)
+}
+
+func TestClientCache_Get_TokenMismatch(t *testing.T) {
+	cache := NewClientCache(10)
+
+	key := testCacheKey
+	token := createTestJWT(time.Now().Add(1 * time.Hour).Unix())
+	scheme := runtime.NewScheme()
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
+	client := &UserK8sClient{
+		dynamicClient: dynamicClient,
+		namespace:     "default",
+	}
+
+	cache.Set(key, token, client)
+
+	retrieved := cache.Get(key, token+"-new")
+	assert.Nil(t, retrieved)
+	assert.Equal(t, 1, cache.Size())
 }
 
 func TestClientCache_UpdateExisting(t *testing.T) {
@@ -259,7 +278,10 @@ func TestClientCache_UpdateExisting(t *testing.T) {
 	cache.Set(key, token2, client2)
 	assert.Equal(t, 1, cache.Size(), "Size should not increase when updating")
 
-	retrieved := cache.Get(key)
+	oldClient := cache.Get(key, token1)
+	assert.Nil(t, oldClient, "Old token should not match updated cache entry")
+
+	retrieved := cache.Get(key, token2)
 	assert.Equal(t, client2, retrieved, "Should return updated client")
 }
 
@@ -268,11 +290,11 @@ func TestClientCache_Eviction(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
+	token := createTestJWT(time.Now().Add(1 * time.Hour).Unix())
 
 	// Fill cache to max size
 	for i := 0; i < 3; i++ {
 		key := "default:sa" + string(rune('0'+i))
-		token := createTestJWT(time.Now().Add(1 * time.Hour).Unix())
 		client := &UserK8sClient{
 			dynamicClient: dynamicClient,
 			namespace:     "default",
@@ -294,9 +316,9 @@ func TestClientCache_Eviction(t *testing.T) {
 	assert.Equal(t, 3, cache.Size(), "Size should remain at max")
 
 	// First key should be evicted
-	assert.Nil(t, cache.Get("default:sa0"))
+	assert.Nil(t, cache.Get("default:sa0", token))
 	// New key should be present
-	assert.NotNil(t, cache.Get(newKey))
+	assert.NotNil(t, cache.Get(newKey, newToken))
 }
 
 func TestClientCache_LRUBehavior(t *testing.T) {
@@ -317,7 +339,7 @@ func TestClientCache_LRUBehavior(t *testing.T) {
 	}
 
 	// Access first entry (should move to front)
-	cache.Get("default:sa0")
+	cache.Get("default:sa0", token)
 
 	// Add new entry - should evict sa1 (least recently used)
 	newKey := "default:sa3"
@@ -328,13 +350,13 @@ func TestClientCache_LRUBehavior(t *testing.T) {
 	cache.Set(newKey, token, newClient)
 
 	// sa0 should still be present (was accessed)
-	assert.NotNil(t, cache.Get("default:sa0"))
+	assert.NotNil(t, cache.Get("default:sa0", token))
 	// sa1 should be evicted
-	assert.Nil(t, cache.Get("default:sa1"))
+	assert.Nil(t, cache.Get("default:sa1", token))
 	// sa2 should be present
-	assert.NotNil(t, cache.Get("default:sa2"))
+	assert.NotNil(t, cache.Get("default:sa2", token))
 	// sa3 should be present
-	assert.NotNil(t, cache.Get(newKey))
+	assert.NotNil(t, cache.Get(newKey, token))
 }
 
 func TestClientCache_Remove(t *testing.T) {
@@ -374,7 +396,7 @@ func TestClientCache_Remove(t *testing.T) {
 
 			cache.Remove(tt.key)
 			assert.Equal(t, 0, cache.Size())
-			assert.Nil(t, cache.Get(tt.key))
+			assert.Nil(t, cache.Get(tt.key, "token"))
 		})
 	}
 }

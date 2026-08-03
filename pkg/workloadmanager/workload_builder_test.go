@@ -332,6 +332,14 @@ func TestBuildCodeInterpreterEnvVars(t *testing.T) {
 				{Name: "PICOD_AUTH_PUBLIC_KEY", Value: "test-public-key"},
 			},
 		},
+		{
+			name:        "empty authMode injects public key",
+			templateEnv: nil,
+			authMode:    "",
+			expected: []corev1.EnvVar{
+				{Name: "PICOD_AUTH_PUBLIC_KEY", Value: "test-public-key"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -566,6 +574,40 @@ func TestBuildSandboxByCodeInterpreter_PicodAuthFailsWithoutKey(t *testing.T) {
 	}
 
 	_, _, _, err = buildSandboxByCodeInterpreter(testNamespace, "ci-picod-no-key", "", ifm)
+	if !errors.Is(err, api.ErrPublicKeyMissing) {
+		t.Fatalf("expected error %v, got %v", api.ErrPublicKeyMissing, err)
+	}
+}
+
+func TestBuildSandboxByCodeInterpreter_DefaultAuthFailsWithoutKey(t *testing.T) {
+	codeInterpreter := &runtimev1alpha1.CodeInterpreter{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ci-default-auth-no-key",
+			Namespace: testNamespace,
+		},
+		Spec: runtimev1alpha1.CodeInterpreterSpec{
+			Template: &runtimev1alpha1.CodeInterpreterSandboxTemplate{
+				Image: "my-ci-image:latest",
+			},
+		},
+	}
+
+	setCachedPublicKeyForTest(t, "")
+
+	fakeClient := cubefake.NewSimpleClientset(codeInterpreter)
+	factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
+	codeInterpreterInformer := factory.Runtime().V1alpha1().CodeInterpreters()
+	err := codeInterpreterInformer.Informer().GetStore().Add(codeInterpreter)
+	assert.NoError(t, err)
+
+	ifm := &Informers{
+		CodeInterpreterLister:   codeInterpreterInformer.Lister(),
+		CodeInterpreterInformer: codeInterpreterInformer.Informer(),
+		informerFactory:         newFactory(),
+		cubeInformerFactory:     factory,
+	}
+
+	_, _, _, err = buildSandboxByCodeInterpreter(testNamespace, "ci-default-auth-no-key", "", ifm)
 	if !errors.Is(err, api.ErrPublicKeyMissing) {
 		t.Fatalf("expected error %v, got %v", api.ErrPublicKeyMissing, err)
 	}

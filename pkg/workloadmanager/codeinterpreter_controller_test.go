@@ -74,14 +74,10 @@ type replacingDeleteClient struct {
 }
 
 func (c *replacingDeleteClient) Delete(ctx context.Context, object client.Object, opts ...client.DeleteOption) error {
-	current := object.DeepCopyObject().(client.Object)
-	if err := c.Get(ctx, client.ObjectKeyFromObject(object), current); err != nil {
+	if err := c.Client.Delete(ctx, object); err != nil {
 		return err
 	}
-	if err := c.Client.Delete(ctx, current); err != nil {
-		return err
-	}
-	if err := c.Create(ctx, c.replacement.DeepCopyObject().(client.Object)); err != nil {
+	if err := c.Create(ctx, c.replacement); err != nil {
 		return err
 	}
 	return c.Client.Delete(ctx, object, opts...)

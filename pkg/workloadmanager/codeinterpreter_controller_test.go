@@ -22,9 +22,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
@@ -53,12 +56,35 @@ func newTestReconcilerWithObjects(objects ...runtime.Object) *CodeInterpreterRec
 	_ = extensionsv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
-	client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objects...).Build()
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&runtimev1alpha1.CodeInterpreter{}).
+		WithRuntimeObjects(objects...).
+		Build()
 
 	return &CodeInterpreterReconciler{
 		Client: client,
 		Scheme: scheme,
 	}
+}
+
+type replacingDeleteClient struct {
+	client.Client
+	replacement client.Object
+}
+
+func (c *replacingDeleteClient) Delete(ctx context.Context, object client.Object, opts ...client.DeleteOption) error {
+	if err := c.Client.Delete(ctx, object); err != nil {
+		return err
+	}
+	if err := c.Create(ctx, c.replacement); err != nil {
+		return err
+	}
+	return c.Client.Delete(ctx, object, opts...)
+}
+
+func replaceObjectBeforeDelete(reconciler *CodeInterpreterReconciler, replacement client.Object) {
+	reconciler.Client = &replacingDeleteClient{Client: reconciler.Client, replacement: replacement}
 }
 
 func stringPtr(s string) *string {
@@ -71,6 +97,7 @@ func testCodeInterpreterWithWarmPool() *runtimev1alpha1.CodeInterpreter {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-code-interpreter",
 			Namespace: "default",
+			UID:       "test-code-interpreter",
 		},
 		Spec: runtimev1alpha1.CodeInterpreterSpec{
 			AuthMode:     runtimev1alpha1.AuthModeNone,
@@ -105,6 +132,9 @@ func TestEnsureSandboxTemplateUpdatesManagedNetworkPolicyToUnmanaged(t *testing.
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ci.Name,
 			Namespace: ci.Namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(ci, runtimev1alpha1.GroupVersion.WithKind("CodeInterpreter")),
+			},
 		},
 		Spec: extensionsv1alpha1.SandboxTemplateSpec{
 			NetworkPolicyManagement: extensionsv1alpha1.NetworkPolicyManagementManaged,
@@ -118,7 +148,7 @@ func TestEnsureSandboxTemplateUpdatesManagedNetworkPolicyToUnmanaged(t *testing.
 			},
 		},
 	}
-	reconciler := newTestReconcilerWithObjects(existing)
+	reconciler := newTestReconcilerWithObjects(ci, existing)
 
 	_, err := reconciler.ensureSandboxTemplate(context.Background(), ci)
 	assert.NoError(t, err)
@@ -130,6 +160,181 @@ func TestEnsureSandboxTemplateUpdatesManagedNetworkPolicyToUnmanaged(t *testing.
 	}, sandboxTemplate)
 	assert.NoError(t, err)
 	assert.Equal(t, extensionsv1alpha1.NetworkPolicyManagementUnmanaged, sandboxTemplate.Spec.NetworkPolicyManagement)
+}
+
+func TestEnsureSandboxTemplateRejectsUnownedTemplate(t *testing.T) {
+	ci := testCodeInterpreterWithWarmPool()
+	existing := &extensionsv1alpha1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+		},
+		Spec: extensionsv1alpha1.SandboxTemplateSpec{
+			PodTemplate: sandboxv1alpha1.PodTemplate{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:  "existing",
+						Image: "existing-image",
+					}},
+				},
+			},
+		},
+	}
+	reconciler := newTestReconcilerWithObjects(ci, existing)
+
+	_, err := reconciler.ensureSandboxTemplate(context.Background(), ci)
+	assert.ErrorContains(t, err, "is not controlled by CodeInterpreter")
+
+	sandboxTemplate := &extensionsv1alpha1.SandboxTemplate{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name:      ci.Name,
+		Namespace: ci.Namespace,
+	}, sandboxTemplate)
+	assert.NoError(t, err)
+	assert.Equal(t, "existing-image", sandboxTemplate.Spec.PodTemplate.Spec.Containers[0].Image)
+
+	storedCI := &runtimev1alpha1.CodeInterpreter{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name:      ci.Name,
+		Namespace: ci.Namespace,
+	}, storedCI)
+	assert.NoError(t, err)
+	condition := apimeta.FindStatusCondition(storedCI.Status.Conditions, "Ready")
+	if assert.NotNil(t, condition) {
+		assert.Equal(t, metav1.ConditionFalse, condition.Status)
+		assert.Equal(t, "OwnershipConflict", condition.Reason)
+	}
+}
+
+func TestEnsureSandboxWarmPoolRejectsUnownedWarmPool(t *testing.T) {
+	ci := testCodeInterpreterWithWarmPool()
+	existing := &extensionsv1alpha1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+		},
+		Spec: extensionsv1alpha1.SandboxWarmPoolSpec{
+			Replicas: 7,
+			TemplateRef: extensionsv1alpha1.SandboxTemplateRef{
+				Name: "existing-template",
+			},
+		},
+	}
+	reconciler := newTestReconcilerWithObjects(ci, existing)
+
+	err := reconciler.ensureSandboxWarmPool(context.Background(), ci)
+	assert.ErrorContains(t, err, "is not controlled by CodeInterpreter")
+
+	warmPool := &extensionsv1alpha1.SandboxWarmPool{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name:      ci.Name,
+		Namespace: ci.Namespace,
+	}, warmPool)
+	assert.NoError(t, err)
+	assert.Equal(t, int32(7), warmPool.Spec.Replicas)
+	assert.Equal(t, "existing-template", warmPool.Spec.TemplateRef.Name)
+}
+
+func TestDeleteSandboxTemplateRejectsUnownedTemplate(t *testing.T) {
+	ci := testCodeInterpreterWithWarmPool()
+	existing := &extensionsv1alpha1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+		},
+	}
+	reconciler := newTestReconcilerWithObjects(ci, existing)
+
+	err := reconciler.deleteSandboxTemplate(context.Background(), ci)
+	assert.ErrorContains(t, err, "is not controlled by CodeInterpreter")
+
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name:      ci.Name,
+		Namespace: ci.Namespace,
+	}, &extensionsv1alpha1.SandboxTemplate{})
+	assert.NoError(t, err)
+}
+
+func TestDeleteSandboxWarmPoolRejectsUnownedWarmPool(t *testing.T) {
+	ci := testCodeInterpreterWithWarmPool()
+	existing := &extensionsv1alpha1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+		},
+	}
+	reconciler := newTestReconcilerWithObjects(ci, existing)
+
+	err := reconciler.deleteSandboxWarmPool(context.Background(), ci)
+	assert.ErrorContains(t, err, "is not controlled by CodeInterpreter")
+
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name:      ci.Name,
+		Namespace: ci.Namespace,
+	}, &extensionsv1alpha1.SandboxWarmPool{})
+	assert.NoError(t, err)
+}
+
+func TestDeleteSandboxTemplateRejectsReplacement(t *testing.T) {
+	ci := testCodeInterpreterWithWarmPool()
+	original := &extensionsv1alpha1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+			UID:       "original-template",
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(ci, runtimev1alpha1.GroupVersion.WithKind("CodeInterpreter")),
+			},
+		},
+	}
+	replacement := &extensionsv1alpha1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+			UID:       "replacement-template",
+		},
+	}
+	reconciler := newTestReconcilerWithObjects(ci, original)
+	replaceObjectBeforeDelete(reconciler, replacement)
+
+	err := reconciler.deleteSandboxTemplate(context.Background(), ci)
+	assert.True(t, apierrors.IsConflict(err))
+
+	stored := &extensionsv1alpha1.SandboxTemplate{}
+	err = reconciler.Get(context.Background(), client.ObjectKeyFromObject(replacement), stored)
+	assert.NoError(t, err)
+	assert.Equal(t, replacement.UID, stored.UID)
+}
+
+func TestDeleteSandboxWarmPoolRejectsReplacement(t *testing.T) {
+	ci := testCodeInterpreterWithWarmPool()
+	original := &extensionsv1alpha1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+			UID:       "original-warm-pool",
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(ci, runtimev1alpha1.GroupVersion.WithKind("CodeInterpreter")),
+			},
+		},
+	}
+	replacement := &extensionsv1alpha1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+			UID:       "replacement-warm-pool",
+		},
+	}
+	reconciler := newTestReconcilerWithObjects(ci, original)
+	replaceObjectBeforeDelete(reconciler, replacement)
+
+	err := reconciler.deleteSandboxWarmPool(context.Background(), ci)
+	assert.True(t, apierrors.IsConflict(err))
+
+	stored := &extensionsv1alpha1.SandboxWarmPool{}
+	err = reconciler.Get(context.Background(), client.ObjectKeyFromObject(replacement), stored)
+	assert.NoError(t, err)
+	assert.Equal(t, replacement.UID, stored.UID)
 }
 
 func TestConvertToPodTemplate_RuntimeClassName_TableDriven(t *testing.T) {

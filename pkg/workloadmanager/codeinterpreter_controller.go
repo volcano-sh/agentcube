@@ -292,7 +292,10 @@ func (r *CodeInterpreterReconciler) deleteSandboxWarmPool(ctx context.Context, c
 		return err
 	}
 
-	if err := r.Delete(ctx, warmPool); err != nil {
+	if err := r.Delete(ctx, warmPool, client.Preconditions{
+		UID:             &warmPool.UID,
+		ResourceVersion: &warmPool.ResourceVersion,
+	}); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete SandboxWarmPool: %w", err)
 		}
@@ -315,7 +318,10 @@ func (r *CodeInterpreterReconciler) deleteSandboxTemplate(ctx context.Context, c
 		return err
 	}
 
-	if err := r.Delete(ctx, sandboxTemplate); err != nil {
+	if err := r.Delete(ctx, sandboxTemplate, client.Preconditions{
+		UID:             &sandboxTemplate.UID,
+		ResourceVersion: &sandboxTemplate.ResourceVersion,
+	}); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete SandboxTemplate: %w", err)
 		}

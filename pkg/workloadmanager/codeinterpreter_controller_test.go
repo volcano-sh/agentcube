@@ -22,10 +22,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
@@ -64,6 +66,29 @@ func newTestReconcilerWithObjects(objects ...runtime.Object) *CodeInterpreterRec
 		Client: client,
 		Scheme: scheme,
 	}
+}
+
+type replacingDeleteClient struct {
+	client.Client
+	replacement client.Object
+}
+
+func (c *replacingDeleteClient) Delete(ctx context.Context, object client.Object, opts ...client.DeleteOption) error {
+	current := object.DeepCopyObject().(client.Object)
+	if err := c.Get(ctx, client.ObjectKeyFromObject(object), current); err != nil {
+		return err
+	}
+	if err := c.Client.Delete(ctx, current); err != nil {
+		return err
+	}
+	if err := c.Create(ctx, c.replacement.DeepCopyObject().(client.Object)); err != nil {
+		return err
+	}
+	return c.Client.Delete(ctx, object, opts...)
+}
+
+func replaceObjectBeforeDelete(reconciler *CodeInterpreterReconciler, replacement client.Object) {
+	reconciler.Client = &replacingDeleteClient{Client: reconciler.Client, replacement: replacement}
 }
 
 func stringPtr(s string) *string {
@@ -252,6 +277,68 @@ func TestDeleteSandboxWarmPoolRejectsUnownedWarmPool(t *testing.T) {
 		Namespace: ci.Namespace,
 	}, &extensionsv1alpha1.SandboxWarmPool{})
 	assert.NoError(t, err)
+}
+
+func TestDeleteSandboxTemplateRejectsReplacement(t *testing.T) {
+	ci := testCodeInterpreterWithWarmPool()
+	original := &extensionsv1alpha1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+			UID:       "original-template",
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(ci, runtimev1alpha1.GroupVersion.WithKind("CodeInterpreter")),
+			},
+		},
+	}
+	replacement := &extensionsv1alpha1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+			UID:       "replacement-template",
+		},
+	}
+	reconciler := newTestReconcilerWithObjects(ci, original)
+	replaceObjectBeforeDelete(reconciler, replacement)
+
+	err := reconciler.deleteSandboxTemplate(context.Background(), ci)
+	assert.True(t, apierrors.IsConflict(err))
+
+	stored := &extensionsv1alpha1.SandboxTemplate{}
+	err = reconciler.Get(context.Background(), client.ObjectKeyFromObject(replacement), stored)
+	assert.NoError(t, err)
+	assert.Equal(t, replacement.UID, stored.UID)
+}
+
+func TestDeleteSandboxWarmPoolRejectsReplacement(t *testing.T) {
+	ci := testCodeInterpreterWithWarmPool()
+	original := &extensionsv1alpha1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+			UID:       "original-warm-pool",
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(ci, runtimev1alpha1.GroupVersion.WithKind("CodeInterpreter")),
+			},
+		},
+	}
+	replacement := &extensionsv1alpha1.SandboxWarmPool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+			UID:       "replacement-warm-pool",
+		},
+	}
+	reconciler := newTestReconcilerWithObjects(ci, original)
+	replaceObjectBeforeDelete(reconciler, replacement)
+
+	err := reconciler.deleteSandboxWarmPool(context.Background(), ci)
+	assert.True(t, apierrors.IsConflict(err))
+
+	stored := &extensionsv1alpha1.SandboxWarmPool{}
+	err = reconciler.Get(context.Background(), client.ObjectKeyFromObject(replacement), stored)
+	assert.NoError(t, err)
+	assert.Equal(t, replacement.UID, stored.UID)
 }
 
 func TestConvertToPodTemplate_RuntimeClassName_TableDriven(t *testing.T) {

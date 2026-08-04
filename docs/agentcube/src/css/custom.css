@@ -1,48 +1,205 @@
 :root {
-  /* AgentCube Primary (CNCF-style Infra Blue) */
-  --ifm-color-primary: #0b5ed7;
-  --ifm-color-primary-dark: #0a54c1;
-  --ifm-color-primary-darker: #094fb6;
-  --ifm-color-primary-darkest: #073f93;
-  --ifm-color-primary-light: #2b73e0;
-  --ifm-color-primary-lighter: #4d8be7;
-  --ifm-color-primary-lightest: #8cb4f2;
+  /* Brand colors */
+  --brand-red: #d94841;
+  --brand-blue: #2563eb;
 
-  /* Subtle Agent Accent */
-  --agentcube-accent: #22b8cf;
+  /* Theme-wide styles */
+  --hero-bg: #ffffff;
+  --hero-title-color: #0f172a;
+  --hero-subtitle-color: #475569;
+
+  --card-bg: #ffffff;
+  --card-border-color: #e2e8f0;
+  --card-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --card-shadow-hover:
+    0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  --card-hover-border-color: #cbd5e1;
+
+  --nav-border-color: #e2e8f0;
+  --nav-hover-color: var(--brand-red);
+
+  --footer-bg: #f8fafc;
+  --footer-border-color: #e2e8f0;
+  --footer-text-color: #475569;
+  --footer-link-hover-color: var(--brand-red);
+
+  /* Audited Theme Overrides - preserve existing typography and primary values */
+  --ifm-color-primary: var(--brand-blue);
+  --ifm-color-primary-dark: #1d4ed8;
+  --ifm-color-primary-darker: #1e40af;
+  --ifm-color-primary-darkest: #1e3a8a;
+  --ifm-color-primary-light: #3b82f6;
+  --ifm-color-primary-lighter: #60a5fa;
+  --ifm-color-primary-lightest: #93c5fd;
+
+  --agentcube-accent: var(--brand-red);
 
   /* Typography */
-  --ifm-font-family-base: Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --ifm-font-family-base:
+    Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   --ifm-code-font-size: 95%;
 
   /* UI */
   --ifm-link-color: var(--ifm-color-primary);
   --ifm-navbar-background-color: #ffffff;
-  --ifm-footer-background-color: #f8fafc;
+  --ifm-navbar-shadow: 0 1px 0 0 var(--nav-border-color);
+  --ifm-footer-background-color: var(--footer-bg);
 
-  --docusaurus-highlighted-code-line-bg: rgba(11, 94, 215, 0.08);
+  --docusaurus-highlighted-code-line-bg: rgba(37, 99, 235, 0.08);
 }
 
-[data-theme='dark'] {
-  --ifm-color-primary: #6ea8fe;
-  --ifm-color-primary-dark: #4c8dff;
-  --ifm-color-primary-darker: #3b82f6;
-  --ifm-color-primary-darkest: #2563eb;
-  --ifm-color-primary-light: #8bbcff;
-  --ifm-color-primary-lighter: #b6d1ff;
-  --ifm-color-primary-lightest: #dbe7ff;
+[data-theme="dark"] {
+  --brand-red: #f87171; /* lighter red/coral for dark mode readability */
+  --brand-blue: #60a5fa;
 
-  --agentcube-accent: #22d3ee;
+  --hero-bg: #0b1220;
+  --hero-title-color: #f8fafc;
+  --hero-subtitle-color: #94a3b8;
+
+  --card-bg: #0f172a;
+  --card-border-color: rgba(255, 255, 255, 0.08);
+  --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+  --card-shadow-hover: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+  --card-hover-border-color: rgba(255, 255, 255, 0.15);
+
+  --nav-border-color: rgba(255, 255, 255, 0.08);
+  --nav-hover-color: var(--brand-red);
+
+  --footer-bg: #0b1220;
+  --footer-border-color: rgba(255, 255, 255, 0.08);
+  --footer-text-color: #94a3b8;
+
+  --ifm-color-primary: #60a5fa;
+  --ifm-color-primary-dark: #3b82f6;
+  --ifm-color-primary-darker: #2563eb;
+  --ifm-color-primary-darkest: #1d4ed8;
+  --ifm-color-primary-light: #93c5fd;
+  --ifm-color-primary-lighter: #bfdbfe;
+  --ifm-color-primary-lightest: #dbeafe;
+
+  --agentcube-accent: var(--brand-red);
 
   --ifm-background-color: #0b1220;
   --ifm-navbar-background-color: #0b1220;
-  --ifm-footer-background-color: #0b1220;
+  --ifm-navbar-shadow: 0 1px 0 0 var(--nav-border-color);
+  --ifm-footer-background-color: var(--footer-bg);
 
-  --docusaurus-highlighted-code-line-bg: rgba(110, 168, 254, 0.25);
+  --docusaurus-highlighted-code-line-bg: rgba(96, 165, 250, 0.25);
 }
 
-.container_lyt7 {
-    max-width: 100%;
-    display: flex;
-    justify-content: space-evenly;
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* Keyboard focus ring — visible only for keyboard navigation */
+:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Navbar refinements */
+.navbar {
+  border-bottom: 1px solid var(--nav-border-color) !important;
+  box-shadow: var(--ifm-navbar-shadow) !important;
+  transition:
+    background-color 0.25s ease,
+    border-color 0.25s ease;
+}
+
+.navbar__link {
+  font-weight: 500;
+  transition: color 0.2s ease;
+}
+
+.navbar__link:hover,
+.navbar__link--active {
+  color: var(--nav-hover-color) !important;
+}
+
+/* Footer refinements */
+.footer {
+  border-top: 1px solid var(--footer-border-color) !important;
+  background-color: var(--footer-bg) !important;
+  padding: 4rem 2rem 3rem !important;
+  transition:
+    background-color 0.25s ease,
+    border-color 0.25s ease;
+}
+
+.footer__title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 1rem;
+  color: var(--ifm-font-color-base);
+}
+
+.footer__link-item {
+  color: var(--footer-text-color) !important;
+  transition: color 0.2s ease;
+}
+
+.footer__link-item:hover {
+  color: var(--footer-link-hover-color) !important;
+  text-decoration: none;
+}
+
+.footer__copyright {
+  margin-top: 2rem;
+  font-size: 0.8rem;
+  color: var(--footer-text-color);
+  opacity: 0.7;
+}
+
+/* Custom Button Styles */
+.button--brand-primary {
+  background-color: var(--brand-red) !important;
+  color: #ffffff !important;
+  border: 1px solid var(--brand-red) !important;
+  font-weight: 600;
+  border-radius: 6px;
+  transition: all 0.2s ease-in-out;
+}
+
+.button--brand-primary:hover {
+  background-color: #c53c35 !important;
+  border-color: #c53c35 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(217, 72, 65, 0.25);
+  text-decoration: none;
+}
+
+.button--brand-secondary {
+  background-color: transparent !important;
+  color: var(--brand-blue) !important;
+  border: 1px solid var(--brand-blue) !important;
+  font-weight: 500;
+  border-radius: 6px;
+  transition: all 0.2s ease-in-out;
+}
+
+.button--brand-secondary:hover {
+  background-color: rgba(37, 99, 235, 0.04) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
+  text-decoration: none;
+}
+
+[data-theme="dark"] .button--brand-secondary {
+  color: var(--brand-blue) !important;
+  border-color: var(--brand-blue) !important;
+}
+
+[data-theme="dark"] .button--brand-secondary:hover {
+  background-color: rgba(96, 165, 250, 0.06) !important;
+  box-shadow: 0 4px 12px rgba(96, 165, 250, 0.12);
 }

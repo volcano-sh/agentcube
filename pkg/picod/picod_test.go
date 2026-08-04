@@ -63,7 +63,7 @@ func createToken(t *testing.T, key *rsa.PrivateKey, claims jwt.MapClaims) string
 }
 
 // setupTestServer creates a test server with public key loaded from env
-func setupTestServer(t *testing.T, pubPEM string) (*Server, *httptest.Server, string) {
+func setupTestServer(t *testing.T, pubPEM string) (*httptest.Server, string) {
 	tmpDir, err := os.MkdirTemp("", "picod_test")
 	require.NoError(t, err)
 
@@ -78,7 +78,7 @@ func setupTestServer(t *testing.T, pubPEM string) (*Server, *httptest.Server, st
 	server := NewServer(config)
 	ts := httptest.NewServer(server.engine)
 
-	return server, ts, tmpDir
+	return ts, tmpDir
 }
 
 func TestPicoD_EndToEnd(t *testing.T) {
@@ -86,7 +86,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 	routerPriv, routerPubStr := generateRSAKeys(t)
 
 	// 2. Setup Server
-	_, ts, tmpDir := setupTestServer(t, routerPubStr)
+	ts, tmpDir := setupTestServer(t, routerPubStr)
 	defer os.RemoveAll(tmpDir)
 	defer ts.Close()
 	defer os.Unsetenv(PublicKeyEnvVar)
@@ -418,4 +418,86 @@ func TestPicoD_SetWorkspace(t *testing.T) {
 	err = server.setWorkspace(linkDir)
 	require.NoError(t, err)
 	assert.Equal(t, resolve(absLinkPath), resolve(server.workspaceDir))
+}
+
+func TestPicoD_SymlinkUploadGuard(t *testing.T) {
+	// 1. Setup Keys
+	routerPriv, routerPubStr := generateRSAKeys(t)
+
+	// 2. Setup Server
+	ts, tmpDir := setupTestServer(t, routerPubStr)
+	defer os.RemoveAll(tmpDir)
+	defer ts.Close()
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	client := ts.Client()
+
+	// Helper to create auth headers
+	getAuthHeaders := func() http.Header {
+		claims := jwt.MapClaims{
+			"iat": time.Now().Unix(),
+			"exp": time.Now().Add(time.Hour * 6).Unix(),
+		}
+		token := createToken(t, routerPriv, claims)
+
+		h := make(http.Header)
+		h.Set("Authorization", "Bearer "+token)
+		return h
+	}
+
+	// 3. Plant a symlink inside the workspace that points outside it
+	outsideDir := t.TempDir()
+	symlinkPath := filepath.Join(tmpDir, "escape-link")
+	require.NoError(t, os.Symlink(outsideDir, symlinkPath))
+
+	// 4. Test JSON Base64 Upload through symlink (should fail)
+	t.Run("JSON Upload Symlink Guard", func(t *testing.T) {
+		contentB64 := base64.StdEncoding.EncodeToString([]byte("malicious content"))
+		uploadReq := UploadFileRequest{
+			Path:    "escape-link/newdir/malicious.txt",
+			Content: contentB64,
+			Mode:    "0644",
+		}
+		body, _ := json.Marshal(uploadReq)
+
+		req, _ := http.NewRequest("POST", ts.URL+"/api/files", bytes.NewBuffer(body))
+		req.Header = getAuthHeaders()
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		// A symlink escape is a security violation — expect 403 Forbidden, not 500.
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+
+		// Verify file was NOT created in outsideDir
+		outsideFile := filepath.Join(outsideDir, "newdir/malicious.txt")
+		_, statErr := os.Stat(outsideFile)
+		assert.True(t, os.IsNotExist(statErr), "File should not be created outside workspace")
+	})
+
+	// 5. Test Multipart Upload through symlink (should fail)
+	t.Run("Multipart Upload Symlink Guard", func(t *testing.T) {
+		bodyBuf := &bytes.Buffer{}
+		writer := multipart.NewWriter(bodyBuf)
+		part, _ := writer.CreateFormFile("file", "malicious_multipart.txt")
+		_, err := part.Write([]byte("multipart malicious content"))
+		require.NoError(t, err)
+		err = writer.WriteField("path", "escape-link/newdir/malicious_multipart.txt")
+		require.NoError(t, err)
+		writer.Close()
+
+		req, _ := http.NewRequest("POST", ts.URL+"/api/files", bodyBuf)
+		req.Header = getAuthHeaders()
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		// A symlink escape is a security violation, expect 403 Forbidden, not 500.
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+
+		// Verify file was NOT created in outsideDir
+		outsideFile := filepath.Join(outsideDir, "newdir/malicious_multipart.txt")
+		_, statErr := os.Stat(outsideFile)
+		assert.True(t, os.IsNotExist(statErr), "File should not be created outside workspace")
+	})
 }

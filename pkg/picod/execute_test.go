@@ -130,19 +130,19 @@ func TestExecuteHandler_TimeoutFormats(t *testing.T) {
 			name:          "invalid format string",
 			timeout:       "invalid",
 			expectError:   true,
-			errorContains: "Invalid timeout format",
+			errorContains: "invalid timeout format",
 		},
 		{
 			name:          "malformed duration (no unit)",
 			timeout:       "10",
 			expectError:   true,
-			errorContains: "Invalid timeout format",
+			errorContains: "invalid timeout format",
 		},
 		{
 			name:          "empty string with quotes",
 			timeout:       `""`,
 			expectError:   true,
-			errorContains: "Invalid timeout format",
+			errorContains: "invalid timeout format",
 		},
 		{
 			name:        "valid seconds format",
@@ -156,7 +156,7 @@ func TestExecuteHandler_TimeoutFormats(t *testing.T) {
 		},
 		{
 			name:        "valid minutes format",
-			timeout:     "2m",
+			timeout:     "1m",
 			expectError: false,
 		},
 		{
@@ -186,7 +186,7 @@ func TestExecuteHandler_TimeoutFormats(t *testing.T) {
 				assert.Contains(t, w.Body.String(), tt.errorContains)
 			} else {
 				if w.Code == http.StatusBadRequest {
-					assert.NotContains(t, w.Body.String(), "Invalid timeout format")
+					assert.NotContains(t, w.Body.String(), "invalid timeout format")
 				}
 			}
 		})
@@ -393,6 +393,35 @@ func TestExecuteHandler_TimeoutHandling(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, TimeoutExitCode, resp.ExitCode)
 	assert.Contains(t, resp.Stderr, "Command timed out")
+}
+
+func TestExecuteHandler_TimeoutCapping(t *testing.T) {
+	server, tmpDir := setupExecuteTestServer(t)
+	defer os.RemoveAll(tmpDir)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	// Set the per-command maximum very low so that a "10s" request exceeds it.
+	server.config.MaxExecutionTimeout = 200 * time.Millisecond
+
+	// Request a timeout that exceeds the configured maximum.
+	// The server must reject the request with a 400 rather than silently capping it,
+	// so the client is aware of the enforced maximum.
+	req := ExecuteRequest{
+		Command: []string{"sleep", "2"},
+		Timeout: "10s",
+	}
+	body, _ := json.Marshal(req)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request, _ = http.NewRequest("POST", "/api/execute", bytes.NewBuffer(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	server.ExecuteHandler(c)
+
+	// Expect a 400 with a clear message about the enforced maximum.
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "exceeds the maximum allowed execution timeout")
 }
 
 func TestExecuteHandler_EnvironmentVariables(t *testing.T) {

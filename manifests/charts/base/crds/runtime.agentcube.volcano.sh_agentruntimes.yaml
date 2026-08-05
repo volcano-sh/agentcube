@@ -44,10 +44,11 @@ spec:
             description: Spec defines the desired state of the AgentRuntime.
             properties:
               maxSessionDuration:
-                default: 8h
                 description: |-
                   MaxSessionDuration describes the maximum duration for a session.
                   After this duration, the session will be terminated no matter active or inactive.
+                  This field is optional for AgentRuntime; if omitted, sessions are not capped by a hard lifetime.
+                  Non-positive values (e.g., 0s, -1h) are also treated as omitted and will not apply a hard lifetime cap.
                 type: string
               podTemplate:
                 description: PodTemplate describes the template that will be used
@@ -8563,7 +8564,6 @@ spec:
                   type: object
                 type: array
             required:
-            - maxSessionDuration
             - podTemplate
             - sessionTimeout
             - targetPort

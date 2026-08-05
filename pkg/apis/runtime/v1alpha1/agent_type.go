@@ -56,6 +56,11 @@ type AgentRuntimeSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:default="8h"
 	MaxSessionDuration *metav1.Duration `json:"maxSessionDuration,omitempty" protobuf:"bytes,3,opt,name=maxSessionDuration"`
+
+	// NodeStickiness configures soft node-affinity stickiness across sessions.
+	// Disabled unless explicitly enabled.
+	// +optional
+	NodeStickiness *NodeStickinessSpec `json:"nodeStickiness,omitempty"`
 }
 
 // AgentRuntimeStatus represents the observed state of an AgentRuntime.

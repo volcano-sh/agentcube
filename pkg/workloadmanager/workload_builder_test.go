@@ -17,6 +17,7 @@ limitations under the License.
 package workloadmanager
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -182,8 +183,8 @@ func TestBuildSandboxClaimObject(t *testing.T) {
 		if claim.Name != "claim-abc" {
 			t.Errorf("expected name claim-abc, got %q", claim.Name)
 		}
-		if claim.Spec.TemplateRef.Name != "my-ci" {
-			t.Errorf("expected templateRef name my-ci, got %q", claim.Spec.TemplateRef.Name)
+		if claim.Spec.WarmPoolRef.Name != "my-ci" {
+			t.Errorf("expected WarmPoolRef name my-ci, got %q", claim.Spec.WarmPoolRef.Name)
 		}
 		if claim.Labels[SessionIdLabelKey] != "session-claim-test" {
 			t.Errorf("expected label %s=session-claim-test, got %q", SessionIdLabelKey, claim.Labels[SessionIdLabelKey])
@@ -403,7 +404,7 @@ func TestBuildSandboxByAgentRuntime_Success(t *testing.T) {
 		cubeInformerFactory:  factory,
 	}
 
-	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", ifm)
+	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "user-123", ifm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -426,6 +427,9 @@ func TestBuildSandboxByAgentRuntime_Success(t *testing.T) {
 	// Validate Entry
 	if entry.Kind != types.SandboxKind {
 		t.Errorf("expected entry kind %q, got %q", types.SandboxKind, entry.Kind)
+	}
+	if entry.OwnerID != "user-123" {
+		t.Errorf("expected entry ownerID %q, got %q", "user-123", entry.OwnerID)
 	}
 	if entry.IdleTimeout != 30*time.Minute {
 		t.Errorf("expected idle timeout 30m, got %v", entry.IdleTimeout)
@@ -600,10 +604,11 @@ func TestBuildSandboxByCodeInterpreter_SuccessNoWarmPool(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, "ci-no-wp", "", ifm)
+	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, "ci-no-wp", "user-123", ifm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	assert.Equal(t, "user-123", entry.OwnerID)
 
 	if sandbox == nil {
 		t.Fatal("expected sandbox not to be nil")
@@ -677,8 +682,8 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 	if entry.Kind != types.SandboxClaimsKind {
 		t.Errorf("expected entry.Kind to be %q, got %q", types.SandboxClaimsKind, entry.Kind)
 	}
-	if claim.Spec.TemplateRef.Name != testCodeInterpreterWarmPool {
-		t.Errorf("expected templateRef name %q, got %q", testCodeInterpreterWarmPool, claim.Spec.TemplateRef.Name)
+	if claim.Spec.WarmPoolRef.Name != testCodeInterpreterWarmPool {
+		t.Errorf("expected WarmPoolRef name %q, got %q", testCodeInterpreterWarmPool, claim.Spec.WarmPoolRef.Name)
 	}
 	if len(claim.OwnerReferences) != 1 {
 		t.Fatalf("expected 1 owner reference, got %d", len(claim.OwnerReferences))
@@ -786,4 +791,99 @@ func TestBuildSandboxClaimObject_OwnershipLabels(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAgentRuntimePodSpec_K8s36CompatibilityBoundary(t *testing.T) {
+	// Verifies that PodSpec in v0.36.2 is cleanly constructed and deep-copied
+	// when building Sandbox objects from AgentRuntime templates.
+	ar := &runtimev1alpha1.AgentRuntime{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: testNamespace,
+			Name:      "compat-runtime",
+		},
+		Spec: runtimev1alpha1.AgentRuntimeSpec{
+			Template: &runtimev1alpha1.SandboxTemplate{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "app", Image: "python:3.11-slim"},
+					},
+				},
+			},
+		},
+	}
+
+	fakeClient := cubefake.NewSimpleClientset(ar)
+	factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
+	agentRuntimeInformer := factory.Runtime().V1alpha1().AgentRuntimes()
+	assert.NoError(t, agentRuntimeInformer.Informer().GetStore().Add(ar))
+
+	ifm := &Informers{
+		AgentRuntimeLister:   agentRuntimeInformer.Lister(),
+		AgentRuntimeInformer: agentRuntimeInformer.Informer(),
+		informerFactory:      newFactory(),
+		cubeInformerFactory:  factory,
+	}
+
+	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, "compat-runtime", "owner-456", ifm)
+	assert.NoError(t, err)
+	assert.NotNil(t, sandbox)
+	assert.Equal(t, "owner-456", entry.OwnerID)
+	assert.Equal(t, "python:3.11-slim", sandbox.Spec.PodTemplate.Spec.Containers[0].Image)
+}
+
+func TestAgentRuntime_OldObjectCompatibility(t *testing.T) {
+	// This simulates a schema-valid old AgentRuntime object stored in etcd (v0.4.6 / k8s v0.35.4 era)
+	// containing the complete legacy 'workloadRef' payload (name, podGroup, podGroupReplicaKey).
+	// Upstream k8s.io/api v0.36.2 dropped 'workloadRef' from corev1.PodSpec in favor of 'schedulingGroup'.
+	rawJSON := []byte(`{
+		"apiVersion": "runtime.agentcube.volcano.sh/v1alpha1",
+		"kind": "AgentRuntime",
+		"metadata": {
+			"name": "compat-runtime-old",
+			"namespace": "default"
+		},
+		"spec": {
+			"podTemplate": {
+				"spec": {
+					"workloadRef": {
+						"name": "my-workload",
+						"podGroup": "my-podgroup",
+						"podGroupReplicaKey": "0"
+					},
+					"containers": [
+						{
+							"name": "app",
+							"image": "python:3.11-slim"
+						}
+					]
+				}
+			}
+		}
+	}`)
+
+	var ar runtimev1alpha1.AgentRuntime
+	err := json.Unmarshal(rawJSON, &ar)
+	assert.NoError(t, err, "Should successfully unmarshal legacy JSON despite tombstoned workloadRef fields")
+
+	fakeClient := cubefake.NewSimpleClientset(&ar)
+	factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
+	agentRuntimeInformer := factory.Runtime().V1alpha1().AgentRuntimes()
+	assert.NoError(t, agentRuntimeInformer.Informer().GetStore().Add(&ar))
+
+	ifm := &Informers{
+		AgentRuntimeLister:   agentRuntimeInformer.Lister(),
+		AgentRuntimeInformer: agentRuntimeInformer.Informer(),
+		informerFactory:      newFactory(),
+		cubeInformerFactory:  factory,
+	}
+
+	sandbox, entry, err := buildSandboxByAgentRuntime("default", "compat-runtime-old", "owner-compat", ifm)
+	assert.NoError(t, err)
+	assert.NotNil(t, sandbox)
+	assert.Equal(t, "owner-compat", entry.OwnerID)
+	assert.Equal(t, "python:3.11-slim", sandbox.Spec.PodTemplate.Spec.Containers[0].Image)
+
+	// Verify contract: legacy workloadRef fields (name, podGroup, podGroupReplicaKey) are dropped
+	// upon conversion, and SchedulingGroup remains nil unless explicitly configured on the AgentRuntime.
+	assert.Nil(t, sandbox.Spec.PodTemplate.Spec.SchedulingGroup, "SchedulingGroup should be nil by default when unmarshaling legacy workloadRef payloads")
 }

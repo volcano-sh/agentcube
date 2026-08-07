@@ -14,10 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package v1alpha1 contains API Schema definitions for the runtime v1alpha1 API group
-// +k8s:deepcopy-gen=package
-// +groupName=runtime.agentcube.volcano.sh
-// +kubebuilder:object:generate=true
 package v1alpha1
 
 import (
@@ -30,6 +26,7 @@ var (
 	GroupVersion = schema.GroupVersion{Group: "runtime.agentcube.volcano.sh", Version: "v1alpha1"}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme
+	//nolint:staticcheck // SA1019: scheme.Builder is deprecated
 	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
 
 	// AddToScheme adds the types in this group-version to the given scheme.

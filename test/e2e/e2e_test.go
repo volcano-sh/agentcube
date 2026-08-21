@@ -48,7 +48,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+	sandboxv1beta1 "sigs.k8s.io/agent-sandbox/api/v1beta1"
 	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
+	extensionsv1beta1 "sigs.k8s.io/agent-sandbox/extensions/api/v1beta1"
 )
 
 const (
@@ -80,7 +82,9 @@ type claimedSandboxResources struct {
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(sandboxv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(sandboxv1beta1.AddToScheme(scheme))
 	utilruntime.Must(extensionsv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(extensionsv1beta1.AddToScheme(scheme))
 	utilruntime.Must(v1alpha1.AddToScheme(scheme))
 }
 
@@ -1036,10 +1040,10 @@ func (ctx *e2eTestContext) cleanupCodeInterpreter(t *testing.T, namespace, name,
 func (ctx *e2eTestContext) verifyClaimedResourcesDeleted(t *testing.T, namespace string, claimedResources *claimedSandboxResources) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		return ctx.objectUIDGone(namespace, claimedResources.claimName, claimedResources.claimUID, &extensionsv1alpha1.SandboxClaim{})
+		return ctx.objectUIDGone(namespace, claimedResources.claimName, claimedResources.claimUID, &extensionsv1beta1.SandboxClaim{})
 	}, 30*time.Second, time.Second, "adopting SandboxClaim %s/%s should be deleted", namespace, claimedResources.claimName)
 	require.Eventually(t, func() bool {
-		return ctx.objectUIDGone(namespace, claimedResources.sandboxName, claimedResources.sandboxUID, &sandboxv1alpha1.Sandbox{})
+		return ctx.objectUIDGone(namespace, claimedResources.sandboxName, claimedResources.sandboxUID, &sandboxv1beta1.Sandbox{})
 	}, 30*time.Second, time.Second, "adopted Sandbox %s/%s should be deleted", namespace, claimedResources.sandboxName)
 	require.Eventually(t, func() bool {
 		return ctx.objectUIDGone(namespace, claimedResources.podName, claimedResources.podUID, &corev1.Pod{})
@@ -1236,7 +1240,7 @@ func (ctx *e2eTestContext) deleteYamlFile(yamlPath string) error {
 
 // countSandboxClaims counts the number of SandboxClaim resources owned by a CodeInterpreter
 func (ctx *e2eTestContext) countSandboxClaims(namespace, codeInterpreterName string) (int, error) {
-	sandboxClaimList := &extensionsv1alpha1.SandboxClaimList{}
+	sandboxClaimList := &extensionsv1beta1.SandboxClaimList{}
 	err := ctx.ctrlClient.List(context.Background(), sandboxClaimList, client.InNamespace(namespace))
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -1292,7 +1296,7 @@ func (ctx *e2eTestContext) getWarmPoolPodIdentities(namespace, codeInterpreterNa
 func (ctx *e2eTestContext) listWarmPoolPods(namespace, codeInterpreterName string) ([]corev1.Pod, error) {
 	listCtx := context.Background()
 
-	sandboxList := &sandboxv1alpha1.SandboxList{}
+	sandboxList := &sandboxv1beta1.SandboxList{}
 	if err := ctx.ctrlClient.List(listCtx, sandboxList, client.InNamespace(namespace)); err != nil {
 		return nil, fmt.Errorf("failed to list sandboxes: %w", err)
 	}
@@ -1329,7 +1333,7 @@ func (ctx *e2eTestContext) listWarmPoolPods(namespace, codeInterpreterName strin
 	return pods, nil
 }
 
-func isWarmPoolSandbox(sandbox sandboxv1alpha1.Sandbox, codeInterpreterName string) bool {
+func isWarmPoolSandbox(sandbox sandboxv1beta1.Sandbox, codeInterpreterName string) bool {
 	if sandbox.DeletionTimestamp != nil || sandbox.UID == "" {
 		return false
 	}
@@ -1406,14 +1410,14 @@ func (ctx *e2eTestContext) arePodsReady(namespace, codeInterpreterName string) (
 }
 
 // getSandboxClaimByOwner finds exactly one SandboxClaim owned by the specified owner
-func (ctx *e2eTestContext) getSandboxClaimByOwner(namespace, ownerKind, ownerName string) (*extensionsv1alpha1.SandboxClaim, error) {
-	sandboxClaimList := &extensionsv1alpha1.SandboxClaimList{}
+func (ctx *e2eTestContext) getSandboxClaimByOwner(namespace, ownerKind, ownerName string) (*extensionsv1beta1.SandboxClaim, error) {
+	sandboxClaimList := &extensionsv1beta1.SandboxClaimList{}
 	err := ctx.ctrlClient.List(context.Background(), sandboxClaimList, client.InNamespace(namespace))
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sandboxclaims: %w", err)
 	}
 
-	var found *extensionsv1alpha1.SandboxClaim
+	var found *extensionsv1beta1.SandboxClaim
 	for i := range sandboxClaimList.Items {
 		claim := &sandboxClaimList.Items[i]
 		for _, ownerRef := range claim.OwnerReferences {
@@ -1431,14 +1435,14 @@ func (ctx *e2eTestContext) getSandboxClaimByOwner(namespace, ownerKind, ownerNam
 }
 
 // getSandboxByOwner finds exactly one Sandbox owned by the specified owner
-func (ctx *e2eTestContext) getSandboxByOwner(namespace, ownerKind, ownerName string) (*sandboxv1alpha1.Sandbox, error) {
-	sandboxList := &sandboxv1alpha1.SandboxList{}
+func (ctx *e2eTestContext) getSandboxByOwner(namespace, ownerKind, ownerName string) (*sandboxv1beta1.Sandbox, error) {
+	sandboxList := &sandboxv1beta1.SandboxList{}
 	err := ctx.ctrlClient.List(context.Background(), sandboxList, client.InNamespace(namespace))
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sandboxes: %w", err)
 	}
 
-	var found *sandboxv1alpha1.Sandbox
+	var found *sandboxv1beta1.Sandbox
 	for i := range sandboxList.Items {
 		sandbox := &sandboxList.Items[i]
 		for _, ownerRef := range sandbox.OwnerReferences {
@@ -1743,4 +1747,68 @@ func TestRLACOwnershipEnforcement(t *testing.T) {
 
 	// Admin role should bypass RLAC ownership checks and succeed with 200 OK.
 	require.Equal(t, http.StatusOK, status, "admin bypass failed: %s", body)
+}
+
+func TestSandboxVolumeClaimTemplatesImmutability(t *testing.T) {
+	tc, err := newE2ETestContext()
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	sandboxName := "test-sandbox-immutability"
+	sandbox := &sandboxv1beta1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      sandboxName,
+			Namespace: agentcubeNamespace,
+		},
+		Spec: sandboxv1beta1.SandboxSpec{
+			SandboxBlueprint: sandboxv1beta1.SandboxBlueprint{
+				PodTemplate: sandboxv1beta1.PodTemplate{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name:  "test-container",
+								Image: "alpine",
+							},
+						},
+					},
+				},
+				VolumeClaimTemplates: []sandboxv1beta1.PersistentVolumeClaimTemplate{
+					{
+						EmbeddedObjectMetadata: sandboxv1beta1.EmbeddedObjectMetadata{
+							Name: "data-pvc",
+						},
+						Spec: corev1.PersistentVolumeClaimSpec{
+							AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err = tc.ctrlClient.Create(ctx, sandbox)
+	require.NoError(t, err)
+
+	// Clean up after test
+	defer func() {
+		_ = tc.ctrlClient.Delete(context.Background(), sandbox)
+	}()
+
+	// Modify the volumeClaimTemplates
+	sandbox.Spec.VolumeClaimTemplates = []sandboxv1beta1.PersistentVolumeClaimTemplate{
+		{
+			EmbeddedObjectMetadata: sandboxv1beta1.EmbeddedObjectMetadata{
+				Name: "data-pvc-modified", // Changed name
+			},
+			Spec: corev1.PersistentVolumeClaimSpec{
+				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			},
+		},
+	}
+
+	err = tc.ctrlClient.Update(ctx, sandbox)
+	require.Error(t, err)
+	require.True(t, apierrors.IsInvalid(err), "expected apierrors.IsInvalid, got: %v", err)
 }

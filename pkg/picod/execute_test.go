@@ -27,6 +27,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -260,6 +261,10 @@ func TestExecuteHandler_WorkingDirectory_SymlinkEscape(t *testing.T) {
 	server, tmpDir := setupExecuteTestServer(t)
 	defer os.RemoveAll(tmpDir)
 	defer os.Unsetenv(PublicKeyEnvVar)
+
+	if runtime.GOOS == "windows" {
+		t.Skip("Symlinks require admin privileges on Windows")
+	}
 
 	// Plant a symlink inside the workspace that points outside it.
 	outsideDir := t.TempDir()

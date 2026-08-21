@@ -22,7 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+	sandboxv1beta1 "sigs.k8s.io/agent-sandbox/api/v1beta1"
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
@@ -35,14 +35,14 @@ func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 
 	tests := []struct {
 		name         string
-		setupSandbox func() *sandboxv1alpha1.Sandbox
+		setupSandbox func() *sandboxv1beta1.Sandbox
 		entry        *sandboxEntry
 		validate     func(t *testing.T, result *types.SandboxInfo)
 	}{
 		{
 			name: "no ShutdownTime falls back to DefaultSandboxTTL",
-			setupSandbox: func() *sandboxv1alpha1.Sandbox {
-				return &sandboxv1alpha1.Sandbox{
+			setupSandbox: func() *sandboxv1beta1.Sandbox {
+				return &sandboxv1beta1.Sandbox{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-sandbox",
 						Namespace: "default",
@@ -62,15 +62,15 @@ func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 		},
 		{
 			name: "ShutdownTime set to 24h is used as ExpiresAt",
-			setupSandbox: func() *sandboxv1alpha1.Sandbox {
+			setupSandbox: func() *sandboxv1beta1.Sandbox {
 				shutdownTime := now.Add(24 * time.Hour)
-				return &sandboxv1alpha1.Sandbox{
+				return &sandboxv1beta1.Sandbox{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-sandbox",
 						Namespace: "default",
 					},
-					Spec: sandboxv1alpha1.SandboxSpec{
-						Lifecycle: sandboxv1alpha1.Lifecycle{
+					Spec: sandboxv1beta1.SandboxSpec{
+						Lifecycle: sandboxv1beta1.Lifecycle{
 							ShutdownTime: &metav1.Time{Time: shutdownTime},
 						},
 					},
@@ -87,15 +87,15 @@ func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 		},
 		{
 			name: "ShutdownTime set to 30m overrides DefaultSandboxTTL",
-			setupSandbox: func() *sandboxv1alpha1.Sandbox {
+			setupSandbox: func() *sandboxv1beta1.Sandbox {
 				shutdownTime := now.Add(30 * time.Minute)
-				return &sandboxv1alpha1.Sandbox{
+				return &sandboxv1beta1.Sandbox{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "short-sandbox",
 						Namespace: "default",
 					},
-					Spec: sandboxv1alpha1.SandboxSpec{
-						Lifecycle: sandboxv1alpha1.Lifecycle{
+					Spec: sandboxv1beta1.SandboxSpec{
+						Lifecycle: sandboxv1beta1.Lifecycle{
 							ShutdownTime: &metav1.Time{Time: shutdownTime},
 						},
 					},
@@ -115,11 +115,11 @@ func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 		},
 		{
 			name: "warm-pool path: ShutdownTime set on simpleSandbox reflects MaxSessionDuration",
-			setupSandbox: func() *sandboxv1alpha1.Sandbox {
+			setupSandbox: func() *sandboxv1beta1.Sandbox {
 				// Simulates the simpleSandbox built by the warm-pool CodeInterpreter path
 				// after the fix in workload_builder.go sets ShutdownTime from MaxSessionDuration.
 				shutdownTime := now.Add(24 * time.Hour)
-				return &sandboxv1alpha1.Sandbox{
+				return &sandboxv1beta1.Sandbox{
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "default",
 						Name:      "ci-warmpool-abc",
@@ -127,8 +127,8 @@ func TestBuildSandboxPlaceHolder_TableDriven(t *testing.T) {
 							SessionIdLabelKey: "session-wp-001",
 						},
 					},
-					Spec: sandboxv1alpha1.SandboxSpec{
-						Lifecycle: sandboxv1alpha1.Lifecycle{
+					Spec: sandboxv1beta1.SandboxSpec{
+						Lifecycle: sandboxv1beta1.Lifecycle{
 							ShutdownTime: &metav1.Time{Time: shutdownTime},
 						},
 					},
@@ -162,25 +162,25 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		setupSandbox   func() *sandboxv1alpha1.Sandbox
+		setupSandbox   func() *sandboxv1beta1.Sandbox
 		podIP          string
 		entry          *sandboxEntry
 		validateResult func(t *testing.T, result *types.SandboxInfo)
 	}{
 		{
 			name: "basic sandbox with ports",
-			setupSandbox: func() *sandboxv1alpha1.Sandbox {
-				return &sandboxv1alpha1.Sandbox{
+			setupSandbox: func() *sandboxv1beta1.Sandbox {
+				return &sandboxv1beta1.Sandbox{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:              "test-sandbox",
 						Namespace:         "default",
 						UID:               "test-uid-123",
 						CreationTimestamp: metav1.NewTime(now),
 					},
-					Status: sandboxv1alpha1.SandboxStatus{
+					Status: sandboxv1beta1.SandboxStatus{
 						Conditions: []metav1.Condition{
 							{
-								Type:   string(sandboxv1alpha1.SandboxConditionReady),
+								Type:   string(sandboxv1beta1.SandboxConditionReady),
 								Status: metav1.ConditionTrue,
 							},
 						},
@@ -215,24 +215,24 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 		},
 		{
 			name: "sandbox with shutdown time",
-			setupSandbox: func() *sandboxv1alpha1.Sandbox {
+			setupSandbox: func() *sandboxv1beta1.Sandbox {
 				shutdownTime := now.Add(2 * time.Hour)
-				return &sandboxv1alpha1.Sandbox{
+				return &sandboxv1beta1.Sandbox{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:              "test-sandbox",
 						Namespace:         "default",
 						UID:               "test-uid-123",
 						CreationTimestamp: metav1.NewTime(now),
 					},
-					Spec: sandboxv1alpha1.SandboxSpec{
-						Lifecycle: sandboxv1alpha1.Lifecycle{
+					Spec: sandboxv1beta1.SandboxSpec{
+						Lifecycle: sandboxv1beta1.Lifecycle{
 							ShutdownTime: &metav1.Time{Time: shutdownTime},
 						},
 					},
-					Status: sandboxv1alpha1.SandboxStatus{
+					Status: sandboxv1beta1.SandboxStatus{
 						Conditions: []metav1.Condition{
 							{
-								Type:   string(sandboxv1alpha1.SandboxConditionReady),
+								Type:   string(sandboxv1beta1.SandboxConditionReady),
 								Status: metav1.ConditionTrue,
 							},
 						},
@@ -253,18 +253,18 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 		},
 		{
 			name: "sandbox with no ports",
-			setupSandbox: func() *sandboxv1alpha1.Sandbox {
-				return &sandboxv1alpha1.Sandbox{
+			setupSandbox: func() *sandboxv1beta1.Sandbox {
+				return &sandboxv1beta1.Sandbox{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:              "test-sandbox",
 						Namespace:         "default",
 						UID:               "test-uid-123",
 						CreationTimestamp: metav1.NewTime(now),
 					},
-					Status: sandboxv1alpha1.SandboxStatus{
+					Status: sandboxv1beta1.SandboxStatus{
 						Conditions: []metav1.Condition{
 							{
-								Type:   string(sandboxv1alpha1.SandboxConditionReady),
+								Type:   string(sandboxv1beta1.SandboxConditionReady),
 								Status: metav1.ConditionTrue,
 							},
 						},
@@ -283,18 +283,18 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 		},
 		{
 			name: "sandbox with empty pod IP",
-			setupSandbox: func() *sandboxv1alpha1.Sandbox {
-				return &sandboxv1alpha1.Sandbox{
+			setupSandbox: func() *sandboxv1beta1.Sandbox {
+				return &sandboxv1beta1.Sandbox{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:              "test-sandbox",
 						Namespace:         "default",
 						UID:               "test-uid-123",
 						CreationTimestamp: metav1.NewTime(now),
 					},
-					Status: sandboxv1alpha1.SandboxStatus{
+					Status: sandboxv1beta1.SandboxStatus{
 						Conditions: []metav1.Condition{
 							{
-								Type:   string(sandboxv1alpha1.SandboxConditionReady),
+								Type:   string(sandboxv1beta1.SandboxConditionReady),
 								Status: metav1.ConditionTrue,
 							},
 						},
@@ -331,16 +331,16 @@ func TestBuildSandboxInfo_TableDriven(t *testing.T) {
 func TestGetSandboxStatus_TableDriven(t *testing.T) {
 	tests := []struct {
 		name     string
-		sandbox  *sandboxv1alpha1.Sandbox
+		sandbox  *sandboxv1beta1.Sandbox
 		expected string
 	}{
 		{
 			name: "ready condition true",
-			sandbox: &sandboxv1alpha1.Sandbox{
-				Status: sandboxv1alpha1.SandboxStatus{
+			sandbox: &sandboxv1beta1.Sandbox{
+				Status: sandboxv1beta1.SandboxStatus{
 					Conditions: []metav1.Condition{
 						{
-							Type:   string(sandboxv1alpha1.SandboxConditionReady),
+							Type:   string(sandboxv1beta1.SandboxConditionReady),
 							Status: metav1.ConditionTrue,
 						},
 					},
@@ -350,11 +350,11 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 		},
 		{
 			name: "ready condition false without reason",
-			sandbox: &sandboxv1alpha1.Sandbox{
-				Status: sandboxv1alpha1.SandboxStatus{
+			sandbox: &sandboxv1beta1.Sandbox{
+				Status: sandboxv1beta1.SandboxStatus{
 					Conditions: []metav1.Condition{
 						{
-							Type:   string(sandboxv1alpha1.SandboxConditionReady),
+							Type:   string(sandboxv1beta1.SandboxConditionReady),
 							Status: metav1.ConditionFalse,
 						},
 					},
@@ -364,11 +364,11 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 		},
 		{
 			name: "ready condition false with reason is not-ready",
-			sandbox: &sandboxv1alpha1.Sandbox{
-				Status: sandboxv1alpha1.SandboxStatus{
+			sandbox: &sandboxv1beta1.Sandbox{
+				Status: sandboxv1beta1.SandboxStatus{
 					Conditions: []metav1.Condition{
 						{
-							Type:    string(sandboxv1alpha1.SandboxConditionReady),
+							Type:    string(sandboxv1beta1.SandboxConditionReady),
 							Status:  metav1.ConditionFalse,
 							Reason:  "ErrImagePull",
 							Message: "Back-off pulling image",
@@ -380,11 +380,11 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 		},
 		{
 			name: "ready condition unknown",
-			sandbox: &sandboxv1alpha1.Sandbox{
-				Status: sandboxv1alpha1.SandboxStatus{
+			sandbox: &sandboxv1beta1.Sandbox{
+				Status: sandboxv1beta1.SandboxStatus{
 					Conditions: []metav1.Condition{
 						{
-							Type:   string(sandboxv1alpha1.SandboxConditionReady),
+							Type:   string(sandboxv1beta1.SandboxConditionReady),
 							Status: metav1.ConditionUnknown,
 						},
 					},
@@ -394,8 +394,8 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 		},
 		{
 			name: "no conditions",
-			sandbox: &sandboxv1alpha1.Sandbox{
-				Status: sandboxv1alpha1.SandboxStatus{
+			sandbox: &sandboxv1beta1.Sandbox{
+				Status: sandboxv1beta1.SandboxStatus{
 					Conditions: []metav1.Condition{},
 				},
 			},
@@ -403,8 +403,8 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 		},
 		{
 			name: "nil conditions",
-			sandbox: &sandboxv1alpha1.Sandbox{
-				Status: sandboxv1alpha1.SandboxStatus{
+			sandbox: &sandboxv1beta1.Sandbox{
+				Status: sandboxv1beta1.SandboxStatus{
 					Conditions: nil,
 				},
 			},
@@ -412,8 +412,8 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 		},
 		{
 			name: "other condition type",
-			sandbox: &sandboxv1alpha1.Sandbox{
-				Status: sandboxv1alpha1.SandboxStatus{
+			sandbox: &sandboxv1beta1.Sandbox{
+				Status: sandboxv1beta1.SandboxStatus{
 					Conditions: []metav1.Condition{
 						{
 							Type:   "OtherCondition",
@@ -426,15 +426,15 @@ func TestGetSandboxStatus_TableDriven(t *testing.T) {
 		},
 		{
 			name: "multiple conditions with ready true",
-			sandbox: &sandboxv1alpha1.Sandbox{
-				Status: sandboxv1alpha1.SandboxStatus{
+			sandbox: &sandboxv1beta1.Sandbox{
+				Status: sandboxv1beta1.SandboxStatus{
 					Conditions: []metav1.Condition{
 						{
 							Type:   "OtherCondition",
 							Status: metav1.ConditionFalse,
 						},
 						{
-							Type:   string(sandboxv1alpha1.SandboxConditionReady),
+							Type:   string(sandboxv1beta1.SandboxConditionReady),
 							Status: metav1.ConditionTrue,
 						},
 					},
@@ -463,7 +463,7 @@ func TestBuildSandboxPlaceHolder_OwnerID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sandbox := &sandboxv1alpha1.Sandbox{
+			sandbox := &sandboxv1beta1.Sandbox{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-sandbox",
 					Namespace: "default",
@@ -493,7 +493,7 @@ func TestBuildSandboxInfo_OwnerID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sandbox := &sandboxv1alpha1.Sandbox{
+			sandbox := &sandboxv1beta1.Sandbox{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:              "test-sandbox",
 					Namespace:         "default",

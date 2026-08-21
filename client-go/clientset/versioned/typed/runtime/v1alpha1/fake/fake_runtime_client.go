@@ -36,6 +36,10 @@ func (c *FakeRuntimeV1alpha1) CodeInterpreters(namespace string) v1alpha1.CodeIn
 	return newFakeCodeInterpreters(c, namespace)
 }
 
+func (c *FakeRuntimeV1alpha1) MultiAgentRuntimes(namespace string) v1alpha1.MultiAgentRuntimeInterface {
+	return newFakeMultiAgentRuntimes(c, namespace)
+}
+
 // RESTClient returns a RESTClient that is used to communicate
 // with API server by this client implementation.
 func (c *FakeRuntimeV1alpha1) RESTClient() rest.Interface {

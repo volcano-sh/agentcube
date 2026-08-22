@@ -17,9 +17,67 @@ Before you begin, ensure you have the following:
 
 ## 1. Installation
 
-AgentCube can be installed using Helm. Follow these steps:
+AgentCube relies on the [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) project for sandbox management. You must install it first.
 
-### Using Helm (Recommended)
+### Install agent-sandbox
+
+```bash
+# Install agent-sandbox CRDs and controller
+AGENT_SANDBOX_VERSION=v0.5.3
+kubectl apply --server-side -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/sandbox-with-extensions.yaml
+```
+
+> [!IMPORTANT]
+> **Kubernetes Dependency Boundary (`workloadRef` vs `schedulingGroup`)**:
+> Upstream Kubernetes `v0.36.2` (`k8s.io/api`) removed the experimental `workloadRef` field (`name`, `podGroup`, `podGroupReplicaKey`) from `corev1.PodSpec` and replaced it with `schedulingGroup` (`podGroupName`).
+>
+> **Compatibility & Scheduling Semantics**:
+> - Legacy `AgentRuntime` objects stored in etcd containing `workloadRef` payloads unmarshal without runtime errors.
+> - However, `workloadRef` fields are tombstoned by the Kubernetes v0.36 API schema and will **not** be copied to newly spawned Sandboxes. Legacy `workloadRef` batch-scheduling intent is **unsupported** on v0.36+.
+> - Workloads requiring batch-scheduling or pod-group semantics must be updated to use `schedulingGroup` with `podGroupName: <group-name>`.
+
+### Upgrade Guide (v0.4.6 to v0.5.3)
+
+When upgrading an existing `v0.4.6` installation with active or cold-start `CodeInterpreter` claims (`warmPoolSize > 0`), applying `v0.5.3` directly can cause claims to map to `warmPoolRef.name=shadow-pool-<template>`. Because `v0.5.3` requeues with `WarmPoolNotFound` if the shadow pool does not exist, claims may hit AgentCube's 2-minute create timeout and enter rollback.
+
+To safely upgrade from `v0.4.6` to `v0.5.3`, follow these mandatory steps:
+
+1. **Backup Existing Resources**
+   ```bash
+   kubectl get sandboxclaims,sandboxes,sandboxtemplates,sandboxwarmpools,codeinterpreters -A -o yaml > backup.yaml
+   ```
+2. **Download the Migration Helper**
+   Obtain the pinned `v0.5.3` migration helper script from the release assets:
+   ```bash
+   wget https://raw.githubusercontent.com/kubernetes-sigs/agent-sandbox/refs/tags/v0.5.3/helm/files/migrate.sh -O migrate.sh
+   chmod +x migrate.sh
+   ```
+3. **Run Pre-Upgrade Bootstrap**
+   This prevents `WarmPoolNotFound` errors for existing cold-start claims:
+   ```bash
+   ./migrate.sh --phase=bootstrap
+   ```
+4. **Apply v0.5.3 Manifest**
+   ```bash
+   kubectl apply --server-side -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.5.3/sandbox-with-extensions.yaml
+   ```
+5. **Wait for Readiness**
+   Wait for the new controller and conversion webhook to be fully responsive before proceeding:
+   ```bash
+   kubectl rollout status deployment/agent-sandbox-controller -n agent-sandbox-system
+   for i in {1..30}; do
+       if kubectl get sandboxwarmpools.extensions.agents.x-k8s.io --all-namespaces >/dev/null 2>&1; then break; fi
+       if [ $i -eq 30 ]; then echo "Timed out waiting for webhook"; exit 1; fi
+       sleep 2
+   done
+   ```
+6. **Run Post-Upgrade Migrate**
+   Execute the migration phase to finalize the upgrade:
+   ```bash
+   ./migrate.sh --phase=migrate
+   ```
+
+### Install AgentCube Using Helm (Recommended)
 
 Add the Volcano Helm repository (if not already added):
 

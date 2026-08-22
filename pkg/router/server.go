@@ -27,6 +27,7 @@ import (
 
 	"github.com/volcano-sh/agentcube/pkg/store"
 	"golang.org/x/net/http2"
+	//nolint:staticcheck // SA1019: h2c is deprecated but required for HTTP/2 cleartext
 	"golang.org/x/net/http2/h2c"
 )
 
@@ -188,6 +189,7 @@ func (s *Server) Start(ctx context.Context) error {
 	h2s := &http2.Server{}
 
 	// Wrap handler with h2c for HTTP/2 cleartext support
+	//nolint:staticcheck // SA1019: h2c.NewHandler is deprecated but required for HTTP/2 cleartext
 	h2cHandler := h2c.NewHandler(s.engine, h2s)
 
 	s.httpServer = &http.Server{

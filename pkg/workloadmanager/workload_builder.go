@@ -154,14 +154,15 @@ type buildSandboxClaimParams struct {
 
 // buildSandboxObject builds a Sandbox object from parameters
 func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
-	if params.ttl == 0 {
-		params.ttl = DefaultSandboxTTL
-	}
 	if params.idleTimeout == 0 {
 		params.idleTimeout = DefaultSandboxIdleTimeout
 	}
 
-	shutdownTime := metav1.NewTime(time.Now().Add(params.ttl))
+	var shutdownTime *metav1.Time
+	if params.ttl != 0 {
+		st := metav1.NewTime(time.Now().Add(params.ttl))
+		shutdownTime = &st
+	}
 
 	// Allocate fresh maps for copied metadata so we never mutate informer-cached input.
 	// Annotations are only copied when params.podAnnotations is non-nil.
@@ -200,7 +201,7 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 				},
 			},
 			Lifecycle: sandboxv1alpha1.Lifecycle{
-				ShutdownTime: &shutdownTime,
+				ShutdownTime: shutdownTime,
 			},
 			Replicas: ptr.To[int32](1),
 		},
@@ -289,8 +290,8 @@ func buildSandboxByAgentRuntime(namespace string, name string, ownerID string, i
 	if agentRuntimeObj.Spec.Template.Annotations != nil {
 		buildParams.podAnnotations = agentRuntimeObj.Spec.Template.Annotations
 	}
-	if agentRuntimeObj.Spec.MaxSessionDuration != nil {
-		buildParams.ttl = agentRuntimeObj.Spec.MaxSessionDuration.Duration
+	if d := agentRuntimeObj.Spec.MaxSessionDuration; d != nil && d.Duration > 0 {
+		buildParams.ttl = d.Duration
 	}
 	idleTimeout := DefaultSandboxIdleTimeout
 	if agentRuntimeObj.Spec.SessionTimeout != nil {
@@ -386,10 +387,12 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				},
 			},
 		}
-		if codeInterpreterObj.Spec.MaxSessionDuration != nil {
-			shutdownTime := metav1.NewTime(time.Now().Add(codeInterpreterObj.Spec.MaxSessionDuration.Duration))
-			simpleSandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
+		maxDuration := DefaultSandboxTTL
+		if d := codeInterpreterObj.Spec.MaxSessionDuration; d != nil && d.Duration > 0 {
+			maxDuration = d.Duration
 		}
+		shutdownTime := metav1.NewTime(time.Now().Add(maxDuration))
+		simpleSandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
 		sandboxEntry.Kind = types.SandboxClaimsKind
 		return simpleSandbox, sandboxClaim, sandboxEntry, nil
 	}
@@ -430,8 +433,10 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		idleTimeout:    idleTimeout,
 	}
 
-	if codeInterpreterObj.Spec.MaxSessionDuration != nil {
-		buildParams.ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration
+	if d := codeInterpreterObj.Spec.MaxSessionDuration; d != nil && d.Duration > 0 {
+		buildParams.ttl = d.Duration
+	} else {
+		buildParams.ttl = DefaultSandboxTTL
 	}
 	sandbox := buildSandboxObject(buildParams)
 	return sandbox, nil, sandboxEntry, nil

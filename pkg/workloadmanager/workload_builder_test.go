@@ -115,6 +115,41 @@ func TestBuildSandboxObject_NilLabels(t *testing.T) {
 	}
 }
 
+func TestBuildSandboxObject_UsesShutdownTimeForNonZeroTTL(t *testing.T) {
+	t.Run("negative ttl sets an already-expired shutdown time", func(t *testing.T) {
+		params := &buildSandboxParams{
+			namespace:   "default",
+			sandboxName: "sandbox-negative-ttl",
+			sessionID:   "session-negative-ttl",
+			ttl:         -time.Hour,
+			idleTimeout: 15 * time.Minute,
+		}
+
+		sandbox := buildSandboxObject(params)
+		if sandbox.Spec.Lifecycle.ShutdownTime == nil {
+			t.Fatal("expected shutdown time to be set for negative ttl")
+		}
+		if !sandbox.Spec.Lifecycle.ShutdownTime.Time.Before(time.Now()) {
+			t.Fatalf("expected shutdown time to be in the past, got %s", sandbox.Spec.Lifecycle.ShutdownTime.Time)
+		}
+	})
+
+	t.Run("zero ttl leaves shutdown time unset", func(t *testing.T) {
+		params := &buildSandboxParams{
+			namespace:   "default",
+			sandboxName: "sandbox-zero-ttl",
+			sessionID:   "session-zero-ttl",
+			ttl:         0,
+			idleTimeout: 15 * time.Minute,
+		}
+
+		sandbox := buildSandboxObject(params)
+		if sandbox.Spec.Lifecycle.ShutdownTime != nil {
+			t.Fatalf("expected shutdown time to remain unset for zero ttl, got %v", sandbox.Spec.Lifecycle.ShutdownTime)
+		}
+	})
+}
+
 // TestBuildSandboxObject_WorkloadNameLabel verifies that the WorkloadNameLabelKey
 // label is correctly set on the Sandbox object metadata from the workloadName param.
 // This covers the bug where CodeInterpreter sandboxes were missing this label.
@@ -473,7 +508,56 @@ func TestBuildSandboxByAgentRuntime_DefaultTimeouts(t *testing.T) {
 
 	assert.Equal(t, types.SandboxKind, entry.Kind)
 	assert.Equal(t, DefaultSandboxIdleTimeout, entry.IdleTimeout)
+	assert.Nil(t, sandbox.Spec.Lifecycle.ShutdownTime)
 	assert.Equal(t, sandbox.Name, sandbox.Spec.PodTemplate.ObjectMeta.Labels[SandboxNameLabelKey])
+}
+
+func TestBuildSandboxByAgentRuntime_DoesNotSetShutdownTimeForNonPositiveMaxSessionDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		duration *metav1.Duration
+	}{
+		{name: "nil", duration: nil},
+		{name: "zero", duration: &metav1.Duration{Duration: 0}},
+		{name: "negative", duration: &metav1.Duration{Duration: -time.Hour}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ar := &runtimev1alpha1.AgentRuntime{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: testNamespace,
+					Name:      testAgentRuntimeName,
+				},
+				Spec: runtimev1alpha1.AgentRuntimeSpec{
+					SessionTimeout:     &metav1.Duration{Duration: 30 * time.Minute},
+					MaxSessionDuration: tt.duration,
+					Template: &runtimev1alpha1.SandboxTemplate{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{{Name: "main", Image: "nginx"}},
+						},
+					},
+				},
+			}
+
+			fakeClient := cubefake.NewSimpleClientset(ar)
+			factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
+			agentRuntimeInformer := factory.Runtime().V1alpha1().AgentRuntimes()
+			err := agentRuntimeInformer.Informer().GetStore().Add(ar)
+			assert.NoError(t, err)
+
+			ifm := &Informers{
+				AgentRuntimeLister:   agentRuntimeInformer.Lister(),
+				AgentRuntimeInformer: agentRuntimeInformer.Informer(),
+				informerFactory:      newFactory(),
+				cubeInformerFactory:  factory,
+			}
+
+			sandbox, _, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", ifm)
+			assert.NoError(t, err)
+			assert.Nil(t, sandbox.Spec.Lifecycle.ShutdownTime)
+		})
+	}
 }
 
 func TestBuildSandboxByAgentRuntime_CustomTimeouts(t *testing.T) {
@@ -568,6 +652,68 @@ func TestBuildSandboxByCodeInterpreter_PicodAuthFailsWithoutKey(t *testing.T) {
 	_, _, _, err = buildSandboxByCodeInterpreter(testNamespace, "ci-picod-no-key", "", ifm)
 	if !errors.Is(err, api.ErrPublicKeyMissing) {
 		t.Fatalf("expected error %v, got %v", api.ErrPublicKeyMissing, err)
+	}
+}
+
+func TestBuildSandboxByCodeInterpreter_FallsBackToDefaultTTLForNonPositiveMaxSessionDuration(t *testing.T) {
+	tests := []struct {
+		name         string
+		warmPoolSize *int32
+		maxDuration  *metav1.Duration
+		wantClaim    bool
+	}{
+		{
+			name:         "warm pool uses default ttl for negative max session duration",
+			warmPoolSize: ptr.To(int32(2)),
+			maxDuration:  &metav1.Duration{Duration: -time.Hour},
+			wantClaim:    true,
+		},
+		{
+			name:         "sandbox uses default ttl for zero max session duration",
+			warmPoolSize: nil,
+			maxDuration:  &metav1.Duration{Duration: 0},
+			wantClaim:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			codeInterpreter := &runtimev1alpha1.CodeInterpreter{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "ci-default-ttl",
+					Namespace: testNamespace,
+				},
+				Spec: runtimev1alpha1.CodeInterpreterSpec{
+					AuthMode:     runtimev1alpha1.AuthModeNone,
+					WarmPoolSize: tt.warmPoolSize,
+					Template: &runtimev1alpha1.CodeInterpreterSandboxTemplate{
+						Image: "my-ci-image:latest",
+					},
+					MaxSessionDuration: tt.maxDuration,
+					SessionTimeout:     &metav1.Duration{Duration: 10 * time.Minute},
+				},
+			}
+
+			fakeClient := cubefake.NewSimpleClientset(codeInterpreter)
+			factory := cubeinformers.NewSharedInformerFactory(fakeClient, 0)
+			codeInterpreterInformer := factory.Runtime().V1alpha1().CodeInterpreters()
+			err := codeInterpreterInformer.Informer().GetStore().Add(codeInterpreter)
+			assert.NoError(t, err)
+
+			ifm := &Informers{
+				CodeInterpreterLister:   codeInterpreterInformer.Lister(),
+				CodeInterpreterInformer: codeInterpreterInformer.Informer(),
+				informerFactory:         newFactory(),
+				cubeInformerFactory:     factory,
+			}
+
+			sandbox, claim, _, err := buildSandboxByCodeInterpreter(testNamespace, "ci-default-ttl", "", ifm)
+			assert.NoError(t, err)
+			assert.NotNil(t, sandbox)
+			assert.Equal(t, tt.wantClaim, claim != nil)
+			assert.NotNil(t, sandbox.Spec.Lifecycle.ShutdownTime)
+			assert.WithinDuration(t, time.Now().Add(DefaultSandboxTTL), sandbox.Spec.Lifecycle.ShutdownTime.Time, 5*time.Second)
+		})
 	}
 }
 

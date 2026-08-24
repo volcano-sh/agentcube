@@ -45,6 +45,8 @@ type Server struct {
 	informers         *Informers
 	storeClient       store.Store
 	wg                sync.WaitGroup
+	shutdownMu        sync.RWMutex
+	shuttingDown      bool
 	certWatcher       *mtls.CertWatcher // mTLS cert watcher for graceful cleanup
 }
 
@@ -226,6 +228,14 @@ func configureHTTP2TLSServer(server *http.Server, tlsConfig *tls.Config) error {
 
 // Shutdown performs graceful shutdown of the HTTP server.
 func (s *Server) Shutdown(ctx context.Context) error {
+	// Signal that the server is shutting down so that new best-effort
+	// background work (e.g. recordStickyNode) is not accepted. Use write lock
+	// so that no concurrent recordStickyNode (which holds a read lock) can
+	// observe shuttingDown=false and then call wg.Add after wg.Wait has begun.
+	s.shutdownMu.Lock()
+	s.shuttingDown = true
+	s.shutdownMu.Unlock()
+
 	if s.httpServer != nil {
 		klog.Info("Shutting down HTTP server...")
 		if err := s.httpServer.Shutdown(ctx); err != nil {

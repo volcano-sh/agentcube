@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
@@ -58,6 +59,9 @@ var (
 	LastActivityAnnotationKey = "last-activity-time"
 	// IdleTimeoutAnnotationKey key for idle timeout
 	IdleTimeoutAnnotationKey = "runtime.agentcube.io/idle-timeout"
+	// LastNodeAnnotationKey records the node the workload's previous session landed
+	// on, so the next session can prefer the same node (soft node stickiness).
+	LastNodeAnnotationKey = "runtime.agentcube.io/last-node"
 )
 
 // K8sClient encapsulates the Kubernetes client
@@ -81,6 +85,12 @@ type sandboxEntry struct {
 	OwnerID     string
 	Ports       []runtimev1alpha1.TargetPort
 	IdleTimeout time.Duration
+	// StickyWorkloadName/StickyWorkloadKind identify the owning workload whose
+	// last-node annotation should be patched for node stickiness. They are set
+	// only on the direct-create path (no warm pool) and are not persisted to the
+	// store. An empty StickyWorkloadName disables the write-back.
+	StickyWorkloadName string
+	StickyWorkloadKind string
 }
 
 // NewK8sClient creates a new Kubernetes client
@@ -336,50 +346,77 @@ func (u *UserK8sClient) DeleteSandboxClaim(ctx context.Context, namespace, sandb
 	return deleteSandboxClaim(ctx, u.dynamicClient, namespace, sandboxClaimName)
 }
 
-// GetSandboxPodIP gets the IP address of the pod corresponding to the Sandbox
-func (c *K8sClient) GetSandboxPodIP(ctx context.Context, namespace, sandboxName, podName string) (string, error) {
+// GetSandboxPodInfo gets the IP address and scheduled node of the pod corresponding to the Sandbox.
+func (c *K8sClient) GetSandboxPodInfo(ctx context.Context, namespace, sandboxName, podName string) (podIP string, nodeName string, err error) {
 	// An explicit Pod name comes from the live Sandbox object. Read the Pod from
 	// the API too, so a lagging informer cannot reject an otherwise ready Sandbox.
 	if podName != "" {
 		pod, err := c.clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 		if err != nil {
-			return "", fmt.Errorf("failed to get sandbox pod %s/%s: %w", namespace, podName, err)
+			return "", "", fmt.Errorf("failed to get sandbox pod %s/%s: %w", namespace, podName, err)
 		}
-		return validateAndGetPodIP(pod)
+		return validateAndGetPodInfo(pod)
 	}
 
 	// Find pod through label selector (sandbox-name label we set)
 	pods, err := c.podLister.Pods(namespace).List(labels.SelectorFromSet(map[string]string{SandboxNameLabelKey: sandboxName}))
 	if err != nil {
-		return "", fmt.Errorf("failed to list pods from cache: %w", err)
+		return "", "", fmt.Errorf("failed to list pods from cache: %w", err)
 	}
 	// Find the pod that belongs to this sandbox by checking ownerReferences
 	for _, pod := range pods {
 		for _, ownerRef := range pod.OwnerReferences {
 			if ownerRef.Kind == "Sandbox" && ownerRef.Name == sandboxName {
 				if ownerRef.Controller == nil || *ownerRef.Controller {
-					return validateAndGetPodIP(pod)
+					return validateAndGetPodInfo(pod)
 				}
 			}
 		}
 	}
 
-	return "", fmt.Errorf("no pod found for sandbox %s", sandboxName)
+	return "", "", fmt.Errorf("no pod found for sandbox %s", sandboxName)
 }
 
-// validateAndGetPodIP validates pod status and returns IP
-func validateAndGetPodIP(pod *corev1.Pod) (string, error) {
+// validateAndGetPodInfo validates pod status and returns the pod IP and scheduled node
+func validateAndGetPodInfo(pod *corev1.Pod) (podIP string, nodeName string, err error) {
 	// Check if Pod is running
 	if pod.Status.Phase != corev1.PodRunning {
-		return "", fmt.Errorf("pod not running yet, status: %s", pod.Status.Phase)
+		return "", "", fmt.Errorf("pod not running yet, status: %s", pod.Status.Phase)
 	}
 
 	// Check if Pod IP is assigned
 	if pod.Status.PodIP == "" {
-		return "", fmt.Errorf("pod IP not assigned yet")
+		return "", "", fmt.Errorf("pod IP not assigned yet")
 	}
 
-	return pod.Status.PodIP, nil
+	return pod.Status.PodIP, pod.Spec.NodeName, nil
+}
+
+// PatchWorkloadLastNode records the node the latest session landed on as an
+// annotation on the owning workload (AgentRuntime or CodeInterpreter), so the
+// next session can prefer the same node.
+func (c *K8sClient) PatchWorkloadLastNode(ctx context.Context, namespace, kind, name, nodeName string) error {
+	patch := []byte(fmt.Sprintf(
+		`{"metadata":{"annotations":{%q:%q}}}`,
+		LastNodeAnnotationKey, nodeName,
+	))
+	var err error
+	switch kind {
+	case runtimev1alpha1.AgentRuntimeKind:
+		_, err = c.cubeClientset.RuntimeV1alpha1().AgentRuntimes(namespace).Patch(
+			ctx, name, k8stypes.MergePatchType, patch, metav1.PatchOptions{},
+		)
+	case runtimev1alpha1.CodeInterpreterKind:
+		_, err = c.cubeClientset.RuntimeV1alpha1().CodeInterpreters(namespace).Patch(
+			ctx, name, k8stypes.MergePatchType, patch, metav1.PatchOptions{},
+		)
+	default:
+		return fmt.Errorf("patch last-node: unsupported workload kind %q", kind)
+	}
+	if err != nil {
+		return fmt.Errorf("patch %s %s/%s last-node: %w", kind, namespace, name, err)
+	}
+	return nil
 }
 
 // WaitForSandboxReady waits for the Sandbox to be ready

@@ -1,6 +1,6 @@
 module github.com/volcano-sh/agentcube
 
-go 1.26.7
+go 1.26.8
 
 require (
 	github.com/agiledragon/gomonkey/v2 v2.13.0

@@ -306,7 +306,7 @@ CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
 
 ## Tool Versions
-CONTROLLER_TOOLS_VERSION ?= v0.17.2
+CONTROLLER_TOOLS_VERSION ?= v0.22.0
 GOLANGCI_LINT_VERSION ?= v1.64.1
 
 .PHONY: controller-gen

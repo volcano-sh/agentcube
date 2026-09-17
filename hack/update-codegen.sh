@@ -12,7 +12,7 @@ export GO111MODULE=on
 
 # Find code-generator
 CODEGEN_PKG=""
-CODEGEN_VERSION="v0.35.4"
+CODEGEN_VERSION="v0.37.0"
 
 # Try vendor directory first
 if [ -d "vendor/k8s.io/code-generator" ]; then

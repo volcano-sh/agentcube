@@ -27,7 +27,7 @@ import (
 
 	"github.com/volcano-sh/agentcube/pkg/store"
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
+	"golang.org/x/net/http2/h2c" //nolint:staticcheck // Preserve HTTP/1.1 Upgrade support; net/http.Protocols only supports prior-knowledge h2c.
 )
 
 // Server is the main structure for Router apiserver
@@ -188,7 +188,7 @@ func (s *Server) Start(ctx context.Context) error {
 	h2s := &http2.Server{}
 
 	// Wrap handler with h2c for HTTP/2 cleartext support
-	h2cHandler := h2c.NewHandler(s.engine, h2s)
+	h2cHandler := h2c.NewHandler(s.engine, h2s) //nolint:staticcheck // Preserve HTTP/1.1 Upgrade support.
 
 	s.httpServer = &http.Server{
 		Addr:        addr,

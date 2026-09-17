@@ -28,16 +28,45 @@ import (
 	apisruntimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
+	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	watch "k8s.io/apimachinery/pkg/watch"
 	cache "k8s.io/client-go/tools/cache"
 )
 
 // AgentRuntimeInformer provides access to a shared informer and lister for
-// AgentRuntimes.
+// AgentRuntimes. Prefer using the type-safe variant (see [TypedAgentRuntimeInformer]).
 type AgentRuntimeInformer interface {
 	Informer() cache.SharedIndexInformer
 	Lister() runtimev1alpha1.AgentRuntimeLister
 }
+
+// TypedAgentRuntimeInformer provides access to a shared informer and lister for
+// AgentRuntimes, including the type-safe TypedInformer variant.
+// It is a superset of AgentRuntimeInformer.
+type TypedAgentRuntimeInformer interface {
+	Informer() cache.SharedIndexInformer
+	TypedInformer() AgentRuntimeIndexInformer
+	Lister() runtimev1alpha1.AgentRuntimeLister
+}
+
+// AgentRuntimeIndexInformer is a wrapper around the underlying [cache.SharedIndexInformer]
+// with type-safe variants of several methods.
+type AgentRuntimeIndexInformer cache.TypedSharedIndexInformer[*apisruntimev1alpha1.AgentRuntime]
+
+// AgentRuntimeHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerFuncs] for AgentRuntime.
+type AgentRuntimeHandlerFuncs = cache.TypedResourceEventHandlerFuncs[*apisruntimev1alpha1.AgentRuntime]
+
+// AgentRuntimeDetailedHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerDetailedFuncs] for AgentRuntime.
+type AgentRuntimeDetailedHandlerFuncs = cache.TypedResourceEventHandlerDetailedFuncs[*apisruntimev1alpha1.AgentRuntime]
+
+// AgentRuntimeFilteringHandler is a specialization of [cache.TypedFilteringResourceEventHandler] for AgentRuntime.
+type AgentRuntimeFilteringHandler = cache.TypedFilteringResourceEventHandler[*apisruntimev1alpha1.AgentRuntime]
+
+// AgentRuntimeIndexers is a specialization of [cache.TypedIndexers] for AgentRuntime.
+type AgentRuntimeIndexers = cache.TypedIndexers[*apisruntimev1alpha1.AgentRuntime]
+
+// DeletedAgentRuntime is a specialization of [cache.DeletedObject] for AgentRuntime.
+type DeletedAgentRuntime = cache.DeletedObject[*apisruntimev1alpha1.AgentRuntime]
 
 type agentRuntimeInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
@@ -48,55 +77,132 @@ type agentRuntimeInformer struct {
 // NewAgentRuntimeInformer constructs a new informer for AgentRuntime type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedAgentRuntimeInformer]).
 func NewAgentRuntimeInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewFilteredAgentRuntimeInformer(client, namespace, resyncPeriod, indexers, nil)
+	return NewAgentRuntimeInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers})
+}
+
+// NewTypedAgentRuntimeInformer constructs a new informer for AgentRuntime type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedAgentRuntimeInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers AgentRuntimeIndexers) AgentRuntimeIndexInformer {
+	return NewTypedAgentRuntimeInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers)})
 }
 
 // NewFilteredAgentRuntimeInformer constructs a new informer for AgentRuntime type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedFilteredAgentRuntimeInformer]).
 func NewFilteredAgentRuntimeInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
-	return cache.NewSharedIndexInformer(
+	return NewTypedAgentRuntimeInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+}
+
+// NewTypedFilteredAgentRuntimeInformer constructs a new informer for AgentRuntime type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedFilteredAgentRuntimeInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers AgentRuntimeIndexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) AgentRuntimeIndexInformer {
+	return NewTypedAgentRuntimeInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers), TweakListOptions: tweakListOptions})
+}
+
+// NewAgentRuntimeInformerWithOptions constructs a new informer for AgentRuntime type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedAgentRuntimeInformerWithOptions]).
+func NewAgentRuntimeInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) cache.SharedIndexInformer {
+	return NewTypedAgentRuntimeInformerWithOptions(client, namespace, options)
+}
+
+// NewTypedAgentRuntimeInformerWithOptions constructs a new informer for AgentRuntime type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedAgentRuntimeInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) AgentRuntimeIndexInformer {
+	gvr := schema.GroupVersionResource{Group: "runtime", Version: "v1alpha1", Resource: "agentruntimes"}
+	identifier := options.InformerName.WithResource(gvr)
+	tweakListOptions := options.TweakListOptions
+	return cache.NewTypedSharedIndexInformer[*apisruntimev1alpha1.AgentRuntime](cache.NewSharedIndexInformerWithOptions(
 		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
-			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
+			ListFunc: func(opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.RuntimeV1alpha1().AgentRuntimes(namespace).List(context.Background(), options)
+				return client.RuntimeV1alpha1().AgentRuntimes(namespace).List(context.Background(), opts)
 			},
-			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
+			WatchFunc: func(opts v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.RuntimeV1alpha1().AgentRuntimes(namespace).Watch(context.Background(), options)
+				return client.RuntimeV1alpha1().AgentRuntimes(namespace).Watch(context.Background(), opts)
 			},
-			ListWithContextFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
+			ListWithContextFunc: func(ctx context.Context, opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.RuntimeV1alpha1().AgentRuntimes(namespace).List(ctx, options)
+				return client.RuntimeV1alpha1().AgentRuntimes(namespace).List(ctx, opts)
 			},
-			WatchFuncWithContext: func(ctx context.Context, options v1.ListOptions) (watch.Interface, error) {
+			WatchFuncWithContext: func(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.RuntimeV1alpha1().AgentRuntimes(namespace).Watch(ctx, options)
+				return client.RuntimeV1alpha1().AgentRuntimes(namespace).Watch(ctx, opts)
 			},
 		}, client),
 		&apisruntimev1alpha1.AgentRuntime{},
-		resyncPeriod,
-		indexers,
-	)
+		cache.SharedIndexInformerOptions{
+			ResyncPeriod: options.ResyncPeriod,
+			Indexers:     options.Indexers,
+			Identifier:   identifier,
+		},
+	))
 }
 
 func (f *agentRuntimeInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewFilteredAgentRuntimeInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+	return NewTypedAgentRuntimeInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
 }
 
 func (f *agentRuntimeInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apisruntimev1alpha1.AgentRuntime{}, f.defaultInformer)
+	return f.TypedInformer()
+}
+
+func (f *agentRuntimeInformer) TypedInformer() AgentRuntimeIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apisruntimev1alpha1.AgentRuntime](f.factory.InformerFor(&apisruntimev1alpha1.AgentRuntime{}, f.defaultInformer))
 }
 
 func (f *agentRuntimeInformer) Lister() runtimev1alpha1.AgentRuntimeLister {
 	return runtimev1alpha1.NewAgentRuntimeLister(f.Informer().GetIndexer())
+}
+
+// ToTypedAgentRuntimeInformer converts an untyped informer into a TypedAgentRuntimeInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *AgentRuntime. If that is not the case, calling type-safe methods of the returned
+// TypedAgentRuntimeInformer leads to runtime panics. A safer alternative is to pass
+// around a TypedAgentRuntimeInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToTypedAgentRuntimeInformer(informer AgentRuntimeInformer) TypedAgentRuntimeInformer {
+	if informer, ok := informer.(TypedAgentRuntimeInformer); ok {
+		return informer
+	}
+	return &agentRuntimeTypedInformerAdapter{informer}
+}
+
+type agentRuntimeTypedInformerAdapter struct {
+	AgentRuntimeInformer
+}
+
+func (a *agentRuntimeTypedInformerAdapter) TypedInformer() AgentRuntimeIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apisruntimev1alpha1.AgentRuntime](a.Informer())
+}
+
+// ToAgentRuntimeIndexInformer converts an untyped informer into a AgentRuntimeIndexInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *AgentRuntime. If that is not the case, calling type-safe methods of the returned
+// AgentRuntimeIndexInformer leads to runtime panics. A safer alternative is to pass
+// around a AgentRuntimeIndexInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToAgentRuntimeIndexInformer(informer cache.SharedIndexInformer) AgentRuntimeIndexInformer {
+	if informer, ok := informer.(AgentRuntimeIndexInformer); ok {
+		return informer
+	}
+	return cache.NewTypedSharedIndexInformer[*apisruntimev1alpha1.AgentRuntime](informer)
 }

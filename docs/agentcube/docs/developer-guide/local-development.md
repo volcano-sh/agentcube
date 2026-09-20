@@ -6,7 +6,7 @@ This guide will help you set up your local environment to develop and test Agent
 
 To contribute to AgentCube, you will need:
 
-- **Go** (v1.22+)
+- **Go** (version specified in `go.mod`)
 - **Docker** or **Podman**
 - **Kubectl**
 - **Kind** (Kubernetes in Docker) for local clusters

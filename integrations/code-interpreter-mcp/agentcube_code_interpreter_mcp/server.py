@@ -15,6 +15,7 @@ from typing import Annotated, Any, Optional
 
 import requests
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 # In-process cache of live CodeInterpreterClient instances for session_reuse.
@@ -138,6 +139,8 @@ def _call_with_session_recovery(
     op: Callable[[Any], Any],
 ) -> tuple[Any, dict[str, Any], str]:
     """Run ``op(client)``; if the caller passed ``session_id`` and Router says it is gone, open a new session once."""
+    from agentcube.exceptions import CommandExecutionError
+
     meta: dict[str, Any] = {}
     client = _client_for_call(session_id, session_reuse, cfg, CodeInterpreterClient)
     try:
@@ -160,6 +163,9 @@ def _call_with_session_recovery(
             )
             out = op(client)
             return out, meta, client.session_id or ""
+    except CommandExecutionError as exc:
+        # Expected sandbox failures must remain visible to MCP clients.
+        raise ToolError(str(exc)) from exc
     finally:
         _cleanup_after_call(client, session_reuse)
 

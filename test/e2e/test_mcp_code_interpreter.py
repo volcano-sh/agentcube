@@ -238,6 +238,22 @@ class TestMCPCodeInterpreterE2E(unittest.TestCase):
 
         _run_async(body())
 
+    def test_mcp_execute_command_failure(self):
+        """Expected sandbox failures retain stderr in the MCP tool error."""
+
+        async def body():
+            async with _mcp_client_session(self.host, self.port) as (session, _):
+                result = await session.call_tool(
+                    "execute_command",
+                    {"command": "sh -c 'echo mcp-command-failed >&2; exit 23'"},
+                )
+                self.assertTrue(result.is_error, "nonzero exit must surface as MCP tool error")
+                error_text = _tool_result_text(result)
+                self.assertIn("mcp-command-failed", error_text)
+                self.assertIn("23", error_text)
+
+        _run_async(body())
+
     def test_mcp_stateless_execution_nameerror(self):
         """SDK case2 equivalent: two run_code calls on same session; second fails (is_error)."""
 

@@ -31,7 +31,7 @@ import (
 	"github.com/volcano-sh/agentcube/pkg/mtls"
 	"github.com/volcano-sh/agentcube/pkg/store"
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
+	"golang.org/x/net/http2/h2c" //nolint:staticcheck // Preserve HTTP/1.1 Upgrade support; net/http.Protocols only supports prior-knowledge h2c.
 )
 
 // Server is the main structure for workload manager
@@ -178,7 +178,7 @@ func (s *Server) Start(ctx context.Context) error {
 	} else {
 		// Plain HTTP with h2c (HTTP/2 cleartext) support
 		h2s := &http2.Server{}
-		s.httpServer.Handler = h2c.NewHandler(s.router, h2s)
+		s.httpServer.Handler = h2c.NewHandler(s.router, h2s) //nolint:staticcheck // Preserve HTTP/1.1 Upgrade support.
 		err = s.httpServer.ListenAndServe()
 	}
 

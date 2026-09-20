@@ -28,16 +28,45 @@ import (
 	apisruntimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
+	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	watch "k8s.io/apimachinery/pkg/watch"
 	cache "k8s.io/client-go/tools/cache"
 )
 
 // CodeInterpreterInformer provides access to a shared informer and lister for
-// CodeInterpreters.
+// CodeInterpreters. Prefer using the type-safe variant (see [TypedCodeInterpreterInformer]).
 type CodeInterpreterInformer interface {
 	Informer() cache.SharedIndexInformer
 	Lister() runtimev1alpha1.CodeInterpreterLister
 }
+
+// TypedCodeInterpreterInformer provides access to a shared informer and lister for
+// CodeInterpreters, including the type-safe TypedInformer variant.
+// It is a superset of CodeInterpreterInformer.
+type TypedCodeInterpreterInformer interface {
+	Informer() cache.SharedIndexInformer
+	TypedInformer() CodeInterpreterIndexInformer
+	Lister() runtimev1alpha1.CodeInterpreterLister
+}
+
+// CodeInterpreterIndexInformer is a wrapper around the underlying [cache.SharedIndexInformer]
+// with type-safe variants of several methods.
+type CodeInterpreterIndexInformer cache.TypedSharedIndexInformer[*apisruntimev1alpha1.CodeInterpreter]
+
+// CodeInterpreterHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerFuncs] for CodeInterpreter.
+type CodeInterpreterHandlerFuncs = cache.TypedResourceEventHandlerFuncs[*apisruntimev1alpha1.CodeInterpreter]
+
+// CodeInterpreterDetailedHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerDetailedFuncs] for CodeInterpreter.
+type CodeInterpreterDetailedHandlerFuncs = cache.TypedResourceEventHandlerDetailedFuncs[*apisruntimev1alpha1.CodeInterpreter]
+
+// CodeInterpreterFilteringHandler is a specialization of [cache.TypedFilteringResourceEventHandler] for CodeInterpreter.
+type CodeInterpreterFilteringHandler = cache.TypedFilteringResourceEventHandler[*apisruntimev1alpha1.CodeInterpreter]
+
+// CodeInterpreterIndexers is a specialization of [cache.TypedIndexers] for CodeInterpreter.
+type CodeInterpreterIndexers = cache.TypedIndexers[*apisruntimev1alpha1.CodeInterpreter]
+
+// DeletedCodeInterpreter is a specialization of [cache.DeletedObject] for CodeInterpreter.
+type DeletedCodeInterpreter = cache.DeletedObject[*apisruntimev1alpha1.CodeInterpreter]
 
 type codeInterpreterInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
@@ -48,55 +77,132 @@ type codeInterpreterInformer struct {
 // NewCodeInterpreterInformer constructs a new informer for CodeInterpreter type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedCodeInterpreterInformer]).
 func NewCodeInterpreterInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewFilteredCodeInterpreterInformer(client, namespace, resyncPeriod, indexers, nil)
+	return NewCodeInterpreterInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers})
+}
+
+// NewTypedCodeInterpreterInformer constructs a new informer for CodeInterpreter type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedCodeInterpreterInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers CodeInterpreterIndexers) CodeInterpreterIndexInformer {
+	return NewTypedCodeInterpreterInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers)})
 }
 
 // NewFilteredCodeInterpreterInformer constructs a new informer for CodeInterpreter type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedFilteredCodeInterpreterInformer]).
 func NewFilteredCodeInterpreterInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
-	return cache.NewSharedIndexInformer(
+	return NewTypedCodeInterpreterInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+}
+
+// NewTypedFilteredCodeInterpreterInformer constructs a new informer for CodeInterpreter type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedFilteredCodeInterpreterInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers CodeInterpreterIndexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) CodeInterpreterIndexInformer {
+	return NewTypedCodeInterpreterInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers), TweakListOptions: tweakListOptions})
+}
+
+// NewCodeInterpreterInformerWithOptions constructs a new informer for CodeInterpreter type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedCodeInterpreterInformerWithOptions]).
+func NewCodeInterpreterInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) cache.SharedIndexInformer {
+	return NewTypedCodeInterpreterInformerWithOptions(client, namespace, options)
+}
+
+// NewTypedCodeInterpreterInformerWithOptions constructs a new informer for CodeInterpreter type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedCodeInterpreterInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) CodeInterpreterIndexInformer {
+	gvr := schema.GroupVersionResource{Group: "runtime", Version: "v1alpha1", Resource: "codeinterpreters"}
+	identifier := options.InformerName.WithResource(gvr)
+	tweakListOptions := options.TweakListOptions
+	return cache.NewTypedSharedIndexInformer[*apisruntimev1alpha1.CodeInterpreter](cache.NewSharedIndexInformerWithOptions(
 		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
-			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
+			ListFunc: func(opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.RuntimeV1alpha1().CodeInterpreters(namespace).List(context.Background(), options)
+				return client.RuntimeV1alpha1().CodeInterpreters(namespace).List(context.Background(), opts)
 			},
-			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
+			WatchFunc: func(opts v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.RuntimeV1alpha1().CodeInterpreters(namespace).Watch(context.Background(), options)
+				return client.RuntimeV1alpha1().CodeInterpreters(namespace).Watch(context.Background(), opts)
 			},
-			ListWithContextFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
+			ListWithContextFunc: func(ctx context.Context, opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.RuntimeV1alpha1().CodeInterpreters(namespace).List(ctx, options)
+				return client.RuntimeV1alpha1().CodeInterpreters(namespace).List(ctx, opts)
 			},
-			WatchFuncWithContext: func(ctx context.Context, options v1.ListOptions) (watch.Interface, error) {
+			WatchFuncWithContext: func(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.RuntimeV1alpha1().CodeInterpreters(namespace).Watch(ctx, options)
+				return client.RuntimeV1alpha1().CodeInterpreters(namespace).Watch(ctx, opts)
 			},
 		}, client),
 		&apisruntimev1alpha1.CodeInterpreter{},
-		resyncPeriod,
-		indexers,
-	)
+		cache.SharedIndexInformerOptions{
+			ResyncPeriod: options.ResyncPeriod,
+			Indexers:     options.Indexers,
+			Identifier:   identifier,
+		},
+	))
 }
 
 func (f *codeInterpreterInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewFilteredCodeInterpreterInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+	return NewTypedCodeInterpreterInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
 }
 
 func (f *codeInterpreterInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apisruntimev1alpha1.CodeInterpreter{}, f.defaultInformer)
+	return f.TypedInformer()
+}
+
+func (f *codeInterpreterInformer) TypedInformer() CodeInterpreterIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apisruntimev1alpha1.CodeInterpreter](f.factory.InformerFor(&apisruntimev1alpha1.CodeInterpreter{}, f.defaultInformer))
 }
 
 func (f *codeInterpreterInformer) Lister() runtimev1alpha1.CodeInterpreterLister {
 	return runtimev1alpha1.NewCodeInterpreterLister(f.Informer().GetIndexer())
+}
+
+// ToTypedCodeInterpreterInformer converts an untyped informer into a TypedCodeInterpreterInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *CodeInterpreter. If that is not the case, calling type-safe methods of the returned
+// TypedCodeInterpreterInformer leads to runtime panics. A safer alternative is to pass
+// around a TypedCodeInterpreterInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToTypedCodeInterpreterInformer(informer CodeInterpreterInformer) TypedCodeInterpreterInformer {
+	if informer, ok := informer.(TypedCodeInterpreterInformer); ok {
+		return informer
+	}
+	return &codeInterpreterTypedInformerAdapter{informer}
+}
+
+type codeInterpreterTypedInformerAdapter struct {
+	CodeInterpreterInformer
+}
+
+func (a *codeInterpreterTypedInformerAdapter) TypedInformer() CodeInterpreterIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apisruntimev1alpha1.CodeInterpreter](a.Informer())
+}
+
+// ToCodeInterpreterIndexInformer converts an untyped informer into a CodeInterpreterIndexInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *CodeInterpreter. If that is not the case, calling type-safe methods of the returned
+// CodeInterpreterIndexInformer leads to runtime panics. A safer alternative is to pass
+// around a CodeInterpreterIndexInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToCodeInterpreterIndexInformer(informer cache.SharedIndexInformer) CodeInterpreterIndexInformer {
+	if informer, ok := informer.(CodeInterpreterIndexInformer); ok {
+		return informer
+	}
+	return cache.NewTypedSharedIndexInformer[*apisruntimev1alpha1.CodeInterpreter](informer)
 }

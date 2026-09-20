@@ -92,6 +92,27 @@ func TestBuildSandboxObject_DoesNotMutateCallerLabels(t *testing.T) {
 	}
 }
 
+func TestEffectiveSessionTTL(t *testing.T) {
+	configured := &metav1.Duration{Duration: 4 * time.Hour}
+	tests := []struct {
+		name       string
+		requested  time.Duration
+		configured *metav1.Duration
+		want       time.Duration
+	}{
+		{name: "workload default", configured: configured, want: 4 * time.Hour},
+		{name: "client ttl below limit", requested: time.Hour, configured: configured, want: time.Hour},
+		{name: "client ttl capped", requested: 8 * time.Hour, configured: configured, want: 4 * time.Hour},
+		{name: "global default", want: DefaultSandboxTTL},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, effectiveSessionTTL(tt.requested, tt.configured))
+		})
+	}
+}
+
 // TestBuildSandboxObject_NilLabels verifies that a nil podLabels input still
 // produces a sandbox with the injected session labels.
 func TestBuildSandboxObject_NilLabels(t *testing.T) {
@@ -361,7 +382,7 @@ func TestBuildSandboxByAgentRuntime_NotFound(t *testing.T) {
 		cubeInformerFactory:  factory,
 	}
 
-	_, _, err := buildSandboxByAgentRuntime(testNamespace, "missing", "", ifm)
+	_, _, err := buildSandboxByAgentRuntime(testNamespace, "missing", "", 0, ifm)
 	if !errors.Is(err, api.ErrAgentRuntimeNotFound) {
 		t.Fatalf("expected error %v, got %v", api.ErrAgentRuntimeNotFound, err)
 	}
@@ -403,7 +424,8 @@ func TestBuildSandboxByAgentRuntime_Success(t *testing.T) {
 		cubeInformerFactory:  factory,
 	}
 
-	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", ifm)
+	startedAt := time.Now()
+	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", time.Hour, ifm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -422,6 +444,7 @@ func TestBuildSandboxByAgentRuntime_Success(t *testing.T) {
 	if sandbox.Spec.Lifecycle.ShutdownTime == nil {
 		t.Error("expected shutdown time to be set")
 	}
+	assert.WithinDuration(t, startedAt.Add(time.Hour), sandbox.Spec.Lifecycle.ShutdownTime.Time, time.Second)
 
 	// Validate Entry
 	if entry.Kind != types.SandboxKind {
@@ -466,7 +489,7 @@ func TestBuildSandboxByAgentRuntime_DefaultTimeouts(t *testing.T) {
 		cubeInformerFactory:  factory,
 	}
 
-	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", ifm)
+	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", 0, ifm)
 	assert.NoError(t, err)
 	assert.NotNil(t, sandbox)
 	assert.NotNil(t, entry)
@@ -509,7 +532,7 @@ func TestBuildSandboxByAgentRuntime_CustomTimeouts(t *testing.T) {
 		cubeInformerFactory:  factory,
 	}
 
-	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", ifm)
+	sandbox, entry, err := buildSandboxByAgentRuntime(testNamespace, testAgentRuntimeName, "", 0, ifm)
 	assert.NoError(t, err)
 	assert.NotNil(t, sandbox)
 	assert.NotNil(t, entry)
@@ -530,7 +553,7 @@ func TestBuildSandboxByCodeInterpreter_NotFound(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	_, _, _, err := buildSandboxByCodeInterpreter(testNamespace, "missing", "", ifm)
+	_, _, _, err := buildSandboxByCodeInterpreter(testNamespace, "missing", "", 0, ifm)
 	if !errors.Is(err, api.ErrCodeInterpreterNotFound) {
 		t.Fatalf("expected error %v, got %v", api.ErrCodeInterpreterNotFound, err)
 	}
@@ -565,7 +588,7 @@ func TestBuildSandboxByCodeInterpreter_PicodAuthFailsWithoutKey(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	_, _, _, err = buildSandboxByCodeInterpreter(testNamespace, "ci-picod-no-key", "", ifm)
+	_, _, _, err = buildSandboxByCodeInterpreter(testNamespace, "ci-picod-no-key", "", 0, ifm)
 	if !errors.Is(err, api.ErrPublicKeyMissing) {
 		t.Fatalf("expected error %v, got %v", api.ErrPublicKeyMissing, err)
 	}
@@ -600,7 +623,8 @@ func TestBuildSandboxByCodeInterpreter_SuccessNoWarmPool(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, "ci-no-wp", "", ifm)
+	startedAt := time.Now()
+	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, "ci-no-wp", "", 30*time.Minute, ifm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -614,6 +638,7 @@ func TestBuildSandboxByCodeInterpreter_SuccessNoWarmPool(t *testing.T) {
 	if claim != nil {
 		t.Fatal("expected claim to be nil for non-warm pool path")
 	}
+	assert.WithinDuration(t, startedAt.Add(30*time.Minute), sandbox.Spec.Lifecycle.ShutdownTime.Time, time.Second)
 
 	if !strings.HasPrefix(sandbox.Name, "ci-no-wp-") {
 		t.Errorf("expected sandbox name to start with 'ci-no-wp-', got %q", sandbox.Name)
@@ -658,7 +683,8 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 		cubeInformerFactory:     factory,
 	}
 
-	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, testCodeInterpreterWarmPool, "", ifm)
+	startedAt := time.Now()
+	sandbox, claim, entry, err := buildSandboxByCodeInterpreter(testNamespace, testCodeInterpreterWarmPool, "", 30*time.Minute, ifm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -672,6 +698,7 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 	if claim == nil {
 		t.Fatal("expected claim not to be nil for warm pool path")
 	}
+	assert.WithinDuration(t, startedAt.Add(30*time.Minute), sandbox.Spec.Lifecycle.ShutdownTime.Time, time.Second)
 
 	assertSandboxMetadata(t, sandbox.Labels, sandbox.Name, sandbox.Namespace, testCodeInterpreterWarmPool+"-", "", entry.SessionID)
 	if entry.Kind != types.SandboxClaimsKind {

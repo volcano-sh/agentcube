@@ -31,6 +31,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 
+	"github.com/volcano-sh/agentcube/pkg/api"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 )
 
@@ -142,7 +143,11 @@ func (s *Server) handleGetSandboxError(c *gin.Context, err error) {
 		if code == http.StatusInternalServerError {
 			message = "internal server error"
 		}
-		c.JSON(code, gin.H{"error": message})
+		response := gin.H{"error": message}
+		if api.IsSessionNotFound(err) {
+			response["code"] = api.SessionNotFoundCode
+		}
+		c.JSON(code, response)
 		return
 	}
 

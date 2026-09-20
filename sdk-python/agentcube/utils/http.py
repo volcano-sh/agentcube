@@ -17,6 +17,11 @@
 import requests
 from requests.adapters import HTTPAdapter
 
+from agentcube.exceptions import SessionNotFoundError
+
+
+SESSION_NOT_FOUND_CODE = "SESSION_NOT_FOUND"
+
 
 def create_session(
     pool_connections: int = 10,
@@ -42,3 +47,19 @@ def create_session(
     session.mount("https://", adapter)
 
     return session
+
+
+def raise_for_session_status(response: requests.Response, session_id: str) -> None:
+    """Raise a typed error for a missing session, or the normal HTTP error."""
+    if response.status_code == 404:
+        try:
+            payload = response.json()
+        except (TypeError, ValueError):
+            payload = {}
+        if isinstance(payload, dict) and payload.get("code") == SESSION_NOT_FOUND_CODE:
+            raise SessionNotFoundError(
+                session_id=session_id,
+                message=payload.get("error"),
+                response=response,
+            )
+    response.raise_for_status()

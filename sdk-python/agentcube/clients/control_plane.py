@@ -103,7 +103,7 @@ class ControlPlaneClient:
         name: str = "my-interpreter",
         namespace: str = "default",
         metadata: Optional[Dict[str, Any]] = None,
-        ttl: int = 3600,
+        ttl: Optional[int] = None,
     ) -> str:
         """Create a new Code Interpreter session.
 
@@ -111,17 +111,19 @@ class ControlPlaneClient:
             name: Name of the CodeInterpreter template (CRD name).
             namespace: Kubernetes namespace.
             metadata: Optional metadata.
-            ttl: Time to live (seconds).
+            ttl: Optional requested maximum lifetime in seconds. When omitted,
+                the workload configuration determines the lifetime.
 
         Returns:
             session_id (str): The ID of the created session.
         """
-        payload = {
+        payload: Dict[str, Any] = {
             "name": name,
             "namespace": namespace,
-            "ttl": ttl,
             "metadata": metadata or {}
         }
+        if ttl is not None:
+            payload["ttl"] = ttl
 
         url = f"{self.base_url}/v1/code-interpreter"
         self.logger.debug(f"Creating session at {url} with payload: {payload}")

@@ -18,8 +18,10 @@ package types
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"k8s.io/utils/ptr"
 )
 
 func TestCreateSandboxRequest_Validate(t *testing.T) {
@@ -44,8 +46,31 @@ func TestCreateSandboxRequest_Validate(t *testing.T) {
 				Kind:      CodeInterpreterKind,
 				Namespace: "default",
 				Name:      "test-ci",
+				TTL:       ptr.To[int64](60),
 			},
 			wantError: false,
+		},
+		{
+			name: "zero ttl",
+			req: CreateSandboxRequest{
+				Kind:      CodeInterpreterKind,
+				Namespace: "default",
+				Name:      "test-ci",
+				TTL:       ptr.To[int64](0),
+			},
+			wantError: true,
+			errorMsg:  "ttl must be greater than zero",
+		},
+		{
+			name: "ttl overflows time.Duration",
+			req: CreateSandboxRequest{
+				Kind:      CodeInterpreterKind,
+				Namespace: "default",
+				Name:      "test-ci",
+				TTL:       ptr.To[int64](1 << 62),
+			},
+			wantError: true,
+			errorMsg:  "ttl exceeds the maximum supported duration",
 		},
 		{
 			name: "invalid kind",
@@ -170,4 +195,9 @@ func TestCreateSandboxRequest_Validate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCreateSandboxRequest_RequestedTTL(t *testing.T) {
+	assert.Zero(t, (&CreateSandboxRequest{}).RequestedTTL())
+	assert.Equal(t, 90*time.Second, (&CreateSandboxRequest{TTL: ptr.To[int64](90)}).RequestedTTL())
 }

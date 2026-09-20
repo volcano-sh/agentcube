@@ -20,6 +20,7 @@ import requests.exceptions
 os.environ.setdefault("ROUTER_URL", "http://mock-router:8080")
 
 from agentcube.agent_runtime import AgentRuntimeClient
+from agentcube.exceptions import SessionNotFoundError
 
 
 class TestAgentRuntimeClientSessionBootstrap(unittest.TestCase):
@@ -88,6 +89,45 @@ class TestAgentRuntimeClientInvoke(unittest.TestCase):
         out = client.invoke({"input": "hi"})
 
         self.assertEqual(out, "plain")
+
+    @patch("agentcube.agent_runtime.AgentRuntimeDataPlaneClient")
+    def test_session_not_found_invalidates_session(self, mock_dp_class):
+        mock_dp = Mock()
+        mock_dp.bootstrap_session_id.return_value = "expired-session"
+
+        resp = Mock()
+        resp.status_code = 404
+        resp.json.return_value = {
+            "code": "SESSION_NOT_FOUND",
+            "error": "session expired-session was not found",
+        }
+        mock_dp.invoke.return_value = resp
+        mock_dp_class.return_value = mock_dp
+
+        client = AgentRuntimeClient(agent_name="agent-a", router_url="http://t:1")
+        with self.assertRaises(SessionNotFoundError) as ctx:
+            client.invoke({"input": "hi"})
+
+        self.assertEqual(ctx.exception.session_id, "expired-session")
+        self.assertIsNone(client.session_id)
+
+    @patch("agentcube.agent_runtime.AgentRuntimeDataPlaneClient")
+    def test_application_404_does_not_invalidate_session(self, mock_dp_class):
+        mock_dp = Mock()
+        mock_dp.bootstrap_session_id.return_value = "active-session"
+
+        resp = Mock()
+        resp.status_code = 404
+        resp.json.return_value = {"error": "application route not found"}
+        resp.raise_for_status.side_effect = requests.exceptions.HTTPError(response=resp)
+        mock_dp.invoke.return_value = resp
+        mock_dp_class.return_value = mock_dp
+
+        client = AgentRuntimeClient(agent_name="agent-a", router_url="http://t:1")
+        with self.assertRaises(requests.exceptions.HTTPError):
+            client.invoke({"input": "hi"})
+
+        self.assertEqual(client.session_id, "active-session")
 
 
 class TestAgentRuntimeDataPlaneClient(unittest.TestCase):

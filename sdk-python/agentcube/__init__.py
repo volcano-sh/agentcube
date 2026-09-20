@@ -15,6 +15,7 @@
 from .code_interpreter import CodeInterpreterClient
 from .agent_runtime import AgentRuntimeClient
 from .auth import AuthProvider, TokenAuth, ServiceAccountAuth
+from .exceptions import SessionError, SessionNotFoundError
 
 __all__ = [
     "CodeInterpreterClient",
@@ -22,4 +23,6 @@ __all__ = [
     "AuthProvider",
     "TokenAuth",
     "ServiceAccountAuth",
+    "SessionError",
+    "SessionNotFoundError",
 ]

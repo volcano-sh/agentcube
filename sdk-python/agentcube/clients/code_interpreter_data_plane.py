@@ -20,14 +20,14 @@ import time
 import os
 import ast
 import shlex
-from typing import TYPE_CHECKING, Optional, Any, Dict, List, Union
+from typing import TYPE_CHECKING, Optional, Any, Callable, Dict, List, Union
 from urllib.parse import urljoin
 
 import requests
 
 from agentcube.utils.log import get_logger
-from agentcube.utils.http import create_session
-from agentcube.exceptions import CommandExecutionError
+from agentcube.utils.http import create_session, raise_for_session_status
+from agentcube.exceptions import CommandExecutionError, SessionError, SessionNotFoundError
 
 if TYPE_CHECKING:
     from agentcube.auth import AuthProvider
@@ -52,6 +52,7 @@ class CodeInterpreterDataPlaneClient:
         pool_connections: int = 10,
         pool_maxsize: int = 10,
         auth: Optional["AuthProvider"] = None,
+        on_session_not_found: Optional[Callable[[], None]] = None,
     ):
         """Initialize Data Plane client.
 
@@ -66,12 +67,13 @@ class CodeInterpreterDataPlaneClient:
             pool_connections: Number of connection pools to cache (default: 10).
             pool_maxsize: Maximum connections per pool (default: 10).
         """
-        self.session_id = session_id
+        self.session_id: Optional[str] = session_id
         self.timeout = timeout
         self.connect_timeout = connect_timeout
         self.pool_connections = pool_connections
         self.pool_maxsize = pool_maxsize
         self._auth = auth
+        self._on_session_not_found = on_session_not_found
         self.logger = get_logger(f"{__name__}.CodeInterpreterDataPlaneClient")
 
         if base_url:
@@ -102,6 +104,9 @@ class CodeInterpreterDataPlaneClient:
 
         Note: Router handles JWT authentication, so we don't add Authorization header here.
         """
+        if not self.session_id:
+            raise SessionError("Session is no longer available")
+
         url = urljoin(self.base_url, endpoint)
 
         headers = {}
@@ -124,13 +129,26 @@ class CodeInterpreterDataPlaneClient:
         self.logger.debug(f"{method} {url}")
 
         # Use session for connection pooling
-        return self.session.request(
+        response = self.session.request(
             method=method,
             url=url,
             data=body,
             headers=headers,
             **kwargs
         )
+        self._raise_for_status(response)
+        return response
+
+    def _raise_for_status(self, response: requests.Response) -> None:
+        session_id = self.session_id or ""
+        try:
+            raise_for_session_status(response, session_id)
+        except SessionNotFoundError:
+            self.session_id = None
+            self.session.headers.pop("x-agentcube-session-id", None)
+            if self._on_session_not_found:
+                self._on_session_not_found()
+            raise
 
     def execute_command_result(
         self, command: Union[str, List[str]], timeout: Optional[float] = None
@@ -153,8 +171,6 @@ class CodeInterpreterDataPlaneClient:
         read_timeout = timeout_value + 2.0 if isinstance(timeout_value, (int, float)) else timeout_value
 
         resp = self._request("POST", "api/execute", body=body, timeout=read_timeout)
-        resp.raise_for_status()
-
         result = resp.json()
         return {
             "stdout": result.get("stdout") or "",
@@ -228,13 +244,14 @@ class CodeInterpreterDataPlaneClient:
         }
         body = json.dumps(payload).encode('utf-8')
 
-        resp = self._request("POST", "api/files", body=body)
-        resp.raise_for_status()
+        self._request("POST", "api/files", body=body)
 
     def upload_file(self, local_path: str, remote_path: str) -> None:
         """Upload a local file using multipart/form-data."""
         if not os.path.exists(local_path):
             raise FileNotFoundError(f"Local file not found: {local_path}")
+        if not self.session_id:
+            raise SessionError("Session is no longer available")
 
         with open(local_path, 'rb') as f:
             files = {'file': f}
@@ -249,14 +266,12 @@ class CodeInterpreterDataPlaneClient:
 
             self.logger.debug(f"Uploading file {local_path} to {remote_path}")
             resp = self.session.post(url, files=files, data=data, headers=headers, timeout=self.timeout)
-            resp.raise_for_status()
+            self._raise_for_status(resp)
 
     def download_file(self, remote_path: str, local_path: str) -> None:
         """Download a file."""
         clean_path = remote_path.lstrip("/")
         resp = self._request("GET", f"api/files/{clean_path}", stream=True)
-        resp.raise_for_status()
-
         if os.path.dirname(local_path):
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
         with open(local_path, 'wb') as f:
@@ -266,7 +281,6 @@ class CodeInterpreterDataPlaneClient:
     def list_files(self, path: str = ".") -> Any:
         """List files in a directory."""
         resp = self._request("GET", "api/files", params={"path": path})
-        resp.raise_for_status()
         return resp.json().get("files", [])
 
     def close(self):

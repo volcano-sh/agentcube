@@ -38,7 +38,7 @@ with CodeInterpreterClient() as client:
 For long-running applications, you can manually control the lifecycle:
 
 ```python
-# Create a session with a 1-hour timeout
+# Request a session with a 1-hour maximum lifetime
 client = CodeInterpreterClient(ttl=3600)
 
 try:
@@ -82,11 +82,16 @@ df.describe().to_csv('/workspace/summary.csv')
 CodeInterpreterClient(
     name="custom-template",        # CodeInterpreter CRD template name
     namespace="agentcube",         # Kubernetes namespace
-    ttl=7200,                      # Session TTL (seconds)
+    ttl=7200,                      # Requested maximum lifetime (seconds)
     session_id="existing-id",      # Optional: reuse existing session
     verbose=True                   # Enable debug logging
 )
 ```
+
+If `ttl` is omitted, the CodeInterpreter CRD's `spec.maxSessionDuration`
+determines the maximum lifetime. Otherwise, the effective maximum lifetime is
+the smaller of `ttl` and `spec.maxSessionDuration`. A session can be reclaimed
+earlier when it is idle for `spec.sessionTimeout`.
 
 **Environment Variables**:
 
@@ -110,6 +115,24 @@ client1.write_file("42", "value.txt")
 client2 = CodeInterpreterClient(session_id=session_id)
 client2.run_code("python", "print(open('value.txt').read())")  # File persists
 client2.stop()  # Cleanup when done
+```
+
+### Expired Sessions
+
+When a reused session has been reclaimed, the SDK clears the stale session ID
+and raises `SessionNotFoundError`. It does not create a replacement implicitly
+because the previous sandbox state has been lost.
+
+```python
+from agentcube import CodeInterpreterClient, SessionNotFoundError
+
+client = CodeInterpreterClient(session_id=saved_session_id)
+try:
+    client.list_files()
+except SessionNotFoundError:
+    # The old ID is no longer usable. Create a new client only if the
+    # application can continue without the previous sandbox state.
+    client = CodeInterpreterClient()
 ```
 
 ## Development

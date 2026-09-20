@@ -28,6 +28,13 @@ class SessionError(AgentCubeError):
     """Raised when session creation or management fails"""
     pass
 
+class SessionNotFoundError(SessionError):
+    """Raised when the server no longer has the requested session."""
+    def __init__(self, session_id, message=None, response=None):
+        self.session_id = session_id
+        self.response = response
+        super().__init__(message or f"Session {session_id!r} was not found")
+
 class DataPlaneError(AgentCubeError):
     """Raised when Data Plane operations fail"""
     pass

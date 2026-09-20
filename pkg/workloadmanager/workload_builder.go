@@ -152,6 +152,19 @@ type buildSandboxClaimParams struct {
 	ownerReference *metav1.OwnerReference
 }
 
+// effectiveSessionTTL applies the workload configuration as the hard upper
+// bound for a client-requested session lifetime.
+func effectiveSessionTTL(requestedTTL time.Duration, maxSessionDuration *metav1.Duration) time.Duration {
+	configuredTTL := DefaultSandboxTTL
+	if maxSessionDuration != nil && maxSessionDuration.Duration > 0 {
+		configuredTTL = maxSessionDuration.Duration
+	}
+	if requestedTTL > 0 && requestedTTL < configuredTTL {
+		return requestedTTL
+	}
+	return configuredTTL
+}
+
 // buildSandboxObject builds a Sandbox object from parameters
 func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 	if params.ttl == 0 {
@@ -256,7 +269,7 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 	return sandboxClaim
 }
 
-func buildSandboxByAgentRuntime(namespace string, name string, ownerID string, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
+func buildSandboxByAgentRuntime(namespace string, name string, ownerID string, requestedTTL time.Duration, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
 	agentRuntimeObj, err := ifm.AgentRuntimeLister.AgentRuntimes(namespace).Get(name)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -280,6 +293,7 @@ func buildSandboxByAgentRuntime(namespace string, name string, ownerID string, i
 		sandboxName:  sandboxName,
 		sessionID:    sessionID,
 		ownerID:      ownerID,
+		ttl:          effectiveSessionTTL(requestedTTL, agentRuntimeObj.Spec.MaxSessionDuration),
 		podSpec:      *podSpec,
 	}
 	// Apply labels and annotations from AgentRuntime template
@@ -288,9 +302,6 @@ func buildSandboxByAgentRuntime(namespace string, name string, ownerID string, i
 	}
 	if agentRuntimeObj.Spec.Template.Annotations != nil {
 		buildParams.podAnnotations = agentRuntimeObj.Spec.Template.Annotations
-	}
-	if agentRuntimeObj.Spec.MaxSessionDuration != nil {
-		buildParams.ttl = agentRuntimeObj.Spec.MaxSessionDuration.Duration
 	}
 	idleTimeout := DefaultSandboxIdleTimeout
 	if agentRuntimeObj.Spec.SessionTimeout != nil {
@@ -322,7 +333,7 @@ func buildCodeInterpreterEnvVars(templateEnv []corev1.EnvVar, authMode runtimev1
 	return envVars
 }
 
-func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, ownerID string, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, ownerID string, requestedTTL time.Duration, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
 	codeInterpreterObj, err := informer.CodeInterpreterLister.CodeInterpreters(namespace).Get(codeInterpreterName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -338,6 +349,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 
 	sessionID := uuid.New().String()
 	sandboxName := fmt.Sprintf("%s-%s", codeInterpreterName, RandString(8))
+	effectiveTTL := effectiveSessionTTL(requestedTTL, codeInterpreterObj.Spec.MaxSessionDuration)
 
 	idleTimeout := DefaultSandboxIdleTimeout
 	if codeInterpreterObj.Spec.SessionTimeout != nil {
@@ -386,10 +398,8 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				},
 			},
 		}
-		if codeInterpreterObj.Spec.MaxSessionDuration != nil {
-			shutdownTime := metav1.NewTime(time.Now().Add(codeInterpreterObj.Spec.MaxSessionDuration.Duration))
-			simpleSandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
-		}
+		shutdownTime := metav1.NewTime(time.Now().Add(effectiveTTL))
+		simpleSandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
 		sandboxEntry.Kind = types.SandboxClaimsKind
 		return simpleSandbox, sandboxClaim, sandboxEntry, nil
 	}
@@ -428,10 +438,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 		podLabels:      codeInterpreterObj.Spec.Template.Labels,
 		podAnnotations: codeInterpreterObj.Spec.Template.Annotations,
 		idleTimeout:    idleTimeout,
-	}
-
-	if codeInterpreterObj.Spec.MaxSessionDuration != nil {
-		buildParams.ttl = codeInterpreterObj.Spec.MaxSessionDuration.Duration
+		ttl:            effectiveTTL,
 	}
 	sandbox := buildSandboxObject(buildParams)
 	return sandbox, nil, sandboxEntry, nil

@@ -135,7 +135,7 @@ The Router uses the Gin framework to provide HTTP services with the following en
    - Preserves original response status and body
 
 **Error Handling:**
-- Invalid session ID → `400 Bad Request`
+- Missing or expired session ID → `404 Not Found` with code `SESSION_NOT_FOUND`
 - No entry points → `404 Not Found`
 - Invalid endpoint → `500 Internal Server Error`
 - Connection refused → `502 Bad Gateway` (SANDBOX_UNREACHABLE)
@@ -170,7 +170,7 @@ The Router uses the Gin framework to provide HTTP services with the following en
 
 | Status Code | Scenario | Response Body Example |
 |-------------|----------|----------------------|
-| 400 Bad Request | Invalid session ID | `{"error": "Invalid session id <session-id>", "code": "BadRequest"}` |
+| 404 Not Found | Missing or expired session ID | `{"error": "session <session-id> was not found", "code": "SESSION_NOT_FOUND"}` |
 | 404 Not Found | No entry points found for sandbox | `{"error": "no entry points found for sandbox", "code": "Service not found"}` |
 | 429 Too Many Requests | Server overloaded (concurrent request limit exceeded) | `{"error": "server overloaded, please try again later", "code": "SERVER_OVERLOADED"}` |
 

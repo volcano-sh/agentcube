@@ -18,6 +18,7 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -154,9 +155,10 @@ func TestHandleInvoke_ErrorPaths(t *testing.T) {
 	defer teardownEnv()
 
 	tests := []struct {
-		name         string
-		err          error
-		expectedCode int
+		name              string
+		err               error
+		expectedCode      int
+		expectedErrorCode string
 	}{
 		{
 			name:         "session manager generic error",
@@ -164,9 +166,10 @@ func TestHandleInvoke_ErrorPaths(t *testing.T) {
 			expectedCode: http.StatusInternalServerError,
 		},
 		{
-			name:         "session not found",
-			err:          api.NewSessionNotFoundError("missing-session"),
-			expectedCode: http.StatusNotFound,
+			name:              "session not found",
+			err:               api.NewSessionNotFoundError("missing-session"),
+			expectedCode:      http.StatusNotFound,
+			expectedErrorCode: api.SessionNotFoundCode,
 		},
 		{
 			name:         "agent runtime not found",
@@ -201,6 +204,13 @@ func TestHandleInvoke_ErrorPaths(t *testing.T) {
 
 			if w.Code != tt.expectedCode {
 				t.Fatalf("expected status %d, got %d", tt.expectedCode, w.Code)
+			}
+			var response map[string]string
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if response["code"] != tt.expectedErrorCode {
+				t.Fatalf("expected error code %q, got %q", tt.expectedErrorCode, response["code"])
 			}
 			t.Logf("Response body: %s", w.Body.String())
 		})

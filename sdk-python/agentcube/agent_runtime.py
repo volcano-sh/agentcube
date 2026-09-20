@@ -19,6 +19,8 @@ from typing import Any, Dict, Optional
 from requests.exceptions import JSONDecodeError
 from agentcube.auth import AuthProvider
 from agentcube.clients.agent_runtime_data_plane import AgentRuntimeDataPlaneClient
+from agentcube.exceptions import SessionNotFoundError
+from agentcube.utils.http import raise_for_session_status
 from agentcube.utils.log import get_logger
 
 
@@ -91,7 +93,11 @@ class AgentRuntimeClient:
             timeout=timeout,
             path=path,
         )
-        resp.raise_for_status()
+        try:
+            raise_for_session_status(resp, self.session_id)
+        except SessionNotFoundError:
+            self.session_id = None
+            raise
 
         try:
             return resp.json()

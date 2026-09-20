@@ -742,6 +742,7 @@ func TestHandleSandboxCreate(t *testing.T) {
 		expectStatus      int
 		expectMessage     string
 		expectCreateCalls int
+		expectTTL         time.Duration
 	}{
 		{
 			name:          "invalid json",
@@ -829,10 +830,11 @@ func TestHandleSandboxCreate(t *testing.T) {
 		{
 			name:              "create sandbox success code interpreter",
 			kind:              types.CodeInterpreterKind,
-			body:              `{"name":"workload","namespace":"ns"}`,
+			body:              `{"name":"workload","namespace":"ns","ttl":60}`,
 			createResp:        &types.CreateSandboxResponse{SessionID: "sess-1", SandboxID: "id-2", SandboxName: "sandbox-2"},
 			expectStatus:      http.StatusOK,
 			expectCreateCalls: 1,
+			expectTTL:         time.Minute,
 		},
 	}
 
@@ -853,20 +855,22 @@ func TestHandleSandboxCreate(t *testing.T) {
 			patches := gomonkey.NewPatches()
 			defer patches.Reset()
 
-			patches.ApplyFunc(buildSandboxByAgentRuntime, func(_, _, _ string, _ *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
+			patches.ApplyFunc(buildSandboxByAgentRuntime, func(_, _, _ string, requestedTTL time.Duration, _ *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
 				if tc.kind != types.AgentRuntimeKind {
 					return nil, nil, errors.New("unexpected kind")
 				}
+				require.Equal(t, tc.expectTTL, requestedTTL)
 				if tc.buildErr != nil {
 					return nil, nil, tc.buildErr
 				}
 				return sb, entry, nil
 			})
 
-			patches.ApplyFunc(buildSandboxByCodeInterpreter, func(_, _, _ string, _ *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+			patches.ApplyFunc(buildSandboxByCodeInterpreter, func(_, _, _ string, requestedTTL time.Duration, _ *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
 				if tc.kind != types.CodeInterpreterKind {
 					return nil, nil, nil, errors.New("unexpected kind")
 				}
+				require.Equal(t, tc.expectTTL, requestedTTL)
 				if tc.buildErr != nil {
 					return nil, nil, nil, tc.buildErr
 				}

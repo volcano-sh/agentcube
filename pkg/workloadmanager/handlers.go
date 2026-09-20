@@ -171,9 +171,9 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 
 	switch sandboxReq.Kind {
 	case types.AgentRuntimeKind:
-		sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, ownerID, s.informers)
+		sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, ownerID, sandboxReq.RequestedTTL(), s.informers)
 	case types.CodeInterpreterKind:
-		sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, ownerID, s.informers)
+		sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, ownerID, sandboxReq.RequestedTTL(), s.informers)
 	}
 
 	if err != nil {

@@ -26,7 +26,7 @@ The `CodeInterpreterClient` is the main entry point. You can initialize it direc
 |-----------|------|---------|-------------|
 | `name` | `str` | `"simple-codeinterpreter"` | CodeInterpreter CRD template name |
 | `namespace` | `str` | `"default"` | Kubernetes namespace |
-| `ttl` | `int` | `3600` | Session time-to-live (seconds) |
+| `ttl` | `Optional[int]` | `None` | Optional requested maximum session lifetime in seconds, capped by `spec.maxSessionDuration` |
 | `workload_manager_url` | `str` | `None` | Control Plane URL (falls back to env `WORKLOAD_MANAGER_URL`) |
 | `router_url` | `str` | `None` | Data Plane Router URL (falls back to env `ROUTER_URL`) |
 | `auth_token` | `str` | `None` | Auth token (falls back to K8s SA token) |
@@ -202,3 +202,24 @@ client2 = CodeInterpreterClient(session_id=session_id)
 client2.run_code("python", "print(open('value.txt').read())")
 client2.stop()  # Cleanup when done
 ```
+
+If a reused session has already been reclaimed, the SDK raises
+`SessionNotFoundError` and clears the stale ID. It does not silently replace
+the session because files and other sandbox-local state are no longer
+available.
+
+```python
+from agentcube import CodeInterpreterClient, SessionNotFoundError
+
+client = CodeInterpreterClient(session_id=saved_session_id)
+try:
+    client.list_files()
+except SessionNotFoundError:
+    # Decide at the application layer whether starting without old state is safe.
+    client = CodeInterpreterClient()
+```
+
+Session reclamation occurs when either the idle `spec.sessionTimeout` or the
+effective maximum lifetime is reached. If `ttl` is omitted, the CRD's
+`spec.maxSessionDuration` determines the maximum lifetime. Otherwise, the
+effective maximum is the smaller of `ttl` and `spec.maxSessionDuration`.

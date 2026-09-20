@@ -31,6 +31,9 @@ const (
 	sessionResourceName         = "sessions"
 	agentRuntimeResourceName    = "agentruntimes"
 	codeInterpreterResourceName = "codeinterpreters"
+	// SessionNotFoundCode is returned when an invocation references a session
+	// that is no longer present in the session store.
+	SessionNotFoundCode = "SESSION_NOT_FOUND"
 )
 
 var (
@@ -55,6 +58,20 @@ var (
 
 func NewSessionNotFoundError(sessionID string) error {
 	return apierrors.NewNotFound(sessionResource, sessionID)
+}
+
+// IsSessionNotFound reports whether err is a not-found error for the session
+// resource, rather than a not-found response from a workload or template.
+func IsSessionNotFound(err error) bool {
+	if !apierrors.IsNotFound(err) {
+		return false
+	}
+	var statusErr apierrors.APIStatus
+	if !errors.As(err, &statusErr) || statusErr.Status().Details == nil {
+		return false
+	}
+	details := statusErr.Status().Details
+	return details.Group == sessionResource.Group && details.Kind == sessionResource.Resource
 }
 
 func workloadResource(kind string) schema.GroupResource {

@@ -277,6 +277,7 @@ POST /v1/agent-runtime
 {
   "namespace": "string", // agentruntime CR namespace, required
   "name": "string",      // agentruntime CR name, required
+  "ttl": 3600            // requested maximum lifetime in seconds, optional
 }
 ```
 
@@ -311,8 +312,15 @@ POST /v1/code-interpreter
 {
   "namespace": "string", // codeinterpreter CR namespace, required
   "name": "string",      // codeinterpreter CR name, required
+  "ttl": 3600            // requested maximum lifetime in seconds, optional
 }
 ```
+
+For both creation APIs, the effective maximum lifetime is the smaller of the
+requested `ttl` and the workload CR's `spec.maxSessionDuration`. If `ttl` is
+omitted, `spec.maxSessionDuration` (or its default) is used. The independent
+`spec.sessionTimeout` idle limit may reclaim the session earlier.
+
 Response body:
 
 ```json

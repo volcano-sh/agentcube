@@ -55,6 +55,9 @@ type CreateSandboxRequest struct {
 	Kind      string `json:"kind"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
+	// TTL is the client-requested maximum session lifetime in seconds. The
+	// workload's MaxSessionDuration remains the upper bound.
+	TTL *int64 `json:"ttl,omitempty"`
 }
 
 type CreateSandboxResponse struct {
@@ -79,5 +82,23 @@ func (car *CreateSandboxRequest) Validate() error {
 	if car.Name == "" {
 		return fmt.Errorf("name is required")
 	}
+	if car.TTL != nil {
+		const maxDurationSeconds = (1<<63 - 1) / int64(time.Second)
+		if *car.TTL <= 0 {
+			return fmt.Errorf("ttl must be greater than zero")
+		}
+		if *car.TTL > maxDurationSeconds {
+			return fmt.Errorf("ttl exceeds the maximum supported duration")
+		}
+	}
 	return nil
+}
+
+// RequestedTTL returns the requested session lifetime, or zero when the
+// client left lifetime selection to the workload configuration.
+func (car *CreateSandboxRequest) RequestedTTL() time.Duration {
+	if car.TTL == nil {
+		return 0
+	}
+	return time.Duration(*car.TTL) * time.Second
 }

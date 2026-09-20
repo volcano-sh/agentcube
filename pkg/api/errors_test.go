@@ -44,6 +44,9 @@ func TestNewSessionNotFoundError(t *testing.T) {
 	assert.Equal(t, sessionResource.Group, status.Details.Group)
 	assert.Equal(t, sessionResource.Resource, status.Details.Kind)
 	assert.Equal(t, sessionID, status.Details.Name)
+	assert.True(t, IsSessionNotFound(err))
+	assert.False(t, IsSessionNotFound(errors.New("not found")))
+	assert.False(t, IsSessionNotFound(NewSandboxTemplateNotFoundError("default", "agent", types.AgentRuntimeKind)))
 }
 
 func TestWorkloadResource(t *testing.T) {

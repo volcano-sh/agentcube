@@ -18,6 +18,7 @@ package picod
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -35,8 +36,10 @@ const (
 
 // Config defines server configuration
 type Config struct {
-	Port      int    `json:"port"`
-	Workspace string `json:"workspace"`
+	Port                int           `json:"port"`
+	Workspace           string        `json:"workspace"`
+	ShutdownTimeout     time.Duration `json:"shutdown_timeout"`
+	MaxExecutionTimeout time.Duration `json:"max_execution_timeout"`
 }
 
 // Server defines the PicoD HTTP server
@@ -50,6 +53,19 @@ type Server struct {
 
 // NewServer creates a new PicoD server instance
 func NewServer(config Config) *Server {
+	if config.ShutdownTimeout <= 0 {
+		config.ShutdownTimeout = 90 * time.Second
+	}
+	// MaxExecutionTimeout defaults to 60s. It is also capped to ShutdownTimeout
+	// so that no command can outlive the server during graceful shutdown.
+	if config.MaxExecutionTimeout <= 0 {
+		config.MaxExecutionTimeout = 60 * time.Second
+	}
+	if config.MaxExecutionTimeout > config.ShutdownTimeout {
+		klog.Warningf("MaxExecutionTimeout (%v) exceeds ShutdownTimeout (%v); capping to ShutdownTimeout to prevent commands from outliving graceful shutdown",
+			config.MaxExecutionTimeout, config.ShutdownTimeout)
+		config.MaxExecutionTimeout = config.ShutdownTimeout
+	}
 	s := &Server{
 		config:      config,
 		startTime:   time.Now(),
@@ -131,20 +147,30 @@ func (s *Server) Start(ctx context.Context) error {
 		ReadHeaderTimeout: 10 * time.Second, // Prevent Slowloris attacks
 	}
 
-	// Listen for shutdown signal and gracefully stop the HTTP server.
+	idleConnsClosed := make(chan struct{})
+	stop := make(chan struct{})
 	go func() {
-		<-ctx.Done()
-		klog.Info("Shutting down PicoD server...")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			klog.Errorf("PicoD server shutdown error: %v", err)
+		defer close(idleConnsClosed)
+		select {
+		case <-ctx.Done():
+			// Allow enough time for in-flight commands to finish.
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), s.config.ShutdownTimeout)
+			defer cancel()
+			if err := httpServer.Shutdown(shutdownCtx); err != nil {
+				klog.Errorf("HTTP server shutdown error: %v", err)
+			}
+		case <-stop:
+			// ListenAndServe failed before the context was canceled; nothing to shut down.
 		}
 	}()
 
-	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		close(stop)
+		<-idleConnsClosed // wait for the goroutine to exit
 		return err
 	}
+
+	<-idleConnsClosed
 	return nil
 }
 

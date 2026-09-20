@@ -91,7 +91,7 @@ func (r *CodeInterpreterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// Update status with ready condition
-	if err := r.updateStatus(ctx, codeInterpreter); err != nil {
+	if err := r.updateStatus(ctx, codeInterpreter, true, "Reconciled", "CodeInterpreter is ready"); err != nil {
 		logger.Error(err, "failed to update status")
 		return ctrl.Result{}, err
 	}
@@ -102,28 +102,47 @@ func (r *CodeInterpreterReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 // updateStatus updates the CodeInterpreter status. It skips the API write
 // when the status is already up-to-date to avoid triggering a new watch event
 // that would re-enqueue the object unnecessarily.
-func (r *CodeInterpreterReconciler) updateStatus(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter) error {
+func (r *CodeInterpreterReconciler) updateStatus(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter, ready bool, reason, message string) error {
+	conditionStatus := metav1.ConditionFalse
+	if ready {
+		conditionStatus = metav1.ConditionTrue
+	}
+
 	existing := apimeta.FindStatusCondition(ci.Status.Conditions, "Ready")
-	if ci.Status.Ready &&
+	if ci.Status.Ready == ready &&
 		existing != nil &&
-		existing.Status == metav1.ConditionTrue &&
+		existing.Status == conditionStatus &&
+		existing.Reason == reason &&
+		existing.Message == message &&
 		existing.ObservedGeneration == ci.Generation {
 		return nil
 	}
 
-	ci.Status.Ready = true
+	ci.Status.Ready = ready
 	// SetStatusCondition only updates LastTransitionTime when the condition
 	// Status actually changes, preventing spurious status writes that would
 	// trigger an infinite reconciliation loop.
 	apimeta.SetStatusCondition(&ci.Status.Conditions, metav1.Condition{
 		Type:               "Ready",
-		Status:             metav1.ConditionTrue,
-		Reason:             "Reconciled",
-		Message:            "CodeInterpreter is ready",
+		Status:             conditionStatus,
+		Reason:             reason,
+		Message:            message,
 		ObservedGeneration: ci.Generation,
 	})
 
 	return r.Status().Update(ctx, ci)
+}
+
+func (r *CodeInterpreterReconciler) validateChildOwnership(ctx context.Context, ci *runtimev1alpha1.CodeInterpreter, child metav1.Object, kind string) error {
+	if metav1.IsControlledBy(child, ci) {
+		return nil
+	}
+
+	ownershipErr := fmt.Errorf("existing %s %s/%s is not controlled by CodeInterpreter %s", kind, child.GetNamespace(), child.GetName(), ci.Name)
+	if err := r.updateStatus(ctx, ci, false, "OwnershipConflict", ownershipErr.Error()); err != nil {
+		return fmt.Errorf("%v: failed to update CodeInterpreter status: %w", ownershipErr, err)
+	}
+	return ownershipErr
 }
 
 // ensureSandboxTemplate ensures that a SandboxTemplate exists for this CodeInterpreter
@@ -168,13 +187,14 @@ func (r *CodeInterpreterReconciler) ensureSandboxTemplate(ctx context.Context, c
 		}
 
 		if err := r.Create(ctx, sandboxTemplate); err != nil {
-			if !errors.IsAlreadyExists(err) {
-				return ctrl.Result{}, fmt.Errorf("failed to create SandboxTemplate: %w", err)
-			}
+			return ctrl.Result{}, fmt.Errorf("failed to create SandboxTemplate: %w", err)
 		}
 		return ctrl.Result{}, nil
 	} else if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to get SandboxTemplate: %w", err)
+	}
+	if err := r.validateChildOwnership(ctx, ci, sandboxTemplate, "SandboxTemplate"); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Update existing SandboxTemplate if needed.
@@ -228,13 +248,14 @@ func (r *CodeInterpreterReconciler) ensureSandboxWarmPool(ctx context.Context, c
 		}
 
 		if err := r.Create(ctx, warmPool); err != nil {
-			if !errors.IsAlreadyExists(err) {
-				return fmt.Errorf("failed to create SandboxWarmPool: %w", err)
-			}
+			return fmt.Errorf("failed to create SandboxWarmPool: %w", err)
 		}
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("failed to get SandboxWarmPool: %w", err)
+	}
+	if err := r.validateChildOwnership(ctx, ci, warmPool, "SandboxWarmPool"); err != nil {
+		return err
 	}
 
 	// Update existing SandboxWarmPool if needed
@@ -267,8 +288,14 @@ func (r *CodeInterpreterReconciler) deleteSandboxWarmPool(ctx context.Context, c
 	} else if err != nil {
 		return fmt.Errorf("failed to get SandboxWarmPool: %w", err)
 	}
+	if err := r.validateChildOwnership(ctx, ci, warmPool, "SandboxWarmPool"); err != nil {
+		return err
+	}
 
-	if err := r.Delete(ctx, warmPool); err != nil {
+	if err := r.Delete(ctx, warmPool, client.Preconditions{
+		UID:             &warmPool.UID,
+		ResourceVersion: &warmPool.ResourceVersion,
+	}); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete SandboxWarmPool: %w", err)
 		}
@@ -287,8 +314,14 @@ func (r *CodeInterpreterReconciler) deleteSandboxTemplate(ctx context.Context, c
 	} else if err != nil {
 		return fmt.Errorf("failed to get SandboxTemplate: %w", err)
 	}
+	if err := r.validateChildOwnership(ctx, ci, sandboxTemplate, "SandboxTemplate"); err != nil {
+		return err
+	}
 
-	if err := r.Delete(ctx, sandboxTemplate); err != nil {
+	if err := r.Delete(ctx, sandboxTemplate, client.Preconditions{
+		UID:             &sandboxTemplate.UID,
+		ResourceVersion: &sandboxTemplate.ResourceVersion,
+	}); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete SandboxTemplate: %w", err)
 		}

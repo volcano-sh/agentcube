@@ -197,6 +197,16 @@ def build(
         "--cloud-provider",
         help="Cloud provider name (e.g., huawei)",
     ),
+    build_mode: Optional[str] = typer.Option(
+        None,
+        "--build-mode",
+        help="Build strategy: local or cloud",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Perform a dry-run / simulated build without executing any real steps",
+    ),
     output: Optional[str] = typer.Option(
         None,
         "--output",
@@ -228,6 +238,8 @@ def build(
             options = {
                 "proxy": proxy,
                 "cloud_provider": cloud_provider,
+                "build_mode": build_mode,
+                "dry_run": dry_run,
                 "output": output,
             }
 

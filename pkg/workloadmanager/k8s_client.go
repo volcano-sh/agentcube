@@ -195,7 +195,7 @@ func (c *K8sClient) GetOrCreateUserK8sClient(userToken, namespace, serviceAccoun
 	cacheKey := makeCacheKey(namespace, serviceAccountName)
 
 	// Try to get from cache
-	if cachedClient := c.clientCache.Get(cacheKey); cachedClient != nil {
+	if cachedClient := c.clientCache.Get(cacheKey, userToken); cachedClient != nil {
 		return cachedClient, nil
 	}
 

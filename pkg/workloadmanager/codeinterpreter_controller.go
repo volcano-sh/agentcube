@@ -19,6 +19,7 @@ package workloadmanager
 import (
 	"context"
 	"fmt"
+	"maps"
 	"reflect"
 	"time"
 
@@ -334,14 +335,25 @@ func (r *CodeInterpreterReconciler) convertToPodTemplate(template *runtimev1alph
 	}
 
 	return sandboxv1alpha1.PodTemplate{
+		ObjectMeta: sandboxv1alpha1.PodMetadata{
+			Labels:      copyNonEmptyMap(template.Labels),
+			Annotations: copyNonEmptyMap(template.Annotations),
+		},
 		Spec: podSpec,
 	}
+}
+
+func copyNonEmptyMap(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	return maps.Clone(m)
 }
 
 // podTemplateEqual checks if two PodTemplates are equal
 func (r *CodeInterpreterReconciler) podTemplateEqual(a, b sandboxv1alpha1.PodTemplate) bool {
 	// Use reflect.DeepEqual for a comprehensive comparison.
-	return reflect.DeepEqual(a.Spec, b.Spec)
+	return reflect.DeepEqual(a.ObjectMeta, b.ObjectMeta) && reflect.DeepEqual(a.Spec, b.Spec)
 }
 
 // SetupWithManager sets up the controller with the Manager.

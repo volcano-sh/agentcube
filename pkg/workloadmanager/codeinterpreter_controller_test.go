@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -130,6 +131,170 @@ func TestEnsureSandboxTemplateUpdatesManagedNetworkPolicyToUnmanaged(t *testing.
 	}, sandboxTemplate)
 	assert.NoError(t, err)
 	assert.Equal(t, extensionsv1alpha1.NetworkPolicyManagementUnmanaged, sandboxTemplate.Spec.NetworkPolicyManagement)
+}
+
+func TestConvertToPodTemplate_PodMetadata(t *testing.T) {
+	reconciler := setupTestReconciler()
+
+	tests := []struct {
+		name                string
+		labels              map[string]string
+		annotations         map[string]string
+		expectedLabels      map[string]string
+		expectedAnnotations map[string]string
+	}{
+		{
+			name:                "labels and annotations are copied to the pod template",
+			labels:              map[string]string{"team": "data-science"},
+			annotations:         map[string]string{"sidecar.istio.io/inject": "false"},
+			expectedLabels:      map[string]string{"team": "data-science"},
+			expectedAnnotations: map[string]string{"sidecar.istio.io/inject": "false"},
+		},
+		{
+			name:                "nil metadata stays nil",
+			labels:              nil,
+			annotations:         nil,
+			expectedLabels:      nil,
+			expectedAnnotations: nil,
+		},
+		{
+			name:                "empty metadata is normalized to nil",
+			labels:              map[string]string{},
+			annotations:         map[string]string{},
+			expectedLabels:      nil,
+			expectedAnnotations: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			template := &runtimev1alpha1.CodeInterpreterSandboxTemplate{
+				Image:       "test-image:latest",
+				Labels:      tt.labels,
+				Annotations: tt.annotations,
+			}
+			ci := &runtimev1alpha1.CodeInterpreter{
+				Spec: runtimev1alpha1.CodeInterpreterSpec{
+					AuthMode: runtimev1alpha1.AuthModeNone,
+				},
+			}
+
+			result := reconciler.convertToPodTemplate(template, ci)
+
+			assert.Equal(t, tt.expectedLabels, result.ObjectMeta.Labels)
+			assert.Equal(t, tt.expectedAnnotations, result.ObjectMeta.Annotations)
+		})
+	}
+}
+
+func TestConvertToPodTemplate_PodMetadataDoesNotMutateTemplate(t *testing.T) {
+	reconciler := setupTestReconciler()
+	template := &runtimev1alpha1.CodeInterpreterSandboxTemplate{
+		Image:       "test-image:latest",
+		Labels:      map[string]string{"team": "data-science"},
+		Annotations: map[string]string{"sidecar.istio.io/inject": "false"},
+	}
+	ci := &runtimev1alpha1.CodeInterpreter{
+		Spec: runtimev1alpha1.CodeInterpreterSpec{
+			AuthMode: runtimev1alpha1.AuthModeNone,
+		},
+	}
+
+	result := reconciler.convertToPodTemplate(template, ci)
+	require.NotNil(t, result.ObjectMeta.Labels)
+	require.NotNil(t, result.ObjectMeta.Annotations)
+	result.ObjectMeta.Labels["extra"] = "value"
+	result.ObjectMeta.Annotations["extra"] = "value"
+
+	assert.Equal(t, map[string]string{"team": "data-science"}, template.Labels)
+	assert.Equal(t, map[string]string{"sidecar.istio.io/inject": "false"}, template.Annotations)
+}
+
+func TestEnsureSandboxTemplate_PodMetadata(t *testing.T) {
+	testCI := func() *runtimev1alpha1.CodeInterpreter {
+		ci := testCodeInterpreterWithWarmPool()
+		ci.Spec.Template.Environment = []corev1.EnvVar{{Name: "ENV1", Value: "value1"}}
+		return ci
+	}
+	withMetadata := func(ci *runtimev1alpha1.CodeInterpreter) *runtimev1alpha1.CodeInterpreter {
+		ci.Spec.Template.Labels = map[string]string{"team": "data-science"}
+		ci.Spec.Template.Annotations = map[string]string{"sidecar.istio.io/inject": "false"}
+		return ci
+	}
+	existingTemplate := func(ci *runtimev1alpha1.CodeInterpreter) *extensionsv1alpha1.SandboxTemplate {
+		return &extensionsv1alpha1.SandboxTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      ci.Name,
+				Namespace: ci.Namespace,
+			},
+			Spec: extensionsv1alpha1.SandboxTemplateSpec{
+				NetworkPolicyManagement: extensionsv1alpha1.NetworkPolicyManagementUnmanaged,
+				PodTemplate:             setupTestReconciler().convertToPodTemplate(ci.Spec.Template, ci),
+			},
+		}
+	}
+
+	tests := []struct {
+		name                string
+		ci                  *runtimev1alpha1.CodeInterpreter
+		existing            *extensionsv1alpha1.SandboxTemplate
+		expectedLabels      map[string]string
+		expectedAnnotations map[string]string
+		expectUpdate        bool
+	}{
+		{
+			name:                "new template carries pod metadata",
+			ci:                  withMetadata(testCI()),
+			existing:            nil,
+			expectedLabels:      map[string]string{"team": "data-science"},
+			expectedAnnotations: map[string]string{"sidecar.istio.io/inject": "false"},
+		},
+		{
+			name:                "existing template is updated when only pod metadata changed",
+			ci:                  withMetadata(testCI()),
+			existing:            existingTemplate(testCI()),
+			expectedLabels:      map[string]string{"team": "data-science"},
+			expectedAnnotations: map[string]string{"sidecar.istio.io/inject": "false"},
+			expectUpdate:        true,
+		},
+		{
+			name:                "existing template without pod metadata is left unchanged",
+			ci:                  testCI(),
+			existing:            existingTemplate(testCI()),
+			expectedLabels:      nil,
+			expectedAnnotations: nil,
+			expectUpdate:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var reconciler *CodeInterpreterReconciler
+			if tt.existing != nil {
+				reconciler = newTestReconcilerWithObjects(tt.existing)
+			} else {
+				reconciler = newTestReconcilerWithObjects()
+			}
+			key := types.NamespacedName{Name: tt.ci.Name, Namespace: tt.ci.Namespace}
+
+			before := &extensionsv1alpha1.SandboxTemplate{}
+			if tt.existing != nil {
+				assert.NoError(t, reconciler.Get(context.Background(), key, before))
+			}
+
+			_, err := reconciler.ensureSandboxTemplate(context.Background(), tt.ci)
+			assert.NoError(t, err)
+
+			sandboxTemplate := &extensionsv1alpha1.SandboxTemplate{}
+			assert.NoError(t, reconciler.Get(context.Background(), key, sandboxTemplate))
+			assert.Equal(t, tt.expectedLabels, sandboxTemplate.Spec.PodTemplate.ObjectMeta.Labels)
+			assert.Equal(t, tt.expectedAnnotations, sandboxTemplate.Spec.PodTemplate.ObjectMeta.Annotations)
+			if tt.existing != nil {
+				assert.Equal(t, tt.expectUpdate, before.ResourceVersion != sandboxTemplate.ResourceVersion,
+					"unexpected SandboxTemplate update")
+			}
+		})
+	}
 }
 
 func TestConvertToPodTemplate_RuntimeClassName_TableDriven(t *testing.T) {

@@ -1,11 +1,78 @@
 .features {
+  padding: 6rem 0;
+  background-color: var(--hero-bg);
+  transition: background-color 0.25s ease;
+}
+
+.featureCard {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 2.5rem 2rem;
+  background-color: var(--card-bg);
+  border: 1px solid var(--card-border-color);
+  border-radius: 12px;
+  box-shadow: var(--card-shadow);
+  transition:
+    transform 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 0.25s ease;
+}
+
+.featureCard:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--card-shadow-hover);
+  border-color: var(--card-hover-border-color);
+}
+
+.featureIconContainer {
   display: flex;
   align-items: center;
-  padding: 2rem 0;
-  width: 100%;
+  justify-content: center;
+  margin-bottom: 2rem;
+  color: var(--brand-blue);
+  transition: color 0.25s ease;
 }
 
 .featureSvg {
-  height: 200px;
-  width: 200px;
+  height: 96px;
+  width: 96px;
+  transition: transform 0.22s ease;
+}
+
+.featureCard:hover .featureSvg {
+  transform: scale(1.05);
+}
+
+.featureContent {
+  text-align: center;
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.featureCardTitle {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  color: var(--card-title-color, var(--ifm-font-color-base));
+  line-height: 1.4;
+}
+
+.featureCardDescription {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--card-text-color, var(--ifm-color-emphasis-700));
+  margin: 0;
+}
+
+@media screen and (max-width: 996px) {
+  .features {
+    padding: 4rem 0;
+  }
+  .featureCard {
+    padding: 2rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
 }

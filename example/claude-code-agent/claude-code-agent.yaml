@@ -1,0 +1,61 @@
+apiVersion: runtime.agentcube.volcano.sh/v1alpha1
+kind: AgentRuntime
+metadata:
+  name: claude-code-agent
+  namespace: default
+spec:
+  targetPort:
+    - pathPrefix: "/"
+      port: 8080
+      protocol: "HTTP"
+  podTemplate:
+    labels:
+      app: claude-code-agent
+    spec:
+      containers:
+        - name: agent
+          image: claude-code-agent:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: claude-code-agent-secrets
+                  key: anthropic-auth-token
+            - name: ANTHROPIC_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: claude-code-agent-secrets
+                  key: anthropic-auth-token
+            - name: ANTHROPIC_BASE_URL
+              value: "https://api.deepseek.com/anthropic"
+            - name: ANTHROPIC_MODEL
+              value: "deepseek-v4-flash"
+            - name: ANTHROPIC_CUSTOM_MODEL_OPTION
+              value: "deepseek-v4-flash"
+            - name: WORKSPACE_DIR
+              value: "/workspace"
+            - name: MAX_TURNS
+              value: "10"
+            - name: ALLOWED_TOOLS
+              value: "Read,Edit,Glob"
+            - name: PERMISSION_MODE
+              value: "acceptEdits"
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+      volumes:
+        - name: workspace
+          emptyDir: {}
+  sessionTimeout: "30m"
+  maxSessionDuration: "8h"

@@ -36,7 +36,7 @@ const (
 // ExecuteRequest defines command execution request body
 type ExecuteRequest struct {
 	Command    []string          `json:"command" binding:"required"` // The command and its arguments to execute. The first element is the executable.
-	Timeout    string            `json:"timeout"`                    // Optional: Timeout for the command execution (e.g., "30s", "500ms"). Defaults to "30s".
+	Timeout    string            `json:"timeout"`                    // Optional: Timeout for the command execution (e.g., "30s", "500ms"). Defaults to "60s".
 	WorkingDir string            `json:"working_dir"`                // Optional: The working directory for the command.
 	Env        map[string]string `json:"env"`                        // Optional: Environment variables to set for the command.
 }

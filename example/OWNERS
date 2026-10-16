@@ -6,5 +6,6 @@ reviewers:
 
 # List of usernames who may use /approve
 approvers:
+  - acsoto
   - YaoZengzeng
   - LeslieKuo

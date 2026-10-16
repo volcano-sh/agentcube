@@ -32,7 +32,7 @@ type RuntimeV1alpha1Interface interface {
 	CodeInterpretersGetter
 }
 
-// RuntimeV1alpha1Client is used to interact with features provided by the runtime group.
+// RuntimeV1alpha1Client is used to interact with features provided by the runtime.agentcube.volcano.sh group.
 type RuntimeV1alpha1Client struct {
 	restClient rest.Interface
 }

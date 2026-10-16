@@ -116,7 +116,7 @@ func NewCodeInterpreterInformerWithOptions(client versioned.Interface, namespace
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
 func NewTypedCodeInterpreterInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) CodeInterpreterIndexInformer {
-	gvr := schema.GroupVersionResource{Group: "runtime", Version: "v1alpha1", Resource: "codeinterpreters"}
+	gvr := schema.GroupVersionResource{Group: "runtime.agentcube.volcano.sh", Version: "v1alpha1", Resource: "codeinterpreters"}
 	identifier := options.InformerName.WithResource(gvr)
 	tweakListOptions := options.TweakListOptions
 	return cache.NewTypedSharedIndexInformer[*apisruntimev1alpha1.CodeInterpreter](cache.NewSharedIndexInformerWithOptions(

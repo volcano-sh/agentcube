@@ -116,7 +116,7 @@ func NewAgentRuntimeInformerWithOptions(client versioned.Interface, namespace st
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
 func NewTypedAgentRuntimeInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) AgentRuntimeIndexInformer {
-	gvr := schema.GroupVersionResource{Group: "runtime", Version: "v1alpha1", Resource: "agentruntimes"}
+	gvr := schema.GroupVersionResource{Group: "runtime.agentcube.volcano.sh", Version: "v1alpha1", Resource: "agentruntimes"}
 	identifier := options.InformerName.WithResource(gvr)
 	tweakListOptions := options.TweakListOptions
 	return cache.NewTypedSharedIndexInformer[*apisruntimev1alpha1.AgentRuntime](cache.NewSharedIndexInformerWithOptions(

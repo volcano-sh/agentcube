@@ -30,6 +30,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+const testUserSubject = "user-123"
+
 func generateTestKeyPair(t *testing.T) (*rsa.PrivateKey, string) {
 	t.Helper()
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -64,7 +66,7 @@ func TestVerifyIdentityJWT_ValidToken(t *testing.T) {
 	privKey, pubPEM := generateTestKeyPair(t)
 
 	token := signTestToken(t, privKey, jwt.MapClaims{
-		"sub": "user-123",
+		"sub": testUserSubject,
 		"aud": "workloadmanager",
 		"exp": time.Now().Add(5 * time.Minute).Unix(),
 		"iat": time.Now().Unix(),
@@ -74,8 +76,8 @@ func TestVerifyIdentityJWT_ValidToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
-	if sub != "user-123" {
-		t.Errorf("expected sub 'user-123', got %q", sub)
+	if sub != testUserSubject {
+		t.Errorf("expected sub %q, got %q", testUserSubject, sub)
 	}
 }
 
@@ -83,7 +85,7 @@ func TestVerifyIdentityJWT_ExpiredToken(t *testing.T) {
 	privKey, pubPEM := generateTestKeyPair(t)
 
 	token := signTestToken(t, privKey, jwt.MapClaims{
-		"sub": "user-123",
+		"sub": testUserSubject,
 		"aud": "workloadmanager",
 		"exp": time.Now().Add(-5 * time.Minute).Unix(),
 	})
@@ -98,7 +100,7 @@ func TestVerifyIdentityJWT_WrongAudience(t *testing.T) {
 	privKey, pubPEM := generateTestKeyPair(t)
 
 	token := signTestToken(t, privKey, jwt.MapClaims{
-		"sub": "user-123",
+		"sub": testUserSubject,
 		"aud": "wrong-audience",
 		"exp": time.Now().Add(5 * time.Minute).Unix(),
 	})
@@ -113,7 +115,7 @@ func TestVerifyIdentityJWT_TamperedSignature(t *testing.T) {
 	privKey, pubPEM := generateTestKeyPair(t)
 
 	token := signTestToken(t, privKey, jwt.MapClaims{
-		"sub": "user-123",
+		"sub": testUserSubject,
 		"aud": "workloadmanager",
 		"exp": time.Now().Add(5 * time.Minute).Unix(),
 	})
@@ -124,7 +126,7 @@ func TestVerifyIdentityJWT_TamperedSignature(t *testing.T) {
 		t.Fatalf("failed to generate second RSA key: %v", err)
 	}
 	tampered := signTestToken(t, otherKey, jwt.MapClaims{
-		"sub": "user-123",
+		"sub": testUserSubject,
 		"aud": "workloadmanager",
 		"exp": time.Now().Add(5 * time.Minute).Unix(),
 	})
@@ -207,7 +209,7 @@ func TestExtractOwnerID(t *testing.T) {
 	publicKeyCacheMutex.Unlock()
 
 	expiredToken := signTestToken(t, privKey, jwt.MapClaims{
-		"sub": "user-123",
+		"sub": testUserSubject,
 		"aud": "workloadmanager",
 		"exp": time.Now().Add(-5 * time.Minute).Unix(),
 	})
@@ -219,7 +221,7 @@ func TestExtractOwnerID(t *testing.T) {
 	}
 
 	validToken := signTestToken(t, privKey, jwt.MapClaims{
-		"sub": "user-123",
+		"sub": testUserSubject,
 		"aud": "workloadmanager",
 		"exp": time.Now().Add(5 * time.Minute).Unix(),
 	})
@@ -229,7 +231,7 @@ func TestExtractOwnerID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if owner != "user-123" {
-		t.Errorf("expected owner 'user-123', got %q", owner)
+	if owner != testUserSubject {
+		t.Errorf("expected owner %q, got %q", testUserSubject, owner)
 	}
 }

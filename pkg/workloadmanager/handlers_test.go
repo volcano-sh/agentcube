@@ -639,6 +639,42 @@ func TestWaitForClaimSandboxReadyCancelsInFlightGet(t *testing.T) {
 	}
 }
 
+func TestWaitForClaimSandboxReadyNoticesQuickBindingWithoutWaitingASecond(t *testing.T) {
+	claim := &extensionsv1alpha1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "ci-claim", Namespace: "ns-1"},
+	}
+	unboundObject, err := runtime.DefaultUnstructuredConverter.ToUnstructured(claim)
+	require.NoError(t, err)
+	bound := claim.DeepCopy()
+	bound.Status.SandboxStatus.Name = "sandbox-1"
+	boundObject, err := runtime.DefaultUnstructuredConverter.ToUnstructured(bound)
+	require.NoError(t, err)
+	sandboxObject, err := runtime.DefaultUnstructuredConverter.ToUnstructured(readySandbox())
+	require.NoError(t, err)
+
+	start := time.Now()
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	dynamicClient.PrependReactor("get", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		switch action.GetResource() {
+		case SandboxClaimGVR:
+			if time.Since(start) < 20*time.Millisecond {
+				return true, &unstructured.Unstructured{Object: unboundObject}, nil
+			}
+			return true, &unstructured.Unstructured{Object: boundObject}, nil
+		case SandboxGVR:
+			return true, &unstructured.Unstructured{Object: sandboxObject}, nil
+		default:
+			return false, nil, nil
+		}
+	})
+
+	createdSandbox, err := (&Server{}).waitForClaimSandboxReady(context.Background(), dynamicClient, claim)
+
+	require.NoError(t, err)
+	require.NotNil(t, createdSandbox)
+	require.Less(t, time.Since(start), 700*time.Millisecond, "claim bound after 20ms should not wait for a 1s tick")
+}
+
 func TestWaitForClaimSandboxReadyRejectsLateReadySandbox(t *testing.T) {
 	claim := &extensionsv1alpha1.SandboxClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "ci-claim", Namespace: "ns-1"},

@@ -24,6 +24,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -33,6 +34,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/lru"
 )
 
 const (
@@ -40,6 +42,12 @@ const (
 	rsaKeySize = 2048
 	// JWT token expiration time
 	jwtExpiration = 5 * time.Minute
+	// jwtReuseWindow is how long a cached token may be handed out again. It is
+	// half of jwtExpiration, so a reused token always has at least 2.5 minutes
+	// of validity left when the sandbox receives it.
+	jwtReuseWindow = jwtExpiration / 2
+	// jwtCacheSize bounds the number of cached tokens (one per session and caller).
+	jwtCacheSize = 4096
 	// IdentitySecretName is the name of the secret storing Router's keys
 	IdentitySecretName = "picod-router-identity" //nolint:gosec // This is a name reference, not a credential
 	// PrivateKeyDataKey is the key in the secret data map for private key
@@ -62,6 +70,19 @@ type JWTManager struct {
 	privateKey *rsa.PrivateKey
 	publicKey  *rsa.PublicKey
 	clientset  kubernetes.Interface
+
+	// tokenCache holds recently signed tokens keyed by the caller-supplied
+	// cache key, so that repeated requests on one session do not pay for an
+	// RSA signature each time.
+	tokenMu    sync.Mutex
+	tokenCache *lru.Cache
+}
+
+// cachedToken is a signed token together with the time after which it must
+// be signed again.
+type cachedToken struct {
+	token   string
+	reuseTo time.Time
 }
 
 // NewJWTManager creates a new JWT manager with a fresh RSA key pair
@@ -74,7 +95,39 @@ func NewJWTManager() (*JWTManager, error) {
 	return &JWTManager{
 		privateKey: privateKey,
 		publicKey:  &privateKey.PublicKey,
+		tokenCache: lru.New(jwtCacheSize),
 	}, nil
+}
+
+// GenerateTokenCached returns a token for claims, reusing a previously signed
+// one for the same key while it is younger than jwtReuseWindow. The key must
+// be comparable and identify the claims exactly: two calls with the same key
+// must pass the same claims. Signing with RSA-2048 costs roughly half a millisecond, which is
+// several times the rest of the router request path.
+func (jm *JWTManager) GenerateTokenCached(key interface{}, claims map[string]interface{}) (string, error) {
+	now := time.Now()
+
+	jm.tokenMu.Lock()
+	if jm.tokenCache == nil {
+		jm.tokenCache = lru.New(jwtCacheSize)
+	}
+	if v, ok := jm.tokenCache.Get(key); ok {
+		if ct, isToken := v.(cachedToken); isToken && now.Before(ct.reuseTo) {
+			jm.tokenMu.Unlock()
+			return ct.token, nil
+		}
+	}
+	jm.tokenMu.Unlock()
+
+	token, err := jm.GenerateToken(claims)
+	if err != nil {
+		return "", err
+	}
+
+	jm.tokenMu.Lock()
+	jm.tokenCache.Add(key, cachedToken{token: token, reuseTo: now.Add(jwtReuseWindow)})
+	jm.tokenMu.Unlock()
+	return token, nil
 }
 
 // GenerateToken generates a JWT token with the given claims
@@ -218,5 +271,9 @@ func (jm *JWTManager) loadPrivateKeyPEM(privateKeyPEM []byte) error {
 
 	jm.privateKey = privateKey
 	jm.publicKey = &privateKey.PublicKey
+	// Tokens signed with the previous key would no longer verify.
+	jm.tokenMu.Lock()
+	jm.tokenCache = lru.New(jwtCacheSize)
+	jm.tokenMu.Unlock()
 	return nil
 }

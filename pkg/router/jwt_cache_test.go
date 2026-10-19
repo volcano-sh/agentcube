@@ -17,6 +17,7 @@ limitations under the License.
 package router
 
 import (
+	"crypto/rsa"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -33,24 +34,44 @@ import (
 
 const testUserAlice = "alice"
 
-func TestGenerateTokenCached(t *testing.T) {
+// swapSigningKey replaces the manager's key pair without clearing the token
+// cache, unlike loadPrivateKeyPEM. RS256 is deterministic, so comparing two
+// tokens signed within the same second cannot tell a cached token from a newly
+// signed one. After a swap it can: a cached token still verifies with the old
+// public key, a newly signed one only with the new key.
+func swapSigningKey(t *testing.T, manager *JWTManager) *rsa.PublicKey {
+	t.Helper()
+	oldKey := manager.publicKey
+	other, err := NewJWTManager()
+	require.NoError(t, err)
+	manager.privateKey = other.privateKey
+	manager.publicKey = other.publicKey
+	return oldKey
+}
+
+func verifiesWith(token string, key *rsa.PublicKey) bool {
+	_, err := jwt.Parse(token, func(*jwt.Token) (interface{}, error) { return key, nil })
+	return err == nil
+}
+
+func TestGenerateSandboxToken(t *testing.T) {
 	manager, err := NewJWTManager()
 	require.NoError(t, err)
+	alice := &Claims{Subject: testUserAlice}
 
-	claims := map[string]interface{}{"session_id": "s1", "user_sub": testUserAlice}
-
-	first, err := manager.GenerateTokenCached(sandboxJWTKey{sessionID: "s1", userSub: testUserAlice}, claims)
+	first, err := manager.GenerateSandboxToken("s1", alice)
 	require.NoError(t, err)
 
-	t.Run("same key reuses the token", func(t *testing.T) {
-		again, err := manager.GenerateTokenCached(sandboxJWTKey{sessionID: "s1", userSub: testUserAlice}, claims)
+	t.Run("same session and caller reuses the token", func(t *testing.T) {
+		oldKey := swapSigningKey(t, manager)
+		again, err := manager.GenerateSandboxToken("s1", &Claims{Subject: testUserAlice})
 		require.NoError(t, err)
 		assert.Equal(t, first, again)
+		assert.True(t, verifiesWith(again, oldKey), "a reused token is the one signed with the old key")
 	})
 
-	t.Run("different key signs a new token", func(t *testing.T) {
-		other, err := manager.GenerateTokenCached(sandboxJWTKey{sessionID: "s1", userSub: "bob"},
-			map[string]interface{}{"session_id": "s1", "user_sub": "bob"})
+	t.Run("different caller signs a new token", func(t *testing.T) {
+		other, err := manager.GenerateSandboxToken("s1", &Claims{Subject: "bob"})
 		require.NoError(t, err)
 		assert.NotEqual(t, first, other)
 
@@ -60,22 +81,43 @@ func TestGenerateTokenCached(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Equal(t, "bob", mapClaims["user_sub"])
+		assert.Equal(t, "s1", mapClaims["session_id"])
+	})
+
+	t.Run("no caller and empty subject are different tokens", func(t *testing.T) {
+		anonymous, err := manager.GenerateSandboxToken("s3", nil)
+		require.NoError(t, err)
+		emptySub, err := manager.GenerateSandboxToken("s3", &Claims{})
+		require.NoError(t, err)
+
+		mapClaims := jwt.MapClaims{}
+		_, err = jwt.ParseWithClaims(anonymous, mapClaims, func(*jwt.Token) (interface{}, error) {
+			return manager.publicKey, nil
+		})
+		require.NoError(t, err)
+		assert.NotContains(t, mapClaims, "user_sub")
+
+		mapClaims = jwt.MapClaims{}
+		_, err = jwt.ParseWithClaims(emptySub, mapClaims, func(*jwt.Token) (interface{}, error) {
+			return manager.publicKey, nil
+		})
+		require.NoError(t, err)
+		assert.Contains(t, mapClaims, "user_sub")
 	})
 
 	t.Run("token past the reuse window is signed again", func(t *testing.T) {
-		key := sandboxJWTKey{sessionID: "s2"}
-		stale, err := manager.GenerateTokenCached(key, map[string]interface{}{"session_id": "s2"})
+		stale, err := manager.GenerateSandboxToken("s2", nil)
 		require.NoError(t, err)
 
 		manager.tokenMu.Lock()
-		manager.tokenCache.Add(key, cachedToken{token: stale, reuseTo: time.Now().Add(-time.Second)})
+		manager.tokenCache.Add(sandboxTokenKey{sessionID: "s2"}, cachedToken{token: stale, reuseTo: time.Now().Add(-time.Second)})
 		manager.tokenMu.Unlock()
 
-		// iat has second resolution, so make sure the new token differs.
-		time.Sleep(1100 * time.Millisecond)
-		fresh, err := manager.GenerateTokenCached(key, map[string]interface{}{"session_id": "s2"})
+		swapSigningKey(t, manager)
+		fresh, err := manager.GenerateSandboxToken("s2", nil)
 		require.NoError(t, err)
 		assert.NotEqual(t, stale, fresh)
+		assert.True(t, verifiesWith(fresh, manager.publicKey))
 	})
 
 	t.Run("loading a new private key drops cached tokens", func(t *testing.T) {
@@ -83,26 +125,25 @@ func TestGenerateTokenCached(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, manager.loadPrivateKeyPEM(other.GetPrivateKeyPEM()))
 
-		token, err := manager.GenerateTokenCached(sandboxJWTKey{sessionID: "s1", userSub: testUserAlice}, claims)
+		token, err := manager.GenerateSandboxToken("s1", alice)
 		require.NoError(t, err)
 		assert.NotEqual(t, first, token)
-		_, err = jwt.Parse(token, func(*jwt.Token) (interface{}, error) { return other.publicKey, nil })
-		assert.NoError(t, err)
+		assert.True(t, verifiesWith(token, other.publicKey))
 	})
 }
 
-func TestGenerateTokenCachedZeroValueManager(t *testing.T) {
+func TestGenerateSandboxTokenZeroValueManager(t *testing.T) {
 	src, err := NewJWTManager()
 	require.NoError(t, err)
 	manager := &JWTManager{}
 	require.NoError(t, manager.loadPrivateKeyPEM(src.GetPrivateKeyPEM()))
 
-	token, err := manager.GenerateTokenCached("k", map[string]interface{}{"session_id": "s"})
+	token, err := manager.GenerateSandboxToken("s", nil)
 	require.NoError(t, err)
 	assert.NotEmpty(t, token)
 }
 
-func TestGenerateTokenCachedConcurrent(t *testing.T) {
+func TestGenerateSandboxTokenConcurrent(t *testing.T) {
 	manager, err := NewJWTManager()
 	require.NoError(t, err)
 
@@ -112,7 +153,7 @@ func TestGenerateTokenCachedConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 50; j++ {
-				_, err := manager.GenerateTokenCached(sandboxJWTKey{sessionID: "shared"}, map[string]interface{}{"session_id": "shared"})
+				_, err := manager.GenerateSandboxToken("shared", nil)
 				assert.NoError(t, err)
 			}
 		}()
@@ -136,12 +177,14 @@ func TestGenerateSandboxJWTReusesTokenPerSessionAndCaller(t *testing.T) {
 
 	a1, ok := s.generateSandboxJWT(newCtx(), sandbox("a"))
 	require.True(t, ok)
+	oldKey := swapSigningKey(t, manager)
 	a2, ok := s.generateSandboxJWT(newCtx(), sandbox("a"))
 	require.True(t, ok)
 	b1, ok := s.generateSandboxJWT(newCtx(), sandbox("b"))
 	require.True(t, ok)
 
 	assert.Equal(t, a1, a2, "same session and caller should reuse the token")
+	assert.True(t, verifiesWith(a2, oldKey), "a reused token is the one signed with the old key")
 	assert.NotEqual(t, a1, b1, "different session must get its own token")
 
 	claims := jwt.MapClaims{}

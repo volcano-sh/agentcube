@@ -279,13 +279,6 @@ func (s *Server) resolveSandboxTarget(c *gin.Context, sandbox *types.SandboxInfo
 	return targetURL, true
 }
 
-// sandboxJWTKey identifies the claims of a sandbox JWT, see generateSandboxJWT.
-type sandboxJWTKey struct {
-	sessionID string
-	userSub   string
-	userEmail string
-}
-
 func (s *Server) generateSandboxJWT(c *gin.Context, sandbox *types.SandboxInfo) (string, bool) {
 	if sandbox.Kind != types.SandboxClaimsKind && sandbox.Kind != types.SandboxKind {
 		return "", true
@@ -294,21 +287,7 @@ func (s *Server) generateSandboxJWT(c *gin.Context, sandbox *types.SandboxInfo) 
 		return "", true
 	}
 
-	claims := map[string]interface{}{
-		"session_id": sandbox.SessionID,
-	}
-	key := sandboxJWTKey{sessionID: sandbox.SessionID}
-
-	if oidcClaims := extractClaims(c); oidcClaims != nil {
-		claims["user_sub"] = oidcClaims.Subject
-		key.userSub = oidcClaims.Subject
-		if oidcClaims.Email != "" {
-			claims["user_email"] = oidcClaims.Email
-			key.userEmail = oidcClaims.Email
-		}
-	}
-
-	token, err := s.jwtManager.GenerateTokenCached(key, claims)
+	token, err := s.jwtManager.GenerateSandboxToken(sandbox.SessionID, extractClaims(c))
 	if err != nil {
 		klog.Errorf("Failed to generate JWT token (session: %s): %v", sandbox.SessionID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{

@@ -71,9 +71,9 @@ type JWTManager struct {
 	publicKey  *rsa.PublicKey
 	clientset  kubernetes.Interface
 
-	// tokenCache holds recently signed tokens keyed by the caller-supplied
-	// cache key, so that repeated requests on one session do not pay for an
-	// RSA signature each time.
+	// tokenCache holds recently signed sandbox tokens keyed by session and
+	// caller, so that repeated requests on one session do not pay for an RSA
+	// signature each time.
 	tokenMu    sync.Mutex
 	tokenCache *lru.Cache
 }
@@ -99,12 +99,35 @@ func NewJWTManager() (*JWTManager, error) {
 	}, nil
 }
 
-// GenerateTokenCached returns a token for claims, reusing a previously signed
-// one for the same key while it is younger than jwtReuseWindow. The key must
-// be comparable and identify the claims exactly: two calls with the same key
-// must pass the same claims. Signing with RSA-2048 costs roughly half a millisecond, which is
-// several times the rest of the router request path.
-func (jm *JWTManager) GenerateTokenCached(key interface{}, claims map[string]interface{}) (string, error) {
+// sandboxTokenKey identifies the claims of a sandbox token. It is built only
+// by GenerateSandboxToken, together with the claims, so the two cannot drift.
+type sandboxTokenKey struct {
+	sessionID string
+	hasCaller bool
+	userSub   string
+	userEmail string
+}
+
+// GenerateSandboxToken returns the token the router sends to a sandbox for a
+// session and, when OIDC is on, the calling user. A token signed for the same
+// session and caller is reused while it is younger than jwtReuseWindow, because
+// signing with RSA-2048 costs roughly half a millisecond, several times the
+// rest of the router request path.
+func (jm *JWTManager) GenerateSandboxToken(sessionID string, caller *Claims) (string, error) {
+	key := sandboxTokenKey{sessionID: sessionID}
+	claims := map[string]interface{}{
+		"session_id": sessionID,
+	}
+	if caller != nil {
+		key.hasCaller = true
+		key.userSub = caller.Subject
+		claims["user_sub"] = caller.Subject
+		if caller.Email != "" {
+			key.userEmail = caller.Email
+			claims["user_email"] = caller.Email
+		}
+	}
+
 	now := time.Now()
 
 	jm.tokenMu.Lock()

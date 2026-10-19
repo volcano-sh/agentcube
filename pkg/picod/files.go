@@ -46,9 +46,9 @@ type FileInfo struct {
 
 // UploadFileRequest defines JSON upload request body
 type UploadFileRequest struct {
-	Path    string `json:"path" binding:"required"`
-	Content string `json:"content" binding:"required"` // Base64 encoded content
-	Mode    string `json:"mode"`
+	Path    string  `json:"path" binding:"required"`
+	Content *string `json:"content" binding:"required"` // Base64 encoded content
+	Mode    string  `json:"mode"`
 }
 
 // UploadFileHandler handles file upload requests
@@ -175,7 +175,7 @@ func (s *Server) handleJSONBase64Upload(c *gin.Context) {
 	}
 
 	// Decode Base64 content
-	decodedContent, err := base64.StdEncoding.DecodeString(req.Content)
+	decodedContent, err := base64.StdEncoding.DecodeString(*req.Content)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": fmt.Sprintf("Invalid base64 content: %v", err),

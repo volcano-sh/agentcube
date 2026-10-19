@@ -17,10 +17,14 @@ limitations under the License.
 package picod
 
 import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -320,4 +324,62 @@ func TestMkdirSafe(t *testing.T) {
 		_, statErr := os.Stat(filepath.Join(externalDir, "should-not-exist"))
 		assert.True(t, os.IsNotExist(statErr), "directory should not exist outside workspace")
 	})
+}
+
+func TestHandleJSONBase64Upload_Content(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "picod-upload-*")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	server := &Server{}
+	assert.NoError(t, server.setWorkspace(tmpDir))
+
+	tests := []struct {
+		name         string
+		body         string
+		file         string
+		expectedCode int
+		expectedData string
+	}{
+		{
+			name:         "empty content creates an empty file",
+			body:         `{"path": "empty.txt", "content": ""}`,
+			file:         "empty.txt",
+			expectedCode: http.StatusOK,
+			expectedData: "",
+		},
+		{
+			name:         "missing content is rejected",
+			body:         `{"path": "missing.txt"}`,
+			file:         "missing.txt",
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:         "non-empty content is written",
+			body:         `{"path": "hello.txt", "content": "aGVsbG8="}`,
+			file:         "hello.txt",
+			expectedCode: http.StatusOK,
+			expectedData: "hello",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request, _ = http.NewRequest("POST", "/api/files", bytes.NewBufferString(tt.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			server.UploadFileHandler(c)
+
+			assert.Equal(t, tt.expectedCode, w.Code, w.Body.String())
+			data, readErr := os.ReadFile(filepath.Join(tmpDir, tt.file))
+			if tt.expectedCode != http.StatusOK {
+				assert.True(t, os.IsNotExist(readErr), "file should not be created")
+				return
+			}
+			assert.NoError(t, readErr)
+			assert.Equal(t, tt.expectedData, string(data))
+		})
+	}
 }

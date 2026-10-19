@@ -212,7 +212,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		contentB64 := base64.StdEncoding.EncodeToString([]byte(content))
 		uploadReq := UploadFileRequest{
 			Path:    "test.txt",
-			Content: contentB64,
+			Content: &contentB64,
 			Mode:    "0644",
 		}
 		body, _ := json.Marshal(uploadReq)
@@ -290,7 +290,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 		// 6. Jail Escape Attempt (Should Fail)
 		escapeReq := UploadFileRequest{
 			Path:    "../outside.txt",
-			Content: contentB64,
+			Content: &contentB64,
 		}
 		escapeBody, _ := json.Marshal(escapeReq)
 		req, _ = http.NewRequest("POST", ts.URL+"/api/files", bytes.NewBuffer(escapeBody))

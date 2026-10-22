@@ -332,6 +332,11 @@ func configureProxyDirector(proxy *httputil.ReverseProxy, c *gin.Context, target
 		if c.Request.TLS != nil {
 			req.Header.Set("X-Forwarded-Proto", "https")
 		}
+		if _, ok := req.Header["X-Forwarded-For"]; !ok {
+			if ip := c.ClientIP(); ip != c.RemoteIP() {
+				req.Header.Set("X-Forwarded-For", ip)
+			}
+		}
 		if jwtToken != "" {
 			req.Header.Set("Authorization", "Bearer "+jwtToken)
 		}

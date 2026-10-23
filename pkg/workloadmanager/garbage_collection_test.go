@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	"github.com/volcano-sh/agentcube/pkg/store"
@@ -271,4 +272,23 @@ func TestGarbageCollector_once_noSandboxes(t *testing.T) {
 	gc := newTestGC(fs)
 	gc.once()
 	assert.Empty(t, fs.deleted)
+}
+
+func TestGarbageCollector_once_k8sDeleteFailurePreservesSession(t *testing.T) {
+	for _, kind := range []string{types.SandboxKind, types.SandboxClaimsKind} {
+		t.Run(kind, func(t *testing.T) {
+			fs := &gcFakeStore{expired: []*types.SandboxInfo{{
+				Kind: kind, SessionID: "session-1", Name: "sandbox-1", SandboxNamespace: "default",
+			}}}
+			gc := newTestGC(fs)
+			gc.k8sClient.dynamicClient.(*dynamicfake.FakeDynamicClient).PrependReactor("delete", "*",
+				func(k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, fmt.Errorf("Kubernetes unavailable")
+				})
+
+			gc.once()
+
+			assert.Empty(t, fs.deleted, "failed Kubernetes deletion must preserve the session for retry")
+		})
+	}
 }

@@ -630,7 +630,7 @@ func TestBuildSandboxByCodeInterpreter_DefaultAuthFailsWithoutKey(t *testing.T) 
 		cubeInformerFactory:     factory,
 	}
 
-	_, _, _, err = buildSandboxByCodeInterpreter(testNamespace, "ci-default-auth-no-key", "", ifm)
+	_, _, _, err = buildSandboxByCodeInterpreter(testNamespace, "ci-default-auth-no-key", "", 0, ifm)
 	if !errors.Is(err, api.ErrPublicKeyMissing) {
 		t.Fatalf("expected error %v, got %v", api.ErrPublicKeyMissing, err)
 	}

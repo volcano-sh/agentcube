@@ -56,6 +56,14 @@ const (
 	sandboxCreationTimeout = 2 * time.Minute
 	// storeCleanupTimeout is the maximum duration allowed to clean up a store placeholder.
 	storeCleanupTimeout = 30 * time.Second
+	// claimReadyPollInitialInterval is the delay before the second read of a
+	// SandboxClaim while waiting for it to bind a ready Sandbox. A claim served
+	// from a warm pool is usually bound within a few hundred milliseconds, so
+	// the first retries come quickly.
+	claimReadyPollInitialInterval = 100 * time.Millisecond
+	// claimReadyPollMaxInterval caps the delay between reads; the interval
+	// doubles from claimReadyPollInitialInterval until it reaches this value.
+	claimReadyPollMaxInterval = 1 * time.Second
 )
 
 // isContextError reports whether err is a context cancellation or deadline error.
@@ -331,8 +339,9 @@ func (s *Server) waitForClaimSandboxReady(ctx context.Context, dynamicClient dyn
 func (s *Server) waitForClaimSandboxReadyWithTimeout(ctx context.Context, dynamicClient dynamic.Interface, sandboxClaim *extensionsv1alpha1.SandboxClaim, timeout time.Duration) (*sandboxv1alpha1.Sandbox, error) {
 	waitCtx, cancel := context.WithTimeoutCause(ctx, timeout, errSandboxCreationTimeout)
 	defer cancel()
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
+	interval := claimReadyPollInitialInterval
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 
 	for {
 		claim, err := getSandboxClaim(waitCtx, dynamicClient, sandboxClaim.Namespace, sandboxClaim.Name)
@@ -375,7 +384,9 @@ func (s *Server) waitForClaimSandboxReadyWithTimeout(ctx context.Context, dynami
 				klog.Warningf("sandbox claim %s/%s wait canceled: %v", sandboxClaim.Namespace, sandboxClaim.Name, waitErr)
 			}
 			return nil, waitErr
-		case <-ticker.C:
+		case <-timer.C:
+			interval = min(interval*2, claimReadyPollMaxInterval)
+			timer.Reset(interval)
 		}
 	}
 }

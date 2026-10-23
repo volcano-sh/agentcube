@@ -111,17 +111,17 @@ func (vs *valkeyStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs
 		sessionIDKeys = append(sessionIDKeys, vs.sessionKey(sessionID))
 	}
 	// MGet should in same slot
-	stingSliceResults, err := vs.cli.Do(ctx, vs.cli.B().Mget().Key(sessionIDKeys...).Build()).AsStrSlice()
+	stringSliceResults, err := vs.cli.Do(ctx, vs.cli.B().Mget().Key(sessionIDKeys...).Build()).AsStrSlice()
 	if err != nil {
 		return nil, fmt.Errorf("loadSandboxesBySessionIDs: Valkey MGet sandboxes failed: %w", err)
 	}
 
-	if len(stingSliceResults) > len(sessionIDKeys) {
-		return nil, fmt.Errorf("unexpected MGet result size: %d, param size: %d", len(stingSliceResults), len(sessionIDKeys))
+	if len(stringSliceResults) > len(sessionIDKeys) {
+		return nil, fmt.Errorf("unexpected MGet result size: %d, param size: %d", len(stringSliceResults), len(sessionIDKeys))
 	}
 
-	sandboxResults := make([]*types.SandboxInfo, 0, len(stingSliceResults))
-	for i, sandboxObjString := range stingSliceResults {
+	sandboxResults := make([]*types.SandboxInfo, 0, len(stringSliceResults))
+	for i, sandboxObjString := range stringSliceResults {
 		if len(sandboxObjString) == 0 {
 			// sandboxObjString is empty while sessionKey not exist, ignore
 			continue

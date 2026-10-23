@@ -17,9 +17,26 @@ Before you begin, ensure you have the following:
 
 ## 1. Installation
 
-AgentCube can be installed using Helm. Follow these steps:
+AgentCube relies on the [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) project for sandbox management. You must install it first.
 
-### Using Helm (Recommended)
+### Install agent-sandbox
+
+```bash
+# Install agent-sandbox CRDs and controller
+AGENT_SANDBOX_VERSION=v0.5.3
+kubectl apply --server-side -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/sandbox-with-extensions.yaml
+```
+
+> [!IMPORTANT]
+> **Kubernetes Dependency Boundary (`workloadRef` vs `schedulingGroup`)**:
+> Upstream Kubernetes `v0.36.2` (`k8s.io/api`) removed the experimental `workloadRef` field (`name`, `podGroup`, `podGroupReplicaKey`) from `corev1.PodSpec` and replaced it with `schedulingGroup` (`podGroupName`).
+> 
+> **Compatibility & Scheduling Semantics**:
+> - Legacy `AgentRuntime` objects stored in etcd containing `workloadRef` payloads unmarshal without runtime errors.
+> - However, `workloadRef` fields are tombstoned by the Kubernetes v0.36 API schema and will **not** be copied to newly spawned Sandboxes. Legacy `workloadRef` batch-scheduling intent is **unsupported** on v0.36+.
+> - Workloads requiring batch-scheduling or pod-group semantics must be updated to use `schedulingGroup` with `podGroupName: <group-name>`.
+
+### Install AgentCube Using Helm (Recommended)
 
 Add the Volcano Helm repository (if not already added):
 

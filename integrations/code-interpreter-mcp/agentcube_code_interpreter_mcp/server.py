@@ -184,6 +184,7 @@ def create_mcp_server(
         instructions=instr,
     )
     CodeInterpreterClient = _import_client()
+    from agentcube.exceptions import CommandExecutionError
 
     @app.tool(structured_output=False)
     def run_code(
@@ -220,7 +221,10 @@ def create_mcp_server(
         cfg = _load_server()
 
         def _op(c: Any) -> Any:
-            return c.run_code(language, code, timeout=timeout_seconds)
+            try:
+                return c.run_code(language, code, timeout=timeout_seconds)
+            except CommandExecutionError as exc:
+                raise ToolError(str(exc)) from exc
 
         out, meta, sid = _call_with_session_recovery(
             session_id, session_reuse, cfg, CodeInterpreterClient, _op
@@ -255,7 +259,10 @@ def create_mcp_server(
         cfg = _load_server()
 
         def _op(c: Any) -> Any:
-            return c.execute_command(command, timeout=timeout_seconds)
+            try:
+                return c.execute_command(command, timeout=timeout_seconds)
+            except CommandExecutionError as exc:
+                raise ToolError(str(exc)) from exc
 
         out, meta, sid = _call_with_session_recovery(
             session_id, session_reuse, cfg, CodeInterpreterClient, _op

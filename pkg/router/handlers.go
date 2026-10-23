@@ -318,13 +318,6 @@ func normalizedProxyPath(path string) string {
 	return path
 }
 
-func forwardedClientIP(req *http.Request, clientIP string) string {
-	if prior, ok := req.Header["X-Forwarded-For"]; ok {
-		return strings.Join(prior, ", ") + ", " + clientIP
-	}
-	return clientIP
-}
-
 func configureProxyDirector(proxy *httputil.ReverseProxy, c *gin.Context, targetURL *url.URL, path, jwtToken, sessionID string) {
 	proxyPath := normalizedProxyPath(path)
 	originalDirector := proxy.Director
@@ -339,7 +332,11 @@ func configureProxyDirector(proxy *httputil.ReverseProxy, c *gin.Context, target
 		if c.Request.TLS != nil {
 			req.Header.Set("X-Forwarded-Proto", "https")
 		}
-		req.Header.Set("X-Forwarded-For", forwardedClientIP(req, c.ClientIP()))
+		if _, ok := req.Header["X-Forwarded-For"]; !ok {
+			if ip := c.ClientIP(); ip != c.RemoteIP() {
+				req.Header.Set("X-Forwarded-For", ip)
+			}
+		}
 		if jwtToken != "" {
 			req.Header.Set("Authorization", "Bearer "+jwtToken)
 		}

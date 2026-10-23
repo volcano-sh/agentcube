@@ -627,3 +627,82 @@ func TestCheckSandboxOwnership(t *testing.T) {
 		})
 	}
 }
+
+func TestForwardToSandbox_XForwardedFor(t *testing.T) {
+	setupEnv()
+	defer teardownEnv()
+
+	received := make(chan string, 1)
+	sandboxServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- r.Header.Get("X-Forwarded-For")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer sandboxServer.Close()
+
+	server, err := NewServer(&Config{Port: "8080"})
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+	server.storeClient = &fakeStoreClient{}
+	server.sessionManager = &mockSessionManager{
+		sandbox: &types.SandboxInfo{
+			SandboxID: "test-sandbox",
+			SessionID: "test-session",
+			Name:      "test-sandbox",
+			EntryPoints: []types.SandboxEntryPoint{
+				{Endpoint: sandboxServer.URL, Path: "/test"},
+			},
+		},
+	}
+
+	routerServer := httptest.NewServer(server.engine)
+	defer routerServer.Close()
+
+	peer, _, err := net.SplitHostPort(routerServer.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("Failed to parse router address: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		prior  []string
+		realIP string
+		want   string
+	}{
+		{name: "no prior header", want: peer},
+		{name: "single prior entry", prior: []string{"198.51.100.9"}, want: "198.51.100.9, " + peer},
+		{name: "multiple prior entries", prior: []string{"198.51.100.9, 192.0.2.1"}, want: "198.51.100.9, 192.0.2.1, " + peer},
+		{name: "repeated prior headers", prior: []string{"198.51.100.9", "192.0.2.1"}, want: "198.51.100.9, 192.0.2.1, " + peer},
+		{name: "X-Real-IP only", realIP: "203.0.113.50", want: "203.0.113.50, " + peer},
+		{name: "invalid X-Real-IP only", realIP: "not-an-ip", want: peer},
+		{name: "X-Forwarded-For wins over X-Real-IP", prior: []string{"198.51.100.9"}, realIP: "203.0.113.50", want: "198.51.100.9, " + peer},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, routerServer.URL+"/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
+			if err != nil {
+				t.Fatalf("Failed to create request: %v", err)
+			}
+			for _, v := range tt.prior {
+				req.Header.Add("X-Forwarded-For", v)
+			}
+			if tt.realIP != "" {
+				req.Header.Set("X-Real-IP", tt.realIP)
+			}
+
+			resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+			if err != nil {
+				t.Fatalf("Failed to make request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("Expected status code %d, got %d", http.StatusOK, resp.StatusCode)
+			}
+			if got := <-received; got != tt.want {
+				t.Errorf("X-Forwarded-For received by sandbox = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

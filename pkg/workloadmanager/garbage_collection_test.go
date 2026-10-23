@@ -281,7 +281,9 @@ func TestGarbageCollector_once_k8sDeleteFailurePreservesSession(t *testing.T) {
 				Kind: kind, SessionID: "session-1", Name: "sandbox-1", SandboxNamespace: "default",
 			}}}
 			gc := newTestGC(fs)
-			gc.k8sClient.dynamicClient.(*dynamicfake.FakeDynamicClient).PrependReactor("delete", "*",
+			dc := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+			gc.k8sClient.dynamicClient = dc
+			dc.PrependReactor("delete", "*",
 				func(k8stesting.Action) (bool, runtime.Object, error) {
 					return true, nil, fmt.Errorf("Kubernetes unavailable")
 				})

@@ -30,6 +30,7 @@ import (
 type clientCacheEntry struct {
 	key         string
 	client      *UserK8sClient
+	token       string
 	tokenExpiry time.Time // Token expiration time parsed from JWT
 	element     *list.Element
 }
@@ -96,13 +97,15 @@ func NewClientCache(maxSize int) *ClientCache {
 
 // Get retrieves a client from cache based on key (service account)
 // Returns the client if found and cached token is not expired, nil otherwise
-// Different tokens for the same service account can share the same client
-func (c *ClientCache) Get(key string) *UserK8sClient {
+func (c *ClientCache) Get(key, token string) *UserK8sClient {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	entry, exists := c.cache[key]
 	if !exists {
+		return nil
+	}
+	if entry.token != token {
 		return nil
 	}
 
@@ -133,6 +136,7 @@ func (c *ClientCache) Set(key, token string, client *UserK8sClient) {
 	if entry, exists := c.cache[key]; exists {
 		// Update existing entry
 		entry.client = client
+		entry.token = token
 		entry.tokenExpiry = tokenExpiry
 		c.lruList.MoveToFront(entry.element)
 		return
@@ -147,6 +151,7 @@ func (c *ClientCache) Set(key, token string, client *UserK8sClient) {
 	entry := &clientCacheEntry{
 		key:         key,
 		client:      client,
+		token:       token,
 		tokenExpiry: tokenExpiry,
 	}
 	entry.element = c.lruList.PushFront(entry)

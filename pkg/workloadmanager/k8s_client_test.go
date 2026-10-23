@@ -248,3 +248,31 @@ func TestGetSandboxPodIP_InvalidPodStatus(t *testing.T) {
 		})
 	}
 }
+
+func TestGetOrCreateUserK8sClient_CacheByToken(t *testing.T) {
+	client := &K8sClient{
+		baseConfig:  &rest.Config{Host: "https://example.com"},
+		clientCache: NewClientCache(10),
+	}
+
+	firstClient, err := client.GetOrCreateUserK8sClient("first-token", "default", "runner")
+	assert.NoError(t, err)
+
+	sameTokenClient, err := client.GetOrCreateUserK8sClient("first-token", "default", "runner")
+	assert.NoError(t, err)
+	if firstClient != sameTokenClient {
+		t.Errorf("expected same token to reuse cached client")
+	}
+
+	secondClient, err := client.GetOrCreateUserK8sClient("second-token", "default", "runner")
+	assert.NoError(t, err)
+	if firstClient == secondClient {
+		t.Errorf("expected changed token to create a new client")
+	}
+
+	otherServiceAccountClient, err := client.GetOrCreateUserK8sClient("first-token", "default", "worker")
+	assert.NoError(t, err)
+	if secondClient == otherServiceAccountClient {
+		t.Errorf("expected different service account to create a new client")
+	}
+}

@@ -287,18 +287,7 @@ func (s *Server) generateSandboxJWT(c *gin.Context, sandbox *types.SandboxInfo) 
 		return "", true
 	}
 
-	claims := map[string]interface{}{
-		"session_id": sandbox.SessionID,
-	}
-
-	if oidcClaims := extractClaims(c); oidcClaims != nil {
-		claims["user_sub"] = oidcClaims.Subject
-		if oidcClaims.Email != "" {
-			claims["user_email"] = oidcClaims.Email
-		}
-	}
-
-	token, err := s.jwtManager.GenerateToken(claims)
+	token, err := s.jwtManager.GenerateSandboxToken(sandbox.SessionID, extractClaims(c))
 	if err != nil {
 		klog.Errorf("Failed to generate JWT token (session: %s): %v", sandbox.SessionID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{

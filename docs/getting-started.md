@@ -28,7 +28,7 @@ AgentCube relies on the [kubernetes-sigs/agent-sandbox](https://github.com/kuber
 
 ```bash
 # Install agent-sandbox CRDs and controller
-AGENT_SANDBOX_VERSION=v0.1.1
+AGENT_SANDBOX_VERSION=v0.4.6
 kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml
 kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml
 ```
@@ -241,7 +241,7 @@ To remove AgentCube from your cluster:
 ```bash
 helm uninstall agentcube -n agentcube
 kubectl delete namespace agentcube
-AGENT_SANDBOX_VERSION=v0.1.1
+AGENT_SANDBOX_VERSION=v0.4.6
 kubectl delete -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml
 kubectl delete -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml
 ```

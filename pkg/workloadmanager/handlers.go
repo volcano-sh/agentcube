@@ -56,10 +56,9 @@ const (
 	sandboxCreationTimeout = 2 * time.Minute
 	// storeCleanupTimeout is the maximum duration allowed to clean up a store placeholder.
 	storeCleanupTimeout = 30 * time.Second
-	// claimReadyPollInitialInterval is the delay before the second read of a
-	// SandboxClaim while waiting for it to bind a ready Sandbox. A claim served
-	// from a warm pool is usually bound within a few hundred milliseconds, so
-	// the first retries come quickly.
+	// claimReadyPollInitialInterval is the initial polling interval while waiting for a SandboxClaim
+	// to bind to a Ready Sandbox. A claim served from a warm pool is usually bound within
+	// a few hundred milliseconds, so the first retries come quickly.
 	claimReadyPollInitialInterval = 100 * time.Millisecond
 	// claimReadyPollMaxInterval caps the delay between reads; the interval
 	// doubles from claimReadyPollInitialInterval until it reaches this value.

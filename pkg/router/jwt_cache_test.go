@@ -109,9 +109,7 @@ func TestGenerateSandboxToken(t *testing.T) {
 		stale, err := manager.GenerateSandboxToken("s2", nil)
 		require.NoError(t, err)
 
-		manager.tokenMu.Lock()
 		manager.tokenCache.Add(sandboxTokenKey{sessionID: "s2"}, cachedToken{token: stale, reuseTo: time.Now().Add(-time.Second)})
-		manager.tokenMu.Unlock()
 
 		swapSigningKey(t, manager)
 		fresh, err := manager.GenerateSandboxToken("s2", nil)

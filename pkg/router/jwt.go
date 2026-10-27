@@ -24,7 +24,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -73,8 +72,7 @@ type JWTManager struct {
 
 	// tokenCache holds recently signed sandbox tokens keyed by session and
 	// caller, so that repeated requests on one session do not pay for an RSA
-	// signature each time.
-	tokenMu    sync.Mutex
+	// signature each time. The LRU is safe for concurrent use.
 	tokenCache *lru.Cache
 }
 
@@ -130,26 +128,18 @@ func (jm *JWTManager) GenerateSandboxToken(sessionID string, caller *Claims) (st
 
 	now := time.Now()
 
-	jm.tokenMu.Lock()
-	if jm.tokenCache == nil {
-		jm.tokenCache = lru.New(jwtCacheSize)
-	}
 	if v, ok := jm.tokenCache.Get(key); ok {
 		if ct, isToken := v.(cachedToken); isToken && now.Before(ct.reuseTo) {
-			jm.tokenMu.Unlock()
 			return ct.token, nil
 		}
 	}
-	jm.tokenMu.Unlock()
 
 	token, err := jm.GenerateToken(claims)
 	if err != nil {
 		return "", err
 	}
 
-	jm.tokenMu.Lock()
 	jm.tokenCache.Add(key, cachedToken{token: token, reuseTo: now.Add(jwtReuseWindow)})
-	jm.tokenMu.Unlock()
 	return token, nil
 }
 
@@ -295,8 +285,10 @@ func (jm *JWTManager) loadPrivateKeyPEM(privateKeyPEM []byte) error {
 	jm.privateKey = privateKey
 	jm.publicKey = &privateKey.PublicKey
 	// Tokens signed with the previous key would no longer verify.
-	jm.tokenMu.Lock()
-	jm.tokenCache = lru.New(jwtCacheSize)
-	jm.tokenMu.Unlock()
+	if jm.tokenCache == nil {
+		jm.tokenCache = lru.New(jwtCacheSize)
+	} else {
+		jm.tokenCache.Clear()
+	}
 	return nil
 }

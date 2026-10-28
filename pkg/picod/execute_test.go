@@ -702,6 +702,23 @@ func TestExecuteHandler_TimeoutMessageKeptWhenStderrFull(t *testing.T) {
 	assert.True(t, strings.HasSuffix(resp.Stderr, "\nstderr truncated: output exceeded 8 bytes"), "stderr: %q", resp.Stderr)
 }
 
+func TestExecuteHandler_CommandNotFound(t *testing.T) {
+	server, tmpDir := setupExecuteTestServer(t)
+	defer os.RemoveAll(tmpDir)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	// The process never starts, so there is no ProcessState and the start error goes to stderr.
+	resp, _ := runExecute(t, server, ExecuteRequest{
+		Command: []string{"picod-test-command-that-does-not-exist"},
+	})
+
+	assert.Equal(t, 1, resp.ExitCode)
+	assert.Empty(t, resp.Stdout)
+	assert.Contains(t, resp.Stderr, "executable file not found")
+	assert.False(t, resp.StdoutTruncated)
+	assert.False(t, resp.StderrTruncated)
+}
+
 func TestExecuteHandler_DefaultOutputLimit(t *testing.T) {
 	// A zero MaxOutputSize falls back to DefaultMaxOutputSize instead of discarding all output.
 	server := &Server{workspaceDir: t.TempDir()}

@@ -23,6 +23,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -560,4 +561,155 @@ func TestExecuteHandler_MultipleEnvVars(t *testing.T) {
 	assert.Contains(t, resp.Stdout, "value1")
 	assert.Contains(t, resp.Stdout, "value2")
 	assert.Contains(t, resp.Stdout, "value3")
+}
+
+func TestCappedBuffer_Write(t *testing.T) {
+	tests := []struct {
+		name          string
+		limit         int
+		writes        []string
+		wantContent   string
+		wantTruncated bool
+	}{
+		{name: "below limit", limit: 10, writes: []string{"abc"}, wantContent: "abc"},
+		{name: "exactly at limit", limit: 3, writes: []string{"abc"}, wantContent: "abc"},
+		{name: "over limit in one write", limit: 3, writes: []string{"abcdef"}, wantContent: "abc", wantTruncated: true},
+		{name: "over limit across writes", limit: 4, writes: []string{"ab", "cd", "ef"}, wantContent: "abcd", wantTruncated: true},
+		{name: "write after full", limit: 2, writes: []string{"ab", "c"}, wantContent: "ab", wantTruncated: true},
+		{name: "zero limit", limit: 0, writes: []string{"a"}, wantContent: "", wantTruncated: true},
+		{name: "empty write", limit: 2, writes: []string{""}, wantContent: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &cappedBuffer{limit: tt.limit}
+			for _, w := range tt.writes {
+				n, err := b.Write([]byte(w))
+				require.NoError(t, err)
+				// The full length must always be reported, or os/exec stops copying output.
+				assert.Equal(t, len(w), n)
+			}
+			assert.Equal(t, tt.wantContent, b.buf.String())
+			assert.Equal(t, tt.wantTruncated, b.truncated)
+		})
+	}
+}
+
+func TestCappedBuffer_IOCopyRespectsLimit(t *testing.T) {
+	// os/exec fills cmd.Stdout via io.Copy. io.LimitReader has no WriteTo, so io.Copy
+	// would use a ReadFrom method on the destination if cappedBuffer had one.
+	b := &cappedBuffer{limit: 8}
+	src := io.LimitReader(strings.NewReader(strings.Repeat("x", 1<<16)), 1<<16)
+
+	n, err := io.Copy(b, src)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1<<16), n)
+	assert.Equal(t, "xxxxxxxx", b.buf.String())
+	assert.True(t, b.truncated)
+}
+
+func runExecute(t *testing.T, server *Server, req ExecuteRequest) (ExecuteResponse, string) {
+	t.Helper()
+	body, _ := json.Marshal(req)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request, _ = http.NewRequest("POST", "/api/execute", bytes.NewBuffer(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	server.ExecuteHandler(c)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp ExecuteResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	return resp, w.Body.String()
+}
+
+func TestExecuteHandler_OutputWithinLimit(t *testing.T) {
+	server, tmpDir := setupExecuteTestServer(t)
+	defer os.RemoveAll(tmpDir)
+	defer os.Unsetenv(PublicKeyEnvVar)
+	server.config.MaxOutputSize = 16
+
+	resp, raw := runExecute(t, server, ExecuteRequest{
+		Command: []string{"sh", "-c", "printf '%s' 0123456789abcdef"},
+	})
+
+	assert.Equal(t, 0, resp.ExitCode)
+	assert.Equal(t, "0123456789abcdef", resp.Stdout)
+	assert.Empty(t, resp.Stderr)
+	assert.False(t, resp.StdoutTruncated)
+	assert.False(t, resp.StderrTruncated)
+	// Responses for untruncated output stay unchanged for existing clients.
+	assert.NotContains(t, raw, "stdout_truncated")
+	assert.NotContains(t, raw, "stderr_truncated")
+}
+
+func TestExecuteHandler_OutputTruncated(t *testing.T) {
+	server, tmpDir := setupExecuteTestServer(t)
+	defer os.RemoveAll(tmpDir)
+	defer os.Unsetenv(PublicKeyEnvVar)
+	server.config.MaxOutputSize = 16
+
+	resp, _ := runExecute(t, server, ExecuteRequest{
+		Command: []string{"sh", "-c", "printf '%s' 0123456789abcdefSTDOUT; printf '%s' 0123456789abcdefSTDERR >&2"},
+	})
+
+	assert.Equal(t, 0, resp.ExitCode)
+	assert.Equal(t, "0123456789abcdef", resp.Stdout)
+	assert.True(t, resp.StdoutTruncated)
+	assert.True(t, resp.StderrTruncated)
+	assert.Equal(t,
+		"0123456789abcdef\nstdout truncated: output exceeded 16 bytes\nstderr truncated: output exceeded 16 bytes",
+		resp.Stderr)
+}
+
+func TestExecuteHandler_LargeOutputDoesNotKillCommand(t *testing.T) {
+	server, tmpDir := setupExecuteTestServer(t)
+	defer os.RemoveAll(tmpDir)
+	defer os.Unsetenv(PublicKeyEnvVar)
+	server.config.MaxOutputSize = 1024
+
+	// Writing 1 MiB through a 1 KiB limit must not break the pipe: the command
+	// should run to completion and exit 0.
+	resp, _ := runExecute(t, server, ExecuteRequest{
+		Command: []string{"sh", "-c", "head -c 1048576 /dev/zero | tr '\\0' a; echo done >&2"},
+	})
+
+	assert.Equal(t, 0, resp.ExitCode)
+	assert.Len(t, resp.Stdout, 1024)
+	assert.Equal(t, strings.Repeat("a", 1024), resp.Stdout)
+	assert.True(t, resp.StdoutTruncated)
+	assert.False(t, resp.StderrTruncated)
+	assert.Equal(t, "done\n\nstdout truncated: output exceeded 1024 bytes", resp.Stderr)
+}
+
+func TestExecuteHandler_TimeoutMessageKeptWhenStderrFull(t *testing.T) {
+	server, tmpDir := setupExecuteTestServer(t)
+	defer os.RemoveAll(tmpDir)
+	defer os.Unsetenv(PublicKeyEnvVar)
+	server.config.MaxOutputSize = 8
+
+	// exec replaces the shell with sleep, so the timeout kill closes the output pipes.
+	resp, _ := runExecute(t, server, ExecuteRequest{
+		Command: []string{"sh", "-c", "printf '%s' 0123456789 >&2; exec sleep 5"},
+		Timeout: "300ms",
+	})
+
+	assert.Equal(t, TimeoutExitCode, resp.ExitCode)
+	assert.True(t, resp.StderrTruncated)
+	assert.True(t, strings.HasPrefix(resp.Stderr, "01234567Command timed out"), "stderr: %q", resp.Stderr)
+	assert.True(t, strings.HasSuffix(resp.Stderr, "\nstderr truncated: output exceeded 8 bytes"), "stderr: %q", resp.Stderr)
+}
+
+func TestExecuteHandler_DefaultOutputLimit(t *testing.T) {
+	// A zero MaxOutputSize falls back to DefaultMaxOutputSize instead of discarding all output.
+	server := &Server{workspaceDir: t.TempDir()}
+
+	resp, _ := runExecute(t, server, ExecuteRequest{
+		Command: []string{"sh", "-c", "printf hello"},
+	})
+
+	assert.Equal(t, "hello", resp.Stdout)
+	assert.False(t, resp.StdoutTruncated)
 }

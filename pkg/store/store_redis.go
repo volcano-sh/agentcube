@@ -26,6 +26,7 @@ import (
 	"time"
 
 	redisv9 "github.com/redis/go-redis/v9"
+	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 )
@@ -94,9 +95,11 @@ func (rs *redisStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs 
 	}
 
 	result := make([]*types.SandboxInfo, 0, len(sessionIDs))
+	var orphanedIDs []string
 	for i, cmd := range sandboxCommands {
 		data, err := cmd.Bytes()
 		if errors.Is(err, redisv9.Nil) {
+			orphanedIDs = append(orphanedIDs, sessionIDs[i])
 			continue
 		}
 		if err != nil {
@@ -109,7 +112,31 @@ func (rs *redisStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs 
 		result = append(result, &sandboxRedis)
 	}
 
+	rs.removeOrphanedIndexEntries(ctx, orphanedIDs)
 	return result, nil
+}
+
+func (rs *redisStore) removeOrphanedIndexEntries(ctx context.Context, sessionIDs []string) {
+	if len(sessionIDs) == 0 {
+		return
+	}
+
+	keys := make([]string, 0, len(sessionIDs)+2)
+	keys = append(keys, rs.expiryIndexKey, rs.lastActivityIndexKey)
+	args := make([]interface{}, 0, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		keys = append(keys, rs.sessionKey(sessionID))
+		args = append(args, sessionID)
+	}
+
+	removed, err := removeOrphanedIndexEntriesScript.Run(ctx, rs.cli, keys, args...).Int64()
+	if err != nil {
+		klog.Warningf("failed to remove %d orphaned session index entries: %v", len(sessionIDs), err)
+		return
+	}
+	if removed > 0 {
+		klog.Infof("removed %d orphaned session index entries", removed)
+	}
 }
 
 func (rs *redisStore) Ping(ctx context.Context) error {
@@ -310,6 +337,21 @@ else
 	return 0
 end
 `)
+
+const removeOrphanedIndexEntriesLua = `
+local removed = 0
+for i = 1, #ARGV do
+	if redis.call("EXISTS", KEYS[i + 2]) == 0 then
+		local n = redis.call("ZREM", KEYS[1], ARGV[i]) + redis.call("ZREM", KEYS[2], ARGV[i])
+		if n > 0 then
+			removed = removed + 1
+		end
+	end
+end
+return removed
+`
+
+var removeOrphanedIndexEntriesScript = redisv9.NewScript(removeOrphanedIndexEntriesLua)
 
 // UpdateSessionLastActivity updates the last-activity index for the given session.
 func (rs *redisStore) UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error {

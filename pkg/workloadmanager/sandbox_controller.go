@@ -18,20 +18,37 @@ package workloadmanager
 
 import (
 	"context"
+	"errors"
 	"sync"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
+
+	commontypes "github.com/volcano-sh/agentcube/pkg/common/types"
+	"github.com/volcano-sh/agentcube/pkg/store"
 )
+
+// sessionCleanupTimeout bounds the store calls made when a Sandbox or
+// SandboxClaim is deleted.
+const sessionCleanupTimeout = 5 * time.Second
 
 type SandboxReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	// Store is used to remove a session when its Sandbox or SandboxClaim is
+	// deleted. Cleanup is skipped when it is nil.
+	Store store.Store
 
 	// Map of watchers waiting for sandbox to reach Running state
 	watchers map[types.NamespacedName]chan SandboxStatusUpdate
@@ -99,4 +116,62 @@ func (r *SandboxReconciler) UnWatchSandbox(namespace, name string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.watchers, key)
+}
+
+// SessionCleanupHandler returns an event handler that removes a session from
+// the store when its Sandbox or SandboxClaim is deleted. GC and the session
+// DELETE API already remove the entry themselves; this covers deletions made
+// by anything else, such as kubectl or a CodeInterpreter deletion cascading
+// to its SandboxClaims. Without it the Router keeps proxying to the old pod
+// instead of returning SESSION_NOT_FOUND.
+func (r *SandboxReconciler) SessionCleanupHandler() handler.EventHandler {
+	return handler.Funcs{
+		DeleteFunc: func(ctx context.Context, e event.DeleteEvent, _ workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			r.cleanupSession(ctx, e.Object)
+		},
+	}
+}
+
+func (r *SandboxReconciler) cleanupSession(ctx context.Context, obj client.Object) {
+	if r.Store == nil || obj == nil {
+		return
+	}
+
+	var kind string
+	switch obj.(type) {
+	case *sandboxv1alpha1.Sandbox:
+		kind = commontypes.SandboxKind
+	case *extensionsv1alpha1.SandboxClaim:
+		kind = commontypes.SandboxClaimsKind
+	default:
+		return
+	}
+
+	sessionID := obj.GetLabels()[SessionIdLabelKey]
+	if sessionID == "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, sessionCleanupTimeout)
+	defer cancel()
+
+	info, err := r.Store.GetSandboxBySessionID(ctx, sessionID)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			klog.Warningf("Failed to get session %s for deleted %s %s/%s: %v", sessionID, kind, obj.GetNamespace(), obj.GetName(), err)
+		}
+		return
+	}
+	// Only remove the entry if it still points at the deleted object, so an
+	// object that carries the same label cannot remove a session stored
+	// under a different Sandbox or SandboxClaim.
+	if info == nil || info.Kind != kind || info.SandboxNamespace != obj.GetNamespace() || info.Name != obj.GetName() {
+		return
+	}
+
+	if err := r.Store.DeleteSandboxBySessionID(ctx, sessionID); err != nil {
+		klog.Warningf("Failed to delete session %s for deleted %s %s/%s: %v", sessionID, kind, obj.GetNamespace(), obj.GetName(), err)
+		return
+	}
+	klog.Infof("%s %s/%s was deleted, removed session %s from store", kind, obj.GetNamespace(), obj.GetName(), sessionID)
 }

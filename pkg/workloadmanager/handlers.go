@@ -520,28 +520,13 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 
 	if sandbox.Kind == types.SandboxClaimsKind {
 		err = deleteSandboxClaim(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				// Already deleted, consider as success
-				klog.Infof("sandbox claim %s/%s already deleted", sandbox.SandboxNamespace, sandbox.Name)
-			} else {
-				klog.Errorf("failed to delete sandbox claim %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
-				respondError(c, http.StatusInternalServerError, "internal server error")
-				return
-			}
-		}
 	} else {
 		err = deleteSandbox(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				// Already deleted, consider as success
-				klog.Infof("sandbox %s/%s already deleted", sandbox.SandboxNamespace, sandbox.Name)
-			} else {
-				klog.Errorf("failed to delete sandbox %s/%s: %v", sandbox.SandboxNamespace, sandbox.Name, err)
-				respondError(c, http.StatusInternalServerError, "internal server error")
-				return
-			}
-		}
+	}
+	if err != nil {
+		klog.Errorf("failed to delete %s %s/%s: %v", sandbox.Kind, sandbox.SandboxNamespace, sandbox.Name, err)
+		respondError(c, http.StatusInternalServerError, "internal server error")
+		return
 	}
 
 	// Use a detached context for the store delete so a client disconnect

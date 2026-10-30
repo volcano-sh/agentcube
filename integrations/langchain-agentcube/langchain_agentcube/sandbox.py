@@ -60,7 +60,7 @@ class AgentcubeSandbox(BaseSandbox):
         return ExecuteResponse(
             output=out,
             exit_code=int(r.get("exit_code", -1)),
-            truncated=False,
+            truncated=bool(r.get("stdout_truncated") or r.get("stderr_truncated")),
         )
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:

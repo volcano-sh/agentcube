@@ -121,9 +121,11 @@ func (vs *valkeyStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs
 	}
 
 	sandboxResults := make([]*types.SandboxInfo, 0, len(stingSliceResults))
+	var orphanedIDs []string
 	for i, sandboxObjString := range stingSliceResults {
 		if len(sandboxObjString) == 0 {
 			// sandboxObjString is empty while sessionKey not exist, ignore
+			orphanedIDs = append(orphanedIDs, sessionIDs[i])
 			continue
 		}
 		var sandboxRedis types.SandboxInfo
@@ -133,7 +135,31 @@ func (vs *valkeyStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs
 		sandboxResults = append(sandboxResults, &sandboxRedis)
 	}
 
+	vs.removeOrphanedIndexEntries(ctx, orphanedIDs)
 	return sandboxResults, nil
+}
+
+var removeOrphanedIndexEntriesValkeyScript = valkey.NewLuaScript(removeOrphanedIndexEntriesLua)
+
+func (vs *valkeyStore) removeOrphanedIndexEntries(ctx context.Context, sessionIDs []string) {
+	if len(sessionIDs) == 0 {
+		return
+	}
+
+	keys := make([]string, 0, len(sessionIDs)+2)
+	keys = append(keys, vs.expiryIndexKey, vs.lastActivityIndexKey)
+	for _, sessionID := range sessionIDs {
+		keys = append(keys, vs.sessionKey(sessionID))
+	}
+
+	removed, err := removeOrphanedIndexEntriesValkeyScript.Exec(ctx, vs.cli, keys, sessionIDs).AsInt64()
+	if err != nil {
+		klog.Warningf("failed to remove %d orphaned session index entries: %v", len(sessionIDs), err)
+		return
+	}
+	if removed > 0 {
+		klog.Infof("removed %d orphaned session index entries", removed)
+	}
 }
 
 // Ping check valkey store available or not

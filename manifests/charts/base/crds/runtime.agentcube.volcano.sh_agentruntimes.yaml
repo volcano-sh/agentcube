@@ -49,6 +49,18 @@ spec:
                   MaxSessionDuration describes the maximum duration for a session.
                   After this duration, the session will be terminated no matter active or inactive.
                 type: string
+              nodeStickiness:
+                description: |-
+                  NodeStickiness configures soft node-affinity stickiness across sessions.
+                  Disabled unless explicitly enabled.
+                properties:
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled turns on node stickiness for this workload's sessions.
+                      Defaults to false.
+                    type: boolean
+                type: object
               podTemplate:
                 description: PodTemplate describes the template that will be used
                   to create an agent sandbox.

@@ -1,5 +1,6 @@
 # List of usernames who may use /lgtm
 reviewers:
+  - acsoto
   - hzxuzhonghu
   - RainbowMango
   - tjucoder
@@ -8,6 +9,7 @@ reviewers:
 
 # List of usernames who may use /approve
 approvers:
+  - acsoto
   - hzxuzhonghu
   - kevin-wangzefeng
   - RainbowMango

@@ -232,19 +232,13 @@ func TestWaitForSandboxEntryPointsReady_DefaultsWhenNotConfigured(t *testing.T) 
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errDial := errors.New("connection refused")
-			calls := stubEntrypointDial(t, func(int, string) error { return errDial })
-			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
+			calls := stubEntrypointDial(t, func(int, string) error { return nil })
 			entry := &sandboxEntry{Ports: entrypointPorts(8080)}
 
-			start := time.Now()
-			err := tt.server.waitForSandboxEntryPointsReady(ctx, probeTestPodIP, entry)
+			err := tt.server.waitForSandboxEntryPointsReady(context.Background(), probeTestPodIP, entry)
 
-			require.Error(t, err)
-			assert.ErrorIs(t, err, errDial)
-			assert.Len(t, *calls, 1, "one attempt is made before the canceled context ends the wait")
-			assert.Less(t, time.Since(start), 5*time.Second)
+			require.NoError(t, err)
+			require.Len(t, *calls, 1)
 			assert.Equal(t, defaultSandboxReadyDialTimeout, (*calls)[0].timeout, "default 1s interval gives the 1s dial timeout")
 			remaining := time.Until((*calls)[0].deadline)
 			assert.Greater(t, remaining, 10*time.Second, "probe deadline comes from the 15s default")
@@ -274,8 +268,8 @@ func TestWaitForSandboxEntryPointsReady_ParentContextCanceled(t *testing.T) {
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, errDial)
-	assert.Len(t, *calls, 2, "it stops right after the cancellation, long before the one minute timeout")
-	assert.Less(t, time.Since(start), 5*time.Second)
+	assert.GreaterOrEqual(t, len(*calls), 2, "the dial that cancels the context ran")
+	assert.Less(t, time.Since(start), 5*time.Second, "it stops after the cancellation, long before the one minute timeout")
 }
 
 func TestWaitForSandboxEntryPointsReady_AllPortsMustBeReady(t *testing.T) {

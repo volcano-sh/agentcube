@@ -1015,3 +1015,43 @@ func TestHandleSandboxCreate_IdentityErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleDeleteSandbox_KubernetesResult(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, kind := range []string{types.SandboxKind, types.SandboxClaimsKind} {
+		for _, failDelete := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/fail=%t", kind, failDelete), func(t *testing.T) {
+				s := newFakeServer()
+				fs := &fakeStore{}
+				s.storeClient = fs
+				patches := gomonkey.NewPatches()
+				defer patches.Reset()
+				patches.ApplyMethod(reflect.TypeOf(fs), "GetSandboxBySessionID", func(_ *fakeStore, _ context.Context, _ string) (*types.SandboxInfo, error) {
+					return &types.SandboxInfo{Kind: kind, Name: "sandbox-1", SandboxNamespace: "default"}, nil
+				})
+				// An empty tracker returns NotFound; the shared helpers treat it as success.
+				dc := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+				if failDelete {
+					dc.PrependReactor("delete", "*", func(k8stesting.Action) (bool, runtime.Object, error) {
+						return true, nil, errors.New("Kubernetes unavailable")
+					})
+				}
+				s.k8sClient.dynamicClient = dc
+				w := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(w)
+				c.Request = httptest.NewRequest(http.MethodDelete, "/sandboxes/session-1", nil)
+				c.Params = gin.Params{{Key: "sessionId", Value: "session-1"}}
+
+				s.handleDeleteSandbox(c)
+
+				if failDelete {
+					require.Equal(t, http.StatusInternalServerError, w.Code)
+					require.Zero(t, fs.deleteSessionCalls)
+				} else {
+					require.Equal(t, http.StatusOK, w.Code)
+					require.Equal(t, 1, fs.deleteSessionCalls)
+				}
+			})
+		}
+	}
+}

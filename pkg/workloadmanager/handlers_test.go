@@ -1015,3 +1015,10 @@ func TestHandleSandboxCreate_IdentityErrors(t *testing.T) {
 		})
 	}
 }
+
+func (*fakeStore) ScanInactiveSandboxIDs(_ context.Context, _ time.Time, _ uint64, _ int64) ([]string, uint64, error) {
+	return nil, 0, nil
+}
+func (*fakeStore) GetSandboxWithLastActivity(_ context.Context, _ string) (*types.SandboxInfo, error) {
+	return nil, nil
+}

@@ -411,6 +411,7 @@ PicoD provides a lightweight REST API that replaces traditional SSH‑based oper
 }
 
 ```
+- **Output limit:** PicoD keeps at most `--max-output-size` bytes (default 10 MB) of stdout, and separately of stderr, to prevent memory exhaustion. Extra output is discarded while the command keeps running. When a stream is cut off, the response adds `"stdout_truncated": true` or `"stderr_truncated": true` and appends a note to `stderr`; both fields are omitted when nothing was truncated.
 - **Error Response (401/400/500):**
 - ref: RFC 7807 Problem Details
 ```

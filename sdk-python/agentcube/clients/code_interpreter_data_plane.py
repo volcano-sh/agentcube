@@ -153,9 +153,11 @@ class CodeInterpreterDataPlaneClient:
     def execute_command_result(
         self, command: Union[str, List[str]], timeout: Optional[float] = None
     ) -> Dict[str, Any]:
-        """Execute a shell command and return stdout, stderr, and exit_code.
+        """Execute a shell command and return stdout, stderr, exit_code, and truncation flags.
 
         Unlike ``execute_command``, this does not raise when ``exit_code != 0``.
+        ``stdout_truncated`` / ``stderr_truncated`` are True when PicoD cut that
+        stream off at its output size limit.
         """
         timeout_value = timeout or self.timeout
         timeout_str = f"{timeout_value}s" if isinstance(timeout_value, (int, float)) else str(timeout_value)
@@ -172,10 +174,16 @@ class CodeInterpreterDataPlaneClient:
 
         resp = self._request("POST", "api/execute", body=body, timeout=read_timeout)
         result = resp.json()
+        stdout_truncated = bool(result.get("stdout_truncated", False))
+        stderr_truncated = bool(result.get("stderr_truncated", False))
+        if stdout_truncated or stderr_truncated:
+            self.logger.warning("Command output exceeded the sandbox output limit and was truncated.")
         return {
             "stdout": result.get("stdout") or "",
             "stderr": result.get("stderr") or "",
             "exit_code": int(result.get("exit_code", -1)),
+            "stdout_truncated": stdout_truncated,
+            "stderr_truncated": stderr_truncated,
         }
 
     def execute_command(self, command: Union[str, List[str]], timeout: Optional[float] = None) -> str:

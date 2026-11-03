@@ -31,14 +31,16 @@ import (
 func main() {
 	port := flag.Int("port", 8080, "Port for the PicoD server to listen on")
 	workspace := flag.String("workspace", "", "Root directory for file operations (default: current working directory)")
+	maxOutputSize := flag.Int("max-output-size", picod.DefaultMaxOutputSize, "Maximum bytes of stdout, and separately of stderr, kept per command execution; extra output is discarded")
 
 	// Initialize klog flags
 	klog.InitFlags(nil)
 	flag.Parse()
 
 	config := picod.Config{
-		Port:      *port,
-		Workspace: *workspace,
+		Port:          *port,
+		Workspace:     *workspace,
+		MaxOutputSize: *maxOutputSize,
 	}
 
 	// Create server

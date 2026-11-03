@@ -37,6 +37,7 @@ import (
 
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	"github.com/volcano-sh/agentcube/pkg/mtls"
+	"github.com/volcano-sh/agentcube/pkg/store"
 	"github.com/volcano-sh/agentcube/pkg/workloadmanager"
 )
 
@@ -100,6 +101,7 @@ func main() {
 	sandboxReconciler := &workloadmanager.SandboxReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
+		Store:  store.Storage(),
 	}
 
 	codeInterpreterReconciler := &workloadmanager.CodeInterpreterReconciler{
@@ -188,6 +190,8 @@ func setupControllers(mgr ctrl.Manager, sandboxReconciler *workloadmanager.Sandb
 	// Setup Sandbox controller
 	if err := ctrl.NewControllerManagedBy(mgr).
 		For(&sandboxv1alpha1.Sandbox{}).
+		Watches(&sandboxv1alpha1.Sandbox{}, sandboxReconciler.SessionCleanupHandler()).
+		Watches(&extensionsv1alpha1.SandboxClaim{}, sandboxReconciler.SessionCleanupHandler()).
 		Complete(sandboxReconciler); err != nil {
 		return fmt.Errorf("unable to create sandbox controller: %w", err)
 	}

@@ -362,6 +362,8 @@ When creation fails, the Sandbox API Server automatically reclaims the underlyin
 
 The Runtime Controller watches `AgentRuntime`, `CodeInterpreter`, `Sandbox` resources. It allows the Sandbox APIServer to obtain the status of a Sandbox as soon as possible. When the SandboxController detects that a Sandbox resource has transitioned to the `Running` state, it immediately sends a notification to the Sandbox APIServer.
 
+The SandboxController also watches `Sandbox` and `SandboxClaim` deletions. When one is deleted by something other than the garbage collector or the session DELETE API (for example `kubectl delete`, or a CodeInterpreter deletion that cascades to its SandboxClaims), it removes the matching session record from the KV storage, so the Router returns `SESSION_NOT_FOUND` instead of proxying to a sandbox that no longer exists.
+
 The CodeInterpreter Controller is responsible for automatically managing SandboxTemplate and SandboxWarmPool resources based on WarmPoolSize configuration to enable fast sandbox allocation for code interpreter sessions:
 
 1. If WarmPoolSize > 0: creates/updates SandboxTemplate (defines pod spec of warm pool) and SandboxWarmPool (maintains pool of pre-warmed Pods).

@@ -4,100 +4,249 @@ sidebar_position: 2
 
 # Getting Started
 
-This guide will help you get AgentCube up and running on your Kubernetes cluster.
+By the end of this guide you'll have AgentCube running on a Kubernetes cluster and a Python sandbox session executing code.
 
 ## Prerequisites
 
-Before you begin, ensure you have the following:
+Before you begin, ensure you have the following tools installed:
 
-- A Kubernetes cluster (v1.24+)
-- `kubectl` installed and configured
-- [Helm](https://helm.sh/docs/intro/install/) v3 installed
-- [Volcano](https://volcano.sh/en/docs/installation/) installed on your cluster (AgentCube is a Volcano subproject)
+- **Kubernetes cluster**: v1.24 or later (local clusters like [Kind](https://kind.sigs.k8s.io/) or [minikube](https://minikube.sigs.k8s.io/) work well for testing)
+- **kubectl**: Configured to access your cluster
+- **Helm**: v3.x or later
+- **Python**: 3.10 or later (for using the SDK)
 
-## 1. Installation
+## Architecture Overview
 
-AgentCube can be installed using Helm. Follow these steps:
+AgentCube consists of the following components:
 
-### Using Helm (Recommended)
+| Component            | Description                                                                                                                       |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| **Workload Manager** | Control plane - manages sandbox lifecycle, session registry                                                                       |
+| **AgentCube Router** | Data plane - handles request routing, authentication                                                                              |
+| **Redis**            | Session store - synchronizes state across components                                                                              |
+| **agent-sandbox**    | Third-party controller providing Sandbox CRDs ([kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox)) |
 
-Add the Volcano Helm repository (if not already added):
+## Step 1: Install agent-sandbox
+
+AgentCube relies on the [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) project for sandbox management. Install it first:
 
 ```bash
-helm repo add volcano-sh https://volcano-sh.github.io/volcano
-helm repo update
+# Install agent-sandbox CRDs and controller
+AGENT_SANDBOX_VERSION=v0.1.1
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml
 ```
 
-Install AgentCube:
+Verify the installation:
 
 ```bash
-# Clone the repository
+kubectl get pods -n agent-sandbox-system
+```
+
+## Step 2: Deploy Redis
+
+AgentCube requires Redis for session state storage. Deploy Redis in your cluster:
+
+```bash
+kubectl create namespace agentcube
+
+kubectl -n agentcube create deployment redis --image=redis:7-alpine --port=6379
+kubectl -n agentcube expose deployment redis --port=6379 --target-port=6379
+
+# Wait for Redis to be ready
+kubectl -n agentcube rollout status deployment/redis
+```
+
+## Step 3: Deploy AgentCube
+
+Clone the repository and install AgentCube using Helm:
+
+```bash
 git clone https://github.com/volcano-sh/agentcube.git
 cd agentcube
 
-# Install the Helm chart
-helm install agentcube ./manifests/charts/base -n agentcube --create-namespace
+helm install agentcube ./manifests/charts/base \
+    --namespace agentcube \
+    --create-namespace \
+    --set redis.addr="redis.agentcube.svc.cluster.local:6379" \
+    --set router.serviceAccountName="agentcube-router"
 ```
+
+:::note
+Do **not** pass `--set redis.password=...` on the command line. The Redis password is injected at runtime via a Kubernetes Secret (using `secretKeyRef`). For a passwordless dev Redis, omit the flag entirely. For production, create your own Secret and reference it with `redis.secretName`.
+:::
+
+For production, create your own Secret and reference it:
+
+```bash
+kubectl -n agentcube create secret generic agentcube-redis \
+    --from-literal=password='your-redis-password'
+
+helm install agentcube ./manifests/charts/base \
+    --namespace agentcube \
+    --create-namespace \
+    --set redis.addr="redis.agentcube.svc.cluster.local:6379" \
+    --set redis.secretName="agentcube-redis" \
+    --set router.serviceAccountName="agentcube-router"
+```
+
+This will install:
+
+- AgentCube CRDs (`CodeInterpreter`, `AgentRuntime`)
+- Workload Manager deployment
+- AgentCube Router deployment
+
+### Configuration Options
+
+Key Helm values you can customize:
+
+| Parameter                  | Default     | Description                                                                      |
+| -------------------------- | ----------- | -------------------------------------------------------------------------------- |
+| `redis.addr`               | `""`        | Redis address (required)                                                         |
+| `redis.password`           | `""`        | Redis password for chart-managed Secret; use `secretName` instead for production |
+| `redis.secretName`         | `""`        | Name of a Secret with the Redis password (recommended for production)            |
+| `redis.secretKey`          | `password`  | Key in the Redis Secret                                                          |
+| `router.replicas`          | `1`         | Router replica count                                                             |
+| `router.service.type`      | `ClusterIP` | Router service type                                                              |
+| `workloadmanager.replicas` | `1`         | Workload Manager replica count                                                   |
+
+For a complete list of options, see the [Configuration Guide](./configuration.md).
 
 ### Verify Installation
 
-Check if the AgentCube components are running:
-
 ```bash
+# Check all pods are running
 kubectl get pods -n agentcube
+
+# Expected output:
+# NAME                                READY   STATUS    RESTARTS   AGE
+# agentcube-router-xxx                1/1     Running   0          1m
+# workloadmanager-xxx                 1/1     Running   0          1m
+# redis-xxx                           1/1     Running   0          2m
+
+# Verify CRDs are installed
+kubectl get crd | grep agentcube
+# Expected output:
+# agentruntimes.runtime.agentcube.volcano.sh
+# codeinterpreters.runtime.agentcube.volcano.sh
 ```
 
-You should see pods for `workloadmanager`, `agentcube-router`, and `volcano-agent-scheduler`.
+## Step 4: Create a CodeInterpreter
 
-## 2. Deploy Your First Agent Runtime
+Create a CodeInterpreter resource that defines your sandbox template:
 
-AgentCube uses a custom resource called `AgentRuntime` to define how your AI Agents should run.
+```bash
+kubectl apply -f example/code-interpreter/code-interpreter.yaml
+```
 
-Create a file named `my-agent.yaml`:
+Or create your own:
 
 ```yaml
 apiVersion: runtime.agentcube.volcano.sh/v1alpha1
-kind: AgentRuntime
+kind: CodeInterpreter
 metadata:
-  name: sample-agent
+  name: my-interpreter
   namespace: default
 spec:
-  targetPort:
+  ports:
     - pathPrefix: "/"
       port: 8080
       protocol: "HTTP"
-  podTemplate:
-    spec:
-      containers:
-        - name: agent
-          image: python:3.11-slim
-          command: ["python3", "-m", "http.server", "8080"]
+  template:
+    image: ghcr.io/volcano-sh/picod:latest
+    args:
+      - --workspace=/root
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
   sessionTimeout: "15m"
-  maxSessionDuration: "1h"
+  maxSessionDuration: "8h"
 ```
 
-Apply the manifest:
+Verify the CodeInterpreter is created:
 
 ```bash
-kubectl apply -f my-agent.yaml
+kubectl get codeinterpreter
 ```
 
-## 3. Access Your Agent
+## Step 5: Use the Python SDK
 
-Once the `AgentRuntime` is created, you can access it through the AgentCube Router.
-
-The Router provides a stable entry point for your agents and handles dynamic scaling and lifecycle management (like sleep/resume).
-
-Find the Router's address:
+### Install the SDK
 
 ```bash
-kubectl get svc -n agentcube agentcube-router
+pip install agentcube-sdk
 ```
 
-You can now send requests to your agent via the router!
+### Set Up Access
+
+To access the services from your local machine, use port-forwarding.
+
+Open **two separate terminals** and run:
+
+```bash
+# Terminal 1: Forward the Workload Manager
+kubectl port-forward -n agentcube svc/workloadmanager 8080:8080
+```
+
+```bash
+# Terminal 2: Forward the Router
+kubectl port-forward -n agentcube svc/agentcube-router 8081:8080
+```
+
+Then, in a **third terminal**, set your environment variables:
+
+```bash
+export WORKLOAD_MANAGER_URL="http://localhost:8080"
+export ROUTER_URL="http://localhost:8081"
+```
+
+### Run Your First Code
+
+Create a file called `quickstart.py` with the following content:
+
+```python
+from agentcube import CodeInterpreterClient
+
+with CodeInterpreterClient(name="my-interpreter") as client:
+    result = client.run_code("python", "print('Hello from AgentCube!')")
+    print(result)
+```
+
+This script connects to the CodeInterpreter you created in Step 4, launches an isolated sandbox session, sends a Python snippet to be executed inside it, and prints the output.
+
+Run it:
+
+```bash
+python quickstart.py
+```
+
+Expected output:
+
+```
+Hello from AgentCube!
+```
+
+For detailed SDK usage, see the [Python SDK Guide](./developer-guide/code-interpreter-python-sdk.md).
 
 ## Next Steps
 
-- Explore the [PCAP Analyzer Example](https://github.com/volcano-sh/agentcube/tree/main/example/pcap-analyzer) for a real-world use case.
-- For more details on the architecture, see the **[Architecture Overview](./architecture/overview.md)** or the original **[Design Proposal](https://github.com/volcano-sh/agentcube/blob/main/docs/design/agentcube-proposal.md)**.
-- Check out the [Python SDK](https://github.com/volcano-sh/agentcube/tree/main/sdk-python) to build your own agents.
+- [Python SDK Guide](./developer-guide/code-interpreter-python-sdk.md) - Detailed SDK documentation
+- [LangChain Integration](./developer-guide/code-interpreter-using-langchain.md) - Integration guide
+- [Architecture Overview](./architecture/overview.md) - Architecture details
+- [Configuration Reference](./configuration.md) - All configuration options
+
+## Cleanup
+
+To remove AgentCube from your cluster:
+
+```bash
+helm uninstall agentcube -n agentcube
+kubectl delete namespace agentcube
+AGENT_SANDBOX_VERSION=v0.1.1
+kubectl delete -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml
+kubectl delete -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml
+```

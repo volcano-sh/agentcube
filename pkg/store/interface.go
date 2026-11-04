@@ -38,6 +38,15 @@ type Store interface {
 	ListExpiredSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error)
 	// ListInactiveSandboxes returns up to limit sandboxes with last-activity time before the given time
 	ListInactiveSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error)
+	// ScanInactiveSandboxIDs scans one page of the activity index, returning IDs
+	// with scores at or before before.Unix(). Start with cursor zero and continue
+	// with the returned cursor until it is zero again. An empty page is not
+	// necessarily the end. count must be positive and is a work hint, not a limit;
+	// results are unordered and may contain duplicates or missing sessions.
+	ScanInactiveSandboxIDs(ctx context.Context, before time.Time, cursor uint64, count int64) ([]string, uint64, error)
+	// GetSandboxWithLastActivity reads the session and its current activity score.
+	// It returns ErrNotFound if the session or activity index entry is missing.
+	GetSandboxWithLastActivity(ctx context.Context, sessionID string) (*types.SandboxInfo, error)
 	// UpdateSessionLastActivity updates the last-activity index for the given session
 	UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error
 	// Close releases all resources held by the store (e.g. connection pools)

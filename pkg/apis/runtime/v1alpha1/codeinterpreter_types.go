@@ -81,6 +81,12 @@ type CodeInterpreterSpec struct {
 	// +kubebuilder:validation:Enum=picod;none
 	// +optional
 	AuthMode AuthModeType `json:"authMode,omitempty"`
+
+	// NodeStickiness configures soft node-affinity stickiness across sessions.
+	// Disabled unless explicitly enabled. Has no effect when WarmPoolSize > 0,
+	// since warm-pool sandboxes are pre-scheduled before a session claims them.
+	// +optional
+	NodeStickiness *NodeStickinessSpec `json:"nodeStickiness,omitempty"`
 }
 
 // CodeInterpreterStatus represents the observed state of a CodeInterpreter.
@@ -168,6 +174,17 @@ type TargetPort struct {
 	// +kubebuilder:default=HTTP
 	// +kubebuilder:validation:Enum=HTTP;HTTPS;
 	Protocol ProtocolType `json:"protocol"`
+}
+
+// NodeStickinessSpec configures soft node-affinity stickiness: when enabled, a new
+// session prefers (soft / PreferredDuringScheduling) the node the previous session
+// for the same workload landed on. It is disabled unless explicitly turned on.
+type NodeStickinessSpec struct {
+	// Enabled turns on node stickiness for this workload's sessions.
+	// Defaults to false.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // AuthModeType defines the authentication mode for the sandbox runtime.

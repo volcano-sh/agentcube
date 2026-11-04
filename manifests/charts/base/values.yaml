@@ -86,6 +86,8 @@ spire:
       repository: ghcr.io/spiffe/spiffe-helper
       tag: "0.10.0"
       pullPolicy: IfNotPresent
+    # HTTP health port inside each pod; keep distinct from application ports.
+    healthPort: 8081
     # Directory inside Router and WorkloadManager pods where the sidecar will deliver the certificates
     certDir: "/run/spire/certs"
     # Desired file names for the SVID certificate, private key, and root trust bundle

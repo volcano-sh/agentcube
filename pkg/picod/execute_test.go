@@ -18,6 +18,7 @@ package picod
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -507,6 +508,50 @@ func TestExecuteHandler_CommandWithArguments(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Contains(t, resp.Stdout, "arg1 arg2 arg3")
+}
+
+// TestExecuteHandler_RequestCancellation_KillsSubprocess is the minimal
+// reproducer requested in volcano-sh/agentcube#499. It demonstrates that when
+// the HTTP client disconnects (request context canceled), the subprocess is
+// killed before it would otherwise finish. Prior to the fix, the handler used
+// context.Background() as the parent, so the subprocess ran to completion even
+// after the caller disconnected.
+func TestExecuteHandler_RequestCancellation_KillsSubprocess(t *testing.T) {
+	server, tmpDir := setupExecuteTestServer(t)
+	defer os.RemoveAll(tmpDir)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	req := ExecuteRequest{
+		Command: []string{"sleep", "10"},
+		Timeout: "30s",
+	}
+	body, _ := json.Marshal(req)
+
+	// Create a cancellable request context — simulates client disconnect.
+	reqCtx, cancelReq := context.WithCancel(context.Background())
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	httpReq, _ := http.NewRequestWithContext(reqCtx, "POST", "/api/execute", bytes.NewBuffer(body))
+	httpReq.Header.Set("Content-Type", "application/json")
+	c.Request = httpReq
+
+	// Cancel the request context (simulate disconnect) shortly after the handler starts.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		server.ExecuteHandler(c)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	cancelReq() // disconnect
+
+	select {
+	case <-done:
+		// Handler returned promptly after disconnect — subprocess was killed.
+	case <-time.After(5 * time.Second):
+		t.Fatal("ExecuteHandler did not return after request context cancellation; subprocess was not killed (pre-fix behavior)")
+	}
 }
 
 func TestExecuteHandler_EmptyEnvVars(t *testing.T) {

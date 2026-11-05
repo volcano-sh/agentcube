@@ -64,7 +64,7 @@ func createToken(t *testing.T, key *rsa.PrivateKey, claims jwt.MapClaims) string
 }
 
 // setupTestServer creates a test server with public key loaded from env
-func setupTestServer(t *testing.T, pubPEM string) (*Server, *httptest.Server, string) {
+func setupTestServer(t *testing.T, pubPEM string) (*httptest.Server, string) {
 	tmpDir, err := os.MkdirTemp("", "picod_test")
 	require.NoError(t, err)
 
@@ -79,7 +79,7 @@ func setupTestServer(t *testing.T, pubPEM string) (*Server, *httptest.Server, st
 	server := NewServer(config)
 	ts := httptest.NewServer(server.engine)
 
-	return server, ts, tmpDir
+	return ts, tmpDir
 }
 
 func TestPicoD_EndToEnd(t *testing.T) {
@@ -87,7 +87,7 @@ func TestPicoD_EndToEnd(t *testing.T) {
 	routerPriv, routerPubStr := generateRSAKeys(t)
 
 	// 2. Setup Server
-	_, ts, tmpDir := setupTestServer(t, routerPubStr)
+	ts, tmpDir := setupTestServer(t, routerPubStr)
 	defer os.RemoveAll(tmpDir)
 	defer ts.Close()
 	defer os.Unsetenv(PublicKeyEnvVar)
@@ -434,7 +434,7 @@ func TestPicoD_SetWorkspace(t *testing.T) {
 // the HTTP round-trip would block until the fixed 60-second default timeout.
 func TestRouterPath_DisconnectKillsSubprocess(t *testing.T) {
 	privKey, pubPEM := generateRSAKeys(t)
-	_, ts, tmpDir := setupTestServer(t, pubPEM)
+	ts, tmpDir := setupTestServer(t, pubPEM)
 	defer ts.Close()
 	defer os.RemoveAll(tmpDir)
 	defer os.Unsetenv(PublicKeyEnvVar)
@@ -451,7 +451,7 @@ func TestRouterPath_DisconnectKillsSubprocess(t *testing.T) {
 		Timeout: "60s",
 	})
 
-	// reqCtx is cancelled to simulate the HTTP client disconnecting.
+	// reqCtx is canceled to simulate the HTTP client disconnecting.
 	reqCtx, cancelReq := context.WithCancel(context.Background())
 
 	req, _ := http.NewRequestWithContext(reqCtx, http.MethodPost, ts.URL+"/api/execute", bytes.NewBuffer(body))

@@ -31,6 +31,11 @@ import (
 
 const (
 	TimeoutExitCode = 124 // Standard timeout exit code used by GNU timeout command.
+
+	// commandWaitDelay bounds how long the handler keeps reading stdout/stderr
+	// after the command exits or times out. Child processes that inherited the
+	// output pipes can otherwise keep the request open until they exit.
+	commandWaitDelay = 100 * time.Millisecond
 )
 
 // ExecuteRequest defines command execution request body
@@ -91,6 +96,9 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	// Execute command with context
 	// Use the first element as the command and the rest as arguments
 	cmd := exec.CommandContext(ctx, req.Command[0], req.Command[1:]...) //nolint:gosec // This is an agent designed to execute arbitrary commands
+	// On timeout, stop the child processes the command started as well.
+	configureProcessGroup(cmd)
+	cmd.WaitDelay = commandWaitDelay
 
 	// Default working directory to workspace; override if the request specifies one.
 	cmd.Dir = s.workspaceDir

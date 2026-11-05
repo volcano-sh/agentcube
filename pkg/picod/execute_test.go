@@ -512,7 +512,7 @@ func TestExecuteHandler_CommandWithArguments(t *testing.T) {
 
 // TestExecuteHandler_RequestCancellation_KillsSubprocess is the minimal
 // reproducer requested in volcano-sh/agentcube#499. It demonstrates that when
-// the HTTP client disconnects (request context cancelled), the subprocess is
+// the HTTP client disconnects (request context canceled), the subprocess is
 // killed before it would otherwise finish. Prior to the fix, the handler used
 // context.Background() as the parent, so the subprocess ran to completion even
 // after the caller disconnected.
@@ -550,7 +550,7 @@ func TestExecuteHandler_RequestCancellation_KillsSubprocess(t *testing.T) {
 	case <-done:
 		// Handler returned promptly after disconnect — subprocess was killed.
 	case <-time.After(5 * time.Second):
-		t.Fatal("ExecuteHandler did not return after request context cancellation; subprocess was not killed (pre-fix behaviour)")
+		t.Fatal("ExecuteHandler did not return after request context cancellation; subprocess was not killed (pre-fix behavior)")
 	}
 }
 

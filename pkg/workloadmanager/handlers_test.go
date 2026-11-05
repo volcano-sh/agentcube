@@ -104,7 +104,7 @@ func readySandbox() *sandboxv1alpha1.Sandbox {
 
 func makeEntry() *sandboxEntry {
 	return &sandboxEntry{
-		Kind:      types.AgentRuntimeKind,
+		Kind:      types.SandboxKind,
 		SessionID: "sess-1",
 		Ports: []runtimev1alpha1.TargetPort{
 			{Port: 8080, Protocol: runtimev1alpha1.ProtocolTypeHTTP, PathPrefix: "/api"},
@@ -286,7 +286,11 @@ func TestServerCreateSandbox(t *testing.T) {
 				claim = &extensionsv1alpha1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: sb.Name, Namespace: sb.Namespace}}
 			}
 
-			resp, err := server.createSandbox(context.Background(), nil, sb, claim, makeEntry(), resultChan)
+			entry := makeEntry()
+			if tt.sandboxClaim {
+				entry.Kind = types.SandboxClaimsKind
+			}
+			resp, err := server.createSandbox(context.Background(), nil, sb, claim, entry, resultChan)
 
 			require.Equal(t, tt.expectCreateCalls, createCalls, "createSandbox call count")
 			require.Equal(t, tt.expectClaimCalls, claimCalls, "createSandboxClaim call count")
@@ -308,6 +312,11 @@ func TestServerCreateSandbox(t *testing.T) {
 			require.Equal(t, "sess-1", resp.SessionID)
 			require.Equal(t, sb.Name, resp.SandboxName)
 			require.Equal(t, string(sb.UID), resp.SandboxID)
+			expectedKind := types.SandboxKind
+			if tt.sandboxClaim {
+				expectedKind = types.SandboxClaimsKind
+			}
+			require.Equal(t, expectedKind, resp.Kind)
 			require.Len(t, resp.EntryPoints, 1)
 			require.Equal(t, "/api", resp.EntryPoints[0].Path)
 			require.Equal(t, "10.0.0.9:8080", resp.EntryPoints[0].Endpoint)

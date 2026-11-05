@@ -18,6 +18,7 @@ package picod
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -418,4 +419,60 @@ func TestPicoD_SetWorkspace(t *testing.T) {
 	err = server.setWorkspace(linkDir)
 	require.NoError(t, err)
 	assert.Equal(t, resolve(absLinkPath), resolve(server.workspaceDir))
+}
+
+// TestRouterPath_DisconnectKillsSubprocess is the Router/SDK-path minimal
+// reproducer for volcano-sh/agentcube#499.
+//
+// It demonstrates the disconnect-kills-subprocess semantics through the full
+// stack: real httptest.Server → JWT auth middleware → gin router → ExecuteHandler.
+//
+// The test makes a real HTTP request for `sleep 10` (a 10-second command), then
+// cancels the client-side request context 200 ms in. With the fix the server
+// kills the subprocess and the handler returns quickly. Without the fix
+// (context.Background() parent) the subprocess would outlive the client and
+// the HTTP round-trip would block until the fixed 60-second default timeout.
+func TestRouterPath_DisconnectKillsSubprocess(t *testing.T) {
+	privKey, pubPEM := generateRSAKeys(t)
+	_, ts, tmpDir := setupTestServer(t, pubPEM)
+	defer ts.Close()
+	defer os.RemoveAll(tmpDir)
+	defer os.Unsetenv(PublicKeyEnvVar)
+
+	// Build a JWT the auth middleware will accept.
+	claims := jwt.MapClaims{
+		"iat": time.Now().Unix(),
+		"exp": time.Now().Add(time.Hour).Unix(),
+	}
+	token := createToken(t, privKey, claims)
+
+	body, _ := json.Marshal(ExecuteRequest{
+		Command: []string{"sleep", "10"},
+		Timeout: "60s",
+	})
+
+	// reqCtx is cancelled to simulate the HTTP client disconnecting.
+	reqCtx, cancelReq := context.WithCancel(context.Background())
+
+	req, _ := http.NewRequestWithContext(reqCtx, http.MethodPost, ts.URL+"/api/execute", bytes.NewBuffer(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := ts.Client().Do(req) //nolint:bodyclose
+		done <- err
+	}()
+
+	// Cancel the client request 200 ms after the subprocess starts.
+	time.Sleep(200 * time.Millisecond)
+	cancelReq()
+
+	select {
+	case <-done:
+		// The HTTP round-trip ended promptly after the client disconnected.
+		// The server killed the subprocess instead of letting it run to completion.
+	case <-time.After(5 * time.Second):
+		t.Fatal("HTTP round-trip did not end after client disconnect: subprocess was not killed (pre-fix behavior)")
+	}
 }

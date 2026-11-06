@@ -8,7 +8,7 @@
 
 ## 0. Deploy AgentCube (same path as the project tutorial)
 
-Do this once on a Kubernetes cluster (v1.24+). Full detail: [`docs/getting-started.md`](../../docs/getting-started.md).
+Do this once on a Kubernetes cluster (v1.25+ with CRD CEL validation enabled for agent-sandbox v1.0.9; keep `CustomResourceValidationExpressions` enabled on v1.25–v1.28; v1.29+ is recommended). Full detail: [`docs/getting-started.md`](../../docs/getting-started.md).
 
 1. **agent-sandbox** — install CRDs + controller (see getting-started **Step 1**).
 2. **Redis** — create namespace `agentcube`, deploy Redis ( **Step 2** ).

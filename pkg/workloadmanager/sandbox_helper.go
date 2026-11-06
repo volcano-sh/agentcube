@@ -26,7 +26,7 @@ import (
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
 	"github.com/volcano-sh/agentcube/pkg/common/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+	sandboxv1beta1 "sigs.k8s.io/agent-sandbox/api/v1beta1"
 )
 
 const (
@@ -47,7 +47,7 @@ var sandboxEntrypointDial = func(ctx context.Context, endpoint string, timeout t
 	return conn.Close()
 }
 
-func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxEntry) *types.SandboxInfo {
+func buildSandboxPlaceHolder(sandboxCR *sandboxv1beta1.Sandbox, entry *sandboxEntry) *types.SandboxInfo {
 	createdAt := sandboxCR.GetCreationTimestamp().Time
 	if createdAt.IsZero() {
 		createdAt = time.Now()
@@ -75,7 +75,7 @@ func buildSandboxPlaceHolder(sandboxCR *sandboxv1alpha1.Sandbox, entry *sandboxE
 	}
 }
 
-func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *sandboxEntry) *types.SandboxInfo {
+func buildSandboxInfo(sandbox *sandboxv1beta1.Sandbox, podIP string, entry *sandboxEntry) *types.SandboxInfo {
 	createdAt := sandbox.GetCreationTimestamp().Time
 	expiresAt := createdAt.Add(DefaultSandboxTTL)
 	if sandbox.Spec.Lifecycle.ShutdownTime != nil {
@@ -110,9 +110,9 @@ func buildSandboxInfo(sandbox *sandboxv1alpha1.Sandbox, podIP string, entry *san
 
 // getSandboxStatus extracts status from Sandbox CRD conditions.
 // Returns sandboxStatusReady when the sandbox is ready, sandboxStatusNotReady otherwise.
-func getSandboxStatus(sandbox *sandboxv1alpha1.Sandbox) string {
+func getSandboxStatus(sandbox *sandboxv1beta1.Sandbox) string {
 	for _, condition := range sandbox.Status.Conditions {
-		if condition.Type == string(sandboxv1alpha1.SandboxConditionReady) && condition.Status == metav1.ConditionTrue {
+		if condition.Type == string(sandboxv1beta1.SandboxConditionReady) && condition.Status == metav1.ConditionTrue {
 			return sandboxStatusReady
 		}
 	}

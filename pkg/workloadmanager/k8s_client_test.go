@@ -22,14 +22,21 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes"
 	listersv1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/rest"
+	ktesting "k8s.io/client-go/testing"
 )
 
 // Helper function to create a pod with owner reference
@@ -170,6 +177,82 @@ func TestGetSandboxPodIPReadsNamedPodFromLiveAPI(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, "10.0.0.2", ip)
+}
+
+func TestWaitForSandboxReadyUnstructuredConditions(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    map[string]interface{}
+		wantReady bool
+	}{
+		{
+			name: "Ready true",
+			status: map[string]interface{}{
+				"conditions": []interface{}{map[string]interface{}{"type": "Ready", "status": "True"}},
+			},
+			wantReady: true,
+		},
+		{
+			name: "Ready false",
+			status: map[string]interface{}{
+				"conditions": []interface{}{map[string]interface{}{"type": "Ready", "status": "False"}},
+			},
+		},
+		{
+			name: "unknown Ready condition",
+			status: map[string]interface{}{
+				"conditions": []interface{}{map[string]interface{}{"type": "Ready", "status": "Unknown"}},
+			},
+		},
+		{
+			name: "conditions without Ready",
+			status: map[string]interface{}{
+				"conditions": []interface{}{map[string]interface{}{"type": "Finished", "status": "True"}},
+			},
+		},
+		{
+			name:   "missing status",
+			status: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				dynamicClient := fake.NewSimpleDynamicClient(runtime.NewScheme())
+				gets := 0
+				dynamicClient.PrependReactor("get", "sandboxes", func(action ktesting.Action) (bool, runtime.Object, error) {
+					gets++
+					get, ok := action.(ktesting.GetAction)
+					require.True(t, ok, "expected a sandbox get action")
+					assert.Equal(t, SandboxGVR, get.GetResource())
+					assert.Equal(t, "test-ns", get.GetNamespace())
+					assert.Equal(t, "sandbox-1", get.GetName())
+					obj := &unstructured.Unstructured{Object: map[string]interface{}{
+						"apiVersion": "agents.x-k8s.io/v1beta1",
+						"kind":       "Sandbox",
+						"metadata": map[string]interface{}{
+							"name": "sandbox-1", "namespace": "test-ns",
+						},
+					}}
+					if tt.status != nil {
+						obj.Object["status"] = tt.status
+					}
+					return true, obj, nil
+				})
+
+				client := &K8sClient{dynamicClient: dynamicClient}
+				timeout := 3 * time.Second // At least one two-second polling tick.
+				err := client.WaitForSandboxReady(context.Background(), "test-ns", "sandbox-1", timeout)
+				if tt.wantReady {
+					require.NoError(t, err)
+				} else {
+					require.ErrorContains(t, err, "timeout waiting for sandbox to be ready")
+				}
+				require.Positive(t, gets, "the test must exercise the unstructured polling path")
+			})
+		})
+	}
 }
 
 // TestGetSandboxPodIP_PodNotFound verifies GetSandboxPodIP returns error when pod is not found

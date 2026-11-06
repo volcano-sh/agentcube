@@ -38,8 +38,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
-	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
-	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
+	sandboxv1beta1 "sigs.k8s.io/agent-sandbox/api/v1beta1"
+	extensionsv1beta1 "sigs.k8s.io/agent-sandbox/extensions/api/v1beta1"
 )
 
 const (
@@ -65,7 +65,6 @@ type K8sClient struct {
 	clientset           *kubernetes.Clientset
 	cubeClientset       cubeversioned.Interface
 	dynamicClient       dynamic.Interface
-	scheme              *runtime.Scheme
 	baseConfig          *rest.Config // Store base config for creating user clients
 	clientCache         *ClientCache // LRU cache for user clients
 	dynamicInformer     dynamicinformer.DynamicSharedInformerFactory
@@ -124,12 +123,6 @@ func NewK8sClient() (*K8sClient, error) {
 		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
-	// Create scheme and register agent-sandbox types
-	scheme := runtime.NewScheme()
-	if err := sandboxv1alpha1.AddToScheme(scheme); err != nil {
-		return nil, fmt.Errorf("failed to add agent-sandbox scheme: %w", err)
-	}
-
 	// Create informer factory for core resources (Pods, etc.)
 	informerFactory := informers.NewSharedInformerFactory(clientset, 0)
 
@@ -144,7 +137,6 @@ func NewK8sClient() (*K8sClient, error) {
 		clientset:           clientset,
 		cubeClientset:       cubeClientset,
 		dynamicClient:       dynamicClient,
-		scheme:              scheme,
 		baseConfig:          config,
 		clientCache:         NewClientCache(100), // Cache up to 100 clients
 		dynamicInformer:     dynamicinformer.NewDynamicSharedInformerFactory(dynamicClient, 0),
@@ -212,7 +204,7 @@ func (c *K8sClient) GetOrCreateUserK8sClient(userToken, namespace, serviceAccoun
 }
 
 // createSandbox creates a Sandbox using the provided dynamic client
-func createSandbox(ctx context.Context, client dynamic.Interface, sandbox *sandboxv1alpha1.Sandbox) (*SandboxInfo, error) {
+func createSandbox(ctx context.Context, client dynamic.Interface, sandbox *sandboxv1beta1.Sandbox) (*SandboxInfo, error) {
 	// Convert to unstructured for dynamic client
 	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(sandbox)
 	if err != nil {
@@ -238,13 +230,13 @@ func createSandbox(ctx context.Context, client dynamic.Interface, sandbox *sandb
 }
 
 // getSandbox gets a Sandbox using the provided dynamic client.
-func getSandbox(ctx context.Context, client dynamic.Interface, namespace, sandboxName string) (*sandboxv1alpha1.Sandbox, error) {
+func getSandbox(ctx context.Context, client dynamic.Interface, namespace, sandboxName string) (*sandboxv1beta1.Sandbox, error) {
 	obj, err := client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sandbox %s/%s: %w", namespace, sandboxName, err)
 	}
 
-	sandbox := &sandboxv1alpha1.Sandbox{}
+	sandbox := &sandboxv1beta1.Sandbox{}
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, sandbox); err != nil {
 		return nil, fmt.Errorf("failed to convert sandbox %s/%s: %w", namespace, sandboxName, err)
 	}
@@ -252,7 +244,7 @@ func getSandbox(ctx context.Context, client dynamic.Interface, namespace, sandbo
 }
 
 // createSandboxClaim creates a SandboxClaim using the provided dynamic client
-func createSandboxClaim(ctx context.Context, client dynamic.Interface, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
+func createSandboxClaim(ctx context.Context, client dynamic.Interface, sandboxClaim *extensionsv1beta1.SandboxClaim) error {
 	// Convert to unstructured for dynamic client
 	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(sandboxClaim)
 	if err != nil {
@@ -275,13 +267,13 @@ func createSandboxClaim(ctx context.Context, client dynamic.Interface, sandboxCl
 }
 
 // getSandboxClaim gets a SandboxClaim using the provided dynamic client.
-func getSandboxClaim(ctx context.Context, client dynamic.Interface, namespace, sandboxClaimName string) (*extensionsv1alpha1.SandboxClaim, error) {
+func getSandboxClaim(ctx context.Context, client dynamic.Interface, namespace, sandboxClaimName string) (*extensionsv1beta1.SandboxClaim, error) {
 	obj, err := client.Resource(SandboxClaimGVR).Namespace(namespace).Get(ctx, sandboxClaimName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sandbox claim %s/%s: %w", namespace, sandboxClaimName, err)
 	}
 
-	sandboxClaim := &extensionsv1alpha1.SandboxClaim{}
+	sandboxClaim := &extensionsv1beta1.SandboxClaim{}
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, sandboxClaim); err != nil {
 		return nil, fmt.Errorf("failed to convert sandbox claim %s/%s: %w", namespace, sandboxClaimName, err)
 	}
@@ -317,12 +309,12 @@ func deleteSandboxClaim(ctx context.Context, client dynamic.Interface, namespace
 }
 
 // CreateSandboxClaim creates a new SandboxClaim using user's permissions
-func (u *UserK8sClient) CreateSandboxClaim(ctx context.Context, sandboxClaim *extensionsv1alpha1.SandboxClaim) error {
+func (u *UserK8sClient) CreateSandboxClaim(ctx context.Context, sandboxClaim *extensionsv1beta1.SandboxClaim) error {
 	return createSandboxClaim(ctx, u.dynamicClient, sandboxClaim)
 }
 
 // CreateSandbox creates a new Sandbox using user's permissions
-func (u *UserK8sClient) CreateSandbox(ctx context.Context, sandbox *sandboxv1alpha1.Sandbox) (*SandboxInfo, error) {
+func (u *UserK8sClient) CreateSandbox(ctx context.Context, sandbox *sandboxv1beta1.Sandbox) (*SandboxInfo, error) {
 	return createSandbox(ctx, u.dynamicClient, sandbox)
 }
 
@@ -405,19 +397,19 @@ func (c *K8sClient) WaitForSandboxReady(ctx context.Context, namespace, sandboxN
 				continue
 			}
 
-			// Check status.phase or status.ready
-			status, found, err := unstructured.NestedMap(sandbox.Object, "status")
+			conditions, found, err := unstructured.NestedSlice(sandbox.Object, "status", "conditions")
 			if err != nil || !found {
 				continue
 			}
 
-			phase, found, err := unstructured.NestedString(status, "phase")
-			if err != nil || !found {
-				continue
-			}
-
-			if phase == "Running" || phase == "Ready" {
-				return nil
+			for _, condition := range conditions {
+				entry, ok := condition.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if entry["type"] == string(sandboxv1beta1.SandboxConditionReady) && entry["status"] == string(metav1.ConditionTrue) {
+					return nil
+				}
 			}
 		}
 	}

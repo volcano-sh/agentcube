@@ -17,6 +17,7 @@ limitations under the License.
 package workloadmanager
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -57,6 +58,24 @@ func TestBuildSandboxObject_DoesNotMutateCallerLabels(t *testing.T) {
 	}
 
 	sandbox := buildSandboxObject(params)
+	data, err := json.Marshal(sandbox)
+	if err != nil {
+		t.Fatalf("marshal sandbox: %v", err)
+	}
+	var serialized map[string]any
+	if err := json.Unmarshal(data, &serialized); err != nil {
+		t.Fatalf("unmarshal sandbox: %v", err)
+	}
+	if serialized["apiVersion"] != "agents.x-k8s.io/v1beta1" {
+		t.Errorf("unexpected sandbox apiVersion: %v", serialized["apiVersion"])
+	}
+	spec, ok := serialized["spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("sandbox spec is not an object: %v", serialized["spec"])
+	}
+	if spec["podTemplate"] == nil {
+		t.Error("sandbox must serialize the embedded blueprint's podTemplate")
+	}
 
 	// The caller's map must be unchanged.
 	if len(original) != len(before) {
@@ -180,20 +199,22 @@ func TestBuildSandboxObject_WorkloadNameLabel(t *testing.T) {
 // TestBuildSandboxClaimObject verifies that buildSandboxClaimObject correctly
 // populates all fields including labels, annotations, and owner references.
 func TestBuildSandboxClaimObject(t *testing.T) {
+	const poolName = "my-ci"
+
 	t.Run("with owner reference", func(t *testing.T) {
 		ownerRef := &metav1.OwnerReference{
 			APIVersion: "runtime.agentcube.volcano.sh/v1alpha1",
 			Kind:       "CodeInterpreter",
-			Name:       "my-ci",
+			Name:       poolName,
 			UID:        "test-uid-123",
 		}
 		params := &buildSandboxClaimParams{
-			namespace:           "test-ns",
-			name:                "claim-abc",
-			sandboxTemplateName: "my-ci",
-			sessionID:           "session-claim-test",
-			idleTimeout:         10 * time.Minute,
-			ownerReference:      ownerRef,
+			namespace:      "test-ns",
+			name:           "claim-abc",
+			warmPoolName:   poolName,
+			sessionID:      "session-claim-test",
+			idleTimeout:    10 * time.Minute,
+			ownerReference: ownerRef,
 		}
 		claim := buildSandboxClaimObject(params)
 
@@ -203,8 +224,8 @@ func TestBuildSandboxClaimObject(t *testing.T) {
 		if claim.Name != "claim-abc" {
 			t.Errorf("expected name claim-abc, got %q", claim.Name)
 		}
-		if claim.Spec.TemplateRef.Name != "my-ci" {
-			t.Errorf("expected templateRef name my-ci, got %q", claim.Spec.TemplateRef.Name)
+		if claim.Spec.WarmPoolRef.Name != poolName {
+			t.Errorf("expected warmPoolRef name my-ci, got %q", claim.Spec.WarmPoolRef.Name)
 		}
 		if claim.Labels[SessionIdLabelKey] != "session-claim-test" {
 			t.Errorf("expected label %s=session-claim-test, got %q", SessionIdLabelKey, claim.Labels[SessionIdLabelKey])
@@ -215,18 +236,18 @@ func TestBuildSandboxClaimObject(t *testing.T) {
 		if len(claim.OwnerReferences) != 1 {
 			t.Fatalf("expected 1 owner reference, got %d", len(claim.OwnerReferences))
 		}
-		if claim.OwnerReferences[0].Name != "my-ci" {
+		if claim.OwnerReferences[0].Name != poolName {
 			t.Errorf("expected owner ref name my-ci, got %q", claim.OwnerReferences[0].Name)
 		}
 	})
 
 	t.Run("without owner reference", func(t *testing.T) {
 		params := &buildSandboxClaimParams{
-			namespace:           "default",
-			name:                "claim-no-owner",
-			sandboxTemplateName: "template-1",
-			sessionID:           "session-no-owner",
-			idleTimeout:         0,
+			namespace:    "default",
+			name:         "claim-no-owner",
+			warmPoolName: "pool-1",
+			sessionID:    "session-no-owner",
+			idleTimeout:  0,
 		}
 		claim := buildSandboxClaimObject(params)
 
@@ -238,6 +259,15 @@ func TestBuildSandboxClaimObject(t *testing.T) {
 				DefaultSandboxIdleTimeout.String(), claim.Annotations[IdleTimeoutAnnotationKey])
 		}
 	})
+}
+
+func TestAgentSandboxResourceVersions(t *testing.T) {
+	if SandboxGVR.GroupVersion().String() != "agents.x-k8s.io/v1beta1" {
+		t.Errorf("unexpected sandbox GVR: %s", SandboxGVR)
+	}
+	if SandboxClaimGVR.GroupVersion().String() != "extensions.agents.x-k8s.io/v1beta1" {
+		t.Errorf("unexpected sandbox claim GVR: %s", SandboxClaimGVR)
+	}
 }
 
 const (
@@ -746,8 +776,8 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 	if entry.Kind != types.SandboxClaimsKind {
 		t.Errorf("expected entry.Kind to be %q, got %q", types.SandboxClaimsKind, entry.Kind)
 	}
-	if claim.Spec.TemplateRef.Name != testCodeInterpreterWarmPool {
-		t.Errorf("expected templateRef name %q, got %q", testCodeInterpreterWarmPool, claim.Spec.TemplateRef.Name)
+	if claim.Spec.WarmPoolRef.Name != testCodeInterpreterWarmPool {
+		t.Errorf("expected warmPoolRef name %q, got %q", testCodeInterpreterWarmPool, claim.Spec.WarmPoolRef.Name)
 	}
 	if len(claim.OwnerReferences) != 1 {
 		t.Fatalf("expected 1 owner reference, got %d", len(claim.OwnerReferences))
@@ -835,12 +865,12 @@ func TestBuildSandboxClaimObject_OwnershipLabels(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			params := &buildSandboxClaimParams{
-				namespace:           "default",
-				name:                "claim-owner-test",
-				sandboxTemplateName: "my-ci",
-				sessionID:           "session-claim-owner",
-				ownerID:             tt.ownerID,
-				idleTimeout:         10 * time.Minute,
+				namespace:    "default",
+				name:         "claim-owner-test",
+				warmPoolName: "my-ci",
+				sessionID:    "session-claim-owner",
+				ownerID:      tt.ownerID,
+				idleTimeout:  10 * time.Minute,
 			}
 			claim := buildSandboxClaimObject(params)
 

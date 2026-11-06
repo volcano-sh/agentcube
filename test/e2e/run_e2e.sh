@@ -13,7 +13,7 @@ if [ -z "${MTLS_ENABLED+x}" ]; then
         MTLS_ENABLED=true
     fi
 fi
-AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION:-v0.4.6}
+AGENT_SANDBOX_VERSION=${AGENT_SANDBOX_VERSION:-v1.0.9}
 E2E_REQUIRE_CODEINTERPRETER=${E2E_REQUIRE_CODEINTERPRETER:-false}
 WORKLOAD_MANAGER_IMAGE=${WORKLOAD_MANAGER_IMAGE:-workloadmanager:latest}
 ROUTER_IMAGE=${ROUTER_IMAGE:-agentcube-router:latest}
@@ -31,7 +31,7 @@ REPO_ROOT="$(cd "$_SCRIPT_DIR/../.." && pwd)"
 
 # Images that need to be pre-pulled and loaded into kind cluster
 # Based on agent-sandbox manifest analysis, only these images are needed:
-# - agent-sandbox-controller (used in both agentsandbox manifest.yaml and extensions.yaml)
+# - agent-sandbox-controller (included in sandbox-with-extensions.yaml)
 # - python:3.9-slim (used by echo-agent)
 PRE_PULL_IMAGES=(
     "registry.k8s.io/agent-sandbox/agent-sandbox-controller:${AGENT_SANDBOX_VERSION}"
@@ -334,8 +334,7 @@ run_setup() {
 
     step "Installing agent-sandbox (${AGENT_SANDBOX_VERSION})..."
     # Download then apply to avoid URL parsing issues / improve debuggability.
-    kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml"
-    kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml"
+    kubectl_apply_url "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/sandbox-with-extensions.yaml"
     verify_agent_sandbox_controller
 
     step "Building images..."

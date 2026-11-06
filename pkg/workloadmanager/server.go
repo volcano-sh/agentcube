@@ -177,7 +177,7 @@ func (s *Server) Start(ctx context.Context) error {
 		err = s.httpServer.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
 	} else {
 		// Plain HTTP with h2c (HTTP/2 cleartext) support
-		h2s := &http2.Server{}
+		h2s := &http2.Server{}                               //nolint:staticcheck // h2c.NewHandler needs x/net/http2.Server to support HTTP/1.1 Upgrade.
 		s.httpServer.Handler = h2c.NewHandler(s.router, h2s) //nolint:staticcheck // Preserve HTTP/1.1 Upgrade support.
 		err = s.httpServer.ListenAndServe()
 	}
@@ -221,7 +221,7 @@ func (s *Server) startMTLSServer(addr string) error {
 
 func configureHTTP2TLSServer(server *http.Server, tlsConfig *tls.Config) error {
 	server.TLSConfig = tlsConfig
-	return http2.ConfigureServer(server, &http2.Server{})
+	return http2.ConfigureServer(server, &http2.Server{}) //nolint:staticcheck // Preserve HTTP/2 on the custom mTLS listener.
 }
 
 // Shutdown performs graceful shutdown of the HTTP server.

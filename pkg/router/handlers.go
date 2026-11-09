@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/net/http/httpguts"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 
@@ -111,7 +112,7 @@ func (s *Server) checkSandboxOwnership(c *gin.Context, sandbox *types.SandboxInf
 			sandbox.Name, sandbox.SessionID, claims.Subject)
 		c.JSON(http.StatusForbidden, gin.H{
 			"error": "sandbox has no owner record",
-			"code":  "FORBIDDEN",
+			"code":  errorCodeForbidden,
 		})
 		c.Abort()
 		return false
@@ -121,7 +122,7 @@ func (s *Server) checkSandboxOwnership(c *gin.Context, sandbox *types.SandboxInf
 			sandbox.Name, sandbox.OwnerID, claims.Subject)
 		c.JSON(http.StatusForbidden, gin.H{
 			"error": "you do not own this sandbox",
-			"code":  "FORBIDDEN",
+			"code":  errorCodeForbidden,
 		})
 		c.Abort()
 		return false
@@ -324,25 +325,23 @@ func normalizedProxyPath(path string) string {
 	return path
 }
 
-func configureProxyDirector(proxy *httputil.ReverseProxy, c *gin.Context, targetURL *url.URL, path, jwtToken, sessionID string) {
+func configureProxyRewrite(proxy *httputil.ReverseProxy, c *gin.Context, targetURL *url.URL, path, jwtToken, sessionID string) {
 	proxyPath := normalizedProxyPath(path)
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		originalDirector(req)
+	proxy.Rewrite = func(pr *httputil.ProxyRequest) {
+		pr.SetURL(targetURL)
+		req := pr.Out
 
 		req.URL.Path = proxyPath
 		req.URL.RawPath = ""
-		req.Host = targetURL.Host
-		req.Header.Set("X-Forwarded-Host", c.Request.Host)
-		req.Header.Set("X-Forwarded-Proto", "http")
-		if c.Request.TLS != nil {
-			req.Header.Set("X-Forwarded-Proto", "https")
-		}
-		if _, ok := req.Header["X-Forwarded-For"]; !ok {
-			if ip := c.ClientIP(); ip != c.RemoteIP() {
+		// Only preserve the forwarding chain when it can cross this hop.
+		if !httpguts.HeaderValuesContainsToken(pr.In.Header.Values("Connection"), "X-Forwarded-For") {
+			if prior, ok := pr.In.Header["X-Forwarded-For"]; ok {
+				req.Header["X-Forwarded-For"] = prior
+			} else if ip := c.ClientIP(); ip != c.RemoteIP() {
 				req.Header.Set("X-Forwarded-For", ip)
 			}
 		}
+		pr.SetXForwarded()
 		if jwtToken != "" {
 			req.Header.Set("Authorization", "Bearer "+jwtToken)
 		}
@@ -390,8 +389,7 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 	}
 
 	// Create reverse proxy with reusable transport
-	proxy := httputil.NewSingleHostReverseProxy(targetURL)
-	proxy.Transport = s.httpTransport
+	proxy := &httputil.ReverseProxy{Transport: s.httpTransport}
 
 	// Sign the request with a JWT for sandbox authentication
 	jwtToken, ok := s.generateSandboxJWT(c, sandbox)
@@ -399,7 +397,7 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 		return
 	}
 
-	configureProxyDirector(proxy, c, targetURL, path, jwtToken, sandbox.SessionID)
+	configureProxyRewrite(proxy, c, targetURL, path, jwtToken, sandbox.SessionID)
 	configureProxyErrorHandler(proxy, c, sandbox.SessionID)
 	configureProxyResponse(proxy, sandbox.SessionID)
 

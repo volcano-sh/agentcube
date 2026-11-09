@@ -155,13 +155,13 @@ vet: ## Run go vet against code.
 
 # Run linter
 .PHONY: lint
-lint: golangci-lint ## Run golangci-lint
+lint: golangci-lint fmt-check ## Validate configuration, check formatting, and run golangci-lint
+	$(GOLANGCI_LINT) config verify
 	$(GOLANGCI_LINT) run ./...
 
 .PHONY: verify
 verify: ## Run local verification before submitting PR
 	$(MAKE) gen-check
-	$(MAKE) fmt-check
 	$(MAKE) vet
 	$(MAKE) lint
 	$(MAKE) test
@@ -307,7 +307,7 @@ GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
 
 ## Tool Versions
 CONTROLLER_TOOLS_VERSION ?= v0.22.0
-GOLANGCI_LINT_VERSION ?= v1.64.1
+GOLANGCI_LINT_VERSION ?= v2.15.0
 
 .PHONY: controller-gen
 controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
@@ -315,9 +315,8 @@ $(CONTROLLER_GEN): $(LOCALBIN)
 	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_TOOLS_VERSION))
 
 .PHONY: golangci-lint
-golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
-$(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+golangci-lint: $(LOCALBIN) ## Download the pinned golangci-lint version locally if necessary.
+	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

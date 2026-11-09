@@ -31,12 +31,17 @@ import (
 const (
 	// MaxBodySize limits request body size to prevent memory exhaustion
 	MaxBodySize = 32 << 20 // 32 MB
+	// DefaultMaxOutputSize limits how many bytes of stdout, and separately of stderr,
+	// an execution keeps in memory to prevent memory exhaustion
+	DefaultMaxOutputSize = 10 << 20 // 10 MB
 )
 
 // Config defines server configuration
 type Config struct {
 	Port      int    `json:"port"`
 	Workspace string `json:"workspace"`
+	// MaxOutputSize is the per-stream output limit in bytes; zero or negative uses DefaultMaxOutputSize.
+	MaxOutputSize int `json:"max_output_size"`
 }
 
 // Server defines the PicoD HTTP server

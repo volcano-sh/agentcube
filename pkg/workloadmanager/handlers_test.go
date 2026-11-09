@@ -1015,3 +1015,137 @@ func TestHandleSandboxCreate_IdentityErrors(t *testing.T) {
 		})
 	}
 }
+
+// deleteTestStore extends fakeStore to support handleDeleteSandbox test scenarios:
+// it can return a sandbox from GetSandboxBySessionID and optionally error on delete.
+type deleteTestStore struct {
+	fakeStore
+	getSandbox *types.SandboxInfo
+	deleteErr  error
+}
+
+func (f *deleteTestStore) GetSandboxBySessionID(_ context.Context, _ string) (*types.SandboxInfo, error) {
+	if f.getSandbox == nil {
+		return nil, store.ErrNotFound
+	}
+	return f.getSandbox, nil
+}
+
+func (f *deleteTestStore) DeleteSandboxBySessionID(_ context.Context, _ string) error {
+	f.deleteSessionCalls++
+	return f.deleteErr
+}
+
+func TestHandleDeleteSandbox_K8sDeleteSucceeds_StoreDeleteFails_Returns500(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	storeInst := &deleteTestStore{
+		getSandbox: &types.SandboxInfo{
+			Kind:             types.SandboxKind,
+			SandboxNamespace: "ns-1",
+			Name:             "sandbox-1",
+			SessionID:        "sess-del-1",
+		},
+		deleteErr: errors.New("store unavailable"),
+	}
+
+	server := &Server{
+		config:            &Config{},
+		k8sClient:         &K8sClient{},
+		sandboxController: &SandboxReconciler{},
+		storeClient:       storeInst,
+	}
+
+	patches := gomonkey.NewPatches()
+	defer patches.Reset()
+	patches.ApplyFunc(deleteSandbox, func(_ context.Context, _ dynamic.Interface, _, _ string) error {
+		return nil
+	})
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodDelete, "/sandboxes/sess-del-1", nil)
+	c.Request = req
+	c.Params = gin.Params{{Key: "sessionId", Value: "sess-del-1"}}
+
+	server.handleDeleteSandbox(c)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	require.Equal(t, 1, storeInst.deleteSessionCalls)
+}
+
+func TestHandleDeleteSandbox_K8sNonNotFoundError_Returns500(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	storeInst := &deleteTestStore{
+		getSandbox: &types.SandboxInfo{
+			Kind:             types.SandboxKind,
+			SandboxNamespace: "ns-1",
+			Name:             "sandbox-1",
+			SessionID:        "sess-del-2",
+		},
+	}
+
+	server := &Server{
+		config:            &Config{},
+		k8sClient:         &K8sClient{},
+		sandboxController: &SandboxReconciler{},
+		storeClient:       storeInst,
+	}
+
+	patches := gomonkey.NewPatches()
+	defer patches.Reset()
+	patches.ApplyFunc(deleteSandbox, func(_ context.Context, _ dynamic.Interface, _, _ string) error {
+		return apierrors.NewInternalError(fmt.Errorf("etcd timeout"))
+	})
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodDelete, "/sandboxes/sess-del-2", nil)
+	c.Request = req
+	c.Params = gin.Params{{Key: "sessionId", Value: "sess-del-2"}}
+
+	server.handleDeleteSandbox(c)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	// Store delete was not reached because the K8s delete failed.
+	require.Equal(t, 0, storeInst.deleteSessionCalls)
+}
+
+func TestHandleDeleteSandbox_K8sIsNotFound_IdempotentReturns200(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	storeInst := &deleteTestStore{
+		getSandbox: &types.SandboxInfo{
+			Kind:             types.SandboxKind,
+			SandboxNamespace: "ns-1",
+			Name:             "sandbox-1",
+			SessionID:        "sess-del-3",
+		},
+	}
+
+	server := &Server{
+		config:            &Config{},
+		k8sClient:         &K8sClient{},
+		sandboxController: &SandboxReconciler{},
+		storeClient:       storeInst,
+	}
+
+	patches := gomonkey.NewPatches()
+	defer patches.Reset()
+	patches.ApplyFunc(deleteSandbox, func(_ context.Context, _ dynamic.Interface, _, _ string) error {
+		return apierrors.NewNotFound(schema.GroupResource{Resource: "sandboxes"}, "sandbox-1")
+	})
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodDelete, "/sandboxes/sess-del-3", nil)
+	c.Request = req
+	c.Params = gin.Params{{Key: "sessionId", Value: "sess-del-3"}}
+
+	server.handleDeleteSandbox(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	// Store entry must be cleaned up even when the K8s object is already gone.
+	require.Equal(t, 1, storeInst.deleteSessionCalls)
+}

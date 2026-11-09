@@ -185,7 +185,7 @@ func (s *Server) Start(ctx context.Context) error {
 	addr := ":" + s.config.Port
 
 	// Create HTTP/2 server for better performance
-	h2s := &http2.Server{}
+	h2s := &http2.Server{} //nolint:staticcheck // h2c.NewHandler needs x/net/http2.Server to support HTTP/1.1 Upgrade.
 
 	// Wrap handler with h2c for HTTP/2 cleartext support
 	h2cHandler := h2c.NewHandler(s.engine, h2s) //nolint:staticcheck // Preserve HTTP/1.1 Upgrade support.

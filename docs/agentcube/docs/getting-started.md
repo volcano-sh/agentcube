@@ -10,7 +10,7 @@ This guide will help you get AgentCube up and running on your Kubernetes cluster
 
 Before you begin, ensure you have the following:
 
-- A Kubernetes cluster (v1.24+)
+- A Kubernetes cluster (v1.25+ with CRD CEL validation enabled for agent-sandbox v1.0.9; keep `CustomResourceValidationExpressions` enabled on v1.25–v1.28; v1.29+ is recommended)
 - `kubectl` installed and configured
 - [Helm](https://helm.sh/docs/intro/install/) v3 installed
 - [Volcano](https://volcano.sh/en/docs/installation/) installed on your cluster (AgentCube is a Volcano subproject)

@@ -6,7 +6,7 @@ This guide walks you through deploying AgentCube on a Kubernetes cluster and run
 
 Before you begin, ensure you have the following tools installed:
 
-- **Kubernetes cluster**: v1.24 or later (local clusters like [Kind](https://kind.sigs.k8s.io/) or [minikube](https://minikube.sigs.k8s.io/) work well for testing)
+- **Kubernetes cluster**: v1.25 or later with CRD CEL validation enabled for agent-sandbox v1.0.9. On v1.25–v1.28, keep the `CustomResourceValidationExpressions` feature gate enabled; v1.29 or later is recommended. Local clusters like [Kind](https://kind.sigs.k8s.io/) or [minikube](https://minikube.sigs.k8s.io/) work well for testing.
 - **kubectl**: Configured to access your cluster
 - **Helm**: v3.x or later
 - **Python**: 3.10 or later (for using the SDK)
@@ -28,9 +28,8 @@ AgentCube relies on the [kubernetes-sigs/agent-sandbox](https://github.com/kuber
 
 ```bash
 # Install agent-sandbox CRDs and controller
-AGENT_SANDBOX_VERSION=v0.1.1
-kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml
-kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml
+AGENT_SANDBOX_VERSION=v1.0.9
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/sandbox-with-extensions.yaml
 ```
 
 Verify the installation:
@@ -241,7 +240,6 @@ To remove AgentCube from your cluster:
 ```bash
 helm uninstall agentcube -n agentcube
 kubectl delete namespace agentcube
-AGENT_SANDBOX_VERSION=v0.1.1
-kubectl delete -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml
-kubectl delete -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml
+AGENT_SANDBOX_VERSION=v1.0.9
+kubectl delete -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/sandbox-with-extensions.yaml
 ```

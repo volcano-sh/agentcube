@@ -338,10 +338,10 @@ endef
 # E2E Test targets
 E2E_CLUSTER_NAME ?= agentcube-e2e
 AGENT_SANDBOX_REPO ?= https://github.com/kubernetes-sigs/agent-sandbox.git
-AGENT_SANDBOX_VERSION ?= main
+AGENT_SANDBOX_VERSION ?= v1.0.9
 
 e2e:
-	./test/e2e/run_e2e.sh
+	AGENT_SANDBOX_VERSION=$(AGENT_SANDBOX_VERSION) ./test/e2e/run_e2e.sh
 
 e2e-clean:
 	@echo "Cleaning up E2E environment..."

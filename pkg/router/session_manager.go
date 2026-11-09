@@ -97,7 +97,7 @@ func NewSessionManager(storeClient store.Store, mtlsCfg *mtls.Config, jwtMgr *JW
 
 	// Configure transport for HTTP/2 support (including h2c for cleartext)
 	// ConfigureTransports returns the HTTP/2 transport for further configuration
-	t2, err := http2.ConfigureTransports(transport)
+	t2, err := http2.ConfigureTransports(transport) //nolint:staticcheck // Keep the existing transport's HTTP/2 negotiation and ping behavior.
 	if err != nil {
 		if closeMTLS != nil {
 			closeMTLS()
@@ -108,8 +108,8 @@ func NewSessionManager(storeClient store.Store, mtlsCfg *mtls.Config, jwtMgr *JW
 	// Configure HTTP/2 ping settings for connection health checks
 	// ReadIdleTimeout: time to wait before sending a ping if no data is received
 	// PingTimeout: time to wait for a ping response before considering connection dead
-	t2.ReadIdleTimeout = 30 * time.Second
-	t2.PingTimeout = 15 * time.Second
+	t2.ReadIdleTimeout = 30 * time.Second //nolint:staticcheck // Preserve existing idle health checks until the transport is migrated.
+	t2.PingTimeout = 15 * time.Second     //nolint:staticcheck // Preserve existing ping timeout behavior.
 
 	return &manager{
 		storeClient:     storeClient,

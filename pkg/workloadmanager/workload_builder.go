@@ -33,9 +33,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
-	"k8s.io/utils/ptr"
-	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
-	extensionsv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
+	sandboxv1beta1 "sigs.k8s.io/agent-sandbox/api/v1beta1"
+	extensionsv1beta1 "sigs.k8s.io/agent-sandbox/extensions/api/v1beta1"
 )
 
 // Constants for Router's identity resources
@@ -142,12 +141,12 @@ type buildSandboxParams struct {
 }
 
 type buildSandboxClaimParams struct {
-	namespace           string
-	name                string
-	sandboxTemplateName string
-	sessionID           string
-	ownerID             string
-	idleTimeout         time.Duration
+	namespace    string
+	name         string
+	warmPoolName string
+	sessionID    string
+	ownerID      string
+	idleTimeout  time.Duration
 	// ownerReference is the reference to the CodeInterpreter that creates this SandboxClaim
 	ownerReference *metav1.OwnerReference
 }
@@ -166,7 +165,7 @@ func effectiveSessionTTL(requestedTTL time.Duration, maxSessionDuration *metav1.
 }
 
 // buildSandboxObject builds a Sandbox object from parameters
-func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
+func buildSandboxObject(params *buildSandboxParams) *sandboxv1beta1.Sandbox {
 	if params.ttl == 0 {
 		params.ttl = DefaultSandboxTTL
 	}
@@ -187,9 +186,9 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 	maps.Copy(podAnnotations, params.podAnnotations)
 
 	// Create Sandbox object using agent-sandbox types
-	sandbox := &sandboxv1alpha1.Sandbox{
+	sandbox := &sandboxv1beta1.Sandbox{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "agents.x-k8s.io/v1alpha1",
+			APIVersion: sandboxv1beta1.GroupVersion.String(),
 			Kind:       types.SandboxKind,
 		},
 		ObjectMeta: metav1.ObjectMeta{
@@ -204,18 +203,19 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 				IdleTimeoutAnnotationKey: params.idleTimeout.String(),
 			},
 		},
-		Spec: sandboxv1alpha1.SandboxSpec{
-			PodTemplate: sandboxv1alpha1.PodTemplate{
-				Spec: params.podSpec,
-				ObjectMeta: sandboxv1alpha1.PodMetadata{
-					Labels:      podLabels,
-					Annotations: podAnnotations,
+		Spec: sandboxv1beta1.SandboxSpec{
+			SandboxBlueprint: sandboxv1beta1.SandboxBlueprint{
+				PodTemplate: sandboxv1beta1.PodTemplate{
+					Spec: params.podSpec,
+					ObjectMeta: sandboxv1beta1.PodMetadata{
+						Labels:      podLabels,
+						Annotations: podAnnotations,
+					},
 				},
 			},
-			Lifecycle: sandboxv1alpha1.Lifecycle{
+			Lifecycle: sandboxv1beta1.Lifecycle{
 				ShutdownTime: &shutdownTime,
 			},
-			Replicas: ptr.To[int32](1),
 		},
 	}
 
@@ -228,14 +228,14 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1alpha1.Sandbox {
 	return sandbox
 }
 
-func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha1.SandboxClaim {
+func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1beta1.SandboxClaim {
 	idleTimeout := params.idleTimeout
 	if idleTimeout == 0 {
 		idleTimeout = DefaultSandboxIdleTimeout
 	}
-	sandboxClaim := &extensionsv1alpha1.SandboxClaim{
+	sandboxClaim := &extensionsv1beta1.SandboxClaim{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "extensions.agents.x-k8s.io/v1alpha1",
+			APIVersion: extensionsv1beta1.GroupVersion.String(),
 			Kind:       types.SandboxClaimsKind,
 		},
 		ObjectMeta: metav1.ObjectMeta{
@@ -249,9 +249,9 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 				IdleTimeoutAnnotationKey: idleTimeout.String(),
 			},
 		},
-		Spec: extensionsv1alpha1.SandboxClaimSpec{
-			TemplateRef: extensionsv1alpha1.SandboxTemplateRef{
-				Name: params.sandboxTemplateName,
+		Spec: extensionsv1beta1.SandboxClaimSpec{
+			WarmPoolRef: extensionsv1beta1.SandboxWarmPoolRef{
+				Name: params.warmPoolName,
 			},
 		},
 	}
@@ -269,7 +269,7 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1alpha
 	return sandboxClaim
 }
 
-func buildSandboxByAgentRuntime(namespace string, name string, ownerID string, requestedTTL time.Duration, ifm *Informers) (*sandboxv1alpha1.Sandbox, *sandboxEntry, error) {
+func buildSandboxByAgentRuntime(namespace string, name string, ownerID string, requestedTTL time.Duration, ifm *Informers) (*sandboxv1beta1.Sandbox, *sandboxEntry, error) {
 	agentRuntimeObj, err := ifm.AgentRuntimeLister.AgentRuntimes(namespace).Get(name)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -333,7 +333,7 @@ func buildCodeInterpreterEnvVars(templateEnv []corev1.EnvVar, authMode runtimev1
 	return envVars
 }
 
-func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, ownerID string, requestedTTL time.Duration, informer *Informers) (*sandboxv1alpha1.Sandbox, *extensionsv1alpha1.SandboxClaim, *sandboxEntry, error) {
+func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string, ownerID string, requestedTTL time.Duration, informer *Informers) (*sandboxv1beta1.Sandbox, *extensionsv1beta1.SandboxClaim, *sandboxEntry, error) {
 	codeInterpreterObj, err := informer.CodeInterpreterLister.CodeInterpreters(namespace).Get(codeInterpreterName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -376,12 +376,12 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 
 	if codeInterpreterObj.Spec.WarmPoolSize != nil && *codeInterpreterObj.Spec.WarmPoolSize > 0 {
 		sandboxClaim := buildSandboxClaimObject(&buildSandboxClaimParams{
-			namespace:           namespace,
-			name:                sandboxName,
-			sandboxTemplateName: codeInterpreterName,
-			sessionID:           sessionID,
-			ownerID:             ownerID,
-			idleTimeout:         idleTimeout,
+			namespace:    namespace,
+			name:         sandboxName,
+			warmPoolName: codeInterpreterName,
+			sessionID:    sessionID,
+			ownerID:      ownerID,
+			idleTimeout:  idleTimeout,
 			ownerReference: &metav1.OwnerReference{
 				APIVersion: runtimev1alpha1.CodeInterpreterGroupVersionKind.GroupVersion().String(),
 				Kind:       runtimev1alpha1.CodeInterpreterKind,
@@ -389,7 +389,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 				UID:        codeInterpreterObj.UID,
 			},
 		})
-		simpleSandbox := &sandboxv1alpha1.Sandbox{
+		simpleSandbox := &sandboxv1beta1.Sandbox{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: namespace,
 				Name:      sandboxName,

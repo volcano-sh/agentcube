@@ -23,18 +23,32 @@ import (
 
 	cubeinformers "github.com/volcano-sh/agentcube/client-go/informers/externalversions"
 	cubelisters "github.com/volcano-sh/agentcube/client-go/listers/runtime/v1alpha1"
-	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
-	sandboxv1beta1 "sigs.k8s.io/agent-sandbox/api/v1beta1"
-	extensionsv1beta1 "sigs.k8s.io/agent-sandbox/extensions/api/v1beta1"
 )
 
 var (
-	AgentRuntimeGVR    = runtimev1alpha1.GroupVersion.WithResource("agentruntimes")
-	CodeInterpreterGVR = runtimev1alpha1.GroupVersion.WithResource("codeinterpreters")
-	SandboxGVR         = sandboxv1beta1.GroupVersion.WithResource("sandboxes")
-	SandboxClaimGVR    = extensionsv1beta1.GroupVersion.WithResource("sandboxclaims")
+	AgentRuntimeGVR = schema.GroupVersionResource{
+		Group:    "runtime.agentcube.volcano.sh",
+		Version:  "v1alpha1",
+		Resource: "agentruntimes",
+	}
+	CodeInterpreterGVR = schema.GroupVersionResource{
+		Group:    "runtime.agentcube.volcano.sh",
+		Version:  "v1alpha1",
+		Resource: "codeinterpreters",
+	}
+	SandboxGVR = schema.GroupVersionResource{
+		Group:    "agents.x-k8s.io",
+		Version:  "v1beta1",
+		Resource: "sandboxes",
+	}
+	SandboxClaimGVR = schema.GroupVersionResource{
+		Group:    "extensions.agents.x-k8s.io",
+		Version:  "v1beta1",
+		Resource: "sandboxclaims",
+	}
 )
 
 type Informers struct {

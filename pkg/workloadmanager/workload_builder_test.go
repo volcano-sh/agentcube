@@ -188,7 +188,7 @@ func TestBuildSandboxObject_WorkloadNameLabel(t *testing.T) {
 			}
 			sandbox := buildSandboxObject(params)
 
-			got := sandbox.ObjectMeta.Labels[WorkloadNameLabelKey]
+			got := sandbox.Labels[WorkloadNameLabelKey]
 			if got != tt.wantLabel {
 				t.Errorf("expected %s=%q, got %q", WorkloadNameLabelKey, tt.wantLabel, got)
 			}
@@ -479,10 +479,10 @@ func TestBuildSandboxByAgentRuntime_Success(t *testing.T) {
 	assertAgentRuntimePodLabels(t, sandbox.Spec.PodTemplate.ObjectMeta.Labels, sandbox.Name, entry.SessionID)
 
 	// Validate TTL (MaxSessionDuration)
-	if sandbox.Spec.Lifecycle.ShutdownTime == nil {
+	if sandbox.Spec.ShutdownTime == nil {
 		t.Error("expected shutdown time to be set")
 	}
-	assert.WithinDuration(t, startedAt.Add(time.Hour), sandbox.Spec.Lifecycle.ShutdownTime.Time, time.Second)
+	assert.WithinDuration(t, startedAt.Add(time.Hour), sandbox.Spec.ShutdownTime.Time, time.Second)
 
 	// Validate Entry
 	if entry.Kind != types.SandboxKind {
@@ -710,7 +710,7 @@ func TestBuildSandboxByCodeInterpreter_SuccessNoWarmPool(t *testing.T) {
 	if claim != nil {
 		t.Fatal("expected claim to be nil for non-warm pool path")
 	}
-	assert.WithinDuration(t, startedAt.Add(30*time.Minute), sandbox.Spec.Lifecycle.ShutdownTime.Time, time.Second)
+	assert.WithinDuration(t, startedAt.Add(30*time.Minute), sandbox.Spec.ShutdownTime.Time, time.Second)
 
 	if !strings.HasPrefix(sandbox.Name, "ci-no-wp-") {
 		t.Errorf("expected sandbox name to start with 'ci-no-wp-', got %q", sandbox.Name)
@@ -770,7 +770,7 @@ func TestBuildSandboxByCodeInterpreter_SuccessWithWarmPool(t *testing.T) {
 	if claim == nil {
 		t.Fatal("expected claim not to be nil for warm pool path")
 	}
-	assert.WithinDuration(t, startedAt.Add(30*time.Minute), sandbox.Spec.Lifecycle.ShutdownTime.Time, time.Second)
+	assert.WithinDuration(t, startedAt.Add(30*time.Minute), sandbox.Spec.ShutdownTime.Time, time.Second)
 
 	assertSandboxMetadata(t, sandbox.Labels, sandbox.Name, sandbox.Namespace, testCodeInterpreterWarmPool+"-", "", entry.SessionID)
 	if entry.Kind != types.SandboxClaimsKind {
@@ -818,8 +818,8 @@ func TestBuildSandboxObject_OwnershipLabels(t *testing.T) {
 			}
 			sandbox := buildSandboxObject(params)
 
-			_, hasAnnot := sandbox.ObjectMeta.Annotations["agentcube.io/owner"]
-			_, hasLabel := sandbox.ObjectMeta.Labels["agentcube.io/owner-hash"]
+			_, hasAnnot := sandbox.Annotations["agentcube.io/owner"]
+			_, hasLabel := sandbox.Labels["agentcube.io/owner-hash"]
 
 			if hasAnnot != tt.wantAnnot {
 				t.Errorf("expected annotation present=%v, got %v", tt.wantAnnot, hasAnnot)
@@ -829,10 +829,10 @@ func TestBuildSandboxObject_OwnershipLabels(t *testing.T) {
 			}
 
 			if tt.ownerID != "" {
-				if sandbox.ObjectMeta.Annotations["agentcube.io/owner"] != tt.ownerID {
-					t.Errorf("expected annotation value %q, got %q", tt.ownerID, sandbox.ObjectMeta.Annotations["agentcube.io/owner"])
+				if sandbox.Annotations["agentcube.io/owner"] != tt.ownerID {
+					t.Errorf("expected annotation value %q, got %q", tt.ownerID, sandbox.Annotations["agentcube.io/owner"])
 				}
-				hash := sandbox.ObjectMeta.Labels["agentcube.io/owner-hash"]
+				hash := sandbox.Labels["agentcube.io/owner-hash"]
 				if len(hash) != 63 {
 					t.Errorf("expected owner-hash length 63, got %d", len(hash))
 				}
@@ -874,8 +874,8 @@ func TestBuildSandboxClaimObject_OwnershipLabels(t *testing.T) {
 			}
 			claim := buildSandboxClaimObject(params)
 
-			_, hasAnnot := claim.ObjectMeta.Annotations["agentcube.io/owner"]
-			_, hasLabel := claim.ObjectMeta.Labels["agentcube.io/owner-hash"]
+			_, hasAnnot := claim.Annotations["agentcube.io/owner"]
+			_, hasLabel := claim.Labels["agentcube.io/owner-hash"]
 
 			if hasAnnot != tt.wantAnnot {
 				t.Errorf("expected annotation present=%v, got %v", tt.wantAnnot, hasAnnot)

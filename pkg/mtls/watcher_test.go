@@ -139,10 +139,10 @@ func TestReloadAll_DoesNotPublishPartialState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read new key: %v", err)
 	}
-	if err := os.WriteFile(certFile, newCert, 0600); err != nil {
+	if err := os.WriteFile(certFile, newCert, 0600); err != nil { //nolint:gosec // G703: certFile is created under t.TempDir by generateTestCerts.
 		t.Fatalf("write replacement cert: %v", err)
 	}
-	if err := os.WriteFile(keyFile, newKey, 0600); err != nil {
+	if err := os.WriteFile(keyFile, newKey, 0600); err != nil { //nolint:gosec // G703: keyFile is created under t.TempDir by generateTestCerts.
 		t.Fatalf("write replacement key: %v", err)
 	}
 	if err := os.WriteFile(caFile, []byte("not a valid CA bundle"), 0600); err != nil {

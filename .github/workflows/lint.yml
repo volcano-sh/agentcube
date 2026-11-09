@@ -13,8 +13,10 @@ on:
 
 permissions:
   contents: read
-  # Optional: allow read access to pull request. Use with `only-new-issues` option.
-  pull-requests: read
+
+concurrency:
+  group: lint-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   golangci:
@@ -24,24 +26,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Filter paths
-        id: changes
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
-        with:
-          filters: |
-            lint:
-              - '**/*.go'
-              - 'go.mod'
-              - 'go.sum'
-              - '.golangci.yml'
-              - '.github/workflows/lint.yml'
-
       - name: Set up Go
-        if: steps.changes.outputs.lint == 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
       - name: Run golangci-lint
-        if: steps.changes.outputs.lint == 'true'
         run: make lint

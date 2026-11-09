@@ -18,12 +18,15 @@ package router
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -759,6 +762,62 @@ func TestForwardToSandbox_XForwardedFor(t *testing.T) {
 			}
 			if got := <-received; got != tt.want {
 				t.Errorf("X-Forwarded-For received by sandbox = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProxyRewrite_Request(t *testing.T) {
+	for _, scheme := range []string{"http", "https"} {
+		t.Run(scheme, func(t *testing.T) {
+			received := make(chan *http.Request, 1)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				received <- r.Clone(context.Background())
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer upstream.Close()
+			target, err := url.Parse(upstream.URL + "/ignored?target=1")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			req := httptest.NewRequest(http.MethodGet, scheme+"://router.example/invoke?x=a%2Fb&x=2", nil)
+			req.RemoteAddr = "192.0.2.10:1234"
+			if scheme == "https" {
+				req.TLS = &tls.ConnectionState{}
+			}
+			req.Header.Set("Connection", "Authorization, X-Forwarded-Host")
+			req.Header.Set("Authorization", "Bearer caller-token")
+			req.Header.Set("Forwarded", "for=spoofed")
+			req.Header.Set("X-Forwarded-Host", "spoofed.example")
+			req.Header.Add("X-Forwarded-For", "198.51.100.1")
+			req.Header.Add("X-Forwarded-For", "198.51.100.2")
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = req
+			proxy := &httputil.ReverseProxy{}
+			configureProxyRewrite(proxy, c, target, "api/run", "signed-token", "session-1")
+
+			proxy.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("proxy returned %d: %s", w.Code, w.Body.String())
+			}
+			got := <-received
+			if got.Host != target.Host || got.URL.Path != "/api/run" || got.URL.RawQuery != "target=1&x=a%2Fb&x=2" {
+				t.Errorf("unexpected upstream request: host=%q URL=%s", got.Host, got.URL)
+			}
+			for header, want := range map[string]string{
+				"Authorization":     "Bearer signed-token",
+				"X-Forwarded-Host":  "router.example",
+				"X-Forwarded-Proto": scheme,
+				"X-Forwarded-For":   "198.51.100.1, 198.51.100.2, 192.0.2.10",
+				"Forwarded":         "",
+				"Connection":        "",
+			} {
+				if value := got.Header.Get(header); value != want {
+					t.Errorf("%s = %q, want %q", header, value, want)
+				}
 			}
 		})
 	}

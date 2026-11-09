@@ -19,6 +19,7 @@ package workloadmanager
 import (
 	"encoding/base64"
 	"encoding/json"
+	"strconv"
 	"testing"
 	"time"
 
@@ -592,7 +593,7 @@ func TestClientCache_ConcurrentAccess(t *testing.T) {
 	done := make(chan bool, 10)
 	for i := 0; i < 10; i++ {
 		go func(idx int) {
-			key := "default:sa" + string(rune('0'+idx))
+			key := "default:sa" + strconv.Itoa(idx)
 			client := &UserK8sClient{
 				dynamicClient: dynamicClient,
 				namespace:     "default",
@@ -618,8 +619,8 @@ func TestTokenCache_ConcurrentAccess(t *testing.T) {
 	done := make(chan bool, 10)
 	for i := 0; i < 10; i++ {
 		go func(idx int) {
-			token := "token" + string(rune('0'+idx))
-			cache.Set(token, true, "user"+string(rune('0'+idx)))
+			token := "token" + strconv.Itoa(idx)
+			cache.Set(token, true, "user"+strconv.Itoa(idx))
 			done <- true
 		}(i)
 	}

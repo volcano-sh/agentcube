@@ -205,8 +205,8 @@ func TestLoadPrivateKeyPEM(t *testing.T) {
 	loadedKey := newManager.privateKey
 
 	// Compare public key components (N and E)
-	assert.Equal(t, originalKey.PublicKey.N, loadedKey.PublicKey.N, "Public key N should match")
-	assert.Equal(t, originalKey.PublicKey.E, loadedKey.PublicKey.E, "Public key E should match")
+	assert.Equal(t, originalKey.N, loadedKey.N, "Public key N should match")
+	assert.Equal(t, originalKey.E, loadedKey.E, "Public key E should match")
 
 	// Compare private exponent D
 	assert.Equal(t, 0, originalKey.D.Cmp(loadedKey.D), "Private exponent D should match")

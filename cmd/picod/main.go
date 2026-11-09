@@ -63,7 +63,9 @@ func main() {
 	case <-ctx.Done():
 		klog.Info("Received shutdown signal, shutting down gracefully...")
 		cancel()
-		<-errCh
+		if err := <-errCh; err != nil {
+			klog.Errorf("Server shutdown error: %v", err)
+		}
 	case err := <-errCh:
 		klog.Fatalf("Server error: %v", err)
 	}

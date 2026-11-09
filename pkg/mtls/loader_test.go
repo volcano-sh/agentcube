@@ -131,6 +131,9 @@ func TestLoadServerConfig(t *testing.T) {
 		t.Fatalf("LoadServerConfig() error: %v", err)
 	}
 	defer watcher.Stop()
+	if !tlsCfg.SessionTicketsDisabled {
+		t.Error("session tickets must be disabled so reconnects verify the current CA pool")
+	}
 	// RequireAnyClientCert: require a cert, but verify it manually via VerifyPeerCertificate
 	if tlsCfg.ClientAuth != tls.RequireAnyClientCert {
 		t.Errorf("ClientAuth = %v, want RequireAnyClientCert", tlsCfg.ClientAuth)
@@ -173,6 +176,9 @@ func TestLoadClientConfig_WithSPIFFEID(t *testing.T) {
 		t.Fatalf("LoadClientConfig() error: %v", err)
 	}
 	defer watcher.Stop()
+	if !tlsCfg.SessionTicketsDisabled {
+		t.Error("session tickets must be disabled so reconnects verify the current CA pool")
+	}
 	if !tlsCfg.InsecureSkipVerify {
 		t.Error("InsecureSkipVerify should be true when expectedServerID is set")
 	}

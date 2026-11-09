@@ -724,15 +724,17 @@ func TestForwardToSandbox_XForwardedFor(t *testing.T) {
 	}
 
 	tests := []struct {
-		name   string
-		prior  []string
-		realIP string
-		want   string
+		name       string
+		prior      []string
+		connection []string
+		realIP     string
+		want       string
 	}{
 		{name: "no prior header", want: peer},
 		{name: "single prior entry", prior: []string{"198.51.100.9"}, want: "198.51.100.9, " + peer},
 		{name: "multiple prior entries", prior: []string{"198.51.100.9, 192.0.2.1"}, want: "198.51.100.9, 192.0.2.1, " + peer},
 		{name: "repeated prior headers", prior: []string{"198.51.100.9", "192.0.2.1"}, want: "198.51.100.9, 192.0.2.1, " + peer},
+		{name: "hop-by-hop forwarding chain", connection: []string{"keep-alive", "other, x-FoRwArDeD-fOr"}, prior: []string{"198.51.100.9"}, want: peer},
 		{name: "X-Real-IP only", realIP: "203.0.113.50", want: "203.0.113.50, " + peer},
 		{name: "invalid X-Real-IP only", realIP: "not-an-ip", want: peer},
 		{name: "X-Forwarded-For wins over X-Real-IP", prior: []string{"198.51.100.9"}, realIP: "203.0.113.50", want: "198.51.100.9, " + peer},
@@ -743,6 +745,9 @@ func TestForwardToSandbox_XForwardedFor(t *testing.T) {
 			req, err := http.NewRequest(http.MethodGet, routerServer.URL+"/v1/namespaces/default/agent-runtimes/test-agent/invocations/test", nil)
 			if err != nil {
 				t.Fatalf("Failed to create request: %v", err)
+			}
+			for _, v := range tt.connection {
+				req.Header.Add("Connection", v)
 			}
 			for _, v := range tt.prior {
 				req.Header.Add("X-Forwarded-For", v)

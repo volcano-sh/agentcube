@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/net/http/httpguts"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 
@@ -332,11 +333,13 @@ func configureProxyRewrite(proxy *httputil.ReverseProxy, c *gin.Context, targetU
 
 		req.URL.Path = proxyPath
 		req.URL.RawPath = ""
-		// Preserve the forwarding chain while appending the immediate peer once.
-		if prior, ok := pr.In.Header["X-Forwarded-For"]; ok {
-			req.Header["X-Forwarded-For"] = prior
-		} else if ip := c.ClientIP(); ip != c.RemoteIP() {
-			req.Header.Set("X-Forwarded-For", ip)
+		// Only preserve the forwarding chain when it can cross this hop.
+		if !httpguts.HeaderValuesContainsToken(pr.In.Header.Values("Connection"), "X-Forwarded-For") {
+			if prior, ok := pr.In.Header["X-Forwarded-For"]; ok {
+				req.Header["X-Forwarded-For"] = prior
+			} else if ip := c.ClientIP(); ip != c.RemoteIP() {
+				req.Header.Set("X-Forwarded-For", ip)
+			}
 		}
 		pr.SetXForwarded()
 		if jwtToken != "" {

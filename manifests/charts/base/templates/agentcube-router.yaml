@@ -33,10 +33,17 @@ spec:
       {{- if .Values.spire.enabled }}
       securityContext:
         fsGroup: 1000
-      {{- end }}
-      containers:
-        {{- if .Values.spire.enabled }}
+      initContainers:
         - name: spiffe-helper
+          restartPolicy: Always
+          # Gate application startup on successful certificate delivery.
+          startupProbe:
+            httpGet:
+              path: /ready
+              port: {{ .Values.spire.spiffeHelper.healthPort | default 8081 }}
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 150
           image: "{{ .Values.spire.spiffeHelper.image.repository }}:{{ .Values.spire.spiffeHelper.image.tag }}"
           imagePullPolicy: {{ .Values.spire.spiffeHelper.image.pullPolicy }}
           args:
@@ -51,7 +58,8 @@ spec:
               readOnly: true
             - name: spire-certs
               mountPath: {{ .Values.spire.spiffeHelper.certDir }}
-        {{- end }}
+      {{- end }}
+      containers:
         - name: agentcube-router
           {{- if .Values.spire.enabled }}
           volumeMounts:

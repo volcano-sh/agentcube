@@ -18,11 +18,8 @@ package workloadmanager
 
 import (
 	"context"
-	"fmt"
 	"time"
 
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 
@@ -121,9 +118,9 @@ func (gc *garbageCollector) once() {
 	// delete sandboxes
 	for _, gcSandbox := range gcSandboxes {
 		if gcSandbox.Kind == types.SandboxClaimsKind {
-			err = gc.deleteSandboxClaim(ctx, gcSandbox.SandboxNamespace, gcSandbox.Name)
+			err = deleteSandboxClaim(ctx, gc.k8sClient.dynamicClient, gcSandbox.SandboxNamespace, gcSandbox.Name)
 		} else {
-			err = gc.deleteSandbox(ctx, gcSandbox.SandboxNamespace, gcSandbox.Name)
+			err = deleteSandbox(ctx, gc.k8sClient.dynamicClient, gcSandbox.SandboxNamespace, gcSandbox.Name)
 		}
 		if err != nil {
 			errs = append(errs, err)
@@ -139,28 +136,6 @@ func (gc *garbageCollector) once() {
 	if err != nil {
 		klog.Errorf("garbage collector failed with error: %v", err)
 	}
-}
-
-func (gc *garbageCollector) deleteSandbox(ctx context.Context, namespace, name string) error {
-	err := gc.k8sClient.dynamicClient.Resource(SandboxGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("error deleting sandbox %s/%s: %w", namespace, name, err)
-	}
-	return nil
-}
-
-func (gc *garbageCollector) deleteSandboxClaim(ctx context.Context, namespace, name string) error {
-	err := gc.k8sClient.dynamicClient.Resource(SandboxClaimGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("error deleting sandboxClaim %s/%s: %w", namespace, name, err)
-	}
-	return nil
 }
 
 // deduplicateSandboxes merges multiple sandbox lists and removes duplicates

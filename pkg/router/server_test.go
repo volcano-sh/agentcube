@@ -18,9 +18,13 @@ package router
 
 import (
 	"context"
+	"net"
+	"net/http"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 func setupTestEnv(t *testing.T) {
@@ -221,6 +225,113 @@ func TestServer_StartContext(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Error("Server did not shutdown within timeout")
+	}
+}
+
+func allocateFreePort(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to find free port: %v", err)
+	}
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	_ = ln.Close()
+	if err != nil {
+		t.Fatalf("Failed to parse listener address: %v", err)
+	}
+	return port
+}
+
+func waitForServerReady(t *testing.T, client *http.Client, port string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		resp, err := client.Get("http://127.0.0.1:" + port + "/health/live")
+		if err == nil {
+			_ = resp.Body.Close()
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Server did not become ready before deadline: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestServer_StartWaitsForInFlightRequests(t *testing.T) {
+	setupTestEnv(t)
+
+	port := allocateFreePort(t)
+	server, err := NewServer(&Config{Port: port})
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+
+	requestStarted := make(chan struct{})
+	releaseHandler := make(chan struct{})
+	server.engine.GET("/inflight", func(c *gin.Context) {
+		close(requestStarted)
+		<-releaseHandler
+		c.Status(http.StatusOK)
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- server.Start(ctx)
+	}()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	waitForServerReady(t, client, port)
+
+	reqStatusCh := make(chan int, 1)
+	go func() {
+		resp, reqErr := client.Get("http://127.0.0.1:" + port + "/inflight")
+		if reqErr != nil {
+			reqStatusCh <- -1
+			return
+		}
+		_ = resp.Body.Close()
+		reqStatusCh <- resp.StatusCode
+	}()
+
+	select {
+	case <-requestStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for in-flight request to start")
+	}
+
+	// Cancel context while the request is still in-flight.
+	cancel()
+
+	// Start must not return while the in-flight handler is still running.
+	select {
+	case err := <-startDone:
+		t.Fatalf("Start returned before in-flight request finished (err=%v)", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// Release the in-flight handler and verify both the request and Start complete cleanly.
+	close(releaseHandler)
+
+	select {
+	case status := <-reqStatusCh:
+		if status != http.StatusOK {
+			t.Fatalf("Expected status %d, got %d", http.StatusOK, status)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for in-flight request response")
+	}
+
+	select {
+	case err := <-startDone:
+		if err != nil {
+			t.Fatalf("Expected Start to return nil after graceful shutdown, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for Start to return after in-flight request completed")
 	}
 }
 

@@ -182,6 +182,10 @@ func (s *Server) setupRoutes() {
 
 // Start starts the Router API server
 func (s *Server) Start(ctx context.Context) error {
+	if s.config.EnableTLS && (s.config.TLSCert == "" || s.config.TLSKey == "") {
+		return fmt.Errorf("TLS enabled but cert/key not provided")
+	}
+
 	addr := ":" + s.config.Port
 
 	// Create HTTP/2 server for better performance
@@ -197,9 +201,17 @@ func (s *Server) Start(ctx context.Context) error {
 		IdleTimeout: 90 * time.Second, // golang http default transport's idletimeout is 90s
 	}
 
+	shutdownDone := make(chan struct{})
+	serveDone := make(chan struct{})
+
 	// Listen for shutdown signal in goroutine
 	go func() {
-		<-ctx.Done()
+		defer close(shutdownDone)
+		select {
+		case <-ctx.Done():
+		case <-serveDone:
+			return
+		}
 		klog.Info("Shutting down Router server...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -216,13 +228,12 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start HTTP or HTTPS server
 	var err error
 	if s.config.EnableTLS {
-		if s.config.TLSCert == "" || s.config.TLSKey == "" {
-			return fmt.Errorf("TLS enabled but cert/key not provided")
-		}
 		err = s.httpServer.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
 	} else {
 		err = s.httpServer.ListenAndServe()
 	}
+	close(serveDone)
+	<-shutdownDone
 
 	if err != nil && err != http.ErrServerClosed {
 		return err

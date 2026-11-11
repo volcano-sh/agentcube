@@ -297,19 +297,23 @@ func (rs *redisStore) Close() error {
 	return rs.cli.Close()
 }
 
-// updateSessionLastActivityScript atomically checks if the session key exists
+// updateSessionLastActivityLua atomically checks if the session key exists
 // and updates its last activity time in the sorted-set index.
 // It uses EXISTS to verify presence rather than GET (which retrieved the
 // actual value in older implementations). This saves data transfer overhead,
 // if in future the value is required GET can be used instead.
-var updateSessionLastActivityScript = redisv9.NewScript(`
+// Both the redis and valkey stores run this script, so a session deleted
+// between the check and the ZADD cannot be re-added to the index.
+const updateSessionLastActivityLua = `
 if redis.call("EXISTS", KEYS[1]) == 1 then
 	redis.call("ZADD", KEYS[2], ARGV[2], ARGV[1])
 	return 1
 else
 	return 0
 end
-`)
+`
+
+var updateSessionLastActivityScript = redisv9.NewScript(updateSessionLastActivityLua)
 
 // UpdateSessionLastActivity updates the last-activity index for the given session.
 func (rs *redisStore) UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error {

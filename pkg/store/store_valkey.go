@@ -301,7 +301,13 @@ func (vs *valkeyStore) Close() error {
 	return nil
 }
 
-// UpdateSessionLastActivity updates the last-activity index for the given session
+// updateSessionLastActivityValkeyScript is the valkey client's handle for
+// updateSessionLastActivityLua (defined in store_redis.go).
+var updateSessionLastActivityValkeyScript = valkey.NewLuaScript(updateSessionLastActivityLua)
+
+// UpdateSessionLastActivity updates the last-activity index for the given session.
+// The existence check and the ZADD run in one script, so a concurrent delete
+// cannot leave an orphaned member in the last-activity index.
 func (vs *valkeyStore) UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error {
 	if sessionID == "" {
 		return errors.New("UpdateSessionLastActivity: sessionID is empty")
@@ -310,20 +316,15 @@ func (vs *valkeyStore) UpdateSessionLastActivity(ctx context.Context, sessionID 
 		at = time.Now()
 	}
 	sessionKey := vs.sessionKey(sessionID)
-	existsResult, err := vs.cli.Do(ctx, vs.cli.B().Exists().Key(sessionKey).Build()).AsInt64()
+	res, err := updateSessionLastActivityValkeyScript.Exec(ctx, vs.cli,
+		[]string{sessionKey, vs.lastActivityIndexKey},
+		[]string{sessionID, strconv.FormatInt(at.Unix(), 10)},
+	).AsInt64()
 	if err != nil {
-		return fmt.Errorf("UpdateSessionLastActivity: valkey Exists failed: %w", err)
+		return fmt.Errorf("UpdateSessionLastActivity: script execution failed for sessionID %s: %w", sessionID, err)
 	}
-	if existsResult != 1 {
-		// Existing result must be 1
+	if res == 0 {
 		return ErrNotFound
-	}
-
-	zddCmd := vs.cli.B().Zadd().Key(vs.lastActivityIndexKey).ScoreMember().
-		ScoreMember(float64(at.Unix()), sessionID).Build()
-	err = vs.cli.Do(ctx, zddCmd).Error()
-	if err != nil {
-		return fmt.Errorf("UpdateSessionLastActivity: ZADD failed: %w", err)
 	}
 	return nil
 }

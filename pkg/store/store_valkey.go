@@ -139,6 +139,7 @@ func (vs *valkeyStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs
 	return sandboxResults, nil
 }
 
+// In cluster mode, all keys accessed by this Lua script must hash to the same slot.
 var removeOrphanedIndexEntriesValkeyScript = valkey.NewLuaScript(removeOrphanedIndexEntriesLua)
 
 func (vs *valkeyStore) removeOrphanedIndexEntries(ctx context.Context, sessionIDs []string) {

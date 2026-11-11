@@ -169,6 +169,15 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 		return
 	}
 
+	// Per-owner rate limiting: only enforced when an identity is present so that
+	// unauthenticated/admin flows (integration tests, CLI tools) are unaffected.
+	if ownerID != "" && s.rateLimiter != nil && !s.rateLimiter.Allow(ownerID) {
+		retryAfter := s.rateLimiter.RetryAfter(ownerID)
+		c.Header("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
+		respondError(c, http.StatusTooManyRequests, "sandbox creation rate limit exceeded")
+		return
+	}
+
 	switch sandboxReq.Kind {
 	case types.AgentRuntimeKind:
 		sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, ownerID, sandboxReq.RequestedTTL(), s.informers)

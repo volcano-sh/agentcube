@@ -44,6 +44,7 @@ type Server struct {
 	tokenCache        *TokenCache
 	informers         *Informers
 	storeClient       store.Store
+	rateLimiter       *OwnerRateLimiter
 	wg                sync.WaitGroup
 	certWatcher       *mtls.CertWatcher // mTLS cert watcher for graceful cleanup
 }
@@ -104,6 +105,7 @@ func NewServer(config *Config, sandboxController *SandboxReconciler) (*Server, e
 		tokenCache:        tokenCache,
 		informers:         NewInformers(k8sClient),
 		storeClient:       store.Storage(),
+		rateLimiter:       NewDefaultOwnerRateLimiter(),
 	}
 
 	// Setup routes

@@ -169,12 +169,7 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 		return
 	}
 
-	// Per-owner rate limiting: only enforced when an identity is present so that
-	// unauthenticated/admin flows (integration tests, CLI tools) are unaffected.
-	if ownerID != "" && s.rateLimiter != nil && !s.rateLimiter.Allow(ownerID) {
-		retryAfter := s.rateLimiter.RetryAfter(ownerID)
-		c.Header("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
-		respondError(c, http.StatusTooManyRequests, "sandbox creation rate limit exceeded")
+	if !s.checkOwnerRateLimit(c, ownerID) {
 		return
 	}
 
@@ -231,6 +226,19 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	}
 
 	respondJSON(c, http.StatusOK, response)
+}
+
+// checkOwnerRateLimit returns true when the request is allowed to proceed.
+// When the owner's token bucket is empty it writes a 429 response with a
+// Retry-After header and returns false so the caller can return immediately.
+func (s *Server) checkOwnerRateLimit(c *gin.Context, ownerID string) bool {
+	if ownerID == "" || s.rateLimiter == nil || s.rateLimiter.Allow(ownerID) {
+		return true
+	}
+	retryAfter := s.rateLimiter.RetryAfter(ownerID)
+	c.Header("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
+	respondError(c, http.StatusTooManyRequests, "sandbox creation rate limit exceeded")
+	return false
 }
 
 func resolveSandboxOwnerID(r *http.Request) (string, int, string) {

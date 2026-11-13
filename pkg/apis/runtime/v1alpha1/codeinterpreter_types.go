@@ -42,6 +42,7 @@ type CodeInterpreter struct {
 }
 
 // CodeInterpreterSpec describes how to create and manage code-interpreter sandboxes.
+// +kubebuilder:validation:XValidation:rule="!has(self.sessionTimeout) || !has(self.maxSessionDuration) || duration(self.sessionTimeout) <= duration(self.maxSessionDuration)",message="sessionTimeout must be less than or equal to maxSessionDuration"
 type CodeInterpreterSpec struct {
 	// Ports is a list of ports that the code interpreter runtime will expose.
 	// These ports are typically used by the router / apiserver to proxy HTTP or gRPC
@@ -59,12 +60,16 @@ type CodeInterpreterSpec struct {
 	// SessionTimeout describes the duration after which an inactive code-interpreter
 	// session will be terminated. Any sandbox that has not received requests within
 	// this duration is eligible for cleanup.
+	// +kubebuilder:validation:Format=duration
+	// +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="sessionTimeout must be greater than 0"
 	// +kubebuilder:default="15m"
 	SessionTimeout *metav1.Duration `json:"sessionTimeout,omitempty"`
 
 	// MaxSessionDuration describes the maximum duration for a code-interpreter session.
 	// After this duration, the session will be terminated regardless of activity, to
 	// prevent long-lived sandboxes from accumulating unbounded state.
+	// +kubebuilder:validation:Format=duration
+	// +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="maxSessionDuration must be greater than 0"
 	// +kubebuilder:default="8h"
 	MaxSessionDuration *metav1.Duration `json:"maxSessionDuration,omitempty"`
 
@@ -72,6 +77,7 @@ type CodeInterpreterSpec struct {
 	// for this code interpreter runtime. Pre-warmed sandboxes can reduce startup
 	// latency for new sessions at the cost of additional resource usage.
 	// +optional
+	// +kubebuilder:validation:Minimum=0
 	WarmPoolSize *int32 `json:"warmPoolSize,omitempty"`
 
 	// AuthMode specifies the authentication mode for the sandbox runtime.
@@ -158,11 +164,14 @@ type TargetPort struct {
 	// PathPrefix is the path prefix to route to this port.
 	// For example, if PathPrefix is "/api", requests to "/api/..." will be routed to this port.
 	// +optional
+	// +kubebuilder:validation:Pattern=`^/.*`
 	PathPrefix string `json:"pathPrefix,omitempty"`
 	// Name is the name of the port.
 	// +optional
 	Name string `json:"name,omitempty"`
 	// Port is the port number.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
 	Port uint32 `json:"port"`
 	// Protocol is the protocol of the port.
 	// +kubebuilder:default=HTTP

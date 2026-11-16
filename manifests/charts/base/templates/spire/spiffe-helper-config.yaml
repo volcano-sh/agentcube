@@ -16,6 +16,13 @@ data:
     svid_file_name = "{{ .Values.spire.spiffeHelper.certFileName }}"
     svid_key_file_name = "{{ .Values.spire.spiffeHelper.keyFileName }}"
     svid_bundle_file_name = "{{ .Values.spire.spiffeHelper.bundleFileName }}"
+    # Readiness succeeds only after the X.509 cert, key, and bundle are written.
+    health_checks {
+      listener_enabled = true
+      bind_port = {{ .Values.spire.spiffeHelper.healthPort | default 8081 }}
+      liveness_path = "/live"
+      readiness_path = "/ready"
+    }
     # Allow non-root app containers (via fsGroup) to read the private key
     key_file_mode = "0640"
 {{- end }}

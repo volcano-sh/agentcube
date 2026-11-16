@@ -130,6 +130,9 @@ func (gc *garbageCollector) once() {
 			continue
 		}
 		klog.Infof("garbage collector %s %s/%s session %s deleted", gcSandbox.Kind, gcSandbox.SandboxNamespace, gcSandbox.Name, gcSandbox.SessionID)
+		sandboxAuditEvent(ctx, gc.k8sClient.clientset, gcSandbox.SandboxNamespace, gcSandbox.Name,
+			sha256Short(gcSandbox.OwnerID), AuditReasonDeleted,
+			fmt.Sprintf("sandbox %s/%s GC-deleted (session %s)", gcSandbox.SandboxNamespace, gcSandbox.Name, gcSandbox.SessionID))
 		err = gc.storeClient.DeleteSandboxBySessionID(ctx, gcSandbox.SessionID)
 		if err != nil {
 			errs = append(errs, err)

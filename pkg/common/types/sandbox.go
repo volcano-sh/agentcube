@@ -40,7 +40,7 @@ type SandboxInfo struct {
 	// a raw nanosecond integer, making the persisted JSON unambiguous.
 	IdleTimeout metav1.Duration `json:"idleTimeout,omitempty"`
 	// LastActivityAt is populated transiently from the store's last-activity sorted set
-	// during ListInactiveSandboxes. It is intentionally excluded from JSON serialization.
+	// during ListInactiveSandboxes or GetSandboxWithLastActivity. It is excluded from JSON serialization.
 	LastActivityAt time.Time `json:"-"`
 	Status         string    `json:"status"`
 }

@@ -332,3 +332,36 @@ func (rs *redisStore) UpdateSessionLastActivity(ctx context.Context, sessionID s
 
 	return nil
 }
+
+// ScanInactiveSandboxIDs advances an opaque cursor over the activity index.
+func (rs *redisStore) ScanInactiveSandboxIDs(ctx context.Context, before time.Time, cursor uint64, count int64) ([]string, uint64, error) {
+	if count <= 0 {
+		return nil, cursor, fmt.Errorf("ScanInactiveSandboxIDs: count must be positive")
+	}
+	elements, next, err := rs.cli.ZScan(ctx, rs.lastActivityIndexKey, cursor, "", count).Result()
+	if err != nil {
+		return nil, cursor, fmt.Errorf("ScanInactiveSandboxIDs: ZSCAN failed: %w", err)
+	}
+	ids, err := inactiveIDsFromScan(elements, before)
+	if err != nil {
+		return nil, cursor, err
+	}
+	return ids, next, nil
+}
+
+// GetSandboxWithLastActivity refreshes activity after reading the session JSON.
+func (rs *redisStore) GetSandboxWithLastActivity(ctx context.Context, sessionID string) (*types.SandboxInfo, error) {
+	sandbox, err := rs.GetSandboxBySessionID(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	score, err := rs.cli.ZScore(ctx, rs.lastActivityIndexKey, sessionID).Result()
+	if errors.Is(err, redisv9.Nil) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("GetSandboxWithLastActivity: ZSCORE failed: %w", err)
+	}
+	sandbox.LastActivityAt = time.Unix(int64(score), 0)
+	return sandbox, nil
+}

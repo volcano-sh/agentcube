@@ -18,12 +18,12 @@ package workloadmanager
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
@@ -39,9 +39,8 @@ const (
 	// shorter than this window are not caught by this check; those rely on the
 	// idle-timeout annotation enforced by the agent-sandbox controller.
 	gcMinInactiveLookback = 1 * time.Minute
-	// gcCandidateLimit is the number of inactive candidates fetched per GC cycle.
-	// A larger value reduces the chance that sandboxes with long IdleTimeout values
-	// at the front of the sorted set starve out eligible sandboxes behind them.
+	// gcCandidateLimit caps the expiry batch and is the inactive scan work hint.
+	// ZSCAN can return more or fewer entries, including empty nonterminal pages.
 	gcCandidateLimit = 100
 )
 
@@ -49,6 +48,11 @@ type garbageCollector struct {
 	k8sClient   *K8sClient
 	interval    time.Duration
 	storeClient store.Store
+
+	// Only the serial GC loop accesses this state. Keep unprocessed IDs, not
+	// sandbox snapshots: sessions may become active before the next GC run.
+	inactiveCursor  uint64
+	inactivePending []string
 }
 
 func newGarbageCollector(k8sClient *K8sClient, storeClient store.Store, interval time.Duration) *garbageCollector {
@@ -76,69 +80,127 @@ func (gc *garbageCollector) run(stopCh <-chan struct{}) {
 func (gc *garbageCollector) once() {
 	ctx, cancel := context.WithTimeout(context.Background(), gcOnceTimeout)
 	defer cancel()
-	now := time.Now()
+	gc.collect(ctx, time.Now())
+}
 
-	// Query sandboxes inactive for at least gcMinInactiveLookback. This avoids scanning
-	// recently-active sandboxes while still catching timeouts shorter than
-	// DefaultSandboxIdleTimeout. The per-sandbox filter below makes the final decision.
-	candidates, err := gc.storeClient.ListInactiveSandboxes(ctx, now.Add(-gcMinInactiveLookback), gcCandidateLimit)
-	if err != nil {
-		klog.Errorf("garbage collector error listing inactive sandboxes: %v", err)
+// collect shares a run deadline while reserving time for inactive traversal.
+func (gc *garbageCollector) collect(ctx context.Context, now time.Time) {
+	seen := make(map[string]struct{})
+	expiryBudget := gcOnceTimeout / 2
+	if deadline, ok := ctx.Deadline(); ok {
+		expiryBudget = min(expiryBudget, time.Until(deadline)/2)
 	}
+	expiryCtx, cancel := context.WithTimeout(ctx, expiryBudget)
+	gc.collectExpired(expiryCtx, now, seen)
+	cancel()
+	gc.collectInactive(ctx, now, seen)
+}
 
-	// Apply per-sandbox idle timeout: only include sandboxes whose own IdleTimeout
-	// (stored in the session JSON) has actually elapsed since LastActivityAt.
-	inactiveSandboxes := make([]*types.SandboxInfo, 0, len(candidates))
-	for _, s := range candidates {
-		activityAt := s.LastActivityAt
-		if activityAt.IsZero() {
-			klog.Warningf("garbage collector: no last-activity for sandbox %s/%s (session %s), falling back to CreatedAt", s.SandboxNamespace, s.Name, s.SessionID)
-			activityAt = s.CreatedAt
-		}
-		idleTimeout := s.IdleTimeout.Duration
-		if idleTimeout == 0 {
-			idleTimeout = DefaultSandboxIdleTimeout
-		}
-		if activityAt.Add(idleTimeout).Before(now) {
-			inactiveSandboxes = append(inactiveSandboxes, s)
-		}
+func (gc *garbageCollector) collectExpired(ctx context.Context, now time.Time, seen map[string]struct{}) {
+	if ctx.Err() != nil {
+		return
 	}
-
-	// List sandboxes that have reached their expiry deadline
-	expiredSandboxes, err := gc.storeClient.ListExpiredSandboxes(ctx, now, gcCandidateLimit)
+	sandboxes, err := gc.storeClient.ListExpiredSandboxes(ctx, now, gcCandidateLimit)
 	if err != nil {
 		klog.Errorf("garbage collector error listing expired sandboxes: %v", err)
+		return
 	}
-	// Merge and deduplicate: a sandbox may appear in both lists when it is
-	// simultaneously idle-timed-out and past its TTL.
-	gcSandboxes := deduplicateSandboxes(inactiveSandboxes, expiredSandboxes)
+	for _, sandbox := range sandboxes {
+		if ctx.Err() != nil {
+			return
+		}
+		if err := gc.deleteCandidate(ctx, sandbox, seen); err != nil {
+			klog.Errorf("garbage collector error deleting expired session %s: %v", sandbox.SessionID, err)
+		}
+	}
+}
 
-	if len(gcSandboxes) > 0 {
-		klog.Infof("garbage collector found %d sandboxes to be deleted", len(gcSandboxes))
+func (gc *garbageCollector) collectInactive(ctx context.Context, now time.Time, seen map[string]struct{}) {
+	for ctx.Err() == nil {
+		if len(gc.inactivePending) == 0 {
+			ids, next, err := gc.storeClient.ScanInactiveSandboxIDs(ctx, now.Add(-gcMinInactiveLookback), gc.inactiveCursor, gcCandidateLimit)
+			if err != nil {
+				klog.Errorf("garbage collector error scanning inactive sandboxes: %v", err)
+				return
+			}
+			gc.inactivePending, gc.inactiveCursor = ids, next
+		}
+		for len(gc.inactivePending) > 0 {
+			if ctx.Err() != nil {
+				return
+			}
+			id := gc.inactivePending[0]
+			err := gc.collectInactiveSession(ctx, id, now, seen)
+			// Retain the interrupted ID even if an operation partially succeeded.
+			// Deletes are idempotent and the next run will refresh the session.
+			if ctx.Err() != nil {
+				return
+			}
+			if err != nil && !stderrors.Is(err, store.ErrNotFound) {
+				klog.Errorf("garbage collector error processing inactive session %s: %v", id, err)
+			}
+			// Ordinary per-session failures must not block the rest of the sweep.
+			// They will be retried when a later sweep encounters the session.
+			gc.inactivePending[0] = ""
+			gc.inactivePending = gc.inactivePending[1:]
+		}
+		gc.inactivePending = nil
+		if gc.inactiveCursor == 0 {
+			return
+		}
 	}
+}
 
-	errs := make([]error, 0, len(gcSandboxes))
-	// delete sandboxes
-	for _, gcSandbox := range gcSandboxes {
-		if gcSandbox.Kind == types.SandboxClaimsKind {
-			err = gc.deleteSandboxClaim(ctx, gcSandbox.SandboxNamespace, gcSandbox.Name)
-		} else {
-			err = gc.deleteSandbox(ctx, gcSandbox.SandboxNamespace, gcSandbox.Name)
-		}
-		if err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		klog.Infof("garbage collector %s %s/%s session %s deleted", gcSandbox.Kind, gcSandbox.SandboxNamespace, gcSandbox.Name, gcSandbox.SessionID)
-		err = gc.storeClient.DeleteSandboxBySessionID(ctx, gcSandbox.SessionID)
-		if err != nil {
-			errs = append(errs, err)
-		}
+func (gc *garbageCollector) collectInactiveSession(ctx context.Context, id string, now time.Time, seen map[string]struct{}) error {
+	if _, ok := seen[id]; ok {
+		return nil
 	}
-	err = utilerrors.NewAggregate(errs)
+	sandbox, err := gc.storeClient.GetSandboxWithLastActivity(ctx, id)
 	if err != nil {
-		klog.Errorf("garbage collector failed with error: %v", err)
+		return err
 	}
+	activityAt := sandbox.LastActivityAt
+	if activityAt.IsZero() {
+		klog.Warningf("garbage collector: no last-activity for sandbox %s/%s (session %s), falling back to CreatedAt", sandbox.SandboxNamespace, sandbox.Name, sandbox.SessionID)
+		activityAt = sandbox.CreatedAt
+	}
+	// The scan may have happened during an earlier run. Recheck its cutoff with
+	// the fresh score before applying the individual idle timeout.
+	if activityAt.Unix() > now.Add(-gcMinInactiveLookback).Unix() {
+		return nil
+	}
+	idleTimeout := sandbox.IdleTimeout.Duration
+	if idleTimeout == 0 {
+		idleTimeout = DefaultSandboxIdleTimeout
+	}
+	if !activityAt.Add(idleTimeout).Before(now) {
+		return nil
+	}
+	return gc.deleteCandidate(ctx, sandbox, seen)
+}
+
+func (gc *garbageCollector) deleteCandidate(ctx context.Context, sandbox *types.SandboxInfo, seen map[string]struct{}) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, ok := seen[sandbox.SessionID]; ok {
+		return nil
+	}
+	seen[sandbox.SessionID] = struct{}{}
+	var err error
+	if sandbox.Kind == types.SandboxClaimsKind {
+		err = gc.deleteSandboxClaim(ctx, sandbox.SandboxNamespace, sandbox.Name)
+	} else {
+		err = gc.deleteSandbox(ctx, sandbox.SandboxNamespace, sandbox.Name)
+	}
+	if err != nil {
+		return err
+	}
+	klog.Infof("garbage collector %s %s/%s session %s deleted", sandbox.Kind, sandbox.SandboxNamespace, sandbox.Name, sandbox.SessionID)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return gc.storeClient.DeleteSandboxBySessionID(ctx, sandbox.SessionID)
 }
 
 func (gc *garbageCollector) deleteSandbox(ctx context.Context, namespace, name string) error {
@@ -161,24 +223,4 @@ func (gc *garbageCollector) deleteSandboxClaim(ctx context.Context, namespace, n
 		return fmt.Errorf("error deleting sandboxClaim %s/%s: %w", namespace, name, err)
 	}
 	return nil
-}
-
-// deduplicateSandboxes merges multiple sandbox lists and removes duplicates
-// by SessionID, preserving the order of first occurrence.
-func deduplicateSandboxes(lists ...[]*types.SandboxInfo) []*types.SandboxInfo {
-	total := 0
-	for _, l := range lists {
-		total += len(l)
-	}
-	seen := make(map[string]struct{}, total)
-	result := make([]*types.SandboxInfo, 0, total)
-	for _, list := range lists {
-		for _, s := range list {
-			if _, ok := seen[s.SessionID]; !ok {
-				seen[s.SessionID] = struct{}{}
-				result = append(result, s)
-			}
-		}
-	}
-	return result
 }

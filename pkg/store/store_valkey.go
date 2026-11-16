@@ -327,3 +327,36 @@ func (vs *valkeyStore) UpdateSessionLastActivity(ctx context.Context, sessionID 
 	}
 	return nil
 }
+
+// ScanInactiveSandboxIDs advances an opaque cursor over the activity index.
+func (vs *valkeyStore) ScanInactiveSandboxIDs(ctx context.Context, before time.Time, cursor uint64, count int64) ([]string, uint64, error) {
+	if count <= 0 {
+		return nil, cursor, fmt.Errorf("ScanInactiveSandboxIDs: count must be positive")
+	}
+	page, err := vs.cli.Do(ctx, vs.cli.B().Zscan().Key(vs.lastActivityIndexKey).Cursor(cursor).Count(count).Build()).AsScanEntry()
+	if err != nil {
+		return nil, cursor, fmt.Errorf("ScanInactiveSandboxIDs: ZSCAN failed: %w", err)
+	}
+	ids, err := inactiveIDsFromScan(page.Elements, before)
+	if err != nil {
+		return nil, cursor, err
+	}
+	return ids, page.Cursor, nil
+}
+
+// GetSandboxWithLastActivity refreshes activity after reading the session JSON.
+func (vs *valkeyStore) GetSandboxWithLastActivity(ctx context.Context, sessionID string) (*types.SandboxInfo, error) {
+	sandbox, err := vs.GetSandboxBySessionID(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	score, err := vs.cli.Do(ctx, vs.cli.B().Zscore().Key(vs.lastActivityIndexKey).Member(sessionID).Build()).AsFloat64()
+	if valkey.IsValkeyNil(err) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("GetSandboxWithLastActivity: ZSCORE failed: %w", err)
+	}
+	sandbox.LastActivityAt = time.Unix(int64(score), 0)
+	return sandbox, nil
+}

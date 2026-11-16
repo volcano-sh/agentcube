@@ -31,6 +31,42 @@ COPY --from=ghcr.io/volcano-sh/picod:latest /usr/local/bin/picod /usr/local/bin/
 ENTRYPOINT ["/usr/local/bin/picod"]
 ```
 
+### Command environments
+
+Previously, all container environment variables reached executed commands. After this change, only the documented allowlist is inherited. Other variables must be supplied explicitly in the execution request.
+
+PicoD inherits the following exact names when they are present in its environment:
+
+| Purpose | Names |
+| --- | --- |
+| Shell and locale | `PATH`, `HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TERM` |
+| Python paths | `PYTHONHOME`, `PYTHONPATH`, `PYTHONUSERBASE` |
+| Python behavior and encoding | `PYTHONNOUSERSITE`, `PYTHONUNBUFFERED`, `PYTHONDONTWRITEBYTECODE`, `PYTHONIOENCODING`, `PYTHONUTF8` |
+
+All other names, including `HTTPS_PROXY`, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, and `TMPDIR`, are excluded from automatic inheritance. There are no prefix exceptions such as `PYTHON*`. Custom images relying on excluded container variables must supply their values explicitly for each execution or adjust their runtime configuration. Python compatibility checks cover selected configurations, not every custom runtime.
+
+The existing HTTP execution request accepts an `env` object. Its values override inherited settings, and empty strings remain valid values. Current Python SDK execution methods do **not** expose an `env=` argument; use a raw HTTP request when you need explicit variables. For example, for an existing CodeInterpreter session in a deployment using external authentication:
+
+```bash
+# Set ROUTER_URL, NAMESPACE, CODE_INTERPRETER, SESSION_ID, and ACCESS_TOKEN
+# to your deployment, runtime, existing session, and OIDC access token.
+curl --fail-with-body --request POST \
+  "${ROUTER_URL}/v1/namespaces/${NAMESPACE}/code-interpreters/${CODE_INTERPRETER}/invocations/api/execute" \
+  --header "Authorization: Bearer ${ACCESS_TOKEN}" \
+  --header "x-agentcube-session-id: ${SESSION_ID}" \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "command": ["python3", "-c", "import os; print(os.environ[\"TMPDIR\"])"],
+    "env": {"TMPDIR": "/tmp", "HTTPS_PROXY": "http://proxy.example:3128"}
+  }'
+```
+
+The Router verifies the external token and signs the forwarded request for PicoD. If external authentication is disabled, omit the `Authorization` header.
+
+Explicit request variables are passed to that command and are not copied into PicoD's environment or automatically inherited by later commands. This does not revoke credentials or provide isolation between executions sharing a sandbox: code can save values in shared files, and other processes may be able to inspect them, including through Linux `/proc`.
+
+Executable lookup is unchanged: PicoD resolves a bare command name using its own `PATH` before applying the request environment. A request's `PATH` override controls the launched command and its subprocesses.
+
 ## 2. Configuration via AgentRuntime
 
 Once your image is built and pushed to a registry, you can define it using the `AgentRuntime` CRD:

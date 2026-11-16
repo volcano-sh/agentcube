@@ -19,6 +19,7 @@ package router
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -86,6 +87,9 @@ func NewServer(config *Config) (*Server, error) {
 
 	// Create a reusable HTTP transport for connection pooling
 	httpTransport := &http.Transport{
+		// Fail fast on an unreachable sandbox instead of waiting for the OS
+		// connect timeout. The same bound applies to the preflight dial.
+		DialContext:        (&net.Dialer{Timeout: config.InitialConnectRetryInterval}).DialContext,
 		IdleConnTimeout:    0,
 		DisableCompression: false,
 	}

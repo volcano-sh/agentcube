@@ -238,6 +238,13 @@ func (s *Server) waitForUpstreamReachable(ctx context.Context, targetURL *url.UR
 		}
 	}
 
+	// Without retries the preflight is one more connect to the sandbox that
+	// the proxy repeats right after. The proxy transport has the same dial
+	// timeout (see NewServer), so it reports the same errors.
+	if retryCount == 0 {
+		return nil
+	}
+
 	var lastErr error
 	for attempt := 0; attempt <= retryCount; attempt++ {
 		dialer := &net.Dialer{Timeout: retryInterval}

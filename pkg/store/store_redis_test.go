@@ -19,6 +19,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -275,6 +276,62 @@ func TestLoadSandboxesBySessionIDs_OrphanedZSetEntry(t *testing.T) {
 	}
 	if result[0].SandboxID != "sb-alive" {
 		t.Fatalf("expected sb-alive, got %s", result[0].SandboxID)
+	}
+
+	for _, key := range []string{c.expiryIndexKey, c.lastActivityIndexKey} {
+		members, err := mr.ZMembers(key)
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"sess-alive"}, members, "index %s", key)
+	}
+}
+
+func TestListSandboxes_OrphanedEntriesDoNotStarveGC(t *testing.T) {
+	ctx := context.Background()
+	c, mr := newTestRedisClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	const limit = 100
+	for i := 0; i < limit; i++ {
+		sessionID := fmt.Sprintf("sess-orphan-%03d", i)
+		assert.NoError(t, c.StoreSandbox(ctx, newTestSandbox("sb-orphan", sessionID, now.Add(-3*time.Hour))))
+		assert.NoError(t, c.UpdateSessionLastActivity(ctx, sessionID, now.Add(-3*time.Hour)))
+		mr.Del(c.sessionKey(sessionID))
+	}
+	assert.NoError(t, c.StoreSandbox(ctx, newTestSandbox("sb-real", "sess-real", now.Add(-2*time.Hour))))
+	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-real", now.Add(-2*time.Hour)))
+
+	expired, err := c.ListExpiredSandboxes(ctx, now, limit)
+	assert.NoError(t, err)
+	assert.Empty(t, expired)
+	for _, key := range []string{c.expiryIndexKey, c.lastActivityIndexKey} {
+		members, err := mr.ZMembers(key)
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"sess-real"}, members, "index %s", key)
+	}
+
+	expired, err = c.ListExpiredSandboxes(ctx, now, limit)
+	assert.NoError(t, err)
+	if assert.Len(t, expired, 1) {
+		assert.Equal(t, "sess-real", expired[0].SessionID)
+	}
+	inactive, err := c.ListInactiveSandboxes(ctx, now.Add(-time.Minute), limit)
+	assert.NoError(t, err)
+	if assert.Len(t, inactive, 1) {
+		assert.Equal(t, "sess-real", inactive[0].SessionID)
+	}
+}
+
+func TestRemoveOrphanedIndexEntries_KeepsSessionsThatExist(t *testing.T) {
+	ctx := context.Background()
+	c, mr := newTestRedisClient(t)
+
+	assert.NoError(t, c.StoreSandbox(ctx, newTestSandbox("sb-1", "sess-1", time.Now().Add(time.Hour))))
+	c.removeOrphanedIndexEntries(ctx, []string{"sess-1"})
+
+	for _, key := range []string{c.expiryIndexKey, c.lastActivityIndexKey} {
+		members, err := mr.ZMembers(key)
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"sess-1"}, members, "index %s", key)
 	}
 }
 

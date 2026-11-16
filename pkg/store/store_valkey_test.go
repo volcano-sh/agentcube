@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -359,4 +360,67 @@ func TestValkeyStore_UpdateSandboxLastActivity(t *testing.T) {
 	err = c.UpdateSessionLastActivity(ctx, "sess-1-not-exist", newLastActivity)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotFound))
+}
+
+// afterFirstDoClient wraps a valkey.Client and runs hook once, right after
+// the first Do call returns. It lets a test land a concurrent operation
+// between two round trips of the code under test.
+type afterFirstDoClient struct {
+	valkey.Client
+	once sync.Once
+	hook func()
+}
+
+func (c *afterFirstDoClient) Do(ctx context.Context, cmd valkey.Completed) valkey.ValkeyResult {
+	resp := c.Client.Do(ctx, cmd)
+	c.once.Do(c.hook)
+	return resp
+}
+
+// TestValkeyStore_UpdateSessionLastActivity_ConcurrentDelete checks that a
+// session deleted while its last activity is being updated does not leave an
+// orphaned member in the last-activity index. The delete lands right after the
+// first round trip of UpdateSessionLastActivity, both before and after the
+// script is cached on the server (EVAL fallback vs. EVALSHA).
+func TestValkeyStore_UpdateSessionLastActivity_ConcurrentDelete(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		scriptCached bool
+	}{
+		{name: "script not cached", scriptCached: false},
+		{name: "script cached", scriptCached: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			c, mr := newValkeyTestClient(t)
+
+			now := time.Now().UTC().Truncate(time.Second)
+			assert.NoError(t, c.StoreSandbox(ctx, newTestSandbox("sb-1", "sess-1", now.Add(30*time.Minute))))
+			if tc.scriptCached {
+				assert.NoError(t, c.StoreSandbox(ctx, newTestSandbox("sb-0", "sess-0", now.Add(30*time.Minute))))
+				assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-0", now))
+			}
+
+			// The delete runs on the unwrapped store, as the GC or a DELETE request would.
+			wrapped := *c
+			wrapped.cli = &afterFirstDoClient{
+				Client: c.cli,
+				hook: func() {
+					assert.NoError(t, c.DeleteSandboxBySessionID(ctx, "sess-1"))
+				},
+			}
+
+			err := wrapped.UpdateSessionLastActivity(ctx, "sess-1", now)
+			if err != nil {
+				assert.ErrorIs(t, err, ErrNotFound)
+			}
+
+			assert.False(t, mr.Exists(c.sessionKey("sess-1")), "session key should be deleted")
+			members, err := mr.ZMembers(c.lastActivityIndexKey)
+			if err != nil {
+				assert.ErrorIs(t, err, miniredis.ErrKeyNotFound)
+			}
+			assert.NotContains(t, members, "sess-1", "deleted session must not be re-added to the last-activity index")
+		})
+	}
 }

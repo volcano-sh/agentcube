@@ -21,7 +21,7 @@ import os
 import ast
 import shlex
 from typing import TYPE_CHECKING, Optional, Any, Callable, Dict, List, Union
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import requests
 
@@ -270,7 +270,7 @@ class CodeInterpreterDataPlaneClient:
 
     def download_file(self, remote_path: str, local_path: str) -> None:
         """Download a file."""
-        clean_path = remote_path.lstrip("/")
+        clean_path = quote(remote_path.lstrip("/"), safe="/")
         resp = self._request("GET", f"api/files/{clean_path}", stream=True)
         if os.path.dirname(local_path):
             os.makedirs(os.path.dirname(local_path), exist_ok=True)

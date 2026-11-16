@@ -130,21 +130,7 @@ func TestReloadAll_DoesNotPublishPartialState(t *testing.T) {
 	}
 	initialCertDER := append([]byte(nil), initialCert.Certificate[0]...)
 
-	newCertFile, newKeyFile, _ := generateTestCerts(t)
-	newCert, err := os.ReadFile(newCertFile)
-	if err != nil {
-		t.Fatalf("read new cert: %v", err)
-	}
-	newKey, err := os.ReadFile(newKeyFile)
-	if err != nil {
-		t.Fatalf("read new key: %v", err)
-	}
-	if err := os.WriteFile(certFile, newCert, 0600); err != nil {
-		t.Fatalf("write replacement cert: %v", err)
-	}
-	if err := os.WriteFile(keyFile, newKey, 0600); err != nil {
-		t.Fatalf("write replacement key: %v", err)
-	}
+	generateWatcherTestCerts(t, filepath.Dir(certFile))
 	if err := os.WriteFile(caFile, []byte("not a valid CA bundle"), 0600); err != nil {
 		t.Fatalf("write invalid CA: %v", err)
 	}

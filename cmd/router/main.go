@@ -116,7 +116,9 @@ func main() {
 		// Cancel the context to trigger server shutdown
 		cancel()
 		// Wait for server goroutine to exit after graceful shutdown is complete
-		<-errCh
+		if err := <-errCh; err != nil {
+			klog.Errorf("Server shutdown error: %v", err)
+		}
 	case err := <-errCh:
 		klog.Fatalf("Server error: %v", err)
 	}

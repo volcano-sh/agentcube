@@ -43,12 +43,14 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.5.0",
     "pre-commit>=3.3.0",
+    "setuptools>=61.0",
 ]
 test = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.11.0",
+    "setuptools>=61.0",
     "httpx-mock>=0.10.0",
 ]
 
@@ -61,5 +63,7 @@ Issues = "https://github.com/volcano-sh/agentcube/issues"
 [project.scripts]
 kubectl-agentcube = "agentcube.cli.main:app"
 
-[tool.setuptools]
-packages = ["agentcube", "agentcube.cli", "agentcube.runtime", "agentcube.operations", "agentcube.services"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentcube*"]
+namespaces = false

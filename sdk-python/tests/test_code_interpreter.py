@@ -300,6 +300,9 @@ class TestCodeInterpreterDataPlaneDownloadPath(unittest.TestCase):
             "notes?.txt": "api/files/notes%3F.txt",
             "%41.txt": "api/files/%2541.txt",
             "sub dir/100%.txt": "api/files/sub%20dir/100%25.txt",
+            "./plain.txt": "api/files/plain.txt",
+            "a/../b.txt": "api/files/b.txt",
+            "..hidden": "api/files/..hidden",
         }
         for remote_path, expected_suffix in cases.items():
             with self.subTest(remote_path=remote_path):
@@ -324,6 +327,25 @@ class TestCodeInterpreterDataPlaneDownloadPath(unittest.TestCase):
 
                 url = session.request.call_args.kwargs["url"]
                 self.assertEqual(url, "http://router/invocations/" + expected_suffix)
+
+    @patch('agentcube.clients.code_interpreter_data_plane.create_session')
+    def test_download_file_rejects_paths_outside_files_endpoint(self, mock_create_session):
+        from agentcube.clients.code_interpreter_data_plane import CodeInterpreterDataPlaneClient
+
+        session = Mock()
+        session.headers = requests.structures.CaseInsensitiveDict()
+        mock_create_session.return_value = session
+        client = CodeInterpreterDataPlaneClient(
+            session_id="active-session",
+            base_url="http://router/invocations/",
+        )
+
+        for remote_path in ["", "/", ".", "./", "..", "../../health", "a/../../x", "/../../../v1"]:
+            with self.subTest(remote_path=remote_path):
+                with tempfile.TemporaryDirectory() as tmp:
+                    with self.assertRaises(ValueError):
+                        client.download_file(remote_path, os.path.join(tmp, "out"))
+        session.request.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ import base64
 import json
 import time
 import os
+import posixpath
 import ast
 import shlex
 from typing import TYPE_CHECKING, Optional, Any, Callable, Dict, List, Union
@@ -270,8 +271,10 @@ class CodeInterpreterDataPlaneClient:
 
     def download_file(self, remote_path: str, local_path: str) -> None:
         """Download a file."""
-        clean_path = quote(remote_path.lstrip("/"), safe="/")
-        resp = self._request("GET", f"api/files/{clean_path}", stream=True)
+        clean_path = posixpath.normpath(remote_path.lstrip("/"))
+        if clean_path in (".", "..") or clean_path.startswith("../"):
+            raise ValueError(f"Invalid remote path: {remote_path!r}")
+        resp = self._request("GET", f"api/files/{quote(clean_path, safe='/')}", stream=True)
         if os.path.dirname(local_path):
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
         with open(local_path, 'wb') as f:

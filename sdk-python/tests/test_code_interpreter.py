@@ -287,5 +287,52 @@ class TestCodeInterpreterDataPlaneSessionErrors(unittest.TestCase):
         self.assertEqual(client.session_id, "active-session")
 
 
+class TestExecuteCommandResultTruncation(unittest.TestCase):
+    """Test that PicoD's output truncation flags are surfaced by the SDK."""
+
+    def _client_with_response(self, mock_create_session, content):
+        session = Mock()
+        response = requests.Response()
+        response.status_code = 200
+        response._content = content
+        session.request.return_value = response
+        session.headers = requests.structures.CaseInsensitiveDict()
+        mock_create_session.return_value = session
+
+        from agentcube.clients.code_interpreter_data_plane import CodeInterpreterDataPlaneClient
+
+        return CodeInterpreterDataPlaneClient(
+            session_id="active-session",
+            base_url="http://router/invocations/",
+        )
+
+    @patch('agentcube.clients.code_interpreter_data_plane.create_session')
+    def test_truncation_flags_returned(self, mock_create_session):
+        client = self._client_with_response(
+            mock_create_session,
+            b'{"stdout":"aaaa","stderr":"stdout truncated","exit_code":0,"stdout_truncated":true}',
+        )
+
+        with self.assertLogs(client.logger, level="WARNING"):
+            result = client.execute_command_result("yes", timeout=1)
+
+        self.assertEqual(result["stdout"], "aaaa")
+        self.assertTrue(result["stdout_truncated"])
+        self.assertFalse(result["stderr_truncated"])
+
+    @patch('agentcube.clients.code_interpreter_data_plane.create_session')
+    def test_flags_default_to_false_without_truncation(self, mock_create_session):
+        # Older PicoD versions and untruncated output omit the flags entirely.
+        client = self._client_with_response(
+            mock_create_session,
+            b'{"stdout":"hi","stderr":"","exit_code":0}',
+        )
+
+        result = client.execute_command_result("echo hi", timeout=1)
+
+        self.assertFalse(result["stdout_truncated"])
+        self.assertFalse(result["stderr_truncated"])
+
+
 if __name__ == "__main__":
     unittest.main()

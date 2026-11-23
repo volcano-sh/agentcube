@@ -207,7 +207,10 @@ class CodeInterpreterClient:
     def execute_command_result(
         self, command: str, timeout: Optional[float] = None
     ) -> dict[str, Any]:
-        """Run a shell command and return ``stdout``, ``stderr``, and ``exit_code`` (no raise on failure)."""
+        """Run a shell command and return ``stdout``, ``stderr``, ``exit_code``, and truncation flags.
+
+        Does not raise on failure.
+        """
         return self._require_data_plane().execute_command_result(command, timeout)
 
     def run_code(self, language: str, code: str, timeout: Optional[float] = None) -> str:

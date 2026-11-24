@@ -17,6 +17,7 @@ limitations under the License.
 package types
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -200,4 +201,32 @@ func TestCreateSandboxRequest_Validate(t *testing.T) {
 func TestCreateSandboxRequest_RequestedTTL(t *testing.T) {
 	assert.Zero(t, (&CreateSandboxRequest{}).RequestedTTL())
 	assert.Equal(t, 90*time.Second, (&CreateSandboxRequest{TTL: ptr.To[int64](90)}).RequestedTTL())
+}
+
+func TestUpdateSandboxTTLRequest_Validate(t *testing.T) {
+	assert.NoError(t, (&UpdateSandboxTTLRequest{TTL: 120}).Validate())
+	assert.NoError(t, (&UpdateSandboxTTLRequest{TTL: 120, Mode: "set"}).Validate())
+	assert.NoError(t, (&UpdateSandboxTTLRequest{TTL: 120, Mode: "extend"}).Validate())
+	assert.Equal(t, 120*time.Second, (&UpdateSandboxTTLRequest{TTL: 120}).RequestedTTL())
+
+	assert.Error(t, (&UpdateSandboxTTLRequest{TTL: 0}).Validate())
+	assert.Error(t, (&UpdateSandboxTTLRequest{TTL: -5}).Validate())
+	assert.Error(t, (&UpdateSandboxTTLRequest{TTL: 1 << 62}).Validate())
+	assert.Error(t, (&UpdateSandboxTTLRequest{TTL: 120, Mode: "invalid"}).Validate())
+}
+
+func TestCreateSandboxRequest_NonStringMetadataAndNormalize(t *testing.T) {
+	rawJSON := `{"kind":"CodeInterpreter","name":"ci-1","namespace":"default","metadata":{"count":3,"flag":true,"env":"prod","nested":{"a":1},"empty":null}}`
+	var req CreateSandboxRequest
+	assert.NoError(t, json.Unmarshal([]byte(rawJSON), &req))
+	assert.NoError(t, req.Validate())
+
+	normalized := NormalizeMetadata(req.Metadata)
+	assert.Equal(t, "3", normalized["count"])
+	assert.Equal(t, "true", normalized["flag"])
+	assert.Equal(t, "prod", normalized["env"])
+	assert.NotContains(t, normalized, "empty")
+	assert.Contains(t, normalized, "nested")
+
+	assert.Nil(t, NormalizeMetadata(map[string]any{"onlyNil": nil}))
 }

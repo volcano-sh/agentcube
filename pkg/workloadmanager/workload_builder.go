@@ -151,13 +151,19 @@ type buildSandboxClaimParams struct {
 	ownerReference *metav1.OwnerReference
 }
 
+// configuredMaxSessionDuration returns the workload's configured maximum session lifetime
+// or DefaultSandboxTTL when none is configured.
+func configuredMaxSessionDuration(maxSessionDuration *metav1.Duration) time.Duration {
+	if maxSessionDuration != nil && maxSessionDuration.Duration > 0 {
+		return maxSessionDuration.Duration
+	}
+	return DefaultSandboxTTL
+}
+
 // effectiveSessionTTL applies the workload configuration as the hard upper
 // bound for a client-requested session lifetime.
 func effectiveSessionTTL(requestedTTL time.Duration, maxSessionDuration *metav1.Duration) time.Duration {
-	configuredTTL := DefaultSandboxTTL
-	if maxSessionDuration != nil && maxSessionDuration.Duration > 0 {
-		configuredTTL = maxSessionDuration.Duration
-	}
+	configuredTTL := configuredMaxSessionDuration(maxSessionDuration)
 	if requestedTTL > 0 && requestedTTL < configuredTTL {
 		return requestedTTL
 	}
@@ -357,10 +363,13 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 
 	sandboxEntry := &sandboxEntry{
-		Kind:        types.SandboxKind,
-		Ports:       codeInterpreterObj.Spec.Ports,
-		SessionID:   sessionID,
-		IdleTimeout: idleTimeout,
+		Kind:               types.SandboxKind,
+		TemplateName:       codeInterpreterName,
+		Ports:              codeInterpreterObj.Spec.Ports,
+		SessionID:          sessionID,
+		IdleTimeout:        idleTimeout,
+		MaxSessionDuration: configuredMaxSessionDuration(codeInterpreterObj.Spec.MaxSessionDuration),
+		ExpiresAt:          time.Now().Add(effectiveTTL),
 	}
 
 	// Set default port for code interpreter if not configured
@@ -442,4 +451,40 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 	}
 	sandbox := buildSandboxObject(buildParams)
 	return sandbox, nil, sandboxEntry, nil
+}
+
+func applyCodeInterpreterRequestOptions(sandbox *sandboxv1beta1.Sandbox, sandboxClaim *extensionsv1beta1.SandboxClaim, entry *sandboxEntry, req *types.CreateSandboxRequest) {
+	if entry == nil || req == nil {
+		return
+	}
+	if entry.TemplateName == "" {
+		entry.TemplateName = req.Name
+	}
+	if len(req.Metadata) > 0 {
+		entry.Metadata = types.NormalizeMetadata(req.Metadata)
+	}
+	if len(req.EnvVars) > 0 {
+		entry.EnvVars = maps.Clone(req.EnvVars)
+	}
+	entry.DisableIdleTimeout = req.DisableIdleTimeout
+	entry.InitEnvd = req.InitEnvd
+	if req.EnvdPort > 0 {
+		entry.EnvdPort = req.EnvdPort
+	} else if req.InitEnvd {
+		entry.EnvdPort = defaultEnvdPort
+	}
+	entry.EnvdAccessToken = req.EnvdAccessToken
+	entry.TrafficAccessToken = req.TrafficAccessToken
+
+	// For E2B-style sessions where TTL can be extended up to MaxSessionDuration,
+	// set the Kubernetes Sandbox ShutdownTime to MaxSessionDuration as a cluster safety cap
+	// while keeping the active deadline in the session store.
+	if req.DisableIdleTimeout && sandbox != nil && sandboxClaim == nil {
+		maxDuration := entry.MaxSessionDuration
+		if maxDuration <= 0 {
+			maxDuration = DefaultSandboxTTL
+		}
+		capTime := metav1.NewTime(time.Now().Add(maxDuration))
+		sandbox.Spec.Lifecycle.ShutdownTime = &capTime
+	}
 }

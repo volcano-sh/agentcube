@@ -19,6 +19,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -352,4 +353,168 @@ func TestUpdateSandboxLastActivity(t *testing.T) {
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
+}
+
+func TestRedisStore_UpdateSandboxExpiry(t *testing.T) {
+	ctx := context.Background()
+	c, mr := newTestRedisClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	initial := now.Add(10 * time.Minute)
+	sb := newTestSandbox("sb-1", "sess-1", initial)
+	sb.OwnerID = "owner-a"
+	sb.EntryPoints = []types.SandboxEntryPoint{{Path: "/", Protocol: "HTTP", Endpoint: "10.0.0.1:49983"}}
+	sb.Metadata = map[string]string{"env": "dev"}
+
+	assert.NoError(t, c.StoreSandbox(ctx, sb))
+
+	// extendOnly with earlier timestamp should preserve initial expiry.
+	shorter := now.Add(5 * time.Minute)
+	got, err := c.UpdateSandboxExpiry(ctx, "sess-1", shorter, true)
+	assert.NoError(t, err)
+	assert.Equal(t, initial.Unix(), got.ExpiresAt.Unix())
+
+	// extendOnly with later timestamp should extend expiry and update ZSet.
+	longer := now.Add(20 * time.Minute)
+	got, err = c.UpdateSandboxExpiry(ctx, "sess-1", longer, true)
+	assert.NoError(t, err)
+	assert.Equal(t, longer.Unix(), got.ExpiresAt.Unix())
+	assert.Equal(t, "dev", got.Metadata["env"])
+	assert.Len(t, got.EntryPoints, 1)
+
+	score, err := mr.ZScore(c.expiryIndexKey, "sess-1")
+	assert.NoError(t, err)
+	assert.Equal(t, longer.Unix(), int64(score))
+
+	// set mode (extendOnly=false) can shorten expiry.
+	got, err = c.UpdateSandboxExpiry(ctx, "sess-1", shorter, false)
+	assert.NoError(t, err)
+	assert.Equal(t, shorter.Unix(), got.ExpiresAt.Unix())
+	score, err = mr.ZScore(c.expiryIndexKey, "sess-1")
+	assert.NoError(t, err)
+	assert.Equal(t, shorter.Unix(), int64(score))
+
+	// missing session returns ErrNotFound.
+	_, err = c.UpdateSandboxExpiry(ctx, "missing", longer, false)
+	assert.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestRedisStore_ListActiveSandboxes(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newTestRedisClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+
+	sb1 := newTestSandbox("sb-1", "sess-1", now.Add(10*time.Minute))
+	sb1.OwnerID = "owner-a"
+	sb1.SandboxNamespace = "ns-1"
+	sb1.CreatedAt = now.Add(-2 * time.Minute)
+
+	sb2 := newTestSandbox("sb-2", "sess-2", now.Add(10*time.Minute))
+	sb2.OwnerID = "owner-a"
+	sb2.SandboxNamespace = "ns-2"
+	sb2.CreatedAt = now.Add(-1 * time.Minute)
+
+	sb3 := newTestSandbox("sb-3", "sess-3", now.Add(-1*time.Minute)) // expired
+	sb3.OwnerID = "owner-a"
+	sb3.SandboxNamespace = "ns-1"
+
+	sb4 := newTestSandbox("sb-4", "sess-4", now.Add(10*time.Minute))
+	sb4.OwnerID = "owner-b"
+	sb4.SandboxNamespace = "ns-1"
+
+	for _, sb := range []*types.SandboxInfo{sb1, sb2, sb3, sb4} {
+		assert.NoError(t, c.StoreSandbox(ctx, sb))
+	}
+
+	activeOwnerA, err := c.ListActiveSandboxes(ctx, "owner-a", "")
+	assert.NoError(t, err)
+	assert.Len(t, activeOwnerA, 2)
+	assert.Equal(t, "sess-2", activeOwnerA[0].SessionID)
+	assert.Equal(t, "sess-1", activeOwnerA[1].SessionID)
+
+	activeOwnerANS1, err := c.ListActiveSandboxes(ctx, "owner-a", "ns-1")
+	assert.NoError(t, err)
+	assert.Len(t, activeOwnerANS1, 1)
+	assert.Equal(t, "sess-1", activeOwnerANS1[0].SessionID)
+
+	assert.NoError(t, c.DeleteSandboxBySessionID(ctx, "sess-1"))
+	activeOwnerAAfterDelete, err := c.ListActiveSandboxes(ctx, "owner-a", "ns-1")
+	assert.NoError(t, err)
+	assert.Empty(t, activeOwnerAAfterDelete)
+}
+
+func TestRedisStore_ExcludesIdleExemptFromInactiveIndex(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newTestRedisClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	exempt := newTestSandbox("sb-exempt", "sess-exempt", now.Add(30*time.Minute))
+	exempt.DisableIdleTimeout = true
+	native := newTestSandbox("sb-native", "sess-native", now.Add(30*time.Minute))
+
+	assert.NoError(t, c.StoreSandbox(ctx, exempt))
+	assert.NoError(t, c.StoreSandbox(ctx, native))
+
+	inactive, err := c.ListInactiveSandboxes(ctx, now.Add(time.Minute), 10)
+	assert.NoError(t, err)
+	assert.Len(t, inactive, 1)
+	assert.Equal(t, "sess-native", inactive[0].SessionID)
+}
+
+func TestRedisStore_ClaimExpiredSandbox(t *testing.T) {
+	ctx := context.Background()
+	c, mr := newTestRedisClient(t)
+
+	assert.False(t, strings.Contains(updateSandboxExpiryLua, "KEYS[2]"))
+	assert.False(t, strings.Contains(claimExpiredSandboxLua, "KEYS[2]"))
+
+	now := time.Now().UTC().Truncate(time.Second)
+	expired := newTestSandbox("sb-exp", "sess-exp", now.Add(-1*time.Minute))
+	expired.Status = "ready"
+	plus8 := time.FixedZone("UTC+8", 8*3600)
+	alive := newTestSandbox("sb-alive", "sess-alive", now.In(plus8).Add(5*time.Minute))
+	alive.Status = "ready"
+
+	assert.NoError(t, c.StoreSandbox(ctx, expired))
+	assert.NoError(t, c.StoreSandbox(ctx, alive))
+
+	// Unexpired session (even if stored from a non-UTC zone) cannot be claimed.
+	claimed, err := c.ClaimExpiredSandbox(ctx, "sess-alive", now)
+	assert.NoError(t, err)
+	assert.False(t, claimed)
+
+	// Expired session is claimed once, retains an expiry-index lease, blocks immediate re-claim,
+	// blocks TTL updates, and becomes claimable again after the lease elapses.
+	claimed, err = c.ClaimExpiredSandbox(ctx, "sess-exp", now)
+	assert.NoError(t, err)
+	assert.True(t, claimed)
+
+	score, err := mr.ZScore(c.expiryIndexKey, "sess-exp")
+	assert.NoError(t, err)
+	assert.Equal(t, now.Add(expiredClaimLease).Unix(), int64(score))
+
+	withinLease, err := c.ListExpiredSandboxes(ctx, now.Add(30*time.Second), 10)
+	assert.NoError(t, err)
+	assert.Empty(t, withinLease)
+
+	claimedAgain, err := c.ClaimExpiredSandbox(ctx, "sess-exp", now.Add(30*time.Second))
+	assert.NoError(t, err)
+	assert.False(t, claimedAgain)
+
+	_, err = c.UpdateSandboxExpiry(ctx, "sess-exp", now.Add(10*time.Minute), true)
+	assert.ErrorIs(t, err, ErrNotFound)
+
+	afterLease := now.Add(expiredClaimLease)
+	retryList, err := c.ListExpiredSandboxes(ctx, afterLease, 10)
+	assert.NoError(t, err)
+	assert.Len(t, retryList, 1)
+	assert.Equal(t, "sess-exp", retryList[0].SessionID)
+
+	reclaimed, err := c.ClaimExpiredSandbox(ctx, "sess-exp", afterLease)
+	assert.NoError(t, err)
+	assert.True(t, reclaimed)
+	score, err = mr.ZScore(c.expiryIndexKey, "sess-exp")
+	assert.NoError(t, err)
+	assert.Equal(t, afterLease.Add(expiredClaimLease).Unix(), int64(score))
 }

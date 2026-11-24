@@ -87,6 +87,9 @@ func (gc *garbageCollector) once() {
 	// (stored in the session JSON) has actually elapsed since LastActivityAt.
 	inactiveSandboxes := make([]*types.SandboxInfo, 0, len(candidates))
 	for _, s := range candidates {
+		if s.DisableIdleTimeout {
+			continue
+		}
 		activityAt := s.LastActivityAt
 		if activityAt.IsZero() {
 			klog.Warningf("garbage collector: no last-activity for sandbox %s/%s (session %s), falling back to CreatedAt", s.SandboxNamespace, s.Name, s.SessionID)
@@ -106,9 +109,23 @@ func (gc *garbageCollector) once() {
 	if err != nil {
 		klog.Errorf("garbage collector error listing expired sandboxes: %v", err)
 	}
+	// Atomically claim expired candidates in store before deleting K8s resources
+	// so concurrent TTL extensions cannot race with garbage collection.
+	confirmedExpired := make([]*types.SandboxInfo, 0, len(expiredSandboxes))
+	for _, s := range expiredSandboxes {
+		claimed, claimErr := gc.storeClient.ClaimExpiredSandbox(ctx, s.SessionID, now)
+		if claimErr != nil {
+			klog.Errorf("garbage collector error claiming expired session %s: %v", s.SessionID, claimErr)
+			continue
+		}
+		if !claimed {
+			continue
+		}
+		confirmedExpired = append(confirmedExpired, s)
+	}
 	// Merge and deduplicate: a sandbox may appear in both lists when it is
 	// simultaneously idle-timed-out and past its TTL.
-	gcSandboxes := deduplicateSandboxes(inactiveSandboxes, expiredSandboxes)
+	gcSandboxes := deduplicateSandboxes(inactiveSandboxes, confirmedExpired)
 
 	if len(gcSandboxes) > 0 {
 		klog.Infof("garbage collector found %d sandboxes to be deleted", len(gcSandboxes))

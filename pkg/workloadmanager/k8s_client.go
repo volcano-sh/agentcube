@@ -75,11 +75,21 @@ type K8sClient struct {
 }
 
 type sandboxEntry struct {
-	Kind        string
-	SessionID   string
-	OwnerID     string
-	Ports       []runtimev1alpha1.TargetPort
-	IdleTimeout time.Duration
+	Kind               string
+	SessionID          string
+	OwnerID            string
+	TemplateName       string
+	Metadata           map[string]string
+	EnvVars            map[string]string
+	DisableIdleTimeout bool
+	InitEnvd           bool
+	EnvdPort           uint32
+	EnvdAccessToken    string
+	TrafficAccessToken string
+	MaxSessionDuration time.Duration
+	ExpiresAt          time.Time
+	Ports              []runtimev1alpha1.TargetPort
+	IdleTimeout        time.Duration
 }
 
 // NewK8sClient creates a new Kubernetes client

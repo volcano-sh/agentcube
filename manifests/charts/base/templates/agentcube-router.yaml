@@ -102,6 +102,12 @@ spec:
             - {{ printf "--jwt-role-claim=%s" .Values.router.jwt.roleClaim | quote }}
             - {{ printf "--jwt-required-role=%s" .Values.router.jwt.requiredRole | quote }}
             {{- end }}
+            {{- if and .Values.router.e2b (hasKey .Values.router.e2b "enabled") }}
+            - {{ printf "--enable-e2b=%v" .Values.router.e2b.enabled | quote }}
+            {{- end }}
+            {{- if and .Values.router.e2b .Values.router.e2b.domain }}
+            - {{ printf "--e2b-domain=%s" .Values.router.e2b.domain | quote }}
+            {{- end }}
           resources:
             {{- toYaml .Values.router.resources | nindent 12 }}
           livenessProbe:

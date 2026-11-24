@@ -127,10 +127,13 @@ func (s *Server) setupRoutes() {
 
 	// agent runtime management endpoints
 	v1Group.POST("/agent-runtime", s.handleAgentRuntimeCreate)
-	v1Group.DELETE("/agent-runtime/sessions/:sessionId", s.handleDeleteSandbox)
+	v1Group.DELETE("/agent-runtime/sessions/:sessionId", s.handleDeleteAgentRuntimeSession)
 	// code interpreter management endpoints
 	v1Group.POST("/code-interpreter", s.handleCodeInterpreterCreate)
-	v1Group.DELETE("/code-interpreter/sessions/:sessionId", s.handleDeleteSandbox)
+	v1Group.GET("/code-interpreter/sessions", s.handleListSessions)
+	v1Group.GET("/code-interpreter/sessions/:sessionId", s.handleGetSession)
+	v1Group.PATCH("/code-interpreter/sessions/:sessionId/ttl", s.handleUpdateSessionTTL)
+	v1Group.DELETE("/code-interpreter/sessions/:sessionId", s.handleDeleteCodeInterpreterSession)
 }
 
 // Start starts the API server

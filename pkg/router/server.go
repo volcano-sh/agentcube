@@ -20,11 +20,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
 
+	"github.com/volcano-sh/agentcube/pkg/router/e2b"
 	"github.com/volcano-sh/agentcube/pkg/store"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c" //nolint:staticcheck // Preserve HTTP/1.1 Upgrade support; net/http.Protocols only supports prior-knowledge h2c.
@@ -40,6 +42,7 @@ type Server struct {
 	httpTransport  *http.Transport // Reusable HTTP transport for connection pooling
 	jwtManager     *JWTManager     // JWT manager for signing requests to sandboxes
 	oidcValidator  *OIDCValidator  // nil when external auth is disabled
+	e2bHandler     *e2b.Handler    // nil when E2B module is disabled
 }
 
 // NewServer creates a new Router API server instance
@@ -120,6 +123,28 @@ func NewServer(config *Config) (*Server, error) {
 			config.JWTIssuerURL, config.JWTAudience, config.JWTRoleClaim, config.JWTRequiredRole)
 	}
 
+	// Initialize built-in E2B compatibility module when enabled (default true, fail-closed).
+	if config.EnableE2B {
+		if mgr, ok := sessionManager.(*manager); ok {
+			e2bCfg := e2b.DefaultConfig()
+			if config.E2BDomain != "" {
+				e2bCfg.Domain = strings.TrimPrefix(strings.TrimSpace(config.E2BDomain), ".")
+			}
+			if config.E2BAPIKeySecret != "" {
+				e2bCfg.APIKeySecret = config.E2BAPIKeySecret
+			}
+			if config.E2BDefaultTTL > 0 {
+				e2bCfg.DefaultTTL = config.E2BDefaultTTL
+			}
+			e2bH, err := e2b.New(context.Background(), e2bCfg, server.storeClient, mgr.workloadMgrAddr, mgr.httpClient, jwtManager)
+			if err != nil {
+				return nil, fmt.Errorf("failed to initialize embedded E2B module: %w", err)
+			}
+			server.e2bHandler = e2bH
+			klog.Infof("Built-in E2B compatibility module initialized (domain=%q)", e2bCfg.Domain)
+		}
+	}
+
 	// Setup routes
 	server.setupRoutes()
 
@@ -184,17 +209,27 @@ func (s *Server) setupRoutes() {
 func (s *Server) Start(ctx context.Context) error {
 	addr := ":" + s.config.Port
 
-	// Create HTTP/2 server for better performance
-	h2s := &http2.Server{} //nolint:staticcheck // h2c.NewHandler needs x/net/http2.Server to support HTTP/1.1 Upgrade.
+	if s.e2bHandler != nil {
+		s.e2bHandler.StartInformers(ctx)
+	}
 
-	// Wrap handler with h2c for HTTP/2 cleartext support
-	h2cHandler := h2c.NewHandler(s.engine, h2s) //nolint:staticcheck // Preserve HTTP/1.1 Upgrade support.
+	var rootHandler http.Handler = s.engine
+	if s.e2bHandler != nil {
+		rootHandler = s.e2bHandler.WrapHandler(s.engine)
+	}
+
+	serverHandler := rootHandler
+	if !s.config.EnableTLS {
+		// Create HTTP/2 server for better performance over cleartext connections.
+		h2s := &http2.Server{}                           //nolint:staticcheck // h2c.NewHandler needs x/net/http2.Server to support HTTP/1.1 Upgrade.
+		serverHandler = h2c.NewHandler(rootHandler, h2s) //nolint:staticcheck // Preserve HTTP/1.1 Upgrade support.
+	}
 
 	s.httpServer = &http.Server{
-		Addr:        addr,
-		Handler:     h2cHandler,
-		ReadTimeout: 30 * time.Second, // Longer timeout for potential long-running requests
-		IdleTimeout: 90 * time.Second, // golang http default transport's idletimeout is 90s
+		Addr:              addr,
+		Handler:           serverHandler,
+		ReadHeaderTimeout: 10 * time.Second, // Preserve long-lived ConnectRPC/PTY/SSE streams.
+		IdleTimeout:       90 * time.Second, // golang http default transport's idletimeout is 90s
 	}
 
 	// Listen for shutdown signal in goroutine

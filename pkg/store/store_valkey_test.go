@@ -360,3 +360,123 @@ func TestValkeyStore_UpdateSandboxLastActivity(t *testing.T) {
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotFound))
 }
+
+func TestValkeyStore_UpdateSandboxExpiryAndListActive(t *testing.T) {
+	ctx := context.Background()
+	c, mr := newValkeyTestClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	initial := now.Add(10 * time.Minute)
+	sb1 := newTestSandbox("sb-1", "sess-1", initial)
+	sb1.OwnerID = "owner-a"
+	sb1.SandboxNamespace = "ns-1"
+	sb1.CreatedAt = now.Add(-2 * time.Minute)
+
+	sb2 := newTestSandbox("sb-2", "sess-2", initial)
+	sb2.OwnerID = "owner-a"
+	sb2.SandboxNamespace = "ns-1"
+	sb2.CreatedAt = now.Add(-1 * time.Minute)
+
+	assert.NoError(t, c.StoreSandbox(ctx, sb1))
+	assert.NoError(t, c.StoreSandbox(ctx, sb2))
+
+	// extendOnly ignores earlier deadline.
+	shorter := now.Add(3 * time.Minute)
+	got, err := c.UpdateSandboxExpiry(ctx, "sess-1", shorter, true)
+	assert.NoError(t, err)
+	assert.Equal(t, initial.Unix(), got.ExpiresAt.Unix())
+
+	// extendOnly applies later deadline.
+	longer := now.Add(25 * time.Minute)
+	got, err = c.UpdateSandboxExpiry(ctx, "sess-1", longer, true)
+	assert.NoError(t, err)
+	assert.Equal(t, longer.Unix(), got.ExpiresAt.Unix())
+	score, err := mr.ZScore(c.expiryIndexKey, "sess-1")
+	assert.NoError(t, err)
+	assert.Equal(t, longer.Unix(), int64(score))
+
+	// List active for owner-a sorted descending by CreatedAt.
+	active, err := c.ListActiveSandboxes(ctx, "owner-a", "ns-1")
+	assert.NoError(t, err)
+	assert.Len(t, active, 2)
+	assert.Equal(t, "sess-2", active[0].SessionID)
+	assert.Equal(t, "sess-1", active[1].SessionID)
+
+	// Delete removes from owner index as well.
+	assert.NoError(t, c.DeleteSandboxBySessionID(ctx, "sess-2"))
+	active, err = c.ListActiveSandboxes(ctx, "owner-a", "ns-1")
+	assert.NoError(t, err)
+	assert.Len(t, active, 1)
+	assert.Equal(t, "sess-1", active[0].SessionID)
+
+	_, err = c.UpdateSandboxExpiry(ctx, "missing", longer, false)
+	assert.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestValkeyStore_ExcludesIdleExemptFromInactiveIndex(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newValkeyTestClient(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	exempt := newTestSandbox("sb-exempt", "sess-exempt", now.Add(30*time.Minute))
+	exempt.DisableIdleTimeout = true
+	native := newTestSandbox("sb-native", "sess-native", now.Add(30*time.Minute))
+
+	assert.NoError(t, c.StoreSandbox(ctx, exempt))
+	assert.NoError(t, c.StoreSandbox(ctx, native))
+
+	inactive, err := c.ListInactiveSandboxes(ctx, now.Add(time.Minute), 10)
+	assert.NoError(t, err)
+	assert.Len(t, inactive, 1)
+	assert.Equal(t, "sess-native", inactive[0].SessionID)
+}
+
+func TestValkeyStore_ClaimExpiredSandbox(t *testing.T) {
+	ctx := context.Background()
+	c, mr := newValkeyTestClient(t)
+
+	assert.False(t, strings.Contains(updateSandboxExpiryLua, "KEYS[2]"))
+	assert.False(t, strings.Contains(claimExpiredSandboxLua, "KEYS[2]"))
+
+	now := time.Now().UTC().Truncate(time.Second)
+	expired := newTestSandbox("sb-exp", "sess-exp", now.Add(-1*time.Minute))
+	expired.Status = "ready"
+	plus8 := time.FixedZone("UTC+8", 8*3600)
+	alive := newTestSandbox("sb-alive", "sess-alive", now.In(plus8).Add(5*time.Minute))
+	alive.Status = "ready"
+
+	assert.NoError(t, c.StoreSandbox(ctx, expired))
+	assert.NoError(t, c.StoreSandbox(ctx, alive))
+
+	claimed, err := c.ClaimExpiredSandbox(ctx, "sess-alive", now)
+	assert.NoError(t, err)
+	assert.False(t, claimed)
+
+	claimed, err = c.ClaimExpiredSandbox(ctx, "sess-exp", now)
+	assert.NoError(t, err)
+	assert.True(t, claimed)
+
+	score, err := mr.ZScore(c.expiryIndexKey, "sess-exp")
+	assert.NoError(t, err)
+	assert.Equal(t, now.Add(expiredClaimLease).Unix(), int64(score))
+
+	claimedAgain, err := c.ClaimExpiredSandbox(ctx, "sess-exp", now.Add(30*time.Second))
+	assert.NoError(t, err)
+	assert.False(t, claimedAgain)
+
+	_, err = c.UpdateSandboxExpiry(ctx, "sess-exp", now.Add(10*time.Minute), true)
+	assert.ErrorIs(t, err, ErrNotFound)
+
+	afterLease := now.Add(expiredClaimLease)
+	retryList, err := c.ListExpiredSandboxes(ctx, afterLease, 10)
+	assert.NoError(t, err)
+	assert.Len(t, retryList, 1)
+	assert.Equal(t, "sess-exp", retryList[0].SessionID)
+
+	reclaimed, err := c.ClaimExpiredSandbox(ctx, "sess-exp", afterLease)
+	assert.NoError(t, err)
+	assert.True(t, reclaimed)
+	score, err = mr.ZScore(c.expiryIndexKey, "sess-exp")
+	assert.NoError(t, err)
+	assert.Equal(t, afterLease.Add(expiredClaimLease).Unix(), int64(score))
+}

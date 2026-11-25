@@ -736,6 +736,7 @@ func TestForwardToSandbox_XForwardedFor(t *testing.T) {
 		{name: "repeated prior headers", prior: []string{"198.51.100.9", "192.0.2.1"}, want: "198.51.100.9, 192.0.2.1, " + peer},
 		{name: "hop-by-hop forwarding chain", connection: []string{"keep-alive", "other, x-FoRwArDeD-fOr"}, prior: []string{"198.51.100.9"}, want: peer},
 		{name: "X-Real-IP only", realIP: "203.0.113.50", want: "203.0.113.50, " + peer},
+		{name: "hop-by-hop X-Real-IP", connection: []string{"X-Real-IP"}, realIP: "203.0.113.50", want: peer},
 		{name: "invalid X-Real-IP only", realIP: "not-an-ip", want: peer},
 		{name: "X-Forwarded-For wins over X-Real-IP", prior: []string{"198.51.100.9"}, realIP: "203.0.113.50", want: "198.51.100.9, " + peer},
 	}

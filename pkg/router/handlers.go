@@ -337,7 +337,7 @@ func configureProxyRewrite(proxy *httputil.ReverseProxy, c *gin.Context, targetU
 		if !httpguts.HeaderValuesContainsToken(pr.In.Header.Values("Connection"), "X-Forwarded-For") {
 			if prior, ok := pr.In.Header["X-Forwarded-For"]; ok {
 				req.Header["X-Forwarded-For"] = prior
-			} else if ip := c.ClientIP(); ip != c.RemoteIP() {
+			} else if ip := c.ClientIP(); req.Header.Get("X-Real-IP") != "" && ip != c.RemoteIP() {
 				req.Header.Set("X-Forwarded-For", ip)
 			}
 		}

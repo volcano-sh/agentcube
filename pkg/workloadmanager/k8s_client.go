@@ -85,7 +85,6 @@ type sandboxEntry struct {
 	InitEnvd           bool
 	EnvdPort           uint32
 	EnvdAccessToken    string
-	TrafficAccessToken string
 	MaxSessionDuration time.Duration
 	ExpiresAt          time.Time
 	Ports              []runtimev1alpha1.TargetPort

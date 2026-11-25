@@ -37,6 +37,8 @@ import (
 // #nosec G101 -- well-known Kubernetes service account token path, not a credential.
 const serviceAccountTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
+const identityHeaderName = "X-AgentCube-User-Identity"
+
 // WorkloadManagerClient defines the control-plane operations E2B invokes on WorkloadManager.
 type WorkloadManagerClient interface {
 	CreateCodeInterpreter(ctx context.Context, ownerID string, req *types.CreateSandboxRequest) (*types.CreateSandboxResponse, error)

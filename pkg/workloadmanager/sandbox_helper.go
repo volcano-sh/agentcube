@@ -77,7 +77,6 @@ func buildSandboxPlaceHolder(sandboxCR *sandboxv1beta1.Sandbox, entry *sandboxEn
 		IdleTimeout:        metav1.Duration{Duration: idleTimeout},
 		DisableIdleTimeout: entry.DisableIdleTimeout,
 		EnvdAccessToken:    entry.EnvdAccessToken,
-		TrafficAccessToken: entry.TrafficAccessToken,
 	}
 }
 
@@ -120,7 +119,6 @@ func buildSandboxInfo(sandbox *sandboxv1beta1.Sandbox, podIP string, entry *sand
 		IdleTimeout:        metav1.Duration{Duration: idleTimeout},
 		DisableIdleTimeout: entry.DisableIdleTimeout,
 		EnvdAccessToken:    entry.EnvdAccessToken,
-		TrafficAccessToken: entry.TrafficAccessToken,
 		PodIP:              podIP,
 	}
 }

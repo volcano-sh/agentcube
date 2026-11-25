@@ -474,7 +474,6 @@ func applyCodeInterpreterRequestOptions(sandbox *sandboxv1beta1.Sandbox, sandbox
 		entry.EnvdPort = defaultEnvdPort
 	}
 	entry.EnvdAccessToken = req.EnvdAccessToken
-	entry.TrafficAccessToken = req.TrafficAccessToken
 
 	// For E2B-style sessions where TTL can be extended up to MaxSessionDuration,
 	// set the Kubernetes Sandbox ShutdownTime to MaxSessionDuration as a cluster safety cap

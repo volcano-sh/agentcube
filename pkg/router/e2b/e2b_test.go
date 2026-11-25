@@ -211,7 +211,14 @@ func setupTestHandler(t *testing.T, domain string) (*Handler, *memStore, *mockWM
 	require.NoError(t, ciInf.Informer().GetStore().Add(ciDisabled))
 
 	auth := NewAuthenticator("ns-a")
-	require.NoError(t, auth.LoadDevAPIKeys("key-tenant-a=owner-a:ns-a,key-tenant-b=owner-b:ns-a"))
+	keySecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2b-api-keys", Namespace: "agentcube"},
+		Data: map[string][]byte{
+			HashAPIKey("key-tenant-a"): []byte("owner-a:ns-a"),
+			HashAPIKey("key-tenant-b"): []byte("owner-b:ns-a"),
+		},
+	}
+	require.NoError(t, auth.LoadFromSecret(context.Background(), fake.NewSimpleClientset(keySecret), "agentcube", "e2b-api-keys"))
 
 	cfg := &Config{Domain: domain, DefaultNamespace: "ns-a", DefaultTTL: 300}
 	h, err := NewWithDeps(cfg, st, wm, auth, NewTemplateResolver(ciInf.Lister(), "0.5.3"), nil, nil)

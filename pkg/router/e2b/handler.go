@@ -63,7 +63,6 @@ type Config struct {
 	Domain                string
 	APIKeySecret          string
 	APIKeySecretNamespace string
-	DevAPIKeys            string
 	DefaultNamespace      string
 	DefaultTTL            int
 }
@@ -75,7 +74,6 @@ func DefaultConfig() *Config {
 		Domain:                strings.TrimPrefix(strings.TrimSpace(os.Getenv("E2B_DOMAIN")), "."),
 		APIKeySecret:          envOrDefault("E2B_API_KEY_SECRET", defaultAPIKeySecret),
 		APIKeySecretNamespace: envOrDefault("E2B_API_KEY_SECRET_NAMESPACE", ns),
-		DevAPIKeys:            os.Getenv("E2B_DEV_API_KEYS"),
 		DefaultNamespace:      envOrDefault("E2B_DEFAULT_NAMESPACE", ns),
 		DefaultTTL:            defaultSandboxTTLSec,
 	}
@@ -140,10 +138,6 @@ func New(
 			templates = NewTemplateResolver(ciInf.Lister(), defaultEnvdVersion)
 			ciSync = ciInf.Informer().HasSynced
 		}
-	}
-
-	if err := auth.LoadDevAPIKeys(cfg.DevAPIKeys); err != nil {
-		return nil, err
 	}
 
 	return NewWithDeps(cfg, storeClient, wmClient, auth, templates, informerFactory, ciSync)

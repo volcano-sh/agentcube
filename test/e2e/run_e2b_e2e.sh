@@ -207,8 +207,8 @@ kubectl -n "${NAMESPACE}" create secret tls e2b-router-tls \
     --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl -n "${NAMESPACE}" create secret generic e2b-api-keys \
-    --from-literal="${HASH_A}=tenant-a:${NAMESPACE}:readwrite" \
-    --from-literal="${HASH_B}=tenant-b:${NAMESPACE}:readwrite" \
+    --from-literal="${HASH_A}=tenant-a:${NAMESPACE}" \
+    --from-literal="${HASH_B}=tenant-b:${NAMESPACE}" \
     --dry-run=client -o yaml | kubectl apply -f -
 
 step "Deploying WorkloadManager and AgentCube Router"

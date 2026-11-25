@@ -468,17 +468,16 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	}
 
 	response := &types.CreateSandboxResponse{
-		Kind:               storeCacheInfo.Kind,
-		SessionID:          sandboxEntry.SessionID,
-		SandboxID:          storeCacheInfo.SandboxID,
-		SandboxName:        storeCacheInfo.Name,
-		EntryPoints:        storeCacheInfo.EntryPoints,
-		OwnerID:            sandboxEntry.OwnerID,
-		EnvdVersion:        storeCacheInfo.EnvdVersion,
-		EnvdAccessToken:    storeCacheInfo.EnvdAccessToken,
-		TrafficAccessToken: storeCacheInfo.TrafficAccessToken,
-		CreatedAt:          storeCacheInfo.CreatedAt,
-		ExpiresAt:          storeCacheInfo.ExpiresAt,
+		Kind:            storeCacheInfo.Kind,
+		SessionID:       sandboxEntry.SessionID,
+		SandboxID:       storeCacheInfo.SandboxID,
+		SandboxName:     storeCacheInfo.Name,
+		EntryPoints:     storeCacheInfo.EntryPoints,
+		OwnerID:         sandboxEntry.OwnerID,
+		EnvdVersion:     storeCacheInfo.EnvdVersion,
+		EnvdAccessToken: storeCacheInfo.EnvdAccessToken,
+		CreatedAt:       storeCacheInfo.CreatedAt,
+		ExpiresAt:       storeCacheInfo.ExpiresAt,
 	}
 
 	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {

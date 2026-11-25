@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/gin-gonic/gin"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -34,10 +33,9 @@ import (
 )
 
 const (
-	contextKeyTenant   = "e2b_tenant"
-	apiKeyHeader       = "X-API-Key" //nolint:gosec // Header name, not a secret.
-	bearerPrefix       = "Bearer "
-	identityHeaderName = "X-AgentCube-User-Identity"
+	contextKeyTenant = "e2b_tenant"
+	apiKeyHeader     = "X-API-Key" //nolint:gosec // Header name, not a secret.
+	bearerPrefix     = "Bearer "
 )
 
 // TenantIdentity identifies the authenticated caller behind an E2B API key.
@@ -54,7 +52,6 @@ type IdentitySigner interface {
 
 // Authenticator validates E2B API keys using SHA-256 key hashes.
 type Authenticator struct {
-	mu               sync.RWMutex
 	keys             map[string]TenantIdentity
 	defaultNamespace string
 }
@@ -74,39 +71,6 @@ func NewAuthenticator(defaultNamespace string) *Authenticator {
 func HashAPIKey(rawKey string) string {
 	sum := sha256.Sum256([]byte(rawKey))
 	return hex.EncodeToString(sum[:])
-}
-
-// LoadDevAPIKeys parses dev-only "<raw-key>=<ownerId>[:<namespace>]" entries,
-// hashes each raw key immediately, and merges them into the authenticator.
-func (a *Authenticator) LoadDevAPIKeys(spec string) error {
-	if strings.TrimSpace(spec) == "" {
-		return nil
-	}
-	entries := make(map[string]TenantIdentity)
-	for _, item := range strings.Split(spec, ",") {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
-		}
-		rawKey, target, ok := strings.Cut(item, "=")
-		rawKey = strings.TrimSpace(rawKey)
-		if !ok || rawKey == "" {
-			return fmt.Errorf("invalid dev api key entry %q: expected key=ownerId[:namespace]", item)
-		}
-		id, err := parseTenantSpec(target, a.defaultNamespace)
-		if err != nil {
-			return fmt.Errorf("invalid dev api key target %q: %w", target, err)
-		}
-		entries[HashAPIKey(rawKey)] = id
-	}
-
-	a.mu.Lock()
-	for k, v := range entries {
-		a.keys[k] = v
-	}
-	a.mu.Unlock()
-	klog.Warning("E2B_DEV_API_KEYS is active; do not use plaintext env API keys in production")
-	return nil
 }
 
 // LoadFromSecret loads SHA-256 hashed API keys ("<sha256hex>: <ownerId>[:<namespace>]")
@@ -138,9 +102,7 @@ func (a *Authenticator) LoadFromSecret(ctx context.Context, clientset kubernetes
 		entries[hashKey] = id
 	}
 
-	a.mu.Lock()
 	a.keys = entries
-	a.mu.Unlock()
 	klog.Infof("Loaded %d hashed E2B API key entries from secret %s/%s", len(entries), namespace, secretName)
 	return nil
 }
@@ -150,10 +112,7 @@ func (a *Authenticator) Validate(rawKey string) (TenantIdentity, bool) {
 	if strings.TrimSpace(rawKey) == "" {
 		return TenantIdentity{}, false
 	}
-	digest := HashAPIKey(strings.TrimSpace(rawKey))
-	a.mu.RLock()
-	id, ok := a.keys[digest]
-	a.mu.RUnlock()
+	id, ok := a.keys[HashAPIKey(strings.TrimSpace(rawKey))]
 	return id, ok
 }
 
@@ -192,14 +151,19 @@ func tenantFromContext(c *gin.Context) (TenantIdentity, bool) {
 }
 
 func parseTenantSpec(raw, defaultNs string) (TenantIdentity, error) {
-	parts := strings.Split(strings.TrimSpace(raw), ":")
-	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+	ownerPart, nsPart, hasNS := strings.Cut(strings.TrimSpace(raw), ":")
+	ownerID := strings.TrimSpace(ownerPart)
+	if ownerID == "" {
 		return TenantIdentity{}, fmt.Errorf("ownerId is required")
 	}
-	ownerID := strings.TrimSpace(parts[0])
 	ns := defaultNs
-	if len(parts) >= 2 && strings.TrimSpace(parts[1]) != "" {
-		ns = strings.TrimSpace(parts[1])
+	if hasNS {
+		if strings.Contains(nsPart, ":") {
+			return TenantIdentity{}, fmt.Errorf("invalid tenant mapping %q: expected ownerId[:namespace]", raw)
+		}
+		if trimmed := strings.TrimSpace(nsPart); trimmed != "" {
+			ns = trimmed
+		}
 	}
 	return TenantIdentity{
 		OwnerID:   ownerID,

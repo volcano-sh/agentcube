@@ -46,7 +46,6 @@ type SandboxInfo struct {
 	DisableIdleTimeout bool   `json:"disableIdleTimeout,omitempty"`
 	EnvdVersion        string `json:"envdVersion,omitempty"`
 	EnvdAccessToken    string `json:"envdAccessToken,omitempty"`
-	TrafficAccessToken string `json:"trafficAccessToken,omitempty"`
 	PodIP              string `json:"podIp,omitempty"`
 	// LastActivityAt is populated transiently from the store's last-activity sorted set
 	// during ListInactiveSandboxes. It is intentionally excluded from JSON serialization.
@@ -73,21 +72,19 @@ type CreateSandboxRequest struct {
 	InitEnvd           bool              `json:"initEnvd,omitempty"`
 	EnvdPort           uint32            `json:"envdPort,omitempty"`
 	EnvdAccessToken    string            `json:"envdAccessToken,omitempty"`
-	TrafficAccessToken string            `json:"trafficAccessToken,omitempty"`
 }
 
 type CreateSandboxResponse struct {
-	Kind               string              `json:"kind"`
-	SessionID          string              `json:"sessionId"`
-	SandboxID          string              `json:"sandboxId"`
-	SandboxName        string              `json:"sandboxName"`
-	EntryPoints        []SandboxEntryPoint `json:"entryPoints"`
-	OwnerID            string              `json:"ownerId,omitempty"`
-	EnvdVersion        string              `json:"envdVersion,omitempty"`
-	EnvdAccessToken    string              `json:"envdAccessToken,omitempty"`
-	TrafficAccessToken string              `json:"trafficAccessToken,omitempty"`
-	CreatedAt          time.Time           `json:"createdAt,omitempty"`
-	ExpiresAt          time.Time           `json:"expiresAt,omitempty"`
+	Kind            string              `json:"kind"`
+	SessionID       string              `json:"sessionId"`
+	SandboxID       string              `json:"sandboxId"`
+	SandboxName     string              `json:"sandboxName"`
+	EntryPoints     []SandboxEntryPoint `json:"entryPoints"`
+	OwnerID         string              `json:"ownerId,omitempty"`
+	EnvdVersion     string              `json:"envdVersion,omitempty"`
+	EnvdAccessToken string              `json:"envdAccessToken,omitempty"`
+	CreatedAt       time.Time           `json:"createdAt,omitempty"`
+	ExpiresAt       time.Time           `json:"expiresAt,omitempty"`
 }
 
 type UpdateSandboxTTLRequest struct {

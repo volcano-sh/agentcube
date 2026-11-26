@@ -769,15 +769,8 @@ func (s *Server) handleDeleteSandboxByKind(c *gin.Context, expectedKind string) 
 }
 
 func deleteSandboxResource(ctx context.Context, dynamicClient dynamic.Interface, sandbox *types.SandboxInfo) error {
-	var err error
 	if sandbox.Kind == types.SandboxClaimsKind {
-		err = deleteSandboxClaim(ctx, dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
-	} else {
-		err = deleteSandbox(ctx, dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
+		return deleteSandboxClaim(ctx, dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
 	}
-	if apierrors.IsNotFound(err) {
-		klog.Infof("%s %s/%s already deleted", sandbox.Kind, sandbox.SandboxNamespace, sandbox.Name)
-		return nil
-	}
-	return err
+	return deleteSandbox(ctx, dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
 }

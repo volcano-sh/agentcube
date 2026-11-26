@@ -85,13 +85,21 @@ def verify_k8s_and_redis_cleaned(namespace: str, session_id: str) -> None:
             check=False,
         )
         if (
-            not claims.stdout.strip()
+            claims.returncode == 0
+            and sandboxes.returncode == 0
+            and redis_res.returncode == 0
+            and not claims.stdout.strip()
             and not sandboxes.stdout.strip()
             and redis_res.stdout.strip() == "0"
         ):
             return
         time.sleep(1)
-    raise AssertionError(f"K8s or Redis resources leaked for session {session_id}")
+    raise AssertionError(
+        f"K8s or Redis resources leaked for session {session_id}: "
+        f"claims=({claims.returncode},{claims.stderr.strip()}) "
+        f"sandboxes=({sandboxes.returncode},{sandboxes.stderr.strip()}) "
+        f"redis=({redis_res.returncode},{redis_res.stderr.strip()})"
+    )
 
 
 def run_tests() -> None:

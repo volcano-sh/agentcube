@@ -229,4 +229,25 @@ func TestCreateSandboxRequest_NonStringMetadataAndNormalize(t *testing.T) {
 	assert.Contains(t, normalized, "nested")
 
 	assert.Nil(t, NormalizeMetadata(map[string]any{"onlyNil": nil}))
+
+	assert.Error(t, (&CreateSandboxRequest{
+		Kind:               CodeInterpreterKind,
+		Namespace:          "default",
+		Name:               "ci-1",
+		DisableIdleTimeout: true,
+	}).Validate())
+	assert.Error(t, (&CreateSandboxRequest{
+		Kind:      CodeInterpreterKind,
+		Namespace: "default",
+		Name:      "ci-1",
+		InitEnvd:  true,
+	}).Validate())
+	assert.NoError(t, (&CreateSandboxRequest{
+		Kind:               CodeInterpreterKind,
+		Namespace:          "default",
+		Name:               "ci-1",
+		InitEnvd:           true,
+		EnvdAccessToken:    "tok",
+		DisableIdleTimeout: true,
+	}).Validate())
 }

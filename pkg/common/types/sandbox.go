@@ -138,6 +138,9 @@ func (car *CreateSandboxRequest) Validate() error {
 	if car.InitEnvd && strings.TrimSpace(car.EnvdAccessToken) == "" {
 		return fmt.Errorf("envdAccessToken is required when initEnvd is true")
 	}
+	if car.DisableIdleTimeout && !car.InitEnvd {
+		return fmt.Errorf("disableIdleTimeout requires initEnvd to be true")
+	}
 	if car.TTL != nil {
 		const maxDurationSeconds = (1<<63 - 1) / int64(time.Second)
 		if *car.TTL <= 0 {

@@ -171,19 +171,19 @@ class PublishRuntime:
         except Exception as e:
             raise RuntimeError(f"Failed to deploy AgentRuntime CR to K8s: {str(e)}")
 
+        endpoint = options.get('agent_endpoint') or metadata.agent_endpoint
+        if not endpoint:
+            raise ValueError("Please enter the endpoint for the agent")
+
         # Step 4: Update metadata with K8s deployment information
         updates = {
             "agent_id": k8s_info["deployment_name"],
+            "agent_endpoint": endpoint,
             "k8s_deployment": {
                 **k8s_info,
                 "type": "AgentRuntime",
             }
         }
-
-        # Use provided endpoint or fall back to router_url from metadata
-        endpoint = options.get('agent_endpoint') or metadata.agent_endpoint
-        if not endpoint:
-            raise ValueError("Please enter the endpoint for the agent")
 
         self.metadata_service.update_metadata(workspace_path, updates)
 

@@ -23,6 +23,7 @@ Tests cover:
 """
 
 import os
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -285,6 +286,66 @@ class TestCodeInterpreterDataPlaneSessionErrors(unittest.TestCase):
             client.list_files()
 
         self.assertEqual(client.session_id, "active-session")
+
+
+class TestCodeInterpreterDataPlaneDownloadPath(unittest.TestCase):
+    @patch('agentcube.clients.code_interpreter_data_plane.create_session')
+    def test_download_file_encodes_remote_path(self, mock_create_session):
+        from agentcube.clients.code_interpreter_data_plane import CodeInterpreterDataPlaneClient
+
+        cases = {
+            "plain.txt": "api/files/plain.txt",
+            "/dir/plain.txt": "api/files/dir/plain.txt",
+            "data#v2.csv": "api/files/data%23v2.csv",
+            "notes?.txt": "api/files/notes%3F.txt",
+            "%41.txt": "api/files/%2541.txt",
+            "sub dir/100%.txt": "api/files/sub%20dir/100%25.txt",
+            "./plain.txt": "api/files/plain.txt",
+            "a/../b.txt": "api/files/b.txt",
+            "..hidden": "api/files/..hidden",
+        }
+        for remote_path, expected_suffix in cases.items():
+            with self.subTest(remote_path=remote_path):
+                session = Mock()
+                response = requests.Response()
+                response.status_code = 200
+                response._content = b"file contents"
+                response._content_consumed = True
+                session.request.return_value = response
+                session.headers = requests.structures.CaseInsensitiveDict()
+                mock_create_session.return_value = session
+
+                client = CodeInterpreterDataPlaneClient(
+                    session_id="active-session",
+                    base_url="http://router/invocations/",
+                )
+                with tempfile.TemporaryDirectory() as tmp:
+                    local_path = os.path.join(tmp, "out")
+                    client.download_file(remote_path, local_path)
+                    with open(local_path, "rb") as f:
+                        self.assertEqual(f.read(), b"file contents")
+
+                url = session.request.call_args.kwargs["url"]
+                self.assertEqual(url, "http://router/invocations/" + expected_suffix)
+
+    @patch('agentcube.clients.code_interpreter_data_plane.create_session')
+    def test_download_file_rejects_paths_outside_files_endpoint(self, mock_create_session):
+        from agentcube.clients.code_interpreter_data_plane import CodeInterpreterDataPlaneClient
+
+        session = Mock()
+        session.headers = requests.structures.CaseInsensitiveDict()
+        mock_create_session.return_value = session
+        client = CodeInterpreterDataPlaneClient(
+            session_id="active-session",
+            base_url="http://router/invocations/",
+        )
+
+        for remote_path in ["", "/", ".", "./", "..", "../../health", "a/../../x", "/../../../v1"]:
+            with self.subTest(remote_path=remote_path):
+                with tempfile.TemporaryDirectory() as tmp:
+                    with self.assertRaises(ValueError):
+                        client.download_file(remote_path, os.path.join(tmp, "out"))
+        session.request.assert_not_called()
 
 
 if __name__ == "__main__":

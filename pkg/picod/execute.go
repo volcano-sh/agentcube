@@ -84,8 +84,9 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 		}
 	}
 
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeoutDuration)
+	// Create context with timeout, chained to the request context so a client
+	// disconnect (c.Request.Context() canceled) also terminates the subprocess.
+	ctx, cancel := context.WithTimeout(c.Request.Context(), timeoutDuration)
 	defer cancel()
 
 	// Execute command with context

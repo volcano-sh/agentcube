@@ -1,0 +1,53 @@
+name: Python CLI Tests
+
+on:
+  pull_request:
+  merge_group:
+
+jobs:
+  python-cli-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Filter paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            cli:
+              - "cmd/cli/**"
+              - "Makefile"
+              - ".github/workflows/python-cli-publish.yml"
+              - ".github/workflows/python-cli-tests.yml"
+
+      - name: Setup Python
+        if: steps.changes.outputs.cli == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        if: steps.changes.outputs.cli == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build pytest setuptools
+          python -m pip install -e ./cmd/cli
+
+      - name: Run unit tests
+        if: steps.changes.outputs.cli == 'true'
+        run: python -m pytest cmd/cli/tests -q
+
+      - name: Build CLI package
+        if: steps.changes.outputs.cli == 'true'
+        run: make build-python-cli
+
+      - name: Verify wheel install
+        if: steps.changes.outputs.cli == 'true'
+        run: |
+          python -m venv /tmp/agentcube-cli-smoke
+          /tmp/agentcube-cli-smoke/bin/python -m pip install --upgrade pip
+          /tmp/agentcube-cli-smoke/bin/python -m pip install cmd/cli/dist/*.whl
+          /tmp/agentcube-cli-smoke/bin/kubectl-agentcube --help

@@ -38,6 +38,7 @@ type AgentRuntime struct {
 }
 
 // AgentRuntimeSpec describes how to create and manage agent runtime sandboxes.
+// +kubebuilder:validation:XValidation:rule="!has(self.sessionTimeout) || !has(self.maxSessionDuration) || duration(self.sessionTimeout) <= duration(self.maxSessionDuration)",message="sessionTimeout must be less than or equal to maxSessionDuration"
 type AgentRuntimeSpec struct {
 	// Ports is a list of ports that the agent runtime will expose.
 	Ports []TargetPort `json:"targetPort"`
@@ -48,12 +49,16 @@ type AgentRuntimeSpec struct {
 
 	// SessionTimeout describes the duration after which an inactive session will be terminated.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Format=duration
+	// +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="sessionTimeout must be greater than 0"
 	// +kubebuilder:default="15m"
 	SessionTimeout *metav1.Duration `json:"sessionTimeout,omitempty" protobuf:"bytes,2,opt,name=sessionTimeout"`
 
 	// MaxSessionDuration describes the maximum duration for a session.
 	// After this duration, the session will be terminated no matter active or inactive.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Format=duration
+	// +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="maxSessionDuration must be greater than 0"
 	// +kubebuilder:default="8h"
 	MaxSessionDuration *metav1.Duration `json:"maxSessionDuration,omitempty" protobuf:"bytes,3,opt,name=maxSessionDuration"`
 }

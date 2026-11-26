@@ -124,31 +124,42 @@ func NewServer(config *Config) (*Server, error) {
 	}
 
 	// Initialize built-in E2B compatibility module when enabled (default true, fail-closed).
-	if config.EnableE2B {
-		if mgr, ok := sessionManager.(*manager); ok {
-			e2bCfg := e2b.DefaultConfig()
-			if config.E2BDomain != "" {
-				e2bCfg.Domain = strings.TrimPrefix(strings.TrimSpace(config.E2BDomain), ".")
-			}
-			if config.E2BAPIKeySecret != "" {
-				e2bCfg.APIKeySecret = config.E2BAPIKeySecret
-			}
-			if config.E2BDefaultTTL > 0 {
-				e2bCfg.DefaultTTL = config.E2BDefaultTTL
-			}
-			e2bH, err := e2b.New(context.Background(), e2bCfg, server.storeClient, mgr.workloadMgrAddr, mgr.httpClient, jwtManager)
-			if err != nil {
-				return nil, fmt.Errorf("failed to initialize embedded E2B module: %w", err)
-			}
-			server.e2bHandler = e2bH
-			klog.Infof("Built-in E2B compatibility module initialized (domain=%q)", e2bCfg.Domain)
-		}
+	e2bHandler, err := initE2BHandler(config, server.storeClient, sessionManager, jwtManager)
+	if err != nil {
+		return nil, err
 	}
+	server.e2bHandler = e2bHandler
 
 	// Setup routes
 	server.setupRoutes()
 
 	return server, nil
+}
+
+func initE2BHandler(config *Config, storeClient store.Store, sessionManager SessionManager, jwtManager *JWTManager) (*e2b.Handler, error) {
+	if !config.EnableE2B {
+		return nil, nil
+	}
+	mgr, ok := sessionManager.(*manager)
+	if !ok {
+		return nil, nil
+	}
+	e2bCfg := e2b.DefaultConfig()
+	if config.E2BDomain != "" {
+		e2bCfg.Domain = strings.TrimPrefix(strings.TrimSpace(config.E2BDomain), ".")
+	}
+	if config.E2BAPIKeySecret != "" {
+		e2bCfg.APIKeySecret = config.E2BAPIKeySecret
+	}
+	if config.E2BDefaultTTL > 0 {
+		e2bCfg.DefaultTTL = config.E2BDefaultTTL
+	}
+	e2bH, err := e2b.New(context.Background(), e2bCfg, storeClient, mgr.workloadMgrAddr, mgr.httpClient, jwtManager)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize embedded E2B module: %w", err)
+	}
+	klog.Infof("Built-in E2B compatibility module initialized (domain=%q)", e2bCfg.Domain)
+	return e2bH, nil
 }
 
 // concurrencyLimitMiddleware limits the number of concurrent requests

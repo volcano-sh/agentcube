@@ -180,7 +180,7 @@ func (m *mockWMClient) DeleteCodeInterpreterSession(ctx context.Context, ownerID
 	return m.store.DeleteSandboxBySessionID(ctx, sessionID)
 }
 
-func setupTestHandler(t *testing.T, domain string) (*Handler, *memStore, *mockWMClient, http.Handler) {
+func setupTestHandler(t *testing.T, domain string) (*memStore, *mockWMClient, http.Handler) {
 	t.Helper()
 	st := newMemStore()
 	wm := &mockWMClient{store: st}
@@ -228,7 +228,7 @@ func setupTestHandler(t *testing.T, domain string) (*Handler, *memStore, *mockWM
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("native-router-ok"))
 	})
-	return h, st, wm, h.WrapHandler(fallback)
+	return st, wm, h.WrapHandler(fallback)
 }
 
 func TestAuthenticator_SecretFormat(t *testing.T) {
@@ -251,8 +251,7 @@ func TestAuthenticator_SecretFormat(t *testing.T) {
 }
 
 func TestHandler_LifecycleAndFailClosed(t *testing.T) {
-	h, _, wm, router := setupTestHandler(t, "127.0.0.1.nip.io:8081")
-	_ = h
+	_, wm, router := setupTestHandler(t, "127.0.0.1.nip.io:8081")
 
 	// Non-E2B Host falls through to native Router.
 	w := httptest.NewRecorder()
@@ -386,7 +385,7 @@ func TestHandler_LifecycleAndFailClosed(t *testing.T) {
 }
 
 func TestHandler_ScopesToE2BSessionsAndEscapedMetadataFilter(t *testing.T) {
-	_, st, _, router := setupTestHandler(t, "127.0.0.1.nip.io:8081")
+	st, _, router := setupTestHandler(t, "127.0.0.1.nip.io:8081")
 
 	now := time.Now().UTC()
 	nativeID := "550e8400-e29b-41d4-a716-446655440077"
@@ -465,7 +464,7 @@ func TestHandler_ScopesToE2BSessionsAndEscapedMetadataFilter(t *testing.T) {
 }
 
 func TestProxy_SecurityBoundariesAndHeaderPreservation(t *testing.T) {
-	_, st, _, router := setupTestHandler(t, "127.0.0.1.nip.io:8081")
+	st, _, router := setupTestHandler(t, "127.0.0.1.nip.io:8081")
 
 	var gotAuth, gotAccessToken, gotMethod, gotPath string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

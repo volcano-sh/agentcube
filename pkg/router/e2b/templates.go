@@ -19,6 +19,7 @@ package e2b
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -106,6 +107,10 @@ func (r *TemplateResolver) Resolve(namespace, idOrAlias string) (*ResolvedTempla
 	}
 
 	// 2. Scan opt-in CodeInterpreters in namespace for matching alias.
+	return r.resolveByAlias(namespace, target)
+}
+
+func (r *TemplateResolver) resolveByAlias(namespace, target string) (*ResolvedTemplate, error) {
 	items, err := r.lister.CodeInterpreters(namespace).List(labels.Everything())
 	if err != nil {
 		return nil, fmt.Errorf("list CodeInterpreters in namespace %s: %w", namespace, err)
@@ -113,14 +118,8 @@ func (r *TemplateResolver) Resolve(namespace, idOrAlias string) (*ResolvedTempla
 
 	var matches []*runtimev1alpha1.CodeInterpreter
 	for _, item := range items {
-		if !isE2BEnabled(item) {
-			continue
-		}
-		for _, alias := range parseAliases(item) {
-			if alias == target {
-				matches = append(matches, item)
-				break
-			}
+		if isE2BEnabled(item) && slices.Contains(parseAliases(item), target) {
+			matches = append(matches, item)
 		}
 	}
 	if len(matches) == 0 {

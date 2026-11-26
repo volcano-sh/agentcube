@@ -73,49 +73,50 @@ var initEnvd = func(ctx context.Context, podIP string, port uint32, envVars map[
 			}
 		}
 
-		payload := envdInitRequest{
-			EnvVars:     envVars,
-			AccessToken: accessToken,
-			Timestamp:   time.Now().UTC().Format(time.RFC3339Nano),
-		}
-		bodyBytes, err := json.Marshal(payload)
-		if err != nil {
-			return "", fmt.Errorf("marshal envd init request: %w", err)
-		}
-
-		req, err := http.NewRequestWithContext(initCtx, http.MethodPost, initURL, bytes.NewReader(bodyBytes))
-		if err != nil {
-			return "", fmt.Errorf("create envd init request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := envdInitHTTPClient.Do(req)
-		if err != nil {
-			lastErr = err
-			if initCtx.Err() != nil {
-				return "", fmt.Errorf("envd /init request failed: %w", lastErr)
-			}
-			continue
-		}
-
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		_ = resp.Body.Close()
-
-		if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK {
-			version := resp.Header.Get("X-Envd-Version")
-			if version == "" {
-				version = defaultEnvdVersion
-			}
+		version, retryable, err := postEnvdInit(initCtx, initURL, envVars, accessToken)
+		if err == nil {
 			return version, nil
 		}
-
-		lastErr = fmt.Errorf("envd /init returned status %d: %s", resp.StatusCode, string(respBody))
-		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
-			if initCtx.Err() != nil {
-				return "", lastErr
-			}
-			continue
+		lastErr = err
+		if !retryable || initCtx.Err() != nil {
+			return "", lastErr
 		}
-		return "", lastErr
 	}
+}
+
+func postEnvdInit(ctx context.Context, initURL string, envVars map[string]string, accessToken string) (string, bool, error) {
+	payload := envdInitRequest{
+		EnvVars:     envVars,
+		AccessToken: accessToken,
+		Timestamp:   time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	// #nosec G117 -- intentionally forwards per-sandbox envd accessToken to Pod /init.
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return "", false, fmt.Errorf("marshal envd init request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, initURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", false, fmt.Errorf("create envd init request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := envdInitHTTPClient.Do(req)
+	if err != nil {
+		return "", true, fmt.Errorf("envd /init request failed: %w", err)
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	_ = resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK {
+		version := resp.Header.Get("X-Envd-Version")
+		if version == "" {
+			version = defaultEnvdVersion
+		}
+		return version, false, nil
+	}
+
+	retryable := resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests
+	return "", retryable, fmt.Errorf("envd /init returned status %d: %s", resp.StatusCode, string(respBody))
 }

@@ -166,19 +166,7 @@ func (c *httpWMClient) doJSON(ctx context.Context, method, path, ownerID string,
 		return fmt.Errorf("read response from %s %s: %w", method, path, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg := strings.TrimSpace(string(respBytes))
-		var apiErr struct {
-			Error   string `json:"error"`
-			Message string `json:"message"`
-		}
-		if json.Unmarshal(respBytes, &apiErr) == nil {
-			if apiErr.Error != "" {
-				msg = apiErr.Error
-			} else if apiErr.Message != "" {
-				msg = apiErr.Message
-			}
-		}
-		return &WMStatusError{StatusCode: resp.StatusCode, Message: msg}
+		return parseWMError(resp.StatusCode, respBytes)
 	}
 	if out != nil && len(respBytes) > 0 {
 		if err := json.Unmarshal(respBytes, out); err != nil {
@@ -186,6 +174,22 @@ func (c *httpWMClient) doJSON(ctx context.Context, method, path, ownerID string,
 		}
 	}
 	return nil
+}
+
+func parseWMError(statusCode int, respBytes []byte) error {
+	msg := strings.TrimSpace(string(respBytes))
+	var apiErr struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(respBytes, &apiErr) == nil {
+		if apiErr.Error != "" {
+			msg = apiErr.Error
+		} else if apiErr.Message != "" {
+			msg = apiErr.Message
+		}
+	}
+	return &WMStatusError{StatusCode: statusCode, Message: msg}
 }
 
 func (c *httpWMClient) attachIdentityHeader(req *http.Request, ownerID string) error {

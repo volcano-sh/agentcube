@@ -484,6 +484,6 @@ func applyCodeInterpreterRequestOptions(sandbox *sandboxv1beta1.Sandbox, sandbox
 			maxDuration = DefaultSandboxTTL
 		}
 		capTime := metav1.NewTime(time.Now().Add(maxDuration))
-		sandbox.Spec.Lifecycle.ShutdownTime = &capTime
+		sandbox.Spec.ShutdownTime = &capTime
 	}
 }

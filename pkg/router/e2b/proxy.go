@@ -18,6 +18,7 @@ package e2b
 
 import (
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -94,7 +95,7 @@ func isEnvdInitPath(reqPath string) bool {
 func writeProxyJSONError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_, _ = fmt.Fprintf(w, `{"code":%d,"message":%q}`, code, msg)
+	_ = json.NewEncoder(w).Encode(ErrorResponse{Code: code, Message: msg})
 }
 
 func (h *Handler) handleSandboxProxy(w http.ResponseWriter, r *http.Request, target sandboxTarget) {

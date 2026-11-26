@@ -158,11 +158,6 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 		return
 	}
 
-	var sandbox *sandboxv1beta1.Sandbox
-	var sandboxClaim *extensionsv1beta1.SandboxClaim
-	var sandboxEntry *sandboxEntry
-	var err error
-
 	ownerID, statusCode, errMsg := resolveSandboxOwnerID(c.Request)
 	if statusCode != 0 {
 		respondError(c, statusCode, errMsg)
@@ -173,16 +168,7 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 		return
 	}
 
-	switch sandboxReq.Kind {
-	case types.AgentRuntimeKind:
-		sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, ownerID, sandboxReq.RequestedTTL(), s.informers)
-	case types.CodeInterpreterKind:
-		sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, ownerID, sandboxReq.RequestedTTL(), s.informers)
-		if err == nil {
-			applyCodeInterpreterRequestOptions(sandbox, sandboxClaim, sandboxEntry, sandboxReq)
-		}
-	}
-
+	sandbox, sandboxClaim, sandboxEntry, err := s.buildSandboxResources(sandboxReq, ownerID)
 	if err != nil {
 		klog.Errorf("build sandbox failed %s/%s: %v", sandboxReq.Namespace, sandboxReq.Name, err)
 		if errors.Is(err, api.ErrAgentRuntimeNotFound) || errors.Is(err, api.ErrCodeInterpreterNotFound) {
@@ -202,16 +188,10 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	sandboxName := sandbox.Name
 	namespace := sandbox.Namespace
 
-	dynamicClient := s.k8sClient.dynamicClient
 	useWMClient := kind == types.CodeInterpreterKind && sandboxReq.InitEnvd && ownerID != ""
-	if s.config.EnableAuth && !useWMClient {
-		userDynamicClient, errExtractClient := s.extractUserK8sClient(c)
-		if errExtractClient != nil {
-			klog.Infof("extract user k8s client failed: %v", errExtractClient)
-			respondError(c, http.StatusUnauthorized, errExtractClient.Error())
-			return
-		}
-		dynamicClient = userDynamicClient
+	dynamicClient, ok := s.resolveDynamicClient(c, useWMClient)
+	if !ok {
+		return
 	}
 
 	var resultChan <-chan SandboxStatusUpdate
@@ -230,6 +210,35 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	}
 
 	respondJSON(c, http.StatusOK, response)
+}
+
+func (s *Server) buildSandboxResources(sandboxReq *types.CreateSandboxRequest, ownerID string) (*sandboxv1beta1.Sandbox, *extensionsv1beta1.SandboxClaim, *sandboxEntry, error) {
+	switch sandboxReq.Kind {
+	case types.AgentRuntimeKind:
+		sandbox, entry, err := buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, ownerID, sandboxReq.RequestedTTL(), s.informers)
+		return sandbox, nil, entry, err
+	case types.CodeInterpreterKind:
+		sandbox, claim, entry, err := buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, ownerID, sandboxReq.RequestedTTL(), s.informers)
+		if err == nil {
+			applyCodeInterpreterRequestOptions(sandbox, claim, entry, sandboxReq)
+		}
+		return sandbox, claim, entry, err
+	default:
+		return nil, nil, nil, fmt.Errorf("unsupported kind %s", sandboxReq.Kind)
+	}
+}
+
+func (s *Server) resolveDynamicClient(c *gin.Context, useWMClient bool) (dynamic.Interface, bool) {
+	if !s.config.EnableAuth || useWMClient {
+		return s.k8sClient.dynamicClient, true
+	}
+	userDynamicClient, err := s.extractUserK8sClient(c)
+	if err != nil {
+		klog.Infof("extract user k8s client failed: %v", err)
+		respondError(c, http.StatusUnauthorized, err.Error())
+		return nil, false
+	}
+	return userDynamicClient, true
 }
 
 func resolveSandboxOwnerID(r *http.Request) (string, int, string) {
@@ -447,15 +456,9 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		return nil, api.NewInternalError(fmt.Errorf("failed to verify sandbox %s/%s entrypoints: %w", createdSandbox.Namespace, sandboxNameForPod, err))
 	}
 
-	var envdVersion string
-	if sandboxEntry.InitEnvd {
-		envdVersion, err = initEnvd(ctx, podIP, sandboxEntry.EnvdPort, sandboxEntry.EnvVars, sandboxEntry.EnvdAccessToken)
-		if err != nil {
-			if isContextError(err) {
-				return nil, err
-			}
-			return nil, api.NewInternalError(fmt.Errorf("failed to initialize envd for sandbox %s/%s: %w", createdSandbox.Namespace, sandboxNameForPod, err))
-		}
+	envdVersion, err := initializeSandboxEnvd(ctx, podIP, sandboxEntry, createdSandbox.Namespace, sandboxNameForPod)
+	if err != nil {
+		return nil, err
 	}
 
 	storeCacheInfo := buildSandboxInfo(createdSandbox, podIP, sandboxEntry)
@@ -491,6 +494,20 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	klog.V(2).Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
 		createdSandbox.Name, createdSandbox.Kind, sandboxEntry.SessionID)
 	return response, nil
+}
+
+func initializeSandboxEnvd(ctx context.Context, podIP string, entry *sandboxEntry, namespace, name string) (string, error) {
+	if !entry.InitEnvd {
+		return "", nil
+	}
+	envdVersion, err := initEnvd(ctx, podIP, entry.EnvdPort, entry.EnvVars, entry.EnvdAccessToken)
+	if err != nil {
+		if isContextError(err) {
+			return "", err
+		}
+		return "", api.NewInternalError(fmt.Errorf("failed to initialize envd for sandbox %s/%s: %w", namespace, name, err))
+	}
+	return envdVersion, nil
 }
 
 // rollbackSandboxCreation deletes the sandbox (or sandbox claim) and its store
@@ -715,23 +732,12 @@ func (s *Server) handleDeleteSandboxByKind(c *gin.Context, expectedKind string) 
 		}
 	}
 
-	dynamicClient := s.k8sClient.dynamicClient
-	useWMClient := isE2BSession && ownerID != ""
-	if s.config.EnableAuth && !useWMClient {
-		userDynamicClient, err := s.extractUserK8sClient(c)
-		if err != nil {
-			respondError(c, http.StatusUnauthorized, err.Error())
-			return
-		}
-		dynamicClient = userDynamicClient
+	dynamicClient, ok := s.resolveDynamicClient(c, isE2BSession && ownerID != "")
+	if !ok {
+		return
 	}
 
-	if sandbox.Kind == types.SandboxClaimsKind {
-		err = deleteSandboxClaim(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
-	} else {
-		err = deleteSandbox(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
-	}
-	if err != nil {
+	if err := deleteSandboxResource(c.Request.Context(), dynamicClient, sandbox); err != nil {
 		klog.Errorf("failed to delete %s %s/%s: %v", sandbox.Kind, sandbox.SandboxNamespace, sandbox.Name, err)
 		respondError(c, http.StatusInternalServerError, "internal server error")
 		return
@@ -754,4 +760,18 @@ func (s *Server) handleDeleteSandboxByKind(c *gin.Context, expectedKind string) 
 	respondJSON(c, http.StatusOK, map[string]string{
 		"message": "Sandbox deleted successfully",
 	})
+}
+
+func deleteSandboxResource(ctx context.Context, dynamicClient dynamic.Interface, sandbox *types.SandboxInfo) error {
+	var err error
+	if sandbox.Kind == types.SandboxClaimsKind {
+		err = deleteSandboxClaim(ctx, dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
+	} else {
+		err = deleteSandbox(ctx, dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
+	}
+	if apierrors.IsNotFound(err) {
+		klog.Infof("%s %s/%s already deleted", sandbox.Kind, sandbox.SandboxNamespace, sandbox.Name)
+		return nil
+	}
+	return err
 }

@@ -164,10 +164,10 @@ func TestApplyCodeInterpreterRequestOptions_SetsMaxCap(t *testing.T) {
 	applyCodeInterpreterRequestOptions(sb, nil, entry, req)
 
 	assert.Equal(t, "e2b-ci", entry.TemplateName)
-	assert.Equal(t, uint32(defaultEnvdPort), entry.EnvdPort)
+	assert.Equal(t, defaultEnvdPort, entry.EnvdPort)
 	assert.True(t, entry.DisableIdleTimeout)
 	assert.Equal(t, "tok", entry.EnvdAccessToken)
-	assert.WithinDuration(t, now.Add(4*time.Hour), sb.Spec.Lifecycle.ShutdownTime.Time, 2*time.Second)
+	assert.WithinDuration(t, now.Add(4*time.Hour), sb.Spec.ShutdownTime.Time, 2*time.Second)
 	assert.WithinDuration(t, now.Add(2*time.Minute), entry.ExpiresAt, 2*time.Second)
 }
 
@@ -217,7 +217,9 @@ func TestCreateSandbox_EnvdInitFailureRollsBack(t *testing.T) {
 	_, err := s.createSandbox(context.Background(), dyn, sb, nil, entry, ch)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "initialize envd")
-	assert.Equal(t, 1, s.storeClient.(*fakeStore).deleteSessionCalls)
+	fs, ok := s.storeClient.(*fakeStore)
+	require.True(t, ok)
+	assert.Equal(t, 1, fs.deleteSessionCalls)
 }
 
 type sessionMemStore struct {

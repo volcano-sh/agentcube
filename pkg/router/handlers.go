@@ -72,22 +72,35 @@ func (s *Server) handleInvoke(c *gin.Context, namespace, name, path, kind string
 		return
 	}
 
+	// Prevent native invocation paths from bypassing E2B data-plane proxy controls.
+	if sessionID != "" && sandbox.EnvdVersion != "" {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "session not found",
+			"code":  "SESSION_NOT_FOUND",
+		})
+		return
+	}
+
 	// RLAC: verify the caller owns this sandbox (only for existing sessions)
 	if sessionID != "" && !s.checkSandboxOwnership(c, sandbox) {
 		return
 	}
 
 	// Update session activity in store when receiving request
-	if err := s.storeClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
-		klog.Warningf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
+	if !sandbox.DisableIdleTimeout {
+		if err := s.storeClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
+			klog.Warningf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
+		}
 	}
 
 	// Forward request to sandbox with session ID
 	klog.V(2).Infof("Forwarding to sandbox: sessionID=%s namespace=%s name=%s path=%s", sandbox.SessionID, namespace, name, path)
 	s.forwardToSandbox(c, sandbox, path)
 
-	if err := s.storeClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
-		klog.Warningf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
+	if !sandbox.DisableIdleTimeout {
+		if err := s.storeClient.UpdateSessionLastActivity(c.Request.Context(), sandbox.SessionID, time.Now()); err != nil {
+			klog.Warningf("Failed to update sandbox with session-id %s last activity for request: %v", sandbox.SessionID, err)
+		}
 	}
 }
 

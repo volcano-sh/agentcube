@@ -32,8 +32,16 @@ type Store interface {
 	StoreSandbox(ctx context.Context, sandboxStore *types.SandboxInfo) error
 	// UpdateSandbox update sandbox of storage
 	UpdateSandbox(ctx context.Context, sandboxStore *types.SandboxInfo) error
+	// UpdateSandboxExpiry atomically updates ExpiresAt on the stored sandbox and its expiry index.
+	// When extendOnly is true, ExpiresAt is updated only if expiresAt is later than the current value.
+	UpdateSandboxExpiry(ctx context.Context, sessionID string, expiresAt time.Time, extendOnly bool) (*types.SandboxInfo, error)
+	// ClaimExpiredSandbox atomically marks an expired session as "deleting" if its expiry is <= now.
+	// Returns false if the session was already deleted, claimed, or concurrently extended past now.
+	ClaimExpiredSandbox(ctx context.Context, sessionID string, now time.Time) (bool, error)
 	// DeleteSandboxBySessionID delete sandbox by session ID
 	DeleteSandboxBySessionID(ctx context.Context, sessionID string) error
+	// ListActiveSandboxes returns non-expired sandboxes, optionally filtered by ownerID and namespace.
+	ListActiveSandboxes(ctx context.Context, ownerID string, namespace string) ([]*types.SandboxInfo, error)
 	// ListExpiredSandboxes returns up to limit sandboxes with ExpiresAt before the given time
 	ListExpiredSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error)
 	// ListInactiveSandboxes returns up to limit sandboxes with last-activity time before the given time

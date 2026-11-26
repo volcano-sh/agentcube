@@ -71,9 +71,18 @@ func (f *fakeStore) UpdateSandbox(_ context.Context, _ *types.SandboxInfo) error
 	f.updateCalls++
 	return f.updateErr
 }
+func (f *fakeStore) UpdateSandboxExpiry(_ context.Context, _ string, _ time.Time, _ bool) (*types.SandboxInfo, error) {
+	return nil, store.ErrNotFound
+}
+func (f *fakeStore) ClaimExpiredSandbox(_ context.Context, _ string, _ time.Time) (bool, error) {
+	return false, nil
+}
 func (f *fakeStore) DeleteSandboxBySessionID(_ context.Context, _ string) error {
 	f.deleteSessionCalls++
 	return nil
+}
+func (f *fakeStore) ListActiveSandboxes(_ context.Context, _ string, _ string) ([]*types.SandboxInfo, error) {
+	return nil, nil
 }
 func (f *fakeStore) ListExpiredSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxInfo, error) {
 	return nil, nil

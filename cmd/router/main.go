@@ -51,6 +51,12 @@ func main() {
 		jwtAudience     = flag.String("jwt-audience", "agentcube-api", "Expected audience (aud) claim in the JWT")
 		jwtRoleClaim    = flag.String("jwt-role-claim", "", "JSON path to roles array in the JWT (e.g., realm_access.roles)")
 		jwtRequiredRole = flag.String("jwt-required-role", "", "Role required to access the API (e.g., sandbox:invoke)")
+
+		// Built-in E2B API compatibility module (enabled by default, fail-closed until configured).
+		enableE2B       = flag.Bool("enable-e2b", true, "Enable built-in E2B API compatibility module (fail-closed until configured)")
+		e2bDomain       = flag.String("e2b-domain", os.Getenv("E2B_DOMAIN"), "Base domain for E2B Host routing (api.<domain> and <port>-<sandboxID>.<domain>)")
+		e2bAPIKeySecret = flag.String("e2b-api-key-secret", "", "Kubernetes Secret name containing SHA-256 hashed E2B API keys (default: e2b-api-keys)")
+		e2bDefaultTTL   = flag.Int("e2b-default-ttl", 0, "Default E2B sandbox TTL in seconds when timeout is omitted (default: 300)")
 	)
 
 	// Initialize klog flags
@@ -87,6 +93,10 @@ func main() {
 		JWTAudience:           *jwtAudience,
 		JWTRoleClaim:          *jwtRoleClaim,
 		JWTRequiredRole:       *jwtRequiredRole,
+		EnableE2B:             *enableE2B,
+		E2BDomain:             *e2bDomain,
+		E2BAPIKeySecret:       *e2bAPIKeySecret,
+		E2BDefaultTTL:         *e2bDefaultTTL,
 	}
 
 	// Create Router API server

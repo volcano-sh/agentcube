@@ -1,0 +1,120 @@
+# Multi-stage build for an E2B-compatible Code Interpreter sandbox image
+# combining Apache-2.0 envd (49983) and e2b-dev/code-interpreter (49999).
+
+FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine AS envd-builder
+
+ARG TARGETOS=linux
+ARG TARGETARCH
+ARG ENVD_REPO=https://github.com/e2b-dev/runtime.git
+ARG ENVD_COMMIT=eee3ca0809921a7a34b4d032e3601e92ca1304ef
+
+ENV GOTOOLCHAIN=auto
+
+RUN apk add --no-cache git
+
+WORKDIR /src
+RUN git init . && \
+    git remote add origin "${ENVD_REPO}" && \
+    git fetch --depth 1 origin "${ENVD_COMMIT}" && \
+    git checkout FETCH_HEAD
+
+# In BestEffort/Burstable Kubernetes Pods without CAP_SYS_RESOURCE, unprivileged
+# commands cannot lower oom_score_adj (e.g. 1000 -> 100). Make oom_score_adj best-effort.
+RUN grep -Fq 'echo %d > /proc/$$/oom_score_adj && exec' /src/packages/envd/internal/services/process/handler/spawn_unix.go && \
+    sed -i 's#echo %d > /proc/\$\$/oom_score_adj && exec#{ echo %d > /proc/$$/oom_score_adj; } 2>/dev/null || true; exec#' /src/packages/envd/internal/services/process/handler/spawn_unix.go && \
+    grep -Fq '{ echo %d > /proc/$$/oom_score_adj; } 2>/dev/null || true; exec' /src/packages/envd/internal/services/process/handler/spawn_unix.go
+
+WORKDIR /src/packages/envd
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/envd .
+
+FROM python:3.12-slim
+
+ARG CI_REPO=https://github.com/e2b-dev/code-interpreter.git
+ARG CI_COMMIT=db9fdb1cfe6552455d58b1690971bdd3052538c6
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HOME=/root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -s /bin/bash user && mkdir -p /home/user /run/e2b-jupyter
+
+RUN git init /tmp/ci-src && \
+    cd /tmp/ci-src && \
+    git remote add origin "${CI_REPO}" && \
+    git fetch --depth 1 origin "${CI_COMMIT}" && \
+    git checkout FETCH_HEAD
+
+# Install Jupyter runtime + FastAPI code-interpreter server dependencies
+RUN pip install \
+    jupyter-server==2.21.1 \
+    ipykernel==6.31.0 \
+    ipython==9.15.0 \
+    matplotlib==3.11.2 \
+    pillow==13.0.0 \
+    orjson==3.11.9 \
+    pandas==2.2.3 \
+    requests==2.33.0 \
+    fastapi==0.162.0 \
+    starlette==1.10.0 \
+    httpx==0.28.1 \
+    websockets==17.3 \
+    "uvicorn[standard]==0.54.0" \
+    pydantic==2.9.1 \
+    /tmp/ci-src/template/charts
+
+RUN ipython kernel install --name python3 --sys-prefix
+
+# Install code-interpreter server and Jupyter configs
+RUN cp -r /tmp/ci-src/template/server /root/.server && \
+    mkdir -p /root/.jupyter /root/.config/matplotlib /root/.ipython/profile_default/startup && \
+    cp /tmp/ci-src/template/jupyter_server_config.py /root/.jupyter/ && \
+    cp /tmp/ci-src/template/jupyter-healthcheck.sh /root/.jupyter/ && \
+    chmod +x /root/.jupyter/jupyter-healthcheck.sh && \
+    cp /tmp/ci-src/template/matplotlibrc /root/.config/matplotlib/.matplotlibrc && \
+    cp /tmp/ci-src/template/ipython_kernel_config.py /root/.ipython/profile_default/ && \
+    cp -r /tmp/ci-src/template/startup_scripts/* /root/.ipython/profile_default/startup/ && \
+    rm -rf /tmp/ci-src
+
+# Make optional non-Python default kernel initialization non-fatal when only Python is installed.
+RUN python3 -c 'from pathlib import Path; p = Path("/root/.server/main.py"); src = p.read_text(); old = """        javascript_context = await create_context(\n            client, websockets, "javascript", "/home/user"\n        )\n        default_websockets["javascript"] = javascript_context.id"""; new = """        try:\n            javascript_context = await create_context(\n                client, websockets, "javascript", "/home/user"\n            )\n            default_websockets["javascript"] = javascript_context.id\n        except Exception as js_err:\n            logger.warning(f"Skipping optional javascript context: {js_err}")"""; assert old in src, "expected snippet not found"; p.write_text(src.replace(old, new, 1))'
+
+COPY --from=envd-builder /out/envd /usr/bin/envd
+
+RUN cat <<'EOF' > /usr/local/bin/start-e2b-sandbox.sh
+#!/bin/bash
+set -euo pipefail
+
+mkdir -p /run/e2b-jupyter /home/user
+chmod 0700 /run/e2b-jupyter
+
+MATPLOTLIBRC=/root/.config/matplotlib/.matplotlibrc \
+    jupyter server --IdentityProvider.token="" --config=/root/.jupyter/jupyter_server_config.py \
+    >/var/log/jupyter.log 2>&1 &
+
+/root/.jupyter/jupyter-healthcheck.sh
+
+(
+    cd /root/.server
+    exec uvicorn main:app --host 0.0.0.0 --port 49999 --workers 1 --no-access-log --no-use-colors --timeout-keep-alive 640
+) >/var/log/code-interpreter.log 2>&1 &
+
+exec /usr/bin/envd --isnotfc --no-cgroups --port 49983 --verbose
+EOF
+RUN chmod +x /usr/local/bin/start-e2b-sandbox.sh
+
+WORKDIR /home/user
+EXPOSE 49983 49999
+
+# Note: Upstream e2b-dev/code-interpreter on port 49999 relies on Router token validation;
+# production clusters should enforce a NetworkPolicy restricting pod ingress on 49983/49999 to agentcube-router.
+ENTRYPOINT ["/usr/local/bin/start-e2b-sandbox.sh"]

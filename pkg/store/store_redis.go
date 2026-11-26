@@ -148,15 +148,17 @@ func (rs *redisStore) StoreSandbox(ctx context.Context, sandboxRedis *types.Sand
 		return errors.New("StoreSandbox: sandbox is nil")
 	}
 
-	sessionKey := rs.sessionKey(sandboxRedis.SessionID)
-
-	b, err := json.Marshal(sandboxRedis)
-	if err != nil {
-		return fmt.Errorf("StoreSandbox: marshal sandbox failed: %w", err)
-	}
-
 	if sandboxRedis.ExpiresAt.IsZero() {
 		return fmt.Errorf("StoreSandbox: sandbox expired at is zero")
+	}
+
+	sessionKey := rs.sessionKey(sandboxRedis.SessionID)
+	normalized := *sandboxRedis
+	normalized.ExpiresAt = normalized.ExpiresAt.UTC()
+
+	b, err := json.Marshal(&normalized)
+	if err != nil {
+		return fmt.Errorf("StoreSandbox: marshal sandbox failed: %w", err)
 	}
 
 	pipe := rs.cli.Pipeline()
@@ -165,10 +167,15 @@ func (rs *redisStore) StoreSandbox(ctx context.Context, sandboxRedis *types.Sand
 		Score:  float64(sandboxRedis.ExpiresAt.Unix()),
 		Member: sandboxRedis.SessionID,
 	})
-	pipe.ZAdd(ctx, rs.lastActivityIndexKey, redisv9.Z{
-		Score:  float64(time.Now().Unix()),
-		Member: sandboxRedis.SessionID,
-	})
+	if !sandboxRedis.DisableIdleTimeout {
+		pipe.ZAdd(ctx, rs.lastActivityIndexKey, redisv9.Z{
+			Score:  float64(time.Now().Unix()),
+			Member: sandboxRedis.SessionID,
+		})
+	}
+	if sandboxRedis.OwnerID != "" {
+		pipe.SAdd(ctx, ownerSessionsKey(sandboxRedis.OwnerID), sandboxRedis.SessionID)
+	}
 
 	cmder, err := pipe.Exec(ctx)
 	if err != nil {
@@ -196,8 +203,12 @@ func (rs *redisStore) UpdateSandbox(ctx context.Context, sandboxRedis *types.San
 	}
 
 	sessionKey := rs.sessionKey(sandboxRedis.SessionID)
+	normalized := *sandboxRedis
+	if !normalized.ExpiresAt.IsZero() {
+		normalized.ExpiresAt = normalized.ExpiresAt.UTC()
+	}
 
-	b, err := json.Marshal(sandboxRedis)
+	b, err := json.Marshal(&normalized)
 	if err != nil {
 		return fmt.Errorf("UpdateSandbox: marshal sandbox: %w", err)
 	}
@@ -216,15 +227,142 @@ func (rs *redisStore) UpdateSandbox(ctx context.Context, sandboxRedis *types.San
 func (rs *redisStore) DeleteSandboxBySessionID(ctx context.Context, sessionID string) error {
 	sessionKey := rs.sessionKey(sessionID)
 
+	var ownerID string
+	if existing, err := rs.GetSandboxBySessionID(ctx, sessionID); err == nil && existing != nil {
+		ownerID = existing.OwnerID
+	}
+
 	pipe := rs.cli.Pipeline()
 	pipe.Del(ctx, sessionKey)
 	pipe.ZRem(ctx, rs.expiryIndexKey, sessionID)
 	pipe.ZRem(ctx, rs.lastActivityIndexKey, sessionID)
+	if ownerID != "" {
+		pipe.SRem(ctx, ownerSessionsKey(ownerID), sessionID)
+	}
 
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("DeleteSandboxBySessionID: pipeline EXEC: %w", err)
 	}
 	return nil
+}
+
+var (
+	updateSandboxExpiryScript = redisv9.NewScript(updateSandboxExpiryLua)
+	claimExpiredSandboxScript = redisv9.NewScript(claimExpiredSandboxLua)
+)
+
+// ClaimExpiredSandbox atomically marks an expired session as deleting if its expiry is <= now
+// and refreshes its expiry-index lease so failed cleanups are retried automatically.
+func (rs *redisStore) ClaimExpiredSandbox(ctx context.Context, sessionID string, now time.Time) (bool, error) {
+	if sessionID == "" {
+		return false, errors.New("ClaimExpiredSandbox: sessionID is empty")
+	}
+	nowUTC := now.UTC()
+	leaseUntil := nowUTC.Add(expiredClaimLease).Unix()
+	res, err := claimExpiredSandboxScript.Run(
+		ctx,
+		rs.cli,
+		[]string{rs.sessionKey(sessionID)},
+		nowUTC.Format("20060102150405"),
+		nowUTC.Unix(),
+		leaseUntil,
+	).Int64()
+	if err != nil {
+		return false, fmt.Errorf("ClaimExpiredSandbox: script execution failed for sessionID %s: %w", sessionID, err)
+	}
+	if res == -1 {
+		_ = rs.cli.ZRem(ctx, rs.expiryIndexKey, sessionID).Err()
+		return false, nil
+	}
+	if res != 1 {
+		return false, nil
+	}
+	if err := rs.cli.ZAdd(ctx, rs.expiryIndexKey, redisv9.Z{
+		Score:  float64(leaseUntil),
+		Member: sessionID,
+	}).Err(); err != nil {
+		return false, fmt.Errorf("ClaimExpiredSandbox: ZADD lease failed for sessionID %s: %w", sessionID, err)
+	}
+	return true, nil
+}
+
+// UpdateSandboxExpiry atomically updates ExpiresAt on the stored sandbox and its expiry index.
+func (rs *redisStore) UpdateSandboxExpiry(ctx context.Context, sessionID string, expiresAt time.Time, extendOnly bool) (*types.SandboxInfo, error) {
+	if sessionID == "" {
+		return nil, errors.New("UpdateSandboxExpiry: sessionID is empty")
+	}
+	if expiresAt.IsZero() {
+		return nil, errors.New("UpdateSandboxExpiry: expiresAt is zero")
+	}
+
+	extendFlag := "0"
+	if extendOnly {
+		extendFlag = "1"
+	}
+	expiresUTC := expiresAt.UTC()
+	res, err := updateSandboxExpiryScript.Run(
+		ctx,
+		rs.cli,
+		[]string{rs.sessionKey(sessionID)},
+		expiresUTC.Format(time.RFC3339Nano),
+		expiresUTC.Format("20060102150405"),
+		extendFlag,
+	).Result()
+	if err != nil {
+		return nil, fmt.Errorf("UpdateSandboxExpiry: script execution failed for sessionID %s: %w", sessionID, err)
+	}
+
+	arr, ok := res.([]interface{})
+	if !ok || len(arr) != 3 {
+		return nil, fmt.Errorf("UpdateSandboxExpiry: unexpected script response %T", res)
+	}
+	found, _ := arr[0].(int64)
+	if found == 0 {
+		return nil, ErrNotFound
+	}
+	updatedJSON, _ := arr[1].(string)
+	changed, _ := arr[2].(int64)
+	var sandbox types.SandboxInfo
+	if err := json.Unmarshal([]byte(updatedJSON), &sandbox); err != nil {
+		return nil, fmt.Errorf("UpdateSandboxExpiry: unmarshal sandbox failed: %w", err)
+	}
+	if changed == 1 {
+		if err := rs.cli.ZAdd(ctx, rs.expiryIndexKey, redisv9.Z{
+			Score:  float64(expiresUTC.Unix()),
+			Member: sessionID,
+		}).Err(); err != nil {
+			return nil, fmt.Errorf("UpdateSandboxExpiry: ZADD failed for sessionID %s: %w", sessionID, err)
+		}
+	}
+	return &sandbox, nil
+}
+
+// ListActiveSandboxes returns non-expired sandboxes, optionally filtered by ownerID and namespace.
+func (rs *redisStore) ListActiveSandboxes(ctx context.Context, ownerID string, namespace string) ([]*types.SandboxInfo, error) {
+	now := time.Now()
+	var ids []string
+	var err error
+	if ownerID != "" {
+		ids, err = rs.cli.SMembers(ctx, ownerSessionsKey(ownerID)).Result()
+		if err != nil {
+			return nil, fmt.Errorf("ListActiveSandboxes: SMembers failed: %w", err)
+		}
+	} else {
+		minScore := fmt.Sprintf("%d", now.Unix())
+		ids, err = rs.cli.ZRangeByScore(ctx, rs.expiryIndexKey, &redisv9.ZRangeBy{
+			Min: minScore,
+			Max: "+inf",
+		}).Result()
+		if err != nil {
+			return nil, fmt.Errorf("ListActiveSandboxes: ZRangeByScore failed: %w", err)
+		}
+	}
+
+	sandboxes, err := rs.loadSandboxesBySessionIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	return filterAndSortActiveSandboxes(sandboxes, namespace, now), nil
 }
 
 // ListExpiredSandboxes returns up to limit sandboxes whose ExpiresAt is before.

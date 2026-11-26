@@ -106,28 +106,26 @@ func (vs *valkeyStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs
 		return nil, nil
 	}
 
-	sessionIDKeys := make([]string, 0, len(sessionIDs))
+	commands := make(valkey.Commands, 0, len(sessionIDs))
 	for _, sessionID := range sessionIDs {
-		sessionIDKeys = append(sessionIDKeys, vs.sessionKey(sessionID))
-	}
-	// MGet should in same slot
-	stringSliceResults, err := vs.cli.Do(ctx, vs.cli.B().Mget().Key(sessionIDKeys...).Build()).AsStrSlice()
-	if err != nil {
-		return nil, fmt.Errorf("loadSandboxesBySessionIDs: Valkey MGet sandboxes failed: %w", err)
+		commands = append(commands, vs.cli.B().Get().Key(vs.sessionKey(sessionID)).Build())
 	}
 
-	if len(stringSliceResults) > len(sessionIDKeys) {
-		return nil, fmt.Errorf("unexpected MGet result size: %d, param size: %d", len(stringSliceResults), len(sessionIDKeys))
-	}
-
-	sandboxResults := make([]*types.SandboxInfo, 0, len(stringSliceResults))
-	for i, sandboxObjString := range stringSliceResults {
-		if len(sandboxObjString) == 0 {
-			// sandboxObjString is empty while sessionKey not exist, ignore
+	responses := vs.cli.DoMulti(ctx, commands...)
+	sandboxResults := make([]*types.SandboxInfo, 0, len(responses))
+	for i, resp := range responses {
+		b, err := resp.AsBytes()
+		if err != nil {
+			if valkey.IsValkeyNil(err) {
+				continue
+			}
+			return nil, fmt.Errorf("loadSandboxesBySessionIDs: Valkey GET failed for sessionID %s: %w", sessionIDs[i], err)
+		}
+		if len(b) == 0 {
 			continue
 		}
 		var sandboxRedis types.SandboxInfo
-		if err = json.Unmarshal([]byte(sandboxObjString), &sandboxRedis); err != nil {
+		if err = json.Unmarshal(b, &sandboxRedis); err != nil {
 			return nil, fmt.Errorf("unmarshal sandbox failed: %w, index: %v, sessionID: %v", err, i, sessionIDs[i])
 		}
 		sandboxResults = append(sandboxResults, &sandboxRedis)
@@ -179,7 +177,9 @@ func (vs *valkeyStore) StoreSandbox(ctx context.Context, sandboxStore *types.San
 	}
 
 	sessionKey := vs.sessionKey(sandboxStore.SessionID)
-	b, err := json.Marshal(sandboxStore)
+	normalized := *sandboxStore
+	normalized.ExpiresAt = normalized.ExpiresAt.UTC()
+	b, err := json.Marshal(&normalized)
 	if err != nil {
 		return fmt.Errorf("StoreSandbox: marshal sandbox: %w", err)
 	}
@@ -188,8 +188,13 @@ func (vs *valkeyStore) StoreSandbox(ctx context.Context, sandboxStore *types.San
 	commands = append(commands, vs.cli.B().Setnx().Key(sessionKey).Value(string(b)).Build())
 	commands = append(commands, vs.cli.B().Zadd().Key(vs.expiryIndexKey).ScoreMember().
 		ScoreMember(float64(sandboxStore.ExpiresAt.Unix()), sandboxStore.SessionID).Build())
-	commands = append(commands, vs.cli.B().Zadd().Key(vs.lastActivityIndexKey).ScoreMember().
-		ScoreMember(float64(time.Now().Unix()), sandboxStore.SessionID).Build())
+	if !sandboxStore.DisableIdleTimeout {
+		commands = append(commands, vs.cli.B().Zadd().Key(vs.lastActivityIndexKey).ScoreMember().
+			ScoreMember(float64(time.Now().Unix()), sandboxStore.SessionID).Build())
+	}
+	if sandboxStore.OwnerID != "" {
+		commands = append(commands, vs.cli.B().Sadd().Key(ownerSessionsKey(sandboxStore.OwnerID)).Member(sandboxStore.SessionID).Build())
+	}
 
 	for i, resp := range vs.cli.DoMulti(ctx, commands...) {
 		if err = resp.Error(); err != nil {
@@ -208,8 +213,12 @@ func (vs *valkeyStore) UpdateSandbox(ctx context.Context, sandboxStore *types.Sa
 	}
 
 	sessionKey := vs.sessionKey(sandboxStore.SessionID)
+	normalized := *sandboxStore
+	if !normalized.ExpiresAt.IsZero() {
+		normalized.ExpiresAt = normalized.ExpiresAt.UTC()
+	}
 
-	b, err := json.Marshal(sandboxStore)
+	b, err := json.Marshal(&normalized)
 	if err != nil {
 		return fmt.Errorf("UpdateSandbox: marshal sandbox failed: %w", err)
 	}
@@ -228,10 +237,18 @@ func (vs *valkeyStore) UpdateSandbox(ctx context.Context, sandboxStore *types.Sa
 func (vs *valkeyStore) DeleteSandboxBySessionID(ctx context.Context, sessionID string) error {
 	sessionKey := vs.sessionKey(sessionID)
 
+	var ownerID string
+	if existing, err := vs.GetSandboxBySessionID(ctx, sessionID); err == nil && existing != nil {
+		ownerID = existing.OwnerID
+	}
+
 	commands := make(valkey.Commands, 0, 4)
 	commands = append(commands, vs.cli.B().Del().Key(sessionKey).Build())
 	commands = append(commands, vs.cli.B().Zrem().Key(vs.expiryIndexKey).Member(sessionID).Build())
 	commands = append(commands, vs.cli.B().Zrem().Key(vs.lastActivityIndexKey).Member(sessionID).Build())
+	if ownerID != "" {
+		commands = append(commands, vs.cli.B().Srem().Key(ownerSessionsKey(ownerID)).Member(sessionID).Build())
+	}
 
 	for i, resp := range vs.cli.DoMulti(ctx, commands...) {
 		if err := resp.Error(); err != nil {
@@ -239,6 +256,129 @@ func (vs *valkeyStore) DeleteSandboxBySessionID(ctx context.Context, sessionID s
 		}
 	}
 	return nil
+}
+
+// ClaimExpiredSandbox atomically marks an expired session as deleting if its expiry is <= now
+// and refreshes its expiry-index lease so failed cleanups are retried automatically.
+func (vs *valkeyStore) ClaimExpiredSandbox(ctx context.Context, sessionID string, now time.Time) (bool, error) {
+	if sessionID == "" {
+		return false, errors.New("ClaimExpiredSandbox: sessionID is empty")
+	}
+	nowUTC := now.UTC()
+	leaseUntil := nowUTC.Add(expiredClaimLease).Unix()
+	evalCmd := vs.cli.B().Eval().
+		Script(claimExpiredSandboxLua).
+		Numkeys(1).
+		Key(vs.sessionKey(sessionID)).
+		Arg(
+			nowUTC.Format("20060102150405"),
+			strconv.FormatInt(nowUTC.Unix(), 10),
+			strconv.FormatInt(leaseUntil, 10),
+		).
+		Build()
+	res, err := vs.cli.Do(ctx, evalCmd).AsInt64()
+	if err != nil {
+		return false, fmt.Errorf("ClaimExpiredSandbox: script execution failed for sessionID %s: %w", sessionID, err)
+	}
+	if res == -1 {
+		_ = vs.cli.Do(ctx, vs.cli.B().Zrem().Key(vs.expiryIndexKey).Member(sessionID).Build()).Error()
+		return false, nil
+	}
+	if res != 1 {
+		return false, nil
+	}
+	zaddCmd := vs.cli.B().Zadd().Key(vs.expiryIndexKey).ScoreMember().
+		ScoreMember(float64(leaseUntil), sessionID).Build()
+	if err := vs.cli.Do(ctx, zaddCmd).Error(); err != nil {
+		return false, fmt.Errorf("ClaimExpiredSandbox: ZADD lease failed for sessionID %s: %w", sessionID, err)
+	}
+	return true, nil
+}
+
+// UpdateSandboxExpiry atomically updates ExpiresAt on the stored sandbox and its expiry index.
+func (vs *valkeyStore) UpdateSandboxExpiry(ctx context.Context, sessionID string, expiresAt time.Time, extendOnly bool) (*types.SandboxInfo, error) {
+	if sessionID == "" {
+		return nil, errors.New("UpdateSandboxExpiry: sessionID is empty")
+	}
+	if expiresAt.IsZero() {
+		return nil, errors.New("UpdateSandboxExpiry: expiresAt is zero")
+	}
+
+	extendFlag := "0"
+	if extendOnly {
+		extendFlag = "1"
+	}
+	expiresUTC := expiresAt.UTC()
+	evalCmd := vs.cli.B().Eval().
+		Script(updateSandboxExpiryLua).
+		Numkeys(1).
+		Key(vs.sessionKey(sessionID)).
+		Arg(
+			expiresUTC.Format(time.RFC3339Nano),
+			expiresUTC.Format("20060102150405"),
+			extendFlag,
+		).
+		Build()
+
+	arr, err := vs.cli.Do(ctx, evalCmd).ToArray()
+	if err != nil {
+		return nil, fmt.Errorf("UpdateSandboxExpiry: script execution failed for sessionID %s: %w", sessionID, err)
+	}
+	if len(arr) != 3 {
+		return nil, fmt.Errorf("UpdateSandboxExpiry: unexpected script response length %d", len(arr))
+	}
+	found, err := arr[0].AsInt64()
+	if err != nil {
+		return nil, fmt.Errorf("UpdateSandboxExpiry: unexpected script status: %w", err)
+	}
+	if found == 0 {
+		return nil, ErrNotFound
+	}
+	updatedJSON, err := arr[1].ToString()
+	if err != nil {
+		return nil, fmt.Errorf("UpdateSandboxExpiry: unexpected script payload: %w", err)
+	}
+	changed, err := arr[2].AsInt64()
+	if err != nil {
+		return nil, fmt.Errorf("UpdateSandboxExpiry: unexpected script changed flag: %w", err)
+	}
+	var sandbox types.SandboxInfo
+	if err := json.Unmarshal([]byte(updatedJSON), &sandbox); err != nil {
+		return nil, fmt.Errorf("UpdateSandboxExpiry: unmarshal sandbox failed: %w", err)
+	}
+	if changed == 1 {
+		zaddCmd := vs.cli.B().Zadd().Key(vs.expiryIndexKey).ScoreMember().
+			ScoreMember(float64(expiresUTC.Unix()), sessionID).Build()
+		if err := vs.cli.Do(ctx, zaddCmd).Error(); err != nil {
+			return nil, fmt.Errorf("UpdateSandboxExpiry: ZADD failed for sessionID %s: %w", sessionID, err)
+		}
+	}
+	return &sandbox, nil
+}
+
+// ListActiveSandboxes returns non-expired sandboxes, optionally filtered by ownerID and namespace.
+func (vs *valkeyStore) ListActiveSandboxes(ctx context.Context, ownerID string, namespace string) ([]*types.SandboxInfo, error) {
+	now := time.Now()
+	var ids []string
+	var err error
+	if ownerID != "" {
+		ids, err = vs.cli.Do(ctx, vs.cli.B().Smembers().Key(ownerSessionsKey(ownerID)).Build()).AsStrSlice()
+		if err != nil {
+			return nil, fmt.Errorf("ListActiveSandboxes: SMembers failed: %w", err)
+		}
+	} else {
+		minScore := fmt.Sprintf("%d", now.Unix())
+		ids, err = vs.cli.Do(ctx, vs.cli.B().Zrangebyscore().Key(vs.expiryIndexKey).Min(minScore).Max("+inf").Build()).AsStrSlice()
+		if err != nil {
+			return nil, fmt.Errorf("ListActiveSandboxes: ZRangeByScore failed: %w", err)
+		}
+	}
+
+	sandboxes, err := vs.loadSandboxesBySessionIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	return filterAndSortActiveSandboxes(sandboxes, namespace, now), nil
 }
 
 // ListExpiredSandboxes returns up to limit sandboxes with ExpiresAt before the given time

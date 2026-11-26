@@ -27,3 +27,32 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}
+{{- $e2b := .Values.router.e2b | default dict }}
+{{- $e2bEnabled := true }}
+{{- if hasKey $e2b "enabled" }}
+{{- $e2bEnabled = $e2b.enabled }}
+{{- end }}
+{{- if and $e2bEnabled $e2b.domain }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}-{{ .Release.Namespace }}-codeinterpreters
+rules:
+  - apiGroups: ["runtime.agentcube.volcano.sh"]
+    resources: ["codeinterpreters"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}-{{ .Release.Namespace }}-codeinterpreters
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Values.router.serviceAccountName | default "agentcube-router" }}-{{ .Release.Namespace }}-codeinterpreters
+{{- end }}

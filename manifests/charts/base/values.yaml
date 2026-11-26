@@ -45,6 +45,10 @@ router:
     audience: "agentcube-api"  # Expected "aud" claim in access tokens
     roleClaim: ""              # Required if issuerUrl is set. JSON path to the roles array in the JWT (e.g., "realm_access.roles" for Keycloak, "groups" for Okta).
     requiredRole: ""           # Required if issuerUrl is set. The role required to access the API endpoints (e.g., "sandbox:invoke").
+  # Built-in E2B API compatibility module (enabled by default, fail-closed until domain & API keys are configured).
+  e2b:
+    enabled: true
+    domain: ""                 # e.g., "sandbox.example.com" (activates api.<domain> and <port>-<sandboxID>.<domain>)
 
 # AgentCube Workload Manager
 workloadmanager:

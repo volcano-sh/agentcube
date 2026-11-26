@@ -19,6 +19,7 @@ package workloadmanager
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net"
 	"strconv"
 	"time"
@@ -52,33 +53,42 @@ func buildSandboxPlaceHolder(sandboxCR *sandboxv1beta1.Sandbox, entry *sandboxEn
 	if createdAt.IsZero() {
 		createdAt = time.Now()
 	}
-	var expiresAt time.Time
-	if sandboxCR.Spec.ShutdownTime != nil {
+	expiresAt := time.Now().Add(DefaultSandboxTTL)
+	if !entry.ExpiresAt.IsZero() {
+		expiresAt = entry.ExpiresAt
+	} else if sandboxCR.Spec.ShutdownTime != nil {
 		expiresAt = sandboxCR.Spec.ShutdownTime.Time
-	} else {
-		expiresAt = time.Now().Add(DefaultSandboxTTL)
 	}
 	idleTimeout := entry.IdleTimeout
 	if idleTimeout == 0 {
 		idleTimeout = DefaultSandboxIdleTimeout
 	}
 	return &types.SandboxInfo{
-		Kind:             entry.Kind,
-		SessionID:        entry.SessionID,
-		OwnerID:          entry.OwnerID,
-		SandboxNamespace: sandboxCR.GetNamespace(),
-		Name:             sandboxCR.GetName(),
-		CreatedAt:        createdAt,
-		ExpiresAt:        expiresAt,
-		Status:           "creating",
-		IdleTimeout:      metav1.Duration{Duration: idleTimeout},
+		Kind:               entry.Kind,
+		SessionID:          entry.SessionID,
+		OwnerID:            entry.OwnerID,
+		TemplateName:       entry.TemplateName,
+		Metadata:           maps.Clone(entry.Metadata),
+		SandboxNamespace:   sandboxCR.GetNamespace(),
+		Name:               sandboxCR.GetName(),
+		CreatedAt:          createdAt,
+		ExpiresAt:          expiresAt,
+		Status:             "creating",
+		IdleTimeout:        metav1.Duration{Duration: idleTimeout},
+		DisableIdleTimeout: entry.DisableIdleTimeout,
+		EnvdAccessToken:    entry.EnvdAccessToken,
 	}
 }
 
 func buildSandboxInfo(sandbox *sandboxv1beta1.Sandbox, podIP string, entry *sandboxEntry) *types.SandboxInfo {
 	createdAt := sandbox.GetCreationTimestamp().Time
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
 	expiresAt := createdAt.Add(DefaultSandboxTTL)
-	if sandbox.Spec.ShutdownTime != nil {
+	if !entry.ExpiresAt.IsZero() {
+		expiresAt = entry.ExpiresAt
+	} else if sandbox.Spec.ShutdownTime != nil {
 		expiresAt = sandbox.Spec.ShutdownTime.Time
 	}
 	accesses := make([]types.SandboxEntryPoint, 0, len(entry.Ports))
@@ -94,17 +104,22 @@ func buildSandboxInfo(sandbox *sandboxv1beta1.Sandbox, podIP string, entry *sand
 		idleTimeout = DefaultSandboxIdleTimeout
 	}
 	return &types.SandboxInfo{
-		Kind:             entry.Kind,
-		SandboxID:        string(sandbox.GetUID()),
-		Name:             sandbox.GetName(),
-		SandboxNamespace: sandbox.GetNamespace(),
-		EntryPoints:      accesses,
-		SessionID:        entry.SessionID,
-		OwnerID:          entry.OwnerID,
-		CreatedAt:        createdAt,
-		ExpiresAt:        expiresAt,
-		Status:           getSandboxStatus(sandbox),
-		IdleTimeout:      metav1.Duration{Duration: idleTimeout},
+		Kind:               entry.Kind,
+		SandboxID:          string(sandbox.GetUID()),
+		Name:               sandbox.GetName(),
+		TemplateName:       entry.TemplateName,
+		SandboxNamespace:   sandbox.GetNamespace(),
+		EntryPoints:        accesses,
+		SessionID:          entry.SessionID,
+		OwnerID:            entry.OwnerID,
+		Metadata:           maps.Clone(entry.Metadata),
+		CreatedAt:          createdAt,
+		ExpiresAt:          expiresAt,
+		Status:             getSandboxStatus(sandbox),
+		IdleTimeout:        metav1.Duration{Duration: idleTimeout},
+		DisableIdleTimeout: entry.DisableIdleTimeout,
+		EnvdAccessToken:    entry.EnvdAccessToken,
+		PodIP:              podIP,
 	}
 }
 

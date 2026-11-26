@@ -18,6 +18,7 @@ package types
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,9 +29,11 @@ type SandboxInfo struct {
 	SandboxID        string              `json:"sandboxId"`
 	SandboxNamespace string              `json:"sandboxNamespace"`
 	Name             string              `json:"name"`
-	EntryPoints      []SandboxEntryPoint `json:"entryPoints"`
+	TemplateName     string              `json:"templateName,omitempty"`
+	EntryPoints      []SandboxEntryPoint `json:"entryPoints,omitempty"`
 	SessionID        string              `json:"sessionId"`
 	OwnerID          string              `json:"ownerId,omitempty"`
+	Metadata         map[string]string   `json:"metadata,omitempty"`
 	CreatedAt        time.Time           `json:"createdAt"`
 	ExpiresAt        time.Time           `json:"expiresAt"`
 	// IdleTimeout is the per-sandbox idle timeout configured via SessionTimeout on the
@@ -39,6 +42,12 @@ type SandboxInfo struct {
 	// metav1.Duration marshals as a human-readable string (e.g. "15m0s") rather than
 	// a raw nanosecond integer, making the persisted JSON unambiguous.
 	IdleTimeout metav1.Duration `json:"idleTimeout,omitempty"`
+	// DisableIdleTimeout opts the session out of idle-timeout garbage collection so
+	// lifecycle is governed strictly by ExpiresAt.
+	DisableIdleTimeout bool   `json:"disableIdleTimeout,omitempty"`
+	EnvdVersion        string `json:"envdVersion,omitempty"`
+	EnvdAccessToken    string `json:"envdAccessToken,omitempty"`
+	PodIP              string `json:"podIp,omitempty"`
 	// LastActivityAt is populated transiently from the store's last-activity sorted set
 	// during ListInactiveSandboxes. It is intentionally excluded from JSON serialization.
 	LastActivityAt time.Time `json:"-"`
@@ -57,16 +66,60 @@ type CreateSandboxRequest struct {
 	Namespace string `json:"namespace"`
 	// TTL is the client-requested maximum session lifetime in seconds. The
 	// workload's MaxSessionDuration remains the upper bound.
-	TTL *int64 `json:"ttl,omitempty"`
+	TTL                *int64            `json:"ttl,omitempty"`
+	Metadata           map[string]any    `json:"metadata,omitempty"`
+	EnvVars            map[string]string `json:"envVars,omitempty"`
+	DisableIdleTimeout bool              `json:"disableIdleTimeout,omitempty"`
+	InitEnvd           bool              `json:"initEnvd,omitempty"`
+	EnvdPort           uint32            `json:"envdPort,omitempty"`
+	EnvdAccessToken    string            `json:"envdAccessToken,omitempty"`
 }
 
 type CreateSandboxResponse struct {
-	Kind        string              `json:"kind"`
-	SessionID   string              `json:"sessionId"`
-	SandboxID   string              `json:"sandboxId"`
-	SandboxName string              `json:"sandboxName"`
-	EntryPoints []SandboxEntryPoint `json:"entryPoints"`
-	OwnerID     string              `json:"ownerId,omitempty"`
+	Kind            string              `json:"kind"`
+	SessionID       string              `json:"sessionId"`
+	SandboxID       string              `json:"sandboxId"`
+	SandboxName     string              `json:"sandboxName"`
+	EntryPoints     []SandboxEntryPoint `json:"entryPoints"`
+	OwnerID         string              `json:"ownerId,omitempty"`
+	EnvdVersion     string              `json:"envdVersion,omitempty"`
+	EnvdAccessToken string              `json:"envdAccessToken,omitempty"`
+	CreatedAt       time.Time           `json:"createdAt,omitempty"`
+	ExpiresAt       time.Time           `json:"expiresAt,omitempty"`
+}
+
+type UpdateSandboxTTLRequest struct {
+	// TTL is the requested lifetime in seconds from now.
+	TTL int64 `json:"ttl"`
+	// Mode controls how the new expiration is applied:
+	// - "set" (default): sets ExpiresAt to now + TTL
+	// - "extend": sets ExpiresAt to max(currentExpiresAt, now + TTL)
+	Mode string `json:"mode,omitempty"`
+}
+
+type UpdateSandboxTTLResponse struct {
+	SessionID string    `json:"sessionId"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+func (r *UpdateSandboxTTLRequest) Validate() error {
+	const maxDurationSeconds = (1<<63 - 1) / int64(time.Second)
+	if r.TTL <= 0 {
+		return fmt.Errorf("ttl must be greater than zero")
+	}
+	if r.TTL > maxDurationSeconds {
+		return fmt.Errorf("ttl exceeds the maximum supported duration")
+	}
+	switch r.Mode {
+	case "", "set", "extend":
+	default:
+		return fmt.Errorf("invalid ttl mode %q", r.Mode)
+	}
+	return nil
+}
+
+func (r *UpdateSandboxTTLRequest) RequestedTTL() time.Duration {
+	return time.Duration(r.TTL) * time.Second
 }
 
 func (car *CreateSandboxRequest) Validate() error {
@@ -81,6 +134,12 @@ func (car *CreateSandboxRequest) Validate() error {
 	}
 	if car.Name == "" {
 		return fmt.Errorf("name is required")
+	}
+	if car.InitEnvd && strings.TrimSpace(car.EnvdAccessToken) == "" {
+		return fmt.Errorf("envdAccessToken is required when initEnvd is true")
+	}
+	if car.DisableIdleTimeout && !car.InitEnvd {
+		return fmt.Errorf("disableIdleTimeout requires initEnvd to be true")
 	}
 	if car.TTL != nil {
 		const maxDurationSeconds = (1<<63 - 1) / int64(time.Second)
@@ -101,4 +160,26 @@ func (car *CreateSandboxRequest) RequestedTTL() time.Duration {
 		return 0
 	}
 	return time.Duration(*car.TTL) * time.Second
+}
+
+// NormalizeMetadata converts arbitrary JSON metadata values into flat string key-value pairs.
+func NormalizeMetadata(raw map[string]any) map[string]string {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(raw))
+	for k, v := range raw {
+		if v == nil {
+			continue
+		}
+		if s, ok := v.(string); ok {
+			out[k] = s
+			continue
+		}
+		out[k] = fmt.Sprint(v)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

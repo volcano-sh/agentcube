@@ -68,4 +68,16 @@ type Config struct {
 
 	// JWTRequiredRole is the role required to access the API.
 	JWTRequiredRole string
+
+	// EnableE2B enables the built-in E2B compatibility module (default true, fail-closed).
+	EnableE2B bool
+
+	// E2BDomain is the base domain for E2B Host routing (api.<domain> and <port>-<sandboxID>.<domain>).
+	E2BDomain string
+
+	// E2BAPIKeySecret is the Kubernetes Secret name containing SHA-256 hashed E2B API keys.
+	E2BAPIKeySecret string
+
+	// E2BDefaultTTL is the default E2B sandbox TTL in seconds when client omits timeout.
+	E2BDefaultTTL int
 }

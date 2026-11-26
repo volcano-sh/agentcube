@@ -43,7 +43,16 @@ func (nopStore) GetSandboxBySessionID(_ context.Context, _ string) (*types.Sandb
 }
 func (nopStore) StoreSandbox(_ context.Context, _ *types.SandboxInfo) error  { return nil }
 func (nopStore) UpdateSandbox(_ context.Context, _ *types.SandboxInfo) error { return nil }
-func (nopStore) DeleteSandboxBySessionID(_ context.Context, _ string) error  { return nil }
+func (nopStore) UpdateSandboxExpiry(_ context.Context, _ string, _ time.Time, _ bool) (*types.SandboxInfo, error) {
+	return nil, nil
+}
+func (nopStore) ClaimExpiredSandbox(_ context.Context, _ string, _ time.Time) (bool, error) {
+	return true, nil
+}
+func (nopStore) DeleteSandboxBySessionID(_ context.Context, _ string) error { return nil }
+func (nopStore) ListActiveSandboxes(_ context.Context, _ string, _ string) ([]*types.SandboxInfo, error) {
+	return nil, nil
+}
 func (nopStore) ListExpiredSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxInfo, error) {
 	return nil, nil
 }
@@ -68,6 +77,22 @@ type gcFakeStore struct {
 	deleted []string
 	// inactiveCutoff captures the `before` argument passed to ListInactiveSandboxes.
 	inactiveCutoff time.Time
+	// bySession overrides GetSandboxBySessionID when set.
+	bySession map[string]*types.SandboxInfo
+}
+
+func (f *gcFakeStore) GetSandboxBySessionID(_ context.Context, sessionID string) (*types.SandboxInfo, error) {
+	if sb, ok := f.bySession[sessionID]; ok {
+		return sb, nil
+	}
+	return nil, nil
+}
+
+func (f *gcFakeStore) ClaimExpiredSandbox(_ context.Context, sessionID string, now time.Time) (bool, error) {
+	if sb, ok := f.bySession[sessionID]; ok && sb != nil && sb.ExpiresAt.After(now) {
+		return false, nil
+	}
+	return true, nil
 }
 
 func (f *gcFakeStore) ListInactiveSandboxes(_ context.Context, before time.Time, _ int64) ([]*types.SandboxInfo, error) {
@@ -265,6 +290,42 @@ func TestGarbageCollector_once_inactiveCutoffUsesGcMinLookback(t *testing.T) {
 		"inactive cutoff %v should be between %v and %v (now - gcMinInactiveLookback)",
 		fs.inactiveCutoff, expectedMin, expectedMax,
 	)
+}
+
+func TestGarbageCollector_once_skipsDisableIdleTimeoutAndExtendedSessions(t *testing.T) {
+	now := time.Now()
+	fs := &gcFakeStore{
+		inactive: []*types.SandboxInfo{
+			{
+				SessionID:          "session-e2b-idle",
+				Kind:               types.SandboxKind,
+				Name:               "sb-e2b",
+				SandboxNamespace:   "default",
+				LastActivityAt:     now.Add(-2 * time.Hour),
+				DisableIdleTimeout: true,
+			},
+		},
+		expired: []*types.SandboxInfo{
+			{
+				SessionID:        "session-extended",
+				Kind:             types.SandboxKind,
+				Name:             "sb-extended",
+				SandboxNamespace: "default",
+				ExpiresAt:        now.Add(-time.Minute),
+			},
+		},
+		bySession: map[string]*types.SandboxInfo{
+			"session-extended": {
+				SessionID: "session-extended",
+				ExpiresAt: now.Add(10 * time.Minute),
+			},
+		},
+	}
+	gc := newTestGC(fs)
+	gc.once()
+
+	assert.NotContains(t, fs.deleted, "session-e2b-idle")
+	assert.NotContains(t, fs.deleted, "session-extended")
 }
 
 func TestGarbageCollector_once_noSandboxes(t *testing.T) {

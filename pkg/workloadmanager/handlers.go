@@ -158,24 +158,17 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 		return
 	}
 
-	var sandbox *sandboxv1beta1.Sandbox
-	var sandboxClaim *extensionsv1beta1.SandboxClaim
-	var sandboxEntry *sandboxEntry
-	var err error
-
 	ownerID, statusCode, errMsg := resolveSandboxOwnerID(c.Request)
 	if statusCode != 0 {
 		respondError(c, statusCode, errMsg)
 		return
 	}
-
-	switch sandboxReq.Kind {
-	case types.AgentRuntimeKind:
-		sandbox, sandboxEntry, err = buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, ownerID, sandboxReq.RequestedTTL(), s.informers)
-	case types.CodeInterpreterKind:
-		sandbox, sandboxClaim, sandboxEntry, err = buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, ownerID, sandboxReq.RequestedTTL(), s.informers)
+	if sandboxReq.InitEnvd && ownerID == "" {
+		respondError(c, http.StatusUnauthorized, "verified owner identity is required for envd initialization")
+		return
 	}
 
+	sandbox, sandboxClaim, sandboxEntry, err := s.buildSandboxResources(sandboxReq, ownerID)
 	if err != nil {
 		klog.Errorf("build sandbox failed %s/%s: %v", sandboxReq.Namespace, sandboxReq.Name, err)
 		if errors.Is(err, api.ErrAgentRuntimeNotFound) || errors.Is(err, api.ErrCodeInterpreterNotFound) {
@@ -195,15 +188,10 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	sandboxName := sandbox.Name
 	namespace := sandbox.Namespace
 
-	dynamicClient := s.k8sClient.dynamicClient
-	if s.config.EnableAuth {
-		userDynamicClient, errExtractClient := s.extractUserK8sClient(c)
-		if errExtractClient != nil {
-			klog.Infof("extract user k8s client failed: %v", errExtractClient)
-			respondError(c, http.StatusUnauthorized, errExtractClient.Error())
-			return
-		}
-		dynamicClient = userDynamicClient
+	useWMClient := kind == types.CodeInterpreterKind && sandboxReq.InitEnvd && ownerID != ""
+	dynamicClient, ok := s.resolveDynamicClient(c, useWMClient)
+	if !ok {
+		return
 	}
 
 	var resultChan <-chan SandboxStatusUpdate
@@ -222,6 +210,35 @@ func (s *Server) handleSandboxCreate(c *gin.Context, kind string) {
 	}
 
 	respondJSON(c, http.StatusOK, response)
+}
+
+func (s *Server) buildSandboxResources(sandboxReq *types.CreateSandboxRequest, ownerID string) (*sandboxv1beta1.Sandbox, *extensionsv1beta1.SandboxClaim, *sandboxEntry, error) {
+	switch sandboxReq.Kind {
+	case types.AgentRuntimeKind:
+		sandbox, entry, err := buildSandboxByAgentRuntime(sandboxReq.Namespace, sandboxReq.Name, ownerID, sandboxReq.RequestedTTL(), s.informers)
+		return sandbox, nil, entry, err
+	case types.CodeInterpreterKind:
+		sandbox, claim, entry, err := buildSandboxByCodeInterpreter(sandboxReq.Namespace, sandboxReq.Name, ownerID, sandboxReq.RequestedTTL(), s.informers)
+		if err == nil {
+			applyCodeInterpreterRequestOptions(sandbox, claim, entry, sandboxReq)
+		}
+		return sandbox, claim, entry, err
+	default:
+		return nil, nil, nil, fmt.Errorf("unsupported kind %s", sandboxReq.Kind)
+	}
+}
+
+func (s *Server) resolveDynamicClient(c *gin.Context, useWMClient bool) (dynamic.Interface, bool) {
+	if !s.config.EnableAuth || useWMClient {
+		return s.k8sClient.dynamicClient, true
+	}
+	userDynamicClient, err := s.extractUserK8sClient(c)
+	if err != nil {
+		klog.Infof("extract user k8s client failed: %v", err)
+		respondError(c, http.StatusUnauthorized, err.Error())
+		return nil, false
+	}
+	return userDynamicClient, true
 }
 
 func resolveSandboxOwnerID(r *http.Request) (string, int, string) {
@@ -439,7 +456,13 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		return nil, api.NewInternalError(fmt.Errorf("failed to verify sandbox %s/%s entrypoints: %w", createdSandbox.Namespace, sandboxNameForPod, err))
 	}
 
+	envdVersion, err := initializeSandboxEnvd(ctx, podIP, sandboxEntry, createdSandbox.Namespace, sandboxNameForPod)
+	if err != nil {
+		return nil, err
+	}
+
 	storeCacheInfo := buildSandboxInfo(createdSandbox, podIP, sandboxEntry)
+	storeCacheInfo.EnvdVersion = envdVersion
 	if sandboxClaim != nil {
 		storeCacheInfo.Name = sandboxClaim.Name
 		storeCacheInfo.SandboxNamespace = sandboxClaim.Namespace
@@ -448,12 +471,16 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	}
 
 	response := &types.CreateSandboxResponse{
-		Kind:        storeCacheInfo.Kind,
-		SessionID:   sandboxEntry.SessionID,
-		SandboxID:   storeCacheInfo.SandboxID,
-		SandboxName: storeCacheInfo.Name,
-		EntryPoints: storeCacheInfo.EntryPoints,
-		OwnerID:     sandboxEntry.OwnerID,
+		Kind:            storeCacheInfo.Kind,
+		SessionID:       sandboxEntry.SessionID,
+		SandboxID:       storeCacheInfo.SandboxID,
+		SandboxName:     storeCacheInfo.Name,
+		EntryPoints:     storeCacheInfo.EntryPoints,
+		OwnerID:         sandboxEntry.OwnerID,
+		EnvdVersion:     storeCacheInfo.EnvdVersion,
+		EnvdAccessToken: storeCacheInfo.EnvdAccessToken,
+		CreatedAt:       storeCacheInfo.CreatedAt,
+		ExpiresAt:       storeCacheInfo.ExpiresAt,
 	}
 
 	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {
@@ -467,6 +494,20 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 	klog.V(2).Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
 		createdSandbox.Name, createdSandbox.Kind, sandboxEntry.SessionID)
 	return response, nil
+}
+
+func initializeSandboxEnvd(ctx context.Context, podIP string, entry *sandboxEntry, namespace, name string) (string, error) {
+	if !entry.InitEnvd {
+		return "", nil
+	}
+	envdVersion, err := initEnvd(ctx, podIP, entry.EnvdPort, entry.EnvVars, entry.EnvdAccessToken)
+	if err != nil {
+		if isContextError(err) {
+			return "", err
+		}
+		return "", api.NewInternalError(fmt.Errorf("failed to initialize envd for sandbox %s/%s: %w", namespace, name, err))
+	}
+	return envdVersion, nil
 }
 
 // rollbackSandboxCreation deletes the sandbox (or sandbox claim) and its store
@@ -493,9 +534,186 @@ func (s *Server) rollbackSandboxCreation(dynamicClient dynamic.Interface, sandbo
 	}
 }
 
-// handleDeleteSandbox handles sandbox deletion requests
-func (s *Server) handleDeleteSandbox(c *gin.Context) {
+func authorizeSessionAccess(c *gin.Context, sandbox *types.SandboxInfo, callerOwnerID string) bool {
+	if sandbox == nil {
+		return false
+	}
+	if callerOwnerID != "" && sandbox.OwnerID != callerOwnerID {
+		respondError(c, http.StatusForbidden, "forbidden: sandbox does not belong to caller")
+		return false
+	}
+	if sandbox.OwnerID != "" && callerOwnerID == "" {
+		respondError(c, http.StatusForbidden, "forbidden: caller identity required")
+		return false
+	}
+	if ns := c.Query("namespace"); ns != "" && sandbox.SandboxNamespace != ns {
+		respondError(c, http.StatusForbidden, "forbidden: sandbox namespace mismatch")
+		return false
+	}
+	return true
+}
+
+func (s *Server) resolveCodeInterpreterMaxDuration(namespace, templateName string) time.Duration {
+	if s.informers != nil && s.informers.CodeInterpreterLister != nil && templateName != "" {
+		ci, err := s.informers.CodeInterpreterLister.CodeInterpreters(namespace).Get(templateName)
+		if err == nil && ci != nil {
+			return configuredMaxSessionDuration(ci.Spec.MaxSessionDuration)
+		}
+	}
+	return DefaultSandboxTTL
+}
+
+func requireSandboxOwnerID(c *gin.Context) (string, bool) {
+	ownerID, statusCode, errMsg := resolveSandboxOwnerID(c.Request)
+	if statusCode != 0 {
+		respondError(c, statusCode, errMsg)
+		return "", false
+	}
+	if ownerID == "" {
+		respondError(c, http.StatusUnauthorized, "verified owner identity is required")
+		return "", false
+	}
+	return ownerID, true
+}
+
+// handleListSessions lists active sessions filtered by caller ownerID and optional namespace.
+func (s *Server) handleListSessions(c *gin.Context) {
+	ownerID, ok := requireSandboxOwnerID(c)
+	if !ok {
+		return
+	}
+	namespace := c.Query("namespace")
+	sandboxes, err := s.storeClient.ListActiveSandboxes(c.Request.Context(), ownerID, namespace)
+	if err != nil {
+		klog.Errorf("list active sandboxes failed: %v", err)
+		respondError(c, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if sandboxes == nil {
+		sandboxes = []*types.SandboxInfo{}
+	}
+	respondJSON(c, http.StatusOK, sandboxes)
+}
+
+// handleGetSession returns details for a single session after enforcing ownership/namespace checks.
+func (s *Server) handleGetSession(c *gin.Context) {
 	sessionID := c.Param("sessionId")
+	ownerID, ok := requireSandboxOwnerID(c)
+	if !ok {
+		return
+	}
+
+	sandbox, err := s.storeClient.GetSandboxBySessionID(c.Request.Context(), sessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			respondError(c, http.StatusNotFound, fmt.Sprintf("Session ID %s not found", sessionID))
+			return
+		}
+		klog.Errorf("get sandbox from store by sessionID %s failed: %v", sessionID, err)
+		respondError(c, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	if !authorizeSessionAccess(c, sandbox, ownerID) {
+		return
+	}
+	if !sandbox.ExpiresAt.After(time.Now()) {
+		respondError(c, http.StatusNotFound, fmt.Sprintf("Session ID %s not found", sessionID))
+		return
+	}
+
+	respondJSON(c, http.StatusOK, sandbox)
+}
+
+// handleUpdateSessionTTL updates or extends a session's ExpiresAt, capped by MaxSessionDuration.
+func (s *Server) handleUpdateSessionTTL(c *gin.Context) {
+	sessionID := c.Param("sessionId")
+	ownerID, ok := requireSandboxOwnerID(c)
+	if !ok {
+		return
+	}
+
+	var req types.UpdateSandboxTTLRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if err := req.Validate(); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	ctx := c.Request.Context()
+	sandbox, err := s.storeClient.GetSandboxBySessionID(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			respondError(c, http.StatusNotFound, fmt.Sprintf("Session ID %s not found", sessionID))
+			return
+		}
+		klog.Errorf("get sandbox from store by sessionID %s failed: %v", sessionID, err)
+		respondError(c, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	if !authorizeSessionAccess(c, sandbox, ownerID) {
+		return
+	}
+	if !sandbox.ExpiresAt.After(time.Now()) {
+		respondError(c, http.StatusNotFound, fmt.Sprintf("Session ID %s has expired", sessionID))
+		return
+	}
+	if sandbox.Status != "ready" {
+		respondError(c, http.StatusConflict, fmt.Sprintf("Session ID %s is not ready", sessionID))
+		return
+	}
+
+	newExpiresAt := time.Now().Add(req.RequestedTTL())
+	maxDuration := s.resolveCodeInterpreterMaxDuration(sandbox.SandboxNamespace, sandbox.TemplateName)
+	maxExpiresAt := sandbox.CreatedAt.Add(maxDuration)
+	if !sandbox.CreatedAt.IsZero() && newExpiresAt.After(maxExpiresAt) {
+		newExpiresAt = maxExpiresAt
+	}
+
+	updated, err := s.storeClient.UpdateSandboxExpiry(ctx, sessionID, newExpiresAt, req.Mode == "extend")
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			respondError(c, http.StatusNotFound, fmt.Sprintf("Session ID %s not found", sessionID))
+			return
+		}
+		klog.Errorf("update sandbox expiry for sessionID %s failed: %v", sessionID, err)
+		respondError(c, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	respondJSON(c, http.StatusOK, types.UpdateSandboxTTLResponse{
+		SessionID: updated.SessionID,
+		ExpiresAt: updated.ExpiresAt,
+	})
+}
+
+// handleDeleteAgentRuntimeSession deletes an AgentRuntime session.
+func (s *Server) handleDeleteAgentRuntimeSession(c *gin.Context) {
+	s.handleDeleteSandboxByKind(c, types.AgentRuntimeKind)
+}
+
+// handleDeleteCodeInterpreterSession deletes a CodeInterpreter session.
+func (s *Server) handleDeleteCodeInterpreterSession(c *gin.Context) {
+	s.handleDeleteSandboxByKind(c, types.CodeInterpreterKind)
+}
+
+// handleDeleteSandbox handles sandbox deletion requests.
+func (s *Server) handleDeleteSandbox(c *gin.Context) {
+	s.handleDeleteSandboxByKind(c, "")
+}
+
+func (s *Server) handleDeleteSandboxByKind(c *gin.Context, expectedKind string) {
+	sessionID := c.Param("sessionId")
+	ownerID, statusCode, errMsg := resolveSandboxOwnerID(c.Request)
+	if statusCode != 0 {
+		respondError(c, statusCode, errMsg)
+		return
+	}
+
 	// Query sandbox from store
 	sandbox, err := s.storeClient.GetSandboxBySessionID(c.Request.Context(), sessionID)
 	if err != nil {
@@ -508,22 +726,24 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 		return
 	}
 
-	dynamicClient := s.k8sClient.dynamicClient
-	if s.config.EnableAuth {
-		userDynamicClient, err := s.extractUserK8sClient(c)
-		if err != nil {
-			respondError(c, http.StatusUnauthorized, err.Error())
-			return
-		}
-		dynamicClient = userDynamicClient
+	if expectedKind == types.AgentRuntimeKind && (sandbox.Kind == types.SandboxClaimsKind || sandbox.EnvdVersion != "") {
+		respondError(c, http.StatusNotFound, fmt.Sprintf("Session ID %s not found", sessionID))
+		return
 	}
 
-	if sandbox.Kind == types.SandboxClaimsKind {
-		err = deleteSandboxClaim(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
-	} else {
-		err = deleteSandbox(c.Request.Context(), dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
+	isE2BSession := sandbox.EnvdVersion != ""
+	if isE2BSession || ownerID != "" {
+		if !authorizeSessionAccess(c, sandbox, ownerID) {
+			return
+		}
 	}
-	if err != nil {
+
+	dynamicClient, ok := s.resolveDynamicClient(c, isE2BSession && ownerID != "")
+	if !ok {
+		return
+	}
+
+	if err := deleteSandboxResource(c.Request.Context(), dynamicClient, sandbox); err != nil {
 		klog.Errorf("failed to delete %s %s/%s: %v", sandbox.Kind, sandbox.SandboxNamespace, sandbox.Name, err)
 		respondError(c, http.StatusInternalServerError, "internal server error")
 		return
@@ -546,4 +766,11 @@ func (s *Server) handleDeleteSandbox(c *gin.Context) {
 	respondJSON(c, http.StatusOK, map[string]string{
 		"message": "Sandbox deleted successfully",
 	})
+}
+
+func deleteSandboxResource(ctx context.Context, dynamicClient dynamic.Interface, sandbox *types.SandboxInfo) error {
+	if sandbox.Kind == types.SandboxClaimsKind {
+		return deleteSandboxClaim(ctx, dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
+	}
+	return deleteSandbox(ctx, dynamicClient, sandbox.SandboxNamespace, sandbox.Name)
 }

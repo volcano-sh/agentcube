@@ -136,7 +136,7 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 	var exitCode int
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		exitCode = TimeoutExitCode
-		stderr.WriteString(fmt.Sprintf("Command timed out after %.0f seconds", timeoutDuration.Seconds()))
+		fmt.Fprintf(&stderr, "Command timed out after %.0f seconds", timeoutDuration.Seconds())
 	} else if cmd.ProcessState != nil {
 		exitCode = cmd.ProcessState.ExitCode()
 	} else {

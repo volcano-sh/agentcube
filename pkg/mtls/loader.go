@@ -41,7 +41,9 @@ func LoadServerConfig(cfg *Config) (*tls.Config, *CertWatcher, error) {
 	}
 
 	tlsCfg := &tls.Config{
-		GetCertificate: watcher.GetCertificate,
+		// Recheck the current trust bundle on every connection, including reconnects.
+		SessionTicketsDisabled: true,
+		GetCertificate:         watcher.GetCertificate,
 		// Use RequireAnyClientCert instead of RequireAndVerifyClientCert so we can
 		// verify the chain against the dynamically-reloaded CA pool in VerifyPeerCertificate.
 		ClientAuth: tls.RequireAnyClientCert,
@@ -79,8 +81,10 @@ func LoadClientConfig(cfg *Config, expectedServerID string) (*tls.Config, *CertW
 	}
 
 	tlsCfg := &tls.Config{
-		GetClientCertificate: watcher.GetClientCertificate,
-		MinVersion:           tls.VersionTLS13,
+		// Recheck the current trust bundle on every connection, including reconnects.
+		SessionTicketsDisabled: true,
+		GetClientCertificate:   watcher.GetClientCertificate,
+		MinVersion:             tls.VersionTLS13,
 		//nolint:gosec // G402: we use VerifyPeerCertificate for custom SPIFFE ID verification instead
 		InsecureSkipVerify: true,
 		// Manually verify the server certificate chain and SPIFFE ID against the

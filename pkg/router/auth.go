@@ -26,6 +26,11 @@ import (
 	"k8s.io/klog/v2"
 )
 
+const (
+	errorCodeUnauthorized = "UNAUTHORIZED"
+	errorCodeForbidden    = "FORBIDDEN"
+)
+
 // contextKeyType is a private type for context keys to avoid collisions.
 type contextKeyType string
 
@@ -45,7 +50,7 @@ func (s *Server) oidcAuthMiddleware() gin.HandlerFunc {
 		if authHeader == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "missing authorization header",
-				"code":  "UNAUTHORIZED",
+				"code":  errorCodeUnauthorized,
 			})
 			c.Abort()
 			return
@@ -55,7 +60,7 @@ func (s *Server) oidcAuthMiddleware() gin.HandlerFunc {
 		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "invalid authorization header format",
-				"code":  "UNAUTHORIZED",
+				"code":  errorCodeUnauthorized,
 			})
 			c.Abort()
 			return
@@ -65,7 +70,7 @@ func (s *Server) oidcAuthMiddleware() gin.HandlerFunc {
 		if rawToken == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "empty bearer token",
-				"code":  "UNAUTHORIZED",
+				"code":  errorCodeUnauthorized,
 			})
 			c.Abort()
 			return
@@ -77,7 +82,7 @@ func (s *Server) oidcAuthMiddleware() gin.HandlerFunc {
 			klog.V(2).Infof("OIDC token validation failed: %v", err)
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "invalid or expired token",
-				"code":  "UNAUTHORIZED",
+				"code":  errorCodeUnauthorized,
 			})
 			c.Abort()
 			return
@@ -100,7 +105,7 @@ func requireRole(role string) gin.HandlerFunc {
 		if claims == nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "authentication required",
-				"code":  "UNAUTHORIZED",
+				"code":  errorCodeUnauthorized,
 			})
 			c.Abort()
 			return
@@ -111,7 +116,7 @@ func requireRole(role string) gin.HandlerFunc {
 				claims.Subject, role, claims.Roles)
 			c.JSON(http.StatusForbidden, gin.H{
 				"error": "insufficient permissions: missing role " + role,
-				"code":  "FORBIDDEN",
+				"code":  errorCodeForbidden,
 			})
 			c.Abort()
 			return

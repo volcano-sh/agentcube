@@ -221,8 +221,8 @@ func buildSandboxObject(params *buildSandboxParams) *sandboxv1beta1.Sandbox {
 
 	// Ownership metadata for RLAC
 	if params.ownerID != "" {
-		sandbox.ObjectMeta.Annotations["agentcube.io/owner"] = params.ownerID
-		sandbox.ObjectMeta.Labels["agentcube.io/owner-hash"] = sha256Short(params.ownerID)
+		sandbox.Annotations["agentcube.io/owner"] = params.ownerID
+		sandbox.Labels["agentcube.io/owner-hash"] = sha256Short(params.ownerID)
 	}
 
 	return sandbox
@@ -257,13 +257,13 @@ func buildSandboxClaimObject(params *buildSandboxClaimParams) *extensionsv1beta1
 	}
 	// Set owner reference to the CodeInterpreter that creates this SandboxClaim
 	if params.ownerReference != nil {
-		sandboxClaim.ObjectMeta.OwnerReferences = []metav1.OwnerReference{*params.ownerReference}
+		sandboxClaim.OwnerReferences = []metav1.OwnerReference{*params.ownerReference}
 	}
 
 	// Ownership metadata for RLAC
 	if params.ownerID != "" {
-		sandboxClaim.ObjectMeta.Annotations["agentcube.io/owner"] = params.ownerID
-		sandboxClaim.ObjectMeta.Labels["agentcube.io/owner-hash"] = sha256Short(params.ownerID)
+		sandboxClaim.Annotations["agentcube.io/owner"] = params.ownerID
+		sandboxClaim.Labels["agentcube.io/owner-hash"] = sha256Short(params.ownerID)
 	}
 
 	return sandboxClaim
@@ -399,7 +399,7 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 			},
 		}
 		shutdownTime := metav1.NewTime(time.Now().Add(effectiveTTL))
-		simpleSandbox.Spec.Lifecycle.ShutdownTime = &shutdownTime
+		simpleSandbox.Spec.ShutdownTime = &shutdownTime
 		sandboxEntry.Kind = types.SandboxClaimsKind
 		return simpleSandbox, sandboxClaim, sandboxEntry, nil
 	}

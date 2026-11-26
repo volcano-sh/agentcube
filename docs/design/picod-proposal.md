@@ -196,13 +196,6 @@ graph TB
 
 #### 2. REST API Endpoints
 
-**Initialization**
-
-- `POST /init` - Initialize sandbox with session public key (one-time only)
-    - Request: JWT signed by bootstrap private key containing session public key
-    - Response: JSON confirmation message
-    - Access: Workload Manager only
-  
 **Command Execution**
 
 - `POST /api/execute` - Execute command and return output (replaces `execute_command()`)
@@ -235,9 +228,9 @@ graph TB
 
 PicoD implements a secure, lightweight authentication system designed specifically for sandbox environments.
 
-The core approach provides an **init interface** (`POST /api/init`) that establishes authentication credentials when a sandbox is allocated to an end user. The primary protection scenario is ensuring that **user-requested sandboxes can only be accessed by the designated user** - we only need to guarantee that the sandbox allocated to a user remains exclusive to that user throughout its lifecycle.
+The authentication credentials are established at sandbox creation time by injecting the public key via the `PICOD_AUTH_PUBLIC_KEY` environment variable. The primary protection scenario is ensuring that **user-requested sandboxes can only be accessed by the designated user** - we only need to guarantee that the sandbox allocated to a user remains exclusive to that user throughout its lifecycle.
 
-The authentication model balances security with operational simplicity, using client-generated tokens and one-time initialization to bind each sandbox securely to its designated end user.
+The authentication model balances security with operational simplicity, using environment-injected public keys to bind each sandbox securely to its designated end user.
 
 ##### Authentication Architecture
 
@@ -289,76 +282,29 @@ sequenceDiagram
 
 ##### Security Considerations
 
-**1. One-Time Initialization**
-- Init interface can only be called once per sandbox lifecycle
-- Credentials cannot be modified after initial setup
-- Implementation includes atomic file operations to prevent race conditions
+**1. Key Injection at Startup**
+- Public key is injected via the `PICOD_AUTH_PUBLIC_KEY` environment variable at pod creation
+- Credentials are established once at startup and cannot be modified at runtime
 
-**2. Bootstrap Key Protection**
-- Bootstrap key pair generated and managed by Workload Manager
-- Bootstrap public key embedded in sandbox pod at creation time
-- Bootstrap private key used only by Workload Manager to sign init JWTs
-- Init endpoint validates JWT signature using embedded bootstrap public key
-
-**3. Credential Security**
+**2. Credential Security**
 - Client-generated tokens/keypairs ensure frontend never stores user credentials
-- Local encryption prevents credential exposure if container is compromised
 - Automatic credential cleanup on container termination
 
-**4. Warmpool Compatibility**
-- Containers start without authentication credentials
-- Init interface called only when sandbox allocated to specific user
+**3. Warmpool Compatibility**
+- Public key is injected into the pod environment when sandbox is allocated to a specific user
 
 ##### Core Authentication Components
 
-**1. Initialization Interface**
+**1. Public Key Loading**
 
-- **Endpoint**: `POST /init`
-- **Purpose**: One-time setup of authentication credentials when sandbox is allocated to end user
-- **Access Control**: Requires JWT signed by bootstrap private key (Workload Manager only)
-- **Request Headers**:
+- **Source**: `PICOD_AUTH_PUBLIC_KEY` environment variable
+- **Purpose**: Provides the RSA public key used to verify JWT signatures
+- **Format**: PEM-encoded RSA public key
+- **Loaded at**: Server startup (required, server will not start without it)
 
-```http
-Authorization: Bearer <init_jwt>
-```
+**2. Request Authentication**
 
-**Init JWT Claims** (signed by Bootstrap Private Key):
-```json
-{
-  "session_public_key": "LS0tLS1CRUdJTi...",  // Base64-encoded session public key
-  "iat": 1732531800,
-  "exp": 1732553400
-}
-```
-
-- **Response**:
-
-```json
-{
-  "message": "Server initialized successfully. This PicoD instance is now locked to your public key."
-}
-```
-
-**2. Session Public Key Storage**
-
-- **Local Storage**: Session public key stored in `picod_public_key.pem` (current working directory)
-- **File Permissions**: 0400 (read-only, immutable via `chattr +i` on Linux)
-- **Storage Format**: PEM-encoded RSA public key
-
-```
------BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
------END PUBLIC KEY-----
-```
-
-**Security Features**:
-- File is made immutable after creation (Linux `chattr +i`)
-- Cannot be modified or deleted once initialized
-- Prevents credential tampering even with container access
-
-**3. Request Authentication**
-
-All API requests (except `/init` and `/health`) require authentication via JWT signed by the session private key:
+All API requests (except `/health`) require authentication via JWT signed by the session private key:
 
 - **Header**: `Authorization: Bearer <session_jwt>`
 
@@ -371,11 +317,10 @@ All API requests (except `/init` and `/health`) require authentication via JWT s
 ```
 
 **Validation Process**:
-  1. Check if server is initialized (session public key exists)
-  2. Extract JWT from Authorization header
-  3. Verify JWT signature using stored session public key
-  4. Validate JWT expiration and issued-at time
-  5. Enforce maximum body size (32MB) to prevent memory exhaustion
+  1. Extract JWT from Authorization header
+  2. Verify JWT signature using the loaded public key
+  3. Validate JWT expiration and issued-at time
+  4. Enforce maximum body size (32MB) to prevent memory exhaustion
 
 #### 4. Core Capabilities
 PicoD provides a lightweight REST API that replaces traditional SSH‑based operations with secure, stateless HTTP endpoints. The two primary capabilities are code execution and file transfer, exposed via JSON or multipart requests.

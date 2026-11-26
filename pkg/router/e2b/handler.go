@@ -119,6 +119,10 @@ func New(
 
 	auth := NewAuthenticator(cfg.DefaultNamespace)
 	templates := NewTemplateResolver(nil, defaultEnvdVersion)
+	if strings.TrimSpace(cfg.Domain) == "" {
+		return NewWithDeps(cfg, storeClient, wmClient, auth, templates, nil, nil)
+	}
+
 	var informerFactory cubeinformers.SharedInformerFactory
 	var ciSync cache.InformerSynced
 
@@ -678,7 +682,8 @@ func parseMetadataFilter(raw string) (map[string]string, error) {
 
 func matchesMetadata(actual, required map[string]string) bool {
 	for k, v := range required {
-		if actual[k] != v {
+		val, ok := actual[k]
+		if !ok || val != v {
 			return false
 		}
 	}

@@ -106,28 +106,26 @@ func (vs *valkeyStore) loadSandboxesBySessionIDs(ctx context.Context, sessionIDs
 		return nil, nil
 	}
 
-	sessionIDKeys := make([]string, 0, len(sessionIDs))
+	commands := make(valkey.Commands, 0, len(sessionIDs))
 	for _, sessionID := range sessionIDs {
-		sessionIDKeys = append(sessionIDKeys, vs.sessionKey(sessionID))
-	}
-	// MGet should in same slot
-	stringSliceResults, err := vs.cli.Do(ctx, vs.cli.B().Mget().Key(sessionIDKeys...).Build()).AsStrSlice()
-	if err != nil {
-		return nil, fmt.Errorf("loadSandboxesBySessionIDs: Valkey MGet sandboxes failed: %w", err)
+		commands = append(commands, vs.cli.B().Get().Key(vs.sessionKey(sessionID)).Build())
 	}
 
-	if len(stringSliceResults) > len(sessionIDKeys) {
-		return nil, fmt.Errorf("unexpected MGet result size: %d, param size: %d", len(stringSliceResults), len(sessionIDKeys))
-	}
-
-	sandboxResults := make([]*types.SandboxInfo, 0, len(stringSliceResults))
-	for i, sandboxObjString := range stringSliceResults {
-		if len(sandboxObjString) == 0 {
-			// sandboxObjString is empty while sessionKey not exist, ignore
+	responses := vs.cli.DoMulti(ctx, commands...)
+	sandboxResults := make([]*types.SandboxInfo, 0, len(responses))
+	for i, resp := range responses {
+		b, err := resp.AsBytes()
+		if err != nil {
+			if valkey.IsValkeyNil(err) {
+				continue
+			}
+			return nil, fmt.Errorf("loadSandboxesBySessionIDs: Valkey GET failed for sessionID %s: %w", sessionIDs[i], err)
+		}
+		if len(b) == 0 {
 			continue
 		}
 		var sandboxRedis types.SandboxInfo
-		if err = json.Unmarshal([]byte(sandboxObjString), &sandboxRedis); err != nil {
+		if err = json.Unmarshal(b, &sandboxRedis); err != nil {
 			return nil, fmt.Errorf("unmarshal sandbox failed: %w, index: %v, sessionID: %v", err, i, sessionIDs[i])
 		}
 		sandboxResults = append(sandboxResults, &sandboxRedis)

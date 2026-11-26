@@ -133,9 +133,9 @@ func (h *Handler) handleSandboxProxy(w http.ResponseWriter, r *http.Request, tar
 		return
 	}
 
-	if target.port == defaultCodeInterpreterPort && sandbox.EnvdAccessToken != "" {
+	if target.port == defaultCodeInterpreterPort {
 		provided := r.Header.Get(headerEnvdAccessToken)
-		if subtle.ConstantTimeCompare([]byte(provided), []byte(sandbox.EnvdAccessToken)) != 1 {
+		if sandbox.EnvdAccessToken == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(sandbox.EnvdAccessToken)) != 1 {
 			writeProxyJSONError(w, http.StatusUnauthorized, "invalid access token")
 			return
 		}

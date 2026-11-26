@@ -341,9 +341,20 @@ func TestSessionLifecycleHandlers_OwnershipAndTTL(t *testing.T) {
 	tokA := signTestIdentityToken(t, priv, "owner-a")
 	tokB := signTestIdentityToken(t, priv, "owner-b")
 
-	// List without verified owner identity returns 401.
+	// List, get, and TTL without verified owner identity all return 401.
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/code-interpreter/sessions?namespace=ns-a", nil)
+	srv.router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/v1/code-interpreter/sessions/sess-a", nil)
+	srv.router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPatch, "/v1/code-interpreter/sessions/sess-a/ttl", bytes.NewBufferString(`{"ttl":600,"mode":"set"}`))
+	req.Header.Set("Content-Type", "application/json")
 	srv.router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 
@@ -402,9 +413,16 @@ func TestSessionLifecycleHandlers_OwnershipAndTTL(t *testing.T) {
 	srv.router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 
-	// E2B create with initEnvd=true requires verified owner identity.
+	// E2B create with initEnvd=true requires envdAccessToken (400) and verified owner identity (401).
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/v1/code-interpreter", bytes.NewBufferString(`{"name":"e2b-ci","namespace":"ns-a","initEnvd":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(identityJWTHeader, tokA)
+	srv.router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/v1/code-interpreter", bytes.NewBufferString(`{"name":"e2b-ci","namespace":"ns-a","initEnvd":true,"envdAccessToken":"tok"}`))
 	req.Header.Set("Content-Type", "application/json")
 	srv.router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -486,7 +504,7 @@ func TestE2BAndNativeAuthClientSelection(t *testing.T) {
 
 	// Verified E2B create uses WorkloadManager's dynamicClient even when EnableAuth=true.
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/code-interpreter", bytes.NewBufferString(`{"name":"e2b-ci","namespace":"ns-a","initEnvd":true}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/code-interpreter", bytes.NewBufferString(`{"name":"e2b-ci","namespace":"ns-a","initEnvd":true,"envdAccessToken":"tok"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(identityJWTHeader, tokA)
 	r.ServeHTTP(w, req)

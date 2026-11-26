@@ -563,15 +563,23 @@ func (s *Server) resolveCodeInterpreterMaxDuration(namespace, templateName strin
 	return DefaultSandboxTTL
 }
 
-// handleListSessions lists active sessions filtered by caller ownerID and optional namespace.
-func (s *Server) handleListSessions(c *gin.Context) {
+func requireSandboxOwnerID(c *gin.Context) (string, bool) {
 	ownerID, statusCode, errMsg := resolveSandboxOwnerID(c.Request)
 	if statusCode != 0 {
 		respondError(c, statusCode, errMsg)
-		return
+		return "", false
 	}
 	if ownerID == "" {
 		respondError(c, http.StatusUnauthorized, "verified owner identity is required")
+		return "", false
+	}
+	return ownerID, true
+}
+
+// handleListSessions lists active sessions filtered by caller ownerID and optional namespace.
+func (s *Server) handleListSessions(c *gin.Context) {
+	ownerID, ok := requireSandboxOwnerID(c)
+	if !ok {
 		return
 	}
 	namespace := c.Query("namespace")
@@ -590,9 +598,8 @@ func (s *Server) handleListSessions(c *gin.Context) {
 // handleGetSession returns details for a single session after enforcing ownership/namespace checks.
 func (s *Server) handleGetSession(c *gin.Context) {
 	sessionID := c.Param("sessionId")
-	ownerID, statusCode, errMsg := resolveSandboxOwnerID(c.Request)
-	if statusCode != 0 {
-		respondError(c, statusCode, errMsg)
+	ownerID, ok := requireSandboxOwnerID(c)
+	if !ok {
 		return
 	}
 
@@ -621,9 +628,8 @@ func (s *Server) handleGetSession(c *gin.Context) {
 // handleUpdateSessionTTL updates or extends a session's ExpiresAt, capped by MaxSessionDuration.
 func (s *Server) handleUpdateSessionTTL(c *gin.Context) {
 	sessionID := c.Param("sessionId")
-	ownerID, statusCode, errMsg := resolveSandboxOwnerID(c.Request)
-	if statusCode != 0 {
-		respondError(c, statusCode, errMsg)
+	ownerID, ok := requireSandboxOwnerID(c)
+	if !ok {
 		return
 	}
 

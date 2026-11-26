@@ -18,6 +18,7 @@ package types
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -133,6 +134,9 @@ func (car *CreateSandboxRequest) Validate() error {
 	}
 	if car.Name == "" {
 		return fmt.Errorf("name is required")
+	}
+	if car.InitEnvd && strings.TrimSpace(car.EnvdAccessToken) == "" {
+		return fmt.Errorf("envdAccessToken is required when initEnvd is true")
 	}
 	if car.TTL != nil {
 		const maxDurationSeconds = (1<<63 - 1) / int64(time.Second)

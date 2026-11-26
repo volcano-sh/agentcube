@@ -534,6 +534,25 @@ func TestProxy_SecurityBoundariesAndHeaderPreservation(t *testing.T) {
 	router.ServeHTTP(w, req)
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
 
+	// Port 49999 fails closed when stored EnvdAccessToken is empty.
+	noAuthSandboxID := "550e8400-e29b-41d4-a716-446655440066"
+	st.items[noAuthSandboxID] = &types.SandboxInfo{
+		SessionID:   noAuthSandboxID,
+		PodIP:       u.Hostname(),
+		Status:      sandboxStatusReady,
+		ExpiresAt:   time.Now().Add(10 * time.Minute),
+		EnvdVersion: "0.5.3",
+	}
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/execute", nil)
+	req.Host = "49999-" + noAuthSandboxID + ".127.0.0.1.nip.io:8081"
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+
+	// matchesMetadata distinguishes absent key from empty string value.
+	assert.False(t, matchesMetadata(map[string]string{}, map[string]string{"team": ""}))
+	assert.True(t, matchesMetadata(map[string]string{"team": ""}, map[string]string{"team": ""}))
+
 	// X-Access-Token and Basic Authorization are preserved end-to-end.
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodDelete, "/contexts/ctx-1", nil)

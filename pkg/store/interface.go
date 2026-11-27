@@ -38,8 +38,9 @@ type Store interface {
 	ListExpiredSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error)
 	// ListInactiveSandboxes returns up to limit sandboxes whose idle deadline is at or before the given time.
 	ListInactiveSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error)
-	// UpdateSessionLastActivity advances the idle deadline without modifying the session record.
-	UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error
+	// UpdateSessionLastActivity updates the session's idle deadline (at + IdleTimeout) without modifying the session record.
+	// When force is false, the deadline only advances forward; when true, it overwrites unconditionally.
+	UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time, force bool) error
 	// Close releases all resources held by the store (e.g. connection pools)
 	Close() error
 }

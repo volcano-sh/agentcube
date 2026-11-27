@@ -79,7 +79,7 @@ func (f *fakeStoreClient) UpdateSandbox(_ context.Context, _ *types.SandboxInfo)
 	return nil
 }
 
-func (f *fakeStoreClient) UpdateSessionLastActivity(_ context.Context, _ string, _ time.Time) error {
+func (f *fakeStoreClient) UpdateSessionLastActivity(_ context.Context, _ string, _ time.Time, _ bool) error {
 	return nil
 }
 

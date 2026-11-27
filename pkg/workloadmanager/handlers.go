@@ -456,17 +456,31 @@ func (s *Server) createSandbox(ctx context.Context, dynamicClient dynamic.Interf
 		OwnerID:     sandboxEntry.OwnerID,
 	}
 
-	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {
-		if isContextError(err) {
-			return nil, err
-		}
-		return nil, api.NewInternalError(fmt.Errorf("update store cache failed: %w", err))
+	if err := s.markSandboxAsReady(ctx, storeCacheInfo); err != nil {
+		return nil, err
 	}
 
 	needRollbackSandbox = false
 	klog.V(2).Infof("init sandbox %s/%s successfully, kind: %s, sessionID: %s", createdSandbox.Namespace,
 		createdSandbox.Name, createdSandbox.Kind, sandboxEntry.SessionID)
 	return response, nil
+}
+
+func (s *Server) markSandboxAsReady(ctx context.Context, storeCacheInfo *types.SandboxInfo) error {
+	if err := s.storeClient.UpdateSandbox(ctx, storeCacheInfo); err != nil {
+		if isContextError(err) {
+			return err
+		}
+		return api.NewInternalError(fmt.Errorf("update store cache failed: %w", err))
+	}
+	// Start the idle timeout countdown now that the sandbox is ready.
+	if err := s.storeClient.UpdateSessionLastActivity(ctx, storeCacheInfo.SessionID, time.Now(), true); err != nil {
+		if isContextError(err) {
+			return err
+		}
+		return api.NewInternalError(fmt.Errorf("initialize sandbox idle expiry failed: %w", err))
+	}
+	return nil
 }
 
 // rollbackSandboxCreation deletes the sandbox (or sandbox claim) and its store

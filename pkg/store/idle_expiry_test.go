@@ -42,24 +42,18 @@ func TestIdleExpiry(t *testing.T) {
 	}
 	for name, setup := range backends {
 		t.Run(name, func(t *testing.T) {
-			t.Run("initial deadline uses configured or default timeout", func(t *testing.T) {
+			t.Run("initial deadline uses provisional grace period", func(t *testing.T) {
 				for _, timeout := range []time.Duration{0, 30 * time.Second, 24 * time.Hour} {
 					t.Run(timeout.String(), func(t *testing.T) {
 						client, mr := setup(t)
 						t.Cleanup(func() { _ = client.Close() })
 						sandbox := newTestSandbox("sandbox", "session", time.Now().Add(48*time.Hour))
 						sandbox.IdleTimeout = metav1.Duration{Duration: timeout}
-						// Use an older creation time so silently initializing activity
-						// to now cannot accidentally satisfy the deadline assertion.
 						sandbox.CreatedAt = time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
 						require.NoError(t, client.StoreSandbox(context.Background(), sandbox))
 						score, err := mr.ZScore("session:idle_expiry", sandbox.SessionID)
 						require.NoError(t, err)
-						effectiveTimeout := timeout
-						if effectiveTimeout == 0 {
-							effectiveTimeout = types.DefaultSandboxIdleTimeout
-						}
-						require.Equal(t, sandbox.CreatedAt.Add(effectiveTimeout).Unix(), int64(score))
+						require.Equal(t, sandbox.CreatedAt.Add(sandboxStartupGracePeriod).Unix(), int64(score))
 						data, err := mr.Get("session:" + sandbox.SessionID)
 						require.NoError(t, err)
 						require.NotContains(t, data, `"lastActivityAt"`)
@@ -78,13 +72,13 @@ func TestIdleExpiry(t *testing.T) {
 					sandbox.IdleTimeout = metav1.Duration{Duration: 24 * time.Hour}
 					sandbox.CreatedAt = now.Add(-3 * time.Hour)
 					require.NoError(t, client.StoreSandbox(ctx, sandbox))
-					require.NoError(t, client.UpdateSessionLastActivity(ctx, id, now.Add(-2*time.Hour)))
+					require.NoError(t, client.UpdateSessionLastActivity(ctx, id, now.Add(-2*time.Hour), true))
 				}
 				eligible := newTestSandbox("eligible", "eligible", now.Add(time.Hour))
 				eligible.IdleTimeout = metav1.Duration{Duration: 5 * time.Minute}
 				eligible.CreatedAt = now.Add(-2 * time.Hour)
 				require.NoError(t, client.StoreSandbox(ctx, eligible))
-				require.NoError(t, client.UpdateSessionLastActivity(ctx, eligible.SessionID, now.Add(-time.Hour)))
+				require.NoError(t, client.UpdateSessionLastActivity(ctx, eligible.SessionID, now.Add(-time.Hour), true))
 				for i := 0; i < 3; i++ {
 					results, err := client.ListInactiveSandboxes(ctx, now, 100)
 					require.NoError(t, err)
@@ -103,10 +97,11 @@ func TestIdleExpiry(t *testing.T) {
 				require.NoError(t, client.StoreSandbox(ctx, sandbox))
 				original, err := mr.Get("session:" + sandbox.SessionID)
 				require.NoError(t, err)
+				require.NoError(t, client.UpdateSessionLastActivity(ctx, sandbox.SessionID, now.Add(-types.DefaultSandboxIdleTimeout), true))
 				results, err := client.ListInactiveSandboxes(ctx, now, 1)
 				require.NoError(t, err)
 				require.Len(t, results, 1)
-				require.NoError(t, client.UpdateSessionLastActivity(ctx, sandbox.SessionID, now))
+				require.NoError(t, client.UpdateSessionLastActivity(ctx, sandbox.SessionID, now, false))
 				results, err = client.ListInactiveSandboxes(ctx, now, 1)
 				require.NoError(t, err)
 				require.Empty(t, results)
@@ -124,11 +119,11 @@ func TestIdleExpiry(t *testing.T) {
 				require.NoError(t, client.DeleteSandboxBySessionID(ctx, sandbox.SessionID))
 				_, err = mr.ZScore("session:idle_expiry", sandbox.SessionID)
 				require.Error(t, err)
-				require.ErrorIs(t, client.UpdateSessionLastActivity(ctx, sandbox.SessionID, now), ErrNotFound)
+				require.ErrorIs(t, client.UpdateSessionLastActivity(ctx, sandbox.SessionID, now, false), ErrNotFound)
 				_, err = mr.ZScore("session:idle_expiry", sandbox.SessionID)
 				require.Error(t, err, "updating a deleted session must not recreate its index entry")
-				require.Error(t, client.UpdateSessionLastActivity(ctx, "", now))
-				require.Error(t, client.UpdateSessionLastActivity(ctx, "session", time.Time{}))
+				require.Error(t, client.UpdateSessionLastActivity(ctx, "", now, false))
+				require.Error(t, client.UpdateSessionLastActivity(ctx, "session", time.Time{}, false))
 			})
 
 			t.Run("concurrent activity and metadata updates preserve latest deadline", func(t *testing.T) {
@@ -146,14 +141,14 @@ func TestIdleExpiry(t *testing.T) {
 					wg.Add(1)
 					go func(i int) {
 						defer wg.Done()
-						errs <- client.UpdateSessionLastActivity(ctx, sandbox.SessionID, base.Add(time.Duration(i)*time.Second))
+						errs <- client.UpdateSessionLastActivity(ctx, sandbox.SessionID, base.Add(time.Duration(i)*time.Second), false)
 					}(i)
 				}
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
 					stale := *sandbox
-					stale.Status = "updated"
+					stale.Name = "updated"
 					errs <- client.UpdateSandbox(ctx, &stale)
 				}()
 				wg.Wait()
@@ -162,10 +157,10 @@ func TestIdleExpiry(t *testing.T) {
 					require.NoError(t, err)
 				}
 				// An older request arriving last must not move the deadline backward.
-				require.NoError(t, client.UpdateSessionLastActivity(ctx, sandbox.SessionID, base))
+				require.NoError(t, client.UpdateSessionLastActivity(ctx, sandbox.SessionID, base, false))
 				stored, err := client.GetSandboxBySessionID(ctx, sandbox.SessionID)
 				require.NoError(t, err)
-				require.Equal(t, "updated", stored.Status)
+				require.Equal(t, "updated", stored.Name)
 				require.True(t, sandbox.ExpiresAt.Equal(stored.ExpiresAt))
 				score, err := mr.ZScore("session:idle_expiry", sandbox.SessionID)
 				require.NoError(t, err)
@@ -182,6 +177,47 @@ func TestIdleExpiry(t *testing.T) {
 				require.False(t, mr.Exists("session:"+sandbox.SessionID))
 				_, err := mr.ZScore("session:idle_expiry", sandbox.SessionID)
 				require.Error(t, err)
+			})
+
+			t.Run("creating placeholder is protected by grace period and overwritten on ready", func(t *testing.T) {
+				client, mr := setup(t)
+				t.Cleanup(func() { _ = client.Close() })
+				ctx := context.Background()
+				createdAt := time.Now().UTC().Add(-50 * time.Second).Truncate(time.Second)
+				sandbox := newTestSandbox("sandbox", "creating-session", createdAt.Add(time.Hour))
+				sandbox.CreatedAt = createdAt
+				sandbox.Status = "creating"
+				sandbox.IdleTimeout = metav1.Duration{Duration: 30 * time.Second}
+				require.NoError(t, client.StoreSandbox(ctx, sandbox))
+
+				// Provisional deadline protects the sandbox during startup (50s > 30s IdleTimeout)
+				// and bounds orphan cleanup if workload-manager crashes mid-creation.
+				provisional := createdAt.Add(sandboxStartupGracePeriod)
+				score, err := mr.ZScore("session:idle_expiry", sandbox.SessionID)
+				require.NoError(t, err)
+				require.Equal(t, provisional.Unix(), int64(score))
+
+				results, err := client.ListInactiveSandboxes(ctx, createdAt.Add(50*time.Second), 10)
+				require.NoError(t, err)
+				require.Empty(t, results)
+				results, err = client.ListInactiveSandboxes(ctx, provisional, 10)
+				require.NoError(t, err)
+				require.Len(t, results, 1)
+
+				// Once ready, force=true overwrites the 3m provisional deadline with readyAt + 30s.
+				readyAt := createdAt.Add(50 * time.Second)
+				sandbox.Status = "ready"
+				require.NoError(t, client.UpdateSandbox(ctx, sandbox))
+				require.NoError(t, client.UpdateSessionLastActivity(ctx, sandbox.SessionID, readyAt, true))
+				score, err = mr.ZScore("session:idle_expiry", sandbox.SessionID)
+				require.NoError(t, err)
+				require.Equal(t, readyAt.Add(30*time.Second).Unix(), int64(score))
+				results, err = client.ListInactiveSandboxes(ctx, readyAt.Add(29*time.Second), 10)
+				require.NoError(t, err)
+				require.Empty(t, results)
+				results, err = client.ListInactiveSandboxes(ctx, readyAt.Add(30*time.Second), 10)
+				require.NoError(t, err)
+				require.Len(t, results, 1)
 			})
 		})
 	}

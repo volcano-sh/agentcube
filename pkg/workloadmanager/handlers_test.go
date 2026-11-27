@@ -52,11 +52,14 @@ import (
 
 type fakeStore struct {
 	store.Store
-	storeErr           error
-	updateErr          error
-	storeCalls         int
-	updateCalls        int
-	deleteSessionCalls int
+	storeErr            error
+	updateErr           error
+	updateActivityErr   error
+	storeCalls          int
+	updateCalls         int
+	updateActivityCalls int
+	updateActivityForce bool
+	deleteSessionCalls  int
 }
 
 func (f *fakeStore) Ping(_ context.Context) error { return nil }
@@ -81,8 +84,10 @@ func (f *fakeStore) ListExpiredSandboxes(_ context.Context, _ time.Time, _ int64
 func (f *fakeStore) ListInactiveSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxInfo, error) {
 	return nil, nil
 }
-func (f *fakeStore) UpdateSessionLastActivity(_ context.Context, _ string, _ time.Time) error {
-	return nil
+func (f *fakeStore) UpdateSessionLastActivity(_ context.Context, _ string, _ time.Time, force bool) error {
+	f.updateActivityCalls++
+	f.updateActivityForce = force
+	return f.updateActivityErr
 }
 func (f *fakeStore) Close() error { return nil }
 
@@ -137,6 +142,7 @@ func TestServerCreateSandbox(t *testing.T) {
 		podIPErr               error
 		readyErr               error
 		updateErr              error
+		updateActivityErr      error
 		sendResult             bool
 		expectErr              bool
 		expectCreateCalls      int
@@ -144,20 +150,23 @@ func TestServerCreateSandbox(t *testing.T) {
 		expectDeleteCalls      int
 		expectStoreDeleteCalls int
 		expectUpdateCalls      int
+		expectActivityCalls    int
 	}
 	tests := []testCase{
 		{
-			name:              "creates sandbox successfully",
-			sendResult:        true,
-			expectCreateCalls: 1,
-			expectUpdateCalls: 1,
+			name:                "creates sandbox successfully",
+			sendResult:          true,
+			expectCreateCalls:   1,
+			expectUpdateCalls:   1,
+			expectActivityCalls: 1,
 		},
 		{
-			name:              "creates sandbox claim successfully",
-			sandboxClaim:      true,
-			sendResult:        true,
-			expectClaimCalls:  1,
-			expectUpdateCalls: 1,
+			name:                "creates sandbox claim successfully",
+			sandboxClaim:        true,
+			sendResult:          true,
+			expectClaimCalls:    1,
+			expectUpdateCalls:   1,
+			expectActivityCalls: 1,
 		},
 		{
 			name:      "store placeholder fails",
@@ -206,6 +215,17 @@ func TestServerCreateSandbox(t *testing.T) {
 			expectErr:              true,
 			expectCreateCalls:      1,
 			expectUpdateCalls:      1,
+			expectDeleteCalls:      1,
+			expectStoreDeleteCalls: 1,
+		},
+		{
+			name:                   "initialize idle expiry fails triggers rollback",
+			updateActivityErr:      errors.New("idle expiry failed"),
+			sendResult:             true,
+			expectErr:              true,
+			expectCreateCalls:      1,
+			expectUpdateCalls:      1,
+			expectActivityCalls:    1,
 			expectDeleteCalls:      1,
 			expectStoreDeleteCalls: 1,
 		},
@@ -272,7 +292,11 @@ func TestServerCreateSandbox(t *testing.T) {
 			claimCalls = 0
 			deleteCalls = 0
 
-			fakeStoreInst := &fakeStore{storeErr: tt.storeErr, updateErr: tt.updateErr}
+			fakeStoreInst := &fakeStore{
+				storeErr:          tt.storeErr,
+				updateErr:         tt.updateErr,
+				updateActivityErr: tt.updateActivityErr,
+			}
 			server.storeClient = fakeStoreInst
 
 			resultChan := make(chan SandboxStatusUpdate, 1)
@@ -293,6 +317,10 @@ func TestServerCreateSandbox(t *testing.T) {
 			require.Equal(t, tt.expectDeleteCalls, deleteCalls, "delete call count")
 			require.Equal(t, 1, fakeStoreInst.storeCalls, "StoreSandbox call count")
 			require.Equal(t, tt.expectUpdateCalls, fakeStoreInst.updateCalls, "UpdateSandbox call count")
+			if tt.expectActivityCalls > 0 {
+				require.True(t, fakeStoreInst.updateActivityForce, "createSandbox should force-overwrite provisional idle expiry")
+			}
+			require.Equal(t, tt.expectActivityCalls, fakeStoreInst.updateActivityCalls, "UpdateSessionLastActivity call count")
 			require.Equal(t, tt.expectStoreDeleteCalls, fakeStoreInst.deleteSessionCalls, "DeleteSandboxBySessionID call count")
 
 			if tt.expectErr {

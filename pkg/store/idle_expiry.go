@@ -21,12 +21,25 @@ import (
 	"time"
 )
 
-// updateSessionIdleExpiryLua only advances the deadline of an existing session.
+// sandboxStartupGracePeriod is the temporary idle timeout used while a sandbox
+// is starting up (from StoreSandbox until it becomes ready).
+// It covers the worst-case startup time (2m creation timeout + 15s entrypoint
+// probe + buffer) so GC does not reclaim a starting sandbox early, while still
+// cleaning up orphaned records if workload-manager crashes mid-creation.
+const sandboxStartupGracePeriod = 3 * time.Minute
+
+// updateSessionIdleExpiryLua updates the idle deadline of an existing session.
+// When ARGV[3] == "1", the deadline is overwritten unconditionally; otherwise it
+// only advances forward.
 // In cluster mode its keys must share a hash slot, so it assumes the currently
 // supported non-cluster Redis and Valkey deployments.
 const updateSessionIdleExpiryLua = `
 if redis.call("EXISTS", KEYS[1]) == 0 then
 	return 0
+end
+if ARGV[3] == "1" then
+	redis.call("ZADD", KEYS[2], ARGV[2], ARGV[1])
+	return 1
 end
 local current = redis.call("ZSCORE", KEYS[2], ARGV[1])
 if not current or tonumber(ARGV[2]) > tonumber(current) then
@@ -34,6 +47,13 @@ if not current or tonumber(ARGV[2]) > tonumber(current) then
 end
 return 1
 `
+
+func forceFlag(force bool) string {
+	if force {
+		return "1"
+	}
+	return "0"
+}
 
 func validateSessionActivity(sessionID string, at time.Time) error {
 	if sessionID == "" {

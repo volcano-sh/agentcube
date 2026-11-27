@@ -205,13 +205,13 @@ func TestListInactiveSandboxes(t *testing.T) {
 	}
 
 	// Activity plus the default timeout falls on either side of the cutoff.
-	if err := c.UpdateSessionLastActivity(ctx, "sess-1", now.Add(-3*time.Hour)); err != nil {
+	if err := c.UpdateSessionLastActivity(ctx, "sess-1", now.Add(-3*time.Hour), false); err != nil {
 		t.Fatalf("UpdateSessionLastActivity sess-1 error: %v", err)
 	}
-	if err := c.UpdateSessionLastActivity(ctx, "sess-2", now.Add(-2*time.Hour)); err != nil {
+	if err := c.UpdateSessionLastActivity(ctx, "sess-2", now.Add(-2*time.Hour), false); err != nil {
 		t.Fatalf("UpdateSessionLastActivity sess-2 error: %v", err)
 	}
-	if err := c.UpdateSessionLastActivity(ctx, "sess-3", now.Add(1*time.Hour)); err != nil {
+	if err := c.UpdateSessionLastActivity(ctx, "sess-3", now.Add(1*time.Hour), false); err != nil {
 		t.Fatalf("UpdateSessionLastActivity sess-3 error: %v", err)
 	}
 
@@ -287,8 +287,8 @@ func TestListInactiveSandboxes_OrdersByIdleDeadline(t *testing.T) {
 
 	assert.NoError(t, c.StoreSandbox(ctx, newTestSandbox("sb-1", "sess-1", now.Add(10*time.Minute))))
 	assert.NoError(t, c.StoreSandbox(ctx, newTestSandbox("sb-2", "sess-2", now.Add(10*time.Minute))))
-	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-1", now.Add(-time.Hour)))
-	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-2", now.Add(-2*time.Hour)))
+	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-1", now.Add(-time.Hour), false))
+	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-2", now.Add(-2*time.Hour), false))
 
 	list, err := c.ListInactiveSandboxes(ctx, now, 10)
 	assert.NoError(t, err)
@@ -318,7 +318,7 @@ func TestUpdateSessionLastActivity(t *testing.T) {
 		t.Fatalf("get session key before update error: %v", err)
 	}
 
-	if err := c.UpdateSessionLastActivity(ctx, "sess-1", activity); err != nil {
+	if err := c.UpdateSessionLastActivity(ctx, "sess-1", activity, false); err != nil {
 		t.Fatalf("UpdateSessionLastActivity sess-1 error: %v", err)
 	}
 
@@ -340,7 +340,7 @@ func TestUpdateSessionLastActivity(t *testing.T) {
 	}
 
 	// session not exists
-	err = c.UpdateSessionLastActivity(ctx, "sess-1-not-exist", activity)
+	err = c.UpdateSessionLastActivity(ctx, "sess-1-not-exist", activity, false)
 	if err == nil {
 		t.Fatalf("expected error for non-existent session")
 	}

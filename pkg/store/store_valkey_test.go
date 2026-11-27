@@ -192,7 +192,6 @@ func TestValkeyStore_GetSandboxBySessionID(t *testing.T) {
 	assert.NoError(t, err, "ZScore expiry should not be error")
 
 	_, err = mr.ZScore(c.idleExpiryIndexKey, sandboxStoreStruct.SessionID)
-	assert.NoError(t, err)
 	assert.NoError(t, err, "ZScore idle expiry should not be error")
 
 	err = c.DeleteSandboxBySessionID(ctx, "TestValkeyStore_GetSandboxBySessionID-SID-01")
@@ -308,11 +307,11 @@ func TestValkeyStore_ListInactiveSandboxes(t *testing.T) {
 	assert.NoError(t, c.StoreSandbox(ctx, sb4))
 	assert.NoError(t, c.StoreSandbox(ctx, sb5))
 
-	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-1", now.Add(-10*time.Hour)))
-	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-2", now.Add(-8*time.Hour)))
-	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-3", now.Add(-6*time.Hour)))
-	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-4", now.Add(-4*time.Hour)))
-	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-5", now.Add(-2*time.Hour)))
+	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-1", now.Add(-10*time.Hour), false))
+	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-2", now.Add(-8*time.Hour), false))
+	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-3", now.Add(-6*time.Hour), false))
+	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-4", now.Add(-4*time.Hour), false))
+	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-5", now.Add(-2*time.Hour), false))
 
 	expiredSandboxes, err := c.ListInactiveSandboxes(ctx, now.Add(-5*time.Hour), 10)
 	assert.Nil(t, err)
@@ -345,7 +344,7 @@ func TestValkeyStore_UpdateSessionLastActivity(t *testing.T) {
 	assert.Equal(t, "sess-1", sandboxStore.SessionID)
 
 	activity := time.Now().Add(time.Hour)
-	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-1", activity))
+	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-1", activity, false))
 
 	// session:idle_expiry index should be updated.
 	score, err := mr.ZScore(c.idleExpiryIndexKey, "sess-1")
@@ -356,7 +355,7 @@ func TestValkeyStore_UpdateSessionLastActivity(t *testing.T) {
 	assert.Equal(t, activity.Add(types.DefaultSandboxIdleTimeout).Unix(), int64(score))
 
 	// session not exists
-	err = c.UpdateSessionLastActivity(ctx, "sess-1-not-exist", activity)
+	err = c.UpdateSessionLastActivity(ctx, "sess-1-not-exist", activity, false)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotFound))
 }

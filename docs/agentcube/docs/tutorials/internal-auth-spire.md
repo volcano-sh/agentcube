@@ -12,11 +12,15 @@ automatically.
    AgentCube on your cluster. **Do not** enable SPIRE during the initial
    installation - this tutorial walks through that step explicitly.
 
-2. Make sure you have the following tools installed:
+2. Use Kubernetes v1.29+ with the `SidecarContainers` feature enabled (enabled
+   by default from v1.29 and stable in v1.33). SPIRE-enabled Router and
+   WorkloadManager pods use native sidecars.
+
+3. Make sure you have the following tools installed:
    - [`kubectl`](https://kubernetes.io/docs/tasks/tools/) (v1.25+)
    - [`helm`](https://helm.sh/docs/intro/install/) (v3.12+)
 
-3. Confirm AgentCube is running without SPIRE:
+4. Confirm AgentCube is running without SPIRE:
 
    ```bash
    kubectl get pods -n agentcube
@@ -48,7 +52,7 @@ inside your cluster:
 | `spire-server` | StatefulSet (1 replica) | Central certificate authority. Runs the SPIRE Controller Manager as a sidecar. |
 | `spire-agent` | DaemonSet | Runs on every node. Attests workloads and delivers certificates. |
 | `ClusterSPIFFEID` (×2) | CRD | Declarative identity registration for the Router and WorkloadManager. |
-| `spiffe-helper` sidecar | Container (injected) | Fetches and rotates certificates inside the Router and WorkloadManager pods. |
+| `spiffe-helper` sidecar | Native sidecar (`initContainers`, `restartPolicy: Always`) | Fetches and rotates certificates inside the Router and WorkloadManager pods. |
 
 The Router and WorkloadManager pods will each go from `1/1` to `2/2` containers
 (the main process + the `spiffe-helper` sidecar).
@@ -94,16 +98,29 @@ helm upgrade agentcube manifests/charts/base \
   --set spire.agent.skipKubeletVerification=true
 ```
 
-This single command deploys the full SPIRE infrastructure **and** injects the
-`spiffe-helper` sidecar into the Router and WorkloadManager pods.
+This single command deploys the full SPIRE infrastructure **and** adds a native
+`spiffe-helper` sidecar to the Router and WorkloadManager pods. Each helper starts
+before its application. Its HTTP startup probe calls `/ready` on port `8081`;
+the helper returns success only after writing the X.509 certificate, private key,
+and CA bundle to the shared certificate volume. This works with the default
+distroless helper image and does not require a shell or file utilities. If you
+customize an application to listen on `8081`, set `spire.spiffeHelper.healthPort`
+to a different free port in that pod.
+
+The probe allows up to five minutes for initial certificate delivery. During
+bootstrap, the pods can remain in `Init` while SPIRE becomes available; the
+applications have not started their 30-second certificate wait yet. If bootstrap
+exceeds the probe budget, Kubernetes restarts the helper and retries while the
+application remains gated. A readiness probe alone would not enforce this startup
+ordering.
 
 Wait for everything to become ready:
 
 ```bash
-kubectl rollout status statefulset/spire-server -n agentcube --timeout=120s
-kubectl rollout status daemonset/spire-agent -n agentcube --timeout=120s
-kubectl rollout status deployment/agentcube-router -n agentcube --timeout=120s
-kubectl rollout status deployment/workloadmanager -n agentcube --timeout=120s
+kubectl rollout status statefulset/spire-server -n agentcube --timeout=360s
+kubectl rollout status daemonset/spire-agent -n agentcube --timeout=360s
+kubectl rollout status deployment/agentcube-router -n agentcube --timeout=360s
+kubectl rollout status deployment/workloadmanager -n agentcube --timeout=360s
 ```
 
 ## Step 3 - Verify SPIRE is healthy
@@ -162,11 +179,24 @@ Expected output:
 
 ```
 NAME                               READY   STATUS    RESTARTS        AGE
-agentcube-router-574d98b76-tr2nr   2/2     Running   5 (2m24s ago)   3m17s
-spire-agent-8r9jx                  1/1     Running   3 (2m44s ago)   3m17s
+agentcube-router-574d98b76-tr2nr   2/2     Running   0               3m17s
+spire-agent-8r9jx                  1/1     Running   0               3m17s
 spire-server-0                     2/2     Running   0               3m17s
-workloadmanager-5797888bd4-jm2qj   2/2     Running   3 (118s ago)    3m17s
+workloadmanager-5797888bd4-jm2qj   2/2     Running   0               3m17s
 ```
+
+The output above illustrates a healthy rollout. Check application and helper
+restart counts separately (native sidecars appear in `initContainerStatuses`):
+
+```bash
+kubectl get pods -n agentcube -l 'app in (agentcube-router,workloadmanager)' \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{range .status.initContainerStatuses[*]}  {.name}: {.restartCount}{"\n"}{end}{range .status.containerStatuses[*]}  {.name}: {.restartCount}{"\n"}{end}{end}'
+```
+
+Router and WorkloadManager should have zero certificate-related restarts. If a
+pod stays in `Init`, inspect `kubectl logs -n agentcube <pod> -c spiffe-helper`
+and the SPIRE Server/Agent logs for attestation or registration errors. SPIRE
+Agent restarts have a separate lifecycle and require their own diagnosis.
 
 Check the Router logs to confirm mTLS is active. You should see a log line
 indicating it is waiting for, and then successfully loading, the certificates:
@@ -285,6 +315,9 @@ signed by the trusted CA. Authorization is handled at the application layer, not
 at the TLS level.
 
 ### Certificate rotation
+
+The helper remains running after its startup probe succeeds because it uses
+`restartPolicy: Always`. It is not a one-shot init container.
 
 The `spiffe-helper` sidecar continuously fetches fresh SVIDs from the local
 SPIRE Agent and writes them to a shared volume at `/run/spire/certs/`. A

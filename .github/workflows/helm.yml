@@ -1,0 +1,36 @@
+name: Helm
+
+on:
+  pull_request:
+    paths:
+      - 'manifests/charts/base/**'
+      - 'test/helm/**'
+      - '.github/workflows/helm.yml'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  helm:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.17.3
+      - name: Lint and test chart
+        run: |
+          make helm-lint
+          helm lint manifests/charts/base --set spire.enabled=true
+          make helm-test

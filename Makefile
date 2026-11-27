@@ -293,6 +293,10 @@ helm-template: ## Render Helm chart locally
 helm-lint: ## Lint Helm chart
 	helm lint manifests/charts/base
 
+.PHONY: helm-test
+helm-test: ## Test SPIRE-enabled and disabled Helm rendering (requires Helm)
+	@command -v helm >/dev/null
+	go test -v ./test/helm
 
 ##@ Dependencies
 

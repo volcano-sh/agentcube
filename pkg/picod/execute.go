@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -49,6 +50,30 @@ type ExecuteResponse struct {
 	Duration  float64   `json:"duration"`   // The duration of the command execution in seconds.
 	StartTime time.Time `json:"start_time"` // The start time of the command execution.
 	EndTime   time.Time `json:"end_time"`   // The end time of the command execution.
+}
+
+// buildCommandEnvironment inherits only named runtime settings, then applies
+// explicit request values. The result must be non-nil even when empty: os/exec
+// treats a nil environment as permission to inherit the entire parent environment.
+func buildCommandEnvironment(parent []string, overrides map[string]string) []string {
+	env := make([]string, 0, len(parent)+len(overrides))
+	for _, entry := range parent {
+		name, _, valid := strings.Cut(entry, "=")
+		if !valid {
+			continue
+		}
+		switch name {
+		case "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TERM",
+			"PYTHONHOME", "PYTHONPATH", "PYTHONUSERBASE", "PYTHONNOUSERSITE",
+			"PYTHONUNBUFFERED", "PYTHONDONTWRITEBYTECODE", "PYTHONIOENCODING", "PYTHONUTF8":
+			env = append(env, entry)
+		}
+	}
+	// os/exec uses the last value when a name appears more than once.
+	for name, value := range overrides {
+		env = append(env, name+"="+value)
+	}
+	return env
 }
 
 // ExecuteHandler handles command execution requests
@@ -115,14 +140,7 @@ func (s *Server) ExecuteHandler(c *gin.Context) {
 		cmd.Dir = safeWorkingDir
 	}
 
-	// Set environment variables
-	if len(req.Env) > 0 {
-		currentEnv := os.Environ()
-		for k, v := range req.Env {
-			currentEnv = append(currentEnv, fmt.Sprintf("%s=%s", k, v))
-		}
-		cmd.Env = currentEnv
-	}
+	cmd.Env = buildCommandEnvironment(os.Environ(), req.Env)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

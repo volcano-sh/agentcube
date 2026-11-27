@@ -49,7 +49,7 @@ func (nopStore) ListExpiredSandboxes(_ context.Context, _ time.Time, _ int64) ([
 func (nopStore) ListInactiveSandboxes(_ context.Context, _ time.Time, _ int64) ([]*types.SandboxInfo, error) {
 	return nil, nil
 }
-func (nopStore) UpdateSessionLastActivity(_ context.Context, _ string, _ time.Time) error {
+func (nopStore) UpdateSessionLastActivity(_ context.Context, _ string, _ time.Time, _ bool) error {
 	return nil
 }
 func (nopStore) Close() error { return nil }

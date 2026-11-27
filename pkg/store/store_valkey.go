@@ -191,8 +191,11 @@ func (vs *valkeyStore) StoreSandbox(ctx context.Context, sandboxStore *types.San
 	commands = append(commands, vs.cli.B().Setnx().Key(sessionKey).Value(string(b)).Build())
 	commands = append(commands, vs.cli.B().Zadd().Key(vs.expiryIndexKey).ScoreMember().
 		ScoreMember(float64(sandboxStore.ExpiresAt.Unix()), sandboxStore.SessionID).Build())
+	// Use a temporary grace deadline here so GC can still clean up orphaned
+	// records if creation crashes before readiness; once ready, it is
+	// overwritten with readyAt + IdleTimeout via UpdateSessionLastActivity(force=true).
 	commands = append(commands, vs.cli.B().Zadd().Key(vs.idleExpiryIndexKey).ScoreMember().
-		ScoreMember(float64(sandboxStore.IdleExpiryTime(sandboxStore.CreatedAt).Unix()), sandboxStore.SessionID).Build())
+		ScoreMember(float64(sandboxStore.CreatedAt.Add(sandboxStartupGracePeriod).Unix()), sandboxStore.SessionID).Build())
 
 	for i, resp := range vs.cli.DoMulti(ctx, commands...) {
 		if err = resp.Error(); err != nil {
@@ -288,8 +291,9 @@ func (vs *valkeyStore) Close() error {
 
 var updateValkeySessionIdleExpiryScript = valkey.NewLuaScript(updateSessionIdleExpiryLua)
 
-// UpdateSessionLastActivity advances the idle expiry score for an existing session.
-func (vs *valkeyStore) UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error {
+// UpdateSessionLastActivity updates the session's idle expiry deadline (at + IdleTimeout).
+// When force is false, the deadline only advances forward; when true, it overwrites unconditionally.
+func (vs *valkeyStore) UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time, force bool) error {
 	if err := validateSessionActivity(sessionID, at); err != nil {
 		return fmt.Errorf("UpdateSessionLastActivity: %w", err)
 	}
@@ -299,7 +303,7 @@ func (vs *valkeyStore) UpdateSessionLastActivity(ctx context.Context, sessionID 
 	}
 	result, err := updateValkeySessionIdleExpiryScript.Exec(ctx, vs.cli,
 		[]string{vs.sessionKey(sessionID), vs.idleExpiryIndexKey},
-		[]string{sessionID, strconv.FormatInt(sandbox.IdleExpiryTime(at).Unix(), 10)}).AsInt64()
+		[]string{sessionID, strconv.FormatInt(sandbox.IdleExpiryTime(at).Unix(), 10), forceFlag(force)}).AsInt64()
 	if err != nil {
 		return fmt.Errorf("UpdateSessionLastActivity: update deadline for session %s: %w", sessionID, err)
 	}

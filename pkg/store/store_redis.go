@@ -168,8 +168,11 @@ func (rs *redisStore) StoreSandbox(ctx context.Context, sandboxRedis *types.Sand
 		Score:  float64(sandboxRedis.ExpiresAt.Unix()),
 		Member: sandboxRedis.SessionID,
 	})
+	// Use a temporary grace deadline here so GC can still clean up orphaned
+	// records if creation crashes before readiness; once ready, it is
+	// overwritten with readyAt + IdleTimeout via UpdateSessionLastActivity(force=true).
 	pipe.ZAdd(ctx, rs.idleExpiryIndexKey, redisv9.Z{
-		Score:  float64(sandboxRedis.IdleExpiryTime(sandboxRedis.CreatedAt).Unix()),
+		Score:  float64(sandboxRedis.CreatedAt.Add(sandboxStartupGracePeriod).Unix()),
 		Member: sandboxRedis.SessionID,
 	})
 
@@ -279,8 +282,9 @@ func (rs *redisStore) Close() error {
 
 var updateSessionIdleExpiryScript = redisv9.NewScript(updateSessionIdleExpiryLua)
 
-// UpdateSessionLastActivity advances the idle expiry score for an existing session.
-func (rs *redisStore) UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error {
+// UpdateSessionLastActivity updates the session's idle expiry deadline (at + IdleTimeout).
+// When force is false, the deadline only advances forward; when true, it overwrites unconditionally.
+func (rs *redisStore) UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time, force bool) error {
 	if err := validateSessionActivity(sessionID, at); err != nil {
 		return fmt.Errorf("UpdateSessionLastActivity: %w", err)
 	}
@@ -289,7 +293,8 @@ func (rs *redisStore) UpdateSessionLastActivity(ctx context.Context, sessionID s
 		return fmt.Errorf("UpdateSessionLastActivity: session %s: %w", sessionID, err)
 	}
 	result, err := updateSessionIdleExpiryScript.Run(ctx, rs.cli,
-		[]string{rs.sessionKey(sessionID), rs.idleExpiryIndexKey}, sessionID, sandbox.IdleExpiryTime(at).Unix()).Int64()
+		[]string{rs.sessionKey(sessionID), rs.idleExpiryIndexKey},
+		sessionID, sandbox.IdleExpiryTime(at).Unix(), forceFlag(force)).Int64()
 	if err != nil {
 		return fmt.Errorf("UpdateSessionLastActivity: update deadline for session %s: %w", sessionID, err)
 	}

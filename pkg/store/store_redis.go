@@ -31,10 +31,10 @@ import (
 )
 
 type redisStore struct {
-	cli                  *redisv9.Client
-	sessionPrefix        string
-	expiryIndexKey       string
-	lastActivityIndexKey string
+	cli                *redisv9.Client
+	sessionPrefix      string
+	expiryIndexKey     string
+	idleExpiryIndexKey string
 }
 
 // initRedisStore init redis store client
@@ -45,10 +45,10 @@ func initRedisStore() (*redisStore, error) {
 	}
 
 	return &redisStore{
-		cli:                  redisv9.NewClient(redisOptions),
-		sessionPrefix:        "session:",
-		expiryIndexKey:       "session:expiry",
-		lastActivityIndexKey: "session:last_activity",
+		cli:                redisv9.NewClient(redisOptions),
+		sessionPrefix:      "session:",
+		expiryIndexKey:     "session:expiry",
+		idleExpiryIndexKey: "session:idle_expiry",
 	}, nil
 }
 
@@ -158,6 +158,9 @@ func (rs *redisStore) StoreSandbox(ctx context.Context, sandboxRedis *types.Sand
 	if sandboxRedis.ExpiresAt.IsZero() {
 		return fmt.Errorf("StoreSandbox: sandbox expired at is zero")
 	}
+	if sandboxRedis.CreatedAt.IsZero() {
+		return errors.New("StoreSandbox: sandbox created at is zero")
+	}
 
 	pipe := rs.cli.Pipeline()
 	pipe.SetNX(ctx, sessionKey, b, 0)
@@ -165,8 +168,8 @@ func (rs *redisStore) StoreSandbox(ctx context.Context, sandboxRedis *types.Sand
 		Score:  float64(sandboxRedis.ExpiresAt.Unix()),
 		Member: sandboxRedis.SessionID,
 	})
-	pipe.ZAdd(ctx, rs.lastActivityIndexKey, redisv9.Z{
-		Score:  float64(time.Now().Unix()),
+	pipe.ZAdd(ctx, rs.idleExpiryIndexKey, redisv9.Z{
+		Score:  float64(sandboxRedis.IdleExpiryTime(sandboxRedis.CreatedAt).Unix()),
 		Member: sandboxRedis.SessionID,
 	})
 
@@ -189,7 +192,7 @@ func (rs *redisStore) StoreSandbox(ctx context.Context, sandboxRedis *types.Sand
 }
 
 // UpdateSandbox update sandbox obj in redis
-// update sandbox object only, do not update expiry and lastActivity ZSet
+// update sandbox object only, do not update expiry and idleExpiry ZSet
 func (rs *redisStore) UpdateSandbox(ctx context.Context, sandboxRedis *types.SandboxInfo) error {
 	if sandboxRedis == nil {
 		return errors.New("UpdateSandbox: sandbox is nil")
@@ -219,7 +222,7 @@ func (rs *redisStore) DeleteSandboxBySessionID(ctx context.Context, sessionID st
 	pipe := rs.cli.Pipeline()
 	pipe.Del(ctx, sessionKey)
 	pipe.ZRem(ctx, rs.expiryIndexKey, sessionID)
-	pipe.ZRem(ctx, rs.lastActivityIndexKey, sessionID)
+	pipe.ZRem(ctx, rs.idleExpiryIndexKey, sessionID)
 
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("DeleteSandboxBySessionID: pipeline EXEC: %w", err)
@@ -248,48 +251,25 @@ func (rs *redisStore) ListExpiredSandboxes(ctx context.Context, before time.Time
 	return rs.loadSandboxesBySessionIDs(ctx, ids)
 }
 
-// ListInactiveSandboxes returns up to limit sandboxes whose last activity
-// time is before, using the last-activity sorted-set index.
-// LastActivityAt is populated on each returned SandboxInfo from the sorted-set
-// score so the caller can apply per-sandbox idle-timeout logic.
+// ListInactiveSandboxes returns up to limit sandboxes whose idle deadline is at
+// or before the given time, ordered by deadline.
 func (rs *redisStore) ListInactiveSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 
 	maxScore := before.Unix()
-	zs, err := rs.cli.ZRangeByScoreWithScores(ctx, rs.lastActivityIndexKey, &redisv9.ZRangeBy{
+	ids, err := rs.cli.ZRangeByScore(ctx, rs.idleExpiryIndexKey, &redisv9.ZRangeBy{
 		Min:    "-inf",
 		Max:    fmt.Sprintf("%d", maxScore),
 		Offset: 0,
 		Count:  limit,
 	}).Result()
 	if err != nil {
-		return nil, fmt.Errorf("ListInactiveSandboxes: ZRangeByScoreWithScores failed: %w", err)
+		return nil, fmt.Errorf("ListInactiveSandboxes: ZRangeByScore failed: %w", err)
 	}
 
-	ids := make([]string, len(zs))
-	scores := make(map[string]time.Time, len(zs))
-	for i, z := range zs {
-		id, ok := z.Member.(string)
-		if !ok {
-			return nil, fmt.Errorf("ListInactiveSandboxes: unexpected member type %T", z.Member)
-		}
-		ids[i] = id
-		scores[id] = time.Unix(int64(z.Score), 0)
-	}
-
-	sandboxes, err := rs.loadSandboxesBySessionIDs(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, s := range sandboxes {
-		if t, ok := scores[s.SessionID]; ok {
-			s.LastActivityAt = t
-		}
-	}
-	return sandboxes, nil
+	return rs.loadSandboxesBySessionIDs(ctx, ids)
 }
 
 // Close releases all resources held by the redis store.
@@ -297,38 +277,24 @@ func (rs *redisStore) Close() error {
 	return rs.cli.Close()
 }
 
-// updateSessionLastActivityScript atomically checks if the session key exists
-// and updates its last activity time in the sorted-set index.
-// It uses EXISTS to verify presence rather than GET (which retrieved the
-// actual value in older implementations). This saves data transfer overhead,
-// if in future the value is required GET can be used instead.
-var updateSessionLastActivityScript = redisv9.NewScript(`
-if redis.call("EXISTS", KEYS[1]) == 1 then
-	redis.call("ZADD", KEYS[2], ARGV[2], ARGV[1])
-	return 1
-else
-	return 0
-end
-`)
+var updateSessionIdleExpiryScript = redisv9.NewScript(updateSessionIdleExpiryLua)
 
-// UpdateSessionLastActivity updates the last-activity index for the given session.
+// UpdateSessionLastActivity advances the idle expiry score for an existing session.
 func (rs *redisStore) UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error {
-	if sessionID == "" {
-		return errors.New("UpdateSessionLastActivity: sessionID is empty")
+	if err := validateSessionActivity(sessionID, at); err != nil {
+		return fmt.Errorf("UpdateSessionLastActivity: %w", err)
 	}
-	if at.IsZero() {
-		at = time.Now()
-	}
-
-	sessionKey := rs.sessionKey(sessionID)
-	res, err := updateSessionLastActivityScript.Run(ctx, rs.cli, []string{sessionKey, rs.lastActivityIndexKey}, sessionID, at.Unix()).Int64()
+	sandbox, err := rs.GetSandboxBySessionID(ctx, sessionID)
 	if err != nil {
-		return fmt.Errorf("UpdateSessionLastActivity: script execution failed for sessionID %s: %w", sessionID, err)
+		return fmt.Errorf("UpdateSessionLastActivity: session %s: %w", sessionID, err)
 	}
-
-	if res == 0 {
+	result, err := updateSessionIdleExpiryScript.Run(ctx, rs.cli,
+		[]string{rs.sessionKey(sessionID), rs.idleExpiryIndexKey}, sessionID, sandbox.IdleExpiryTime(at).Unix()).Int64()
+	if err != nil {
+		return fmt.Errorf("UpdateSessionLastActivity: update deadline for session %s: %w", sessionID, err)
+	}
+	if result == 0 {
 		return ErrNotFound
 	}
-
 	return nil
 }

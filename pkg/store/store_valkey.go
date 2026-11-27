@@ -34,10 +34,10 @@ import (
 )
 
 type valkeyStore struct {
-	cli                  valkey.Client
-	sessionPrefix        string
-	expiryIndexKey       string
-	lastActivityIndexKey string
+	cli                valkey.Client
+	sessionPrefix      string
+	expiryIndexKey     string
+	idleExpiryIndexKey string
 }
 
 // initValkeyStore init valkey store client
@@ -52,10 +52,10 @@ func initValkeyStore() (*valkeyStore, error) {
 		return nil, fmt.Errorf("create valkey client failed: %w", err)
 	}
 	return &valkeyStore{
-		cli:                  client,
-		sessionPrefix:        "session:",
-		expiryIndexKey:       "session:expiry",
-		lastActivityIndexKey: "session:last_activity",
+		cli:                client,
+		sessionPrefix:      "session:",
+		expiryIndexKey:     "session:expiry",
+		idleExpiryIndexKey: "session:idle_expiry",
 	}, nil
 }
 
@@ -177,6 +177,9 @@ func (vs *valkeyStore) StoreSandbox(ctx context.Context, sandboxStore *types.San
 	if sandboxStore.ExpiresAt.IsZero() {
 		return fmt.Errorf("StoreSandbox: sandbox expires time is zero")
 	}
+	if sandboxStore.CreatedAt.IsZero() {
+		return errors.New("StoreSandbox: sandbox created time is zero")
+	}
 
 	sessionKey := vs.sessionKey(sandboxStore.SessionID)
 	b, err := json.Marshal(sandboxStore)
@@ -188,8 +191,8 @@ func (vs *valkeyStore) StoreSandbox(ctx context.Context, sandboxStore *types.San
 	commands = append(commands, vs.cli.B().Setnx().Key(sessionKey).Value(string(b)).Build())
 	commands = append(commands, vs.cli.B().Zadd().Key(vs.expiryIndexKey).ScoreMember().
 		ScoreMember(float64(sandboxStore.ExpiresAt.Unix()), sandboxStore.SessionID).Build())
-	commands = append(commands, vs.cli.B().Zadd().Key(vs.lastActivityIndexKey).ScoreMember().
-		ScoreMember(float64(time.Now().Unix()), sandboxStore.SessionID).Build())
+	commands = append(commands, vs.cli.B().Zadd().Key(vs.idleExpiryIndexKey).ScoreMember().
+		ScoreMember(float64(sandboxStore.IdleExpiryTime(sandboxStore.CreatedAt).Unix()), sandboxStore.SessionID).Build())
 
 	for i, resp := range vs.cli.DoMulti(ctx, commands...) {
 		if err = resp.Error(); err != nil {
@@ -201,7 +204,7 @@ func (vs *valkeyStore) StoreSandbox(ctx context.Context, sandboxStore *types.San
 }
 
 // UpdateSandbox update sandbox obj in valkey
-// update sandbox object only, do not update expiry and lastActivity ZSet
+// update sandbox object only, do not update expiry and idleExpiry ZSet
 func (vs *valkeyStore) UpdateSandbox(ctx context.Context, sandboxStore *types.SandboxInfo) error {
 	if sandboxStore == nil {
 		return errors.New("UpdateSandbox: sandbox is nil")
@@ -231,7 +234,7 @@ func (vs *valkeyStore) DeleteSandboxBySessionID(ctx context.Context, sessionID s
 	commands := make(valkey.Commands, 0, 4)
 	commands = append(commands, vs.cli.B().Del().Key(sessionKey).Build())
 	commands = append(commands, vs.cli.B().Zrem().Key(vs.expiryIndexKey).Member(sessionID).Build())
-	commands = append(commands, vs.cli.B().Zrem().Key(vs.lastActivityIndexKey).Member(sessionID).Build())
+	commands = append(commands, vs.cli.B().Zrem().Key(vs.idleExpiryIndexKey).Member(sessionID).Build())
 
 	for i, resp := range vs.cli.DoMulti(ctx, commands...) {
 		if err := resp.Error(); err != nil {
@@ -257,42 +260,24 @@ func (vs *valkeyStore) ListExpiredSandboxes(ctx context.Context, before time.Tim
 	return vs.loadSandboxesBySessionIDs(ctx, ids)
 }
 
-// ListInactiveSandboxes returns up to limit sandboxes with last-activity time before the given time.
-// LastActivityAt is populated on each returned SandboxInfo from the sorted-set score so the
-// caller can apply per-sandbox idle-timeout logic.
+// ListInactiveSandboxes returns up to limit sandboxes whose idle deadline is at
+// or before the given time, ordered by deadline.
 func (vs *valkeyStore) ListInactiveSandboxes(ctx context.Context, before time.Time, limit int64) ([]*types.SandboxInfo, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 
 	maxScore := before.Unix()
-	zscores, err := vs.cli.Do(ctx,
-		vs.cli.B().Zrangebyscore().Key(vs.lastActivityIndexKey).
+	ids, err := vs.cli.Do(ctx,
+		vs.cli.B().Zrangebyscore().Key(vs.idleExpiryIndexKey).
 			Min("-inf").Max(fmt.Sprintf("%d", maxScore)).
-			Withscores().Limit(0, limit).Build(),
-	).AsZScores()
+			Limit(0, limit).Build(),
+	).AsStrSlice()
 	if err != nil {
-		return nil, fmt.Errorf("ListInactiveSandboxes: ZRangeByScore WITHSCORES failed: %w", err)
+		return nil, fmt.Errorf("ListInactiveSandboxes: ZRangeByScore failed: %w", err)
 	}
 
-	ids := make([]string, 0, len(zscores))
-	scores := make(map[string]time.Time, len(zscores))
-	for _, z := range zscores {
-		ids = append(ids, z.Member)
-		scores[z.Member] = time.Unix(int64(z.Score), 0)
-	}
-
-	sandboxes, err := vs.loadSandboxesBySessionIDs(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, s := range sandboxes {
-		if t, ok := scores[s.SessionID]; ok {
-			s.LastActivityAt = t
-		}
-	}
-	return sandboxes, nil
+	return vs.loadSandboxesBySessionIDs(ctx, ids)
 }
 
 // Close releases all resources held by the valkey store.
@@ -301,29 +286,25 @@ func (vs *valkeyStore) Close() error {
 	return nil
 }
 
-// UpdateSessionLastActivity updates the last-activity index for the given session
-func (vs *valkeyStore) UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error {
-	if sessionID == "" {
-		return errors.New("UpdateSessionLastActivity: sessionID is empty")
-	}
-	if at.IsZero() {
-		at = time.Now()
-	}
-	sessionKey := vs.sessionKey(sessionID)
-	existsResult, err := vs.cli.Do(ctx, vs.cli.B().Exists().Key(sessionKey).Build()).AsInt64()
-	if err != nil {
-		return fmt.Errorf("UpdateSessionLastActivity: valkey Exists failed: %w", err)
-	}
-	if existsResult != 1 {
-		// Existing result must be 1
-		return ErrNotFound
-	}
+var updateValkeySessionIdleExpiryScript = valkey.NewLuaScript(updateSessionIdleExpiryLua)
 
-	zddCmd := vs.cli.B().Zadd().Key(vs.lastActivityIndexKey).ScoreMember().
-		ScoreMember(float64(at.Unix()), sessionID).Build()
-	err = vs.cli.Do(ctx, zddCmd).Error()
+// UpdateSessionLastActivity advances the idle expiry score for an existing session.
+func (vs *valkeyStore) UpdateSessionLastActivity(ctx context.Context, sessionID string, at time.Time) error {
+	if err := validateSessionActivity(sessionID, at); err != nil {
+		return fmt.Errorf("UpdateSessionLastActivity: %w", err)
+	}
+	sandbox, err := vs.GetSandboxBySessionID(ctx, sessionID)
 	if err != nil {
-		return fmt.Errorf("UpdateSessionLastActivity: ZADD failed: %w", err)
+		return fmt.Errorf("UpdateSessionLastActivity: session %s: %w", sessionID, err)
+	}
+	result, err := updateValkeySessionIdleExpiryScript.Exec(ctx, vs.cli,
+		[]string{vs.sessionKey(sessionID), vs.idleExpiryIndexKey},
+		[]string{sessionID, strconv.FormatInt(sandbox.IdleExpiryTime(at).Unix(), 10)}).AsInt64()
+	if err != nil {
+		return fmt.Errorf("UpdateSessionLastActivity: update deadline for session %s: %w", sessionID, err)
+	}
+	if result == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

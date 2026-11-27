@@ -23,6 +23,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// DefaultSandboxIdleTimeout is used when a session has no configured idle timeout.
+const DefaultSandboxIdleTimeout = 15 * time.Minute
+
 type SandboxInfo struct {
 	Kind             string              `json:"kind"`
 	SandboxID        string              `json:"sandboxId"`
@@ -34,15 +37,25 @@ type SandboxInfo struct {
 	CreatedAt        time.Time           `json:"createdAt"`
 	ExpiresAt        time.Time           `json:"expiresAt"`
 	// IdleTimeout is the per-sandbox idle timeout configured via SessionTimeout on the
-	// AgentRuntime or CodeInterpreter spec. It is stored in the JSON blob so the
-	// garbage collector can apply it per-sandbox rather than using a global constant.
+	// AgentRuntime or CodeInterpreter spec. It is stored in the JSON blob so activity
+	// updates can compute the session's idle expiry deadline.
 	// metav1.Duration marshals as a human-readable string (e.g. "15m0s") rather than
 	// a raw nanosecond integer, making the persisted JSON unambiguous.
 	IdleTimeout metav1.Duration `json:"idleTimeout,omitempty"`
-	// LastActivityAt is populated transiently from the store's last-activity sorted set
-	// during ListInactiveSandboxes. It is intentionally excluded from JSON serialization.
-	LastActivityAt time.Time `json:"-"`
-	Status         string    `json:"status"`
+	Status      string          `json:"status"`
+}
+
+// IdleExpiryTime returns the deadline for activity at the given time.
+// A zero activity time uses the sandbox's creation time.
+func (s *SandboxInfo) IdleExpiryTime(at time.Time) time.Time {
+	timeout := s.IdleTimeout.Duration
+	if timeout == 0 {
+		timeout = DefaultSandboxIdleTimeout
+	}
+	if at.IsZero() {
+		at = s.CreatedAt
+	}
+	return at.Add(timeout)
 }
 
 type SandboxEntryPoint struct {

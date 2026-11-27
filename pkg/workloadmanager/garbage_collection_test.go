@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
@@ -100,95 +99,29 @@ func newTestGC(s store.Store) *garbageCollector {
 	}
 }
 
-// TestGarbageCollector_once_perSandboxIdleFilter covers the four cases the
-// reviewer requested: elapsed, within, zero-fallback, and zero LastActivityAt.
-func TestGarbageCollector_once_perSandboxIdleFilter(t *testing.T) {
-	now := time.Now()
+// Idle eligibility is determined by the store's deadline index, not by GC.
+func TestGarbageCollector_once_idleExpiredSandboxDeleted(t *testing.T) {
+	fs := &gcFakeStore{inactive: []*types.SandboxInfo{{
+		SessionID: "session-idle-expired", Kind: types.SandboxKind,
+		Name: "sb-idle-expired", SandboxNamespace: "default",
+	}}}
+	gc := newTestGC(fs)
+	gc.once()
+	assert.Equal(t, []string{"session-idle-expired"}, fs.deleted)
+}
 
-	tests := []struct {
-		name        string
-		sandbox     *types.SandboxInfo
-		wantDeleted bool
-	}{
-		{
-			name: "IdleTimeout elapsed — should be collected",
-			sandbox: &types.SandboxInfo{
-				SessionID:        "session-elapsed",
-				Kind:             types.SandboxKind,
-				Name:             "sb-elapsed",
-				SandboxNamespace: "default",
-				IdleTimeout:      metav1.Duration{Duration: 15 * time.Minute},
-				LastActivityAt:   now.Add(-20 * time.Minute),
-			},
-			wantDeleted: true,
-		},
-		{
-			name: "within IdleTimeout — should be skipped",
-			sandbox: &types.SandboxInfo{
-				SessionID:        "session-active",
-				Kind:             types.SandboxKind,
-				Name:             "sb-active",
-				SandboxNamespace: "default",
-				IdleTimeout:      metav1.Duration{Duration: 15 * time.Minute},
-				LastActivityAt:   now.Add(-5 * time.Minute),
-			},
-			wantDeleted: false,
-		},
-		{
-			name: "IdleTimeout zero — falls back to DefaultSandboxIdleTimeout",
-			sandbox: &types.SandboxInfo{
-				SessionID:        "session-default-timeout",
-				Kind:             types.SandboxKind,
-				Name:             "sb-default",
-				SandboxNamespace: "default",
-				IdleTimeout:      metav1.Duration{Duration: 0},
-				LastActivityAt:   now.Add(-(DefaultSandboxIdleTimeout + time.Minute)),
-			},
-			wantDeleted: true,
-		},
-		{
-			name: "LastActivityAt zero, CreatedAt old — falls back to CreatedAt, should be collected",
-			sandbox: &types.SandboxInfo{
-				SessionID:        "session-zero-activity-old",
-				Kind:             types.SandboxKind,
-				Name:             "sb-zero-activity-old",
-				SandboxNamespace: "default",
-				IdleTimeout:      metav1.Duration{Duration: 15 * time.Minute},
-				LastActivityAt:   time.Time{},
-				CreatedAt:        now.Add(-20 * time.Minute),
-			},
-			wantDeleted: true,
-		},
-		{
-			name: "LastActivityAt zero, CreatedAt recent — falls back to CreatedAt, should be skipped",
-			sandbox: &types.SandboxInfo{
-				SessionID:        "session-zero-activity-new",
-				Kind:             types.SandboxKind,
-				Name:             "sb-zero-activity-new",
-				SandboxNamespace: "default",
-				IdleTimeout:      metav1.Duration{Duration: 15 * time.Minute},
-				LastActivityAt:   time.Time{},
-				CreatedAt:        now.Add(-5 * time.Minute),
-			},
-			wantDeleted: false,
-		},
+func TestGarbageCollector_once_deduplicatesHardAndIdleExpiry(t *testing.T) {
+	sandbox := &types.SandboxInfo{
+		SessionID: "session-expired", Kind: types.SandboxKind,
+		Name: "sb-expired", SandboxNamespace: "default",
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fs := &gcFakeStore{inactive: []*types.SandboxInfo{tt.sandbox}}
-			gc := newTestGC(fs)
-			gc.once()
-
-			if tt.wantDeleted {
-				assert.Contains(t, fs.deleted, tt.sandbox.SessionID,
-					"expected session %s to be deleted", tt.sandbox.SessionID)
-			} else {
-				assert.NotContains(t, fs.deleted, tt.sandbox.SessionID,
-					"expected session %s NOT to be deleted", tt.sandbox.SessionID)
-			}
-		})
+	fs := &gcFakeStore{
+		inactive: []*types.SandboxInfo{sandbox},
+		expired:  []*types.SandboxInfo{sandbox},
 	}
+	gc := newTestGC(fs)
+	gc.once()
+	assert.Equal(t, []string{"session-expired"}, fs.deleted)
 }
 
 func TestGarbageCollector_once_expiredSandboxDeleted(t *testing.T) {
@@ -250,20 +183,18 @@ func TestGarbageCollector_once_storeDeleteErrorDoesNotAbortOthers(t *testing.T) 
 	assert.NotContains(t, fs.deleted, "session-fail")
 }
 
-func TestGarbageCollector_once_inactiveCutoffUsesGcMinLookback(t *testing.T) {
-	// once() must pass `now - gcMinInactiveLookback` as the cutoff.
+func TestGarbageCollector_once_idleDeadlineCutoffUsesNow(t *testing.T) {
+	// Deadlines can be queried directly without a minimum idle lookback.
 	fs := &gcFakeStore{}
 	gc := newTestGC(fs)
 	before := time.Now()
 	gc.once()
 	after := time.Now()
 
-	expectedMin := before.Add(-gcMinInactiveLookback)
-	expectedMax := after.Add(-gcMinInactiveLookback)
 	assert.True(t,
-		!fs.inactiveCutoff.Before(expectedMin) && !fs.inactiveCutoff.After(expectedMax),
-		"inactive cutoff %v should be between %v and %v (now - gcMinInactiveLookback)",
-		fs.inactiveCutoff, expectedMin, expectedMax,
+		!fs.inactiveCutoff.Before(before) && !fs.inactiveCutoff.After(after),
+		"idle deadline cutoff %v should be between %v and %v",
+		fs.inactiveCutoff, before, after,
 	)
 }
 

@@ -65,10 +65,10 @@ func newTestRedisClient(t *testing.T) (*redisStore, *miniredis.Miniredis) {
 
 	mr := miniredis.RunT(t)
 	rs := &redisStore{
-		cli:                  redisv9.NewClient(&redisv9.Options{Addr: mr.Addr()}),
-		sessionPrefix:        "session:",
-		expiryIndexKey:       "sandbox:expiry",
-		lastActivityIndexKey: "sandbox:last_activity",
+		cli:                redisv9.NewClient(&redisv9.Options{Addr: mr.Addr()}),
+		sessionPrefix:      "session:",
+		expiryIndexKey:     "sandbox:expiry",
+		idleExpiryIndexKey: "session:idle_expiry",
 	}
 	return rs, mr
 }
@@ -101,6 +101,7 @@ func TestRedisStore_StoreSandbox(t *testing.T) {
 		SessionID:        "session-id-TestClient_StoreSandbox-01",
 		SandboxNamespace: "agent-cube",
 		Name:             "fake-sandbox-01",
+		CreatedAt:        time.Now(),
 		ExpiresAt:        time.Now(),
 	}
 	err := c.StoreSandbox(ctx, sandboxStoreStruct)
@@ -187,7 +188,7 @@ func TestListInactiveSandboxes(t *testing.T) {
 	ctx := context.Background()
 	c, _ := newTestRedisClient(t)
 
-	now := time.Now().UTC().Truncate(time.Second)
+	now := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
 
 	sb1 := newTestSandbox("sb-1", "sess-1", now.Add(10*time.Minute))
 	sb2 := newTestSandbox("sb-2", "sess-2", now.Add(10*time.Minute))
@@ -203,7 +204,7 @@ func TestListInactiveSandboxes(t *testing.T) {
 		t.Fatalf("TestListInactiveSandboxes StoreSandbox sb3 error: %v", err)
 	}
 
-	// Only UpdateSandboxLastActivity writes last-activity index.
+	// Activity plus the default timeout falls on either side of the cutoff.
 	if err := c.UpdateSessionLastActivity(ctx, "sess-1", now.Add(-3*time.Hour)); err != nil {
 		t.Fatalf("UpdateSessionLastActivity sess-1 error: %v", err)
 	}
@@ -278,36 +279,31 @@ func TestLoadSandboxesBySessionIDs_OrphanedZSetEntry(t *testing.T) {
 	}
 }
 
-func TestListInactiveSandboxes_PopulatesLastActivityAt(t *testing.T) {
+func TestListInactiveSandboxes_OrdersByIdleDeadline(t *testing.T) {
 	ctx := context.Background()
 	c, _ := newTestRedisClient(t)
 
-	now := time.Now().UTC().Truncate(time.Second)
+	now := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
 
 	assert.NoError(t, c.StoreSandbox(ctx, newTestSandbox("sb-1", "sess-1", now.Add(10*time.Minute))))
 	assert.NoError(t, c.StoreSandbox(ctx, newTestSandbox("sb-2", "sess-2", now.Add(10*time.Minute))))
-	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-1", now.Add(-3*time.Hour)))
+	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-1", now.Add(-time.Hour)))
 	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-2", now.Add(-2*time.Hour)))
 
 	list, err := c.ListInactiveSandboxes(ctx, now, 10)
 	assert.NoError(t, err)
 	assert.Len(t, list, 2)
 
-	bySession := map[string]*types.SandboxInfo{}
-	for _, sb := range list {
-		bySession[sb.SessionID] = sb
-	}
-	// LastActivityAt must reflect the score written by UpdateSessionLastActivity.
-	assert.Equal(t, now.Add(-3*time.Hour).Unix(), bySession["sess-1"].LastActivityAt.Unix())
-	assert.Equal(t, now.Add(-2*time.Hour).Unix(), bySession["sess-2"].LastActivityAt.Unix())
+	assert.Equal(t, "sess-2", list[0].SessionID)
+	assert.Equal(t, "sess-1", list[1].SessionID)
 }
 
-func TestUpdateSandboxLastActivity(t *testing.T) {
+func TestUpdateSessionLastActivity(t *testing.T) {
 	ctx := context.Background()
 	c, mr := newTestRedisClient(t)
 
 	now := time.Now().UTC().Truncate(time.Second)
-	newLastActivity := now.Add(-5 * time.Minute)
+	activity := now.Add(5 * time.Minute)
 
 	sb := newTestSandbox("sb-1", "sess-1", now.Add(30*time.Minute))
 
@@ -322,30 +318,29 @@ func TestUpdateSandboxLastActivity(t *testing.T) {
 		t.Fatalf("get session key before update error: %v", err)
 	}
 
-	if err := c.UpdateSessionLastActivity(ctx, "sess-1", newLastActivity); err != nil {
+	if err := c.UpdateSessionLastActivity(ctx, "sess-1", activity); err != nil {
 		t.Fatalf("UpdateSessionLastActivity sess-1 error: %v", err)
 	}
 
-	// Session value should remain unchanged (UpdateSandboxLastActivity only updates the index).
+	// Activity only changes the idle index, not the session JSON.
 	dataAfter, err := mr.Get(key)
 	if err != nil {
 		t.Fatalf("get session key after update error: %v", err)
 	}
-	if dataBefore != dataAfter {
-		t.Fatalf("expected session value to remain unchanged after UpdateSandboxLastActivity")
-	}
+	assert.Equal(t, dataBefore, dataAfter)
 
-	// last_activity index should be updated.
-	score, err := mr.ZScore(c.lastActivityIndexKey, "sess-1")
+	// session:idle_expiry index should be updated.
+	score, err := mr.ZScore(c.idleExpiryIndexKey, "sess-1")
 	if err != nil {
-		t.Fatalf("expected last_activity index entry after update: %v", err)
+		t.Fatalf("expected session:idle_expiry index entry after update: %v", err)
 	}
-	if int64(score) != newLastActivity.Unix() {
-		t.Fatalf("unexpected lastActivity score after update: got %v, want %v", score, newLastActivity.Unix())
+	want := activity.Add(types.DefaultSandboxIdleTimeout).Unix()
+	if int64(score) != want {
+		t.Fatalf("unexpected idle expiry score after update: got %v, want %v", score, want)
 	}
 
 	// session not exists
-	err = c.UpdateSessionLastActivity(ctx, "sess-1-not-exist", newLastActivity)
+	err = c.UpdateSessionLastActivity(ctx, "sess-1-not-exist", activity)
 	if err == nil {
 		t.Fatalf("expected error for non-existent session")
 	}

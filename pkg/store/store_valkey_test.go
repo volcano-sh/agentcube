@@ -133,10 +133,10 @@ func newValkeyTestClient(t *testing.T) (*valkeyStore, *miniredis.Miniredis) {
 	}
 
 	rs := &valkeyStore{
-		cli:                  client,
-		sessionPrefix:        "session:",
-		expiryIndexKey:       "sandbox:expiry",
-		lastActivityIndexKey: "sandbox:last_activity",
+		cli:                client,
+		sessionPrefix:      "session:",
+		expiryIndexKey:     "sandbox:expiry",
+		idleExpiryIndexKey: "session:idle_expiry",
 	}
 	return rs, mr
 }
@@ -165,6 +165,7 @@ func TestValkeyStore_GetSandboxBySessionID(t *testing.T) {
 		SessionID:        "TestValkeyStore_GetSandboxBySessionID-SID-01",
 		SandboxNamespace: "agent-cube",
 		Name:             "TestValkeyStore_GetSandboxBySessionID-NAME-01",
+		CreatedAt:        time.Now(),
 		ExpiresAt:        time.Now(),
 	}
 	err = c.StoreSandbox(ctx, sandboxStoreStruct)
@@ -190,9 +191,9 @@ func TestValkeyStore_GetSandboxBySessionID(t *testing.T) {
 	_, err = mr.ZScore(c.expiryIndexKey, sandboxStoreStruct.SessionID)
 	assert.NoError(t, err, "ZScore expiry should not be error")
 
-	_, err = mr.ZScore(c.lastActivityIndexKey, sandboxStoreStruct.SessionID)
+	_, err = mr.ZScore(c.idleExpiryIndexKey, sandboxStoreStruct.SessionID)
 	assert.NoError(t, err)
-	assert.NoError(t, err, "ZScore lastActivity should not be error")
+	assert.NoError(t, err, "ZScore idle expiry should not be error")
 
 	err = c.DeleteSandboxBySessionID(ctx, "TestValkeyStore_GetSandboxBySessionID-SID-01")
 	assert.Nil(t, err)
@@ -203,7 +204,7 @@ func TestValkeyStore_GetSandboxBySessionID(t *testing.T) {
 	_, err = mr.ZScore(c.expiryIndexKey, sandboxStoreStruct.SessionID)
 	assert.True(t, errors.Is(err, miniredis.ErrKeyNotFound))
 
-	_, err = mr.ZScore(c.lastActivityIndexKey, sandboxStoreStruct.SessionID)
+	_, err = mr.ZScore(c.idleExpiryIndexKey, sandboxStoreStruct.SessionID)
 	assert.True(t, errors.Is(err, miniredis.ErrKeyNotFound))
 
 	err = c.DeleteSandboxBySessionID(ctx, "TestValkeyStore_GetSandboxBySessionID-SID-01-NotExists")
@@ -293,7 +294,7 @@ func TestValkeyStore_ListInactiveSandboxes(t *testing.T) {
 	ctx := context.Background()
 	c, _ := newValkeyTestClient(t)
 
-	now := time.Now().UTC().Truncate(time.Second)
+	now := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
 
 	sb1 := newTestSandbox("sb-1", "sess-1", now.Add(15*time.Minute))
 	sb2 := newTestSandbox("sb-2", "sess-2", now.Add(14*time.Minute))
@@ -319,10 +320,6 @@ func TestValkeyStore_ListInactiveSandboxes(t *testing.T) {
 	assert.Equal(t, "sess-1", expiredSandboxes[0].SessionID)
 	assert.Equal(t, "sess-2", expiredSandboxes[1].SessionID)
 	assert.Equal(t, "sess-3", expiredSandboxes[2].SessionID)
-	// LastActivityAt must reflect the score written by UpdateSessionLastActivity.
-	assert.Equal(t, now.Add(-10*time.Hour).Unix(), expiredSandboxes[0].LastActivityAt.Unix())
-	assert.Equal(t, now.Add(-8*time.Hour).Unix(), expiredSandboxes[1].LastActivityAt.Unix())
-	assert.Equal(t, now.Add(-6*time.Hour).Unix(), expiredSandboxes[2].LastActivityAt.Unix())
 
 	expiredSandboxes, err = c.ListInactiveSandboxes(ctx, now, 1)
 	assert.Nil(t, err)
@@ -333,7 +330,7 @@ func TestValkeyStore_ListInactiveSandboxes(t *testing.T) {
 	assert.Len(t, expiredSandboxes, 5)
 }
 
-func TestValkeyStore_UpdateSandboxLastActivity(t *testing.T) {
+func TestValkeyStore_UpdateSessionLastActivity(t *testing.T) {
 	ctx := context.Background()
 	c, mr := newValkeyTestClient(t)
 
@@ -347,16 +344,19 @@ func TestValkeyStore_UpdateSandboxLastActivity(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, "sess-1", sandboxStore.SessionID)
 
-	newLastActivity := time.Now().Add(time.Hour)
-	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-1", newLastActivity))
+	activity := time.Now().Add(time.Hour)
+	assert.NoError(t, c.UpdateSessionLastActivity(ctx, "sess-1", activity))
 
-	// last_activity index should be updated.
-	score, err := mr.ZScore(c.lastActivityIndexKey, "sess-1")
+	// session:idle_expiry index should be updated.
+	score, err := mr.ZScore(c.idleExpiryIndexKey, "sess-1")
 	assert.Nil(t, err)
-	assert.Equal(t, newLastActivity.Unix(), int64(score))
+	sandboxStore, err = c.GetSandboxBySessionID(ctx, "sess-1")
+	assert.NoError(t, err)
+	assert.True(t, sb.ExpiresAt.Equal(sandboxStore.ExpiresAt))
+	assert.Equal(t, activity.Add(types.DefaultSandboxIdleTimeout).Unix(), int64(score))
 
 	// session not exists
-	err = c.UpdateSessionLastActivity(ctx, "sess-1-not-exist", newLastActivity)
+	err = c.UpdateSessionLastActivity(ctx, "sess-1-not-exist", activity)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotFound))
 }

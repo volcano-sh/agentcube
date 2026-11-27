@@ -21,8 +21,39 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 )
+
+func TestSandboxInfo_IdleExpiryTime(t *testing.T) {
+	createdAt := time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
+	activityAt := createdAt.Add(time.Hour)
+	for _, timeout := range []time.Duration{0, 30 * time.Second, 24 * time.Hour} {
+		for _, hasActivity := range []bool{false, true} {
+			name := "creation fallback/" + timeout.String()
+			if hasActivity {
+				name = "last activity/" + timeout.String()
+			}
+			t.Run(name, func(t *testing.T) {
+				sandbox := SandboxInfo{
+					CreatedAt:   createdAt,
+					IdleTimeout: metav1.Duration{Duration: timeout},
+				}
+				base := createdAt
+				var at time.Time
+				if hasActivity {
+					at = activityAt
+					base = activityAt
+				}
+				effectiveTimeout := timeout
+				if effectiveTimeout == 0 {
+					effectiveTimeout = DefaultSandboxIdleTimeout
+				}
+				assert.Equal(t, base.Add(effectiveTimeout), sandbox.IdleExpiryTime(at))
+			})
+		}
+	}
+}
 
 func TestCreateSandboxRequest_Validate(t *testing.T) {
 	tests := []struct {

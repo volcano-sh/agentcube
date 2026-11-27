@@ -24,6 +24,7 @@ import (
 	cubeversioned "github.com/volcano-sh/agentcube/client-go/clientset/versioned"
 	cubeinformers "github.com/volcano-sh/agentcube/client-go/informers/externalversions"
 	runtimev1alpha1 "github.com/volcano-sh/agentcube/pkg/apis/runtime/v1alpha1"
+	"github.com/volcano-sh/agentcube/pkg/common/types"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,7 +45,7 @@ import (
 
 const (
 	DefaultSandboxTTL         = 8 * time.Hour
-	DefaultSandboxIdleTimeout = 15 * time.Minute
+	DefaultSandboxIdleTimeout = types.DefaultSandboxIdleTimeout
 )
 
 var (

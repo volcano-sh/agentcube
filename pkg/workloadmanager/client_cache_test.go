@@ -571,6 +571,43 @@ func TestTokenCache_Remove(t *testing.T) {
 // Note: TestTokenCache_Size removed - it only verified that Size() returns
 // the count of entries, which is trivial getter behavior.
 
+// TestTokenCache_Get_JWTExpiredEvictsEntry is the regression test for
+// https://github.com/volcano-sh/agentcube/issues/375:
+// A cached JWT whose exp claim has passed must NOT be returned as
+// authenticated=true, even when the sliding-window TTL has not yet elapsed.
+func TestTokenCache_Get_JWTExpiredEvictsEntry(t *testing.T) {
+	cache := NewTokenCache(10, 10*time.Minute) // long sliding TTL
+
+	// Create a JWT that expired 1 minute ago.
+	expiredToken := createTestJWT(time.Now().Add(-time.Minute).Unix())
+
+	cache.Set(expiredToken, true, "alice")
+
+	// A single Get must evict the entry and return found=false.
+	found, authenticated, _ := cache.Get(expiredToken)
+	assert.False(t, found, "expired JWT should not be found in cache")
+	assert.False(t, authenticated, "expired JWT should not be reported as authenticated")
+	assert.Equal(t, 0, cache.Size(), "expired entry should be evicted")
+}
+
+// TestTokenCache_RepeatedGetDoesNotResurrectExpiredJWT ensures that multiple
+// Get calls on an already-expired JWT all return found=false. Before the fix
+// an expired-but-active-window entry would continue to be returned on each Get.
+func TestTokenCache_RepeatedGetDoesNotResurrectExpiredJWT(t *testing.T) {
+	cache := NewTokenCache(10, 10*time.Minute) // long sliding TTL
+
+	// A token whose JWT exp is firmly in the past.
+	expiredToken := createTestJWT(time.Now().Add(-2 * time.Minute).Unix())
+	cache.Set(expiredToken, true, "carol")
+
+	for i := 0; i < 3; i++ {
+		found, authenticated, _ := cache.Get(expiredToken)
+		assert.False(t, found, "call %d: expired JWT must not be found", i+1)
+		assert.False(t, authenticated, "call %d: expired JWT must not be authenticated", i+1)
+	}
+	assert.Equal(t, 0, cache.Size(), "expired entry must be evicted on first Get")
+}
+
 func TestTokenCache_NotAuthenticated(t *testing.T) {
 	cache := NewTokenCache(10, 5*time.Minute)
 

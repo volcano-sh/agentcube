@@ -203,6 +203,7 @@ type tokenCacheEntry struct {
 	authenticated bool
 	username      string
 	lastAccess    time.Time
+	tokenExpiry   time.Time // JWT exp claim; zero means no expiry parsed
 	element       *list.Element
 }
 
@@ -243,9 +244,17 @@ func (c *TokenCache) Get(token string) (found bool, authenticated bool, username
 		return false, false, ""
 	}
 
-	// Check if entry is expired; evict stale entries to prevent memory leak.
-	// This mirrors ClientCache.Get which correctly removes expired entries.
+	// Evict if the sliding-window TTL has elapsed (protects opaque tokens too).
 	if time.Since(entry.lastAccess) > c.ttl {
+		c.lruList.Remove(entry.element)
+		delete(c.cache, token)
+		return false, false, ""
+	}
+
+	// Hard expiry: if the JWT carries an exp claim, honour it regardless of
+	// how recently the token was used. This prevents a continuously-used token
+	// from staying cached as authenticated after the JWT has expired.
+	if !entry.tokenExpiry.IsZero() && time.Now().After(entry.tokenExpiry) {
 		c.lruList.Remove(entry.element)
 		delete(c.cache, token)
 		return false, false, ""
@@ -268,6 +277,7 @@ func (c *TokenCache) Set(token string, authenticated bool, username string) {
 		entry.authenticated = authenticated
 		entry.username = username
 		entry.lastAccess = time.Now()
+		entry.tokenExpiry = parseJWTExpiry(token)
 		c.lruList.MoveToFront(entry.element)
 		return
 	}
@@ -283,6 +293,7 @@ func (c *TokenCache) Set(token string, authenticated bool, username string) {
 		authenticated: authenticated,
 		username:      username,
 		lastAccess:    time.Now(),
+		tokenExpiry:   parseJWTExpiry(token),
 	}
 	entry.element = c.lruList.PushFront(entry)
 	c.cache[token] = entry
